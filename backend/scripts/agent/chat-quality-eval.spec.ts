@@ -297,6 +297,7 @@ describe("assembleLegacyTurn", () => {
 
 describe("heuristicHasQuestion", () => {
     it.each([
+        // --- existing cases (must keep passing) ---
         ["산모 이름이 뭔가요?", true],
         ["이 산모가 맞는 산모인가요", true],
         ["새 전화번호를 알려주세요", true],
@@ -304,6 +305,68 @@ describe("heuristicHasQuestion", () => {
         ["도하린 산모는 서구에 거주해요.", false],
         ["", false],
         ["   ", false],
+
+        // --- new true cases: one per asking ending ---
+        ["오늘 방문하실 예정이신가요?", true], // literal "?"
+        ["언제 오실 수 있을까요", true], // 까요
+        ["담당자가 누구였나요", true], // 나요
+        ["이 산모가 맞는 산모인가요", true], // 인가요
+        ["오늘이 상담일은가요", true], // 은가요
+        ["이게 맞는 서류는가요", true], // 는가요
+        ["예전에도 그랬던가요", true], // 던가요
+        ["같이 확인할래요", true], // 할래요
+        ["이거 먼저 먹을래요", true], // 을래요
+        ["연락처를 알려주세요", true], // 주세요
+        ["새 주소를 알려 주시겠어요", true], // 주시겠어요
+        ["같이 확인해 주실래요", true], // 주실래요
+        ["예약 시간이 맞는지요", true], // 는지요
+        ["담당자가 누구인지요", true], // 인지요
+        ["새 전화번호를 알려 주시겠습니까", true], // 습니까
+        ["오늘 방문이 됩니까", true], // ㅂ니까 스타일 (됩니까)
+        ["지금 확인 가능합니까", true], // ㅂ니까 스타일 (합니까)
+
+        // trailing period after an asking ending must still count
+        ["새 주소를 알려 주시겠어요.", true],
+        ["담당자님 성함을 여쭤봐도 될까요.", true],
+
+        // question followed by a short trailing line in the same paragraph
+        ["새 전화번호가 필요해요. 알려주시겠어요?\n감사합니다!", true],
+        ["오늘 방문 예정이신가요?\n확인 부탁드려요", true],
+
+        // --- new false cases ---
+        ["확인했습니다.", false],
+        ["확인했으니까.", false], // bare 니까 (no ㅂ 받침 앞말) must NOT count
+        ["내일 가요.", false], // bare 가요 must NOT count
+        ["하래요.", false], // bare 래요 (전달/인용) must NOT count
+        ["질문: \"언제 오시나요?\"\n\n네, 알겠습니다. 확인 후 안내드리겠습니다.", false], // "?" only in an earlier paragraph
+        ["| 항목 | 값 |\n| --- | --- |\n| 이름 | 홍길동 |", false], // table-only answer, no question
+
+        // --- fullwidth question mark normalization ---
+        ["담당자가 누구인가요？", true],
+
+        // --- trailing markdown emphasis / punctuation / laughter / emoji stripped before checking the ending ---
+        ["**방문하실까요?**", true], // bold-wrapped
+        ["_…?_", true], // italic-wrapped with a leading ellipsis
+        ["언제 방문하실까요…", true], // trailing ellipsis after an asking ending
+        ["언제 방문하실까요^^", true], // trailing caret emoticon
+        ["언제 방문하실까요?ㅎㅎ", true], // trailing ㅎ run after "?"
+        ["언제 방문하실까요 👍🏻", true], // trailing emoji with a skin-tone modifier
+        ["언제 방문하실까요 👨‍👩‍👧", true], // trailing ZWJ emoji sequence
+
+        // --- a colon-terminated lead-in line followed by a list still counts ---
+        ["선택해 주세요:\n- 옵션1\n- 옵션2", true],
+
+        // --- 주세요 only counts as the FINAL sentence of the last paragraph ---
+        ["고객님께 전화해 주세요. 감사합니다!", false], // 주세요 in a non-final sentence must not count
+
+        // --- a "?" inside an unquoted mid-sentence quote must not count when the paragraph's real final sentence is a statement ---
+        ["고객님이 언제 오나요? 하고 물으셨던 건은 처리했어요.", false],
+        ["고객님이 언제 오나요? 라고 물으셔서 안내드렸어요.", false],
+
+        // --- a clarifying question followed by an offer or example sentence still counts (live eval vague-1 / write-2) ---
+        ["어느 산모님을 찾으시나요? 이름이나 연락처 뒷자리를 알려주시면 바로 찾아드릴게요.", true],
+        ["전화번호가 바뀌었군요! 어느 산모님의 전화번호인지 알려주시면 변경해 드릴게요. (예: 산모님 성함이나 연락처 뒷자리)", true],
+        ["산모님의 성함과 **새로 변경할 전화번호**를 함께 알려주세요. 확인 후 바로 처리해 드릴게요!", true],
     ])("%s -> %s", (text, expected) => {
         expect(heuristicHasQuestion(text)).toBe(expected);
     });

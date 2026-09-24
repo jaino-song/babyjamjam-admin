@@ -9,6 +9,7 @@ export * from "./list-employees-by-open-status.usecase";
 export * from "./list-employees-by-registered-date-range.usecase";
 export * from "./list-employees-by-registered-date.usecase";
 export * from "./list-employees-by-work-area.usecase";
+export * from "./list-employees-for-date.usecase";
 export * from "./list-employees-open-to-next-work.usecase";
 export * from "./list-employees.usecase";
 export * from "./update-employee.usecase";

@@ -4,6 +4,7 @@ import {
     canonicalConversationMessage,
     conversationMessageHash,
     extractExplicitUserOperations,
+    isQuestionLike,
     sanitizeConversationMessage,
 } from "./conversation-task-policy";
 
@@ -62,5 +63,41 @@ describe("conversation task intake policy", () => {
             { op: "mark-tentative", field: "startDate", value: "3월 초" },
         ]);
         expect(extractExplicitUserOperations("홍길동이 3월 초를 원해요")).toEqual([]);
+    });
+
+    describe("isQuestionLike", () => {
+        it.each([
+            "남궁솔 관리사 다음 근무 가능하게 바꿔줘",
+            "주소 확인하고 인천 서구 가정로 10으로 바꿔줘",
+            "연락처 찾아서 010-0000-0101로 수정해 주세요",
+            "근무 가능하게 해줘",
+        ])("treats an imperative change request as not question-like: %s", (text) => {
+            expect(isQuestionLike(text)).toBe(false);
+        });
+
+        it.each([
+            "근무 가능한지 알려줘",
+            "바꿀 수 있어?",
+            "변경해 줄래?",
+            "지금 가능해?",
+            "일정 확인해줘",
+            "계약서 보여줘",
+        ])("still treats question-shaped text as question-like: %s", (text) => {
+            expect(isQuestionLike(text)).toBe(true);
+        });
+
+        it.each([
+            "계약서 어떻게 만들어",
+            "이거 누가 삭제해",
+            "언제 등록해",
+            "왜 안 바꿔",
+            "어디로 돌려",
+        ])("does not let a trailing imperative verb override a genuine interrogative: %s", (text) => {
+            expect(isQuestionLike(text)).toBe(true);
+        });
+
+        it("still treats an imperative change request with no interrogative word as not question-like", () => {
+            expect(isQuestionLike("주소 확인하고 인천 서구로 바꿔줘")).toBe(false);
+        });
     });
 });

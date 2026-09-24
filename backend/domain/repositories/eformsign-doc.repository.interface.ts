@@ -18,6 +18,24 @@ export interface EformsignDocUnscopedResult {
     branchId: string | null;
 }
 
+/**
+ * Projection for `contracts.recent` — a contract-or-unclassified document (never a
+ * service-record snapshot), newest updated first, with the client name resolved by
+ * a join so callers never need a follow-up per-row lookup.
+ */
+export interface RecentEformsignDocRow {
+    documentId: string;
+    documentName: string | null;
+    clientId: number | null;
+    clientName: string | null;
+    statusType: string;
+    statusDetail: string;
+    stepType: string;
+    stepName: string;
+    updatedDate: Date;
+    expired: boolean;
+}
+
 export class EformsignDocMappingError extends Error {
     readonly originalError: unknown;
 
@@ -139,6 +157,13 @@ export interface IEformsignDocRepository {
         params: EformsignDocCompletionClaimParams,
     ): Promise<EformsignDocCompletionClaimResult>;
     findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]>;
+    /**
+     * The `take` most recently updated contract-or-unclassified documents for the
+     * branch (never a service-record snapshot, never a permanently-purged or
+     * locally-deleted row), with the client name joined in. Ordering, kind, and
+     * deletion filters are applied in the query, not in memory.
+     */
+    findRecentContracts(branchid: string, take: number): Promise<RecentEformsignDocRow[]>;
     findAll(branchid: string): Promise<EformsignDocEntity[]>;
     /**
      * Rows safe to expose through the local-only mirror list. Completed documents stay

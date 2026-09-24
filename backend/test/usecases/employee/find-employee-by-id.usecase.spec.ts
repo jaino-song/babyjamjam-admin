@@ -79,4 +79,23 @@ describe("FindEmployeeByIdUsecase", () => {
             expect(result?.openToNextWork).toBe(true);
         });
     });
+
+    describe("resolveStatus", () => {
+        it("computes the status via the repository's date-scoped lookup, not the base findById", async () => {
+            const employee = EmployeeFactory.create({ id: 1, name: "테스트 직원" });
+            mockRepository.setData([employee]);
+            const date = new Date("2026-09-24T00:00:00.000Z");
+            const findByIdForDateSpy = jest.spyOn(mockRepository, "findByIdForDate");
+
+            await usecase.resolveStatus(branchId, 1, date);
+
+            expect(findByIdForDateSpy).toHaveBeenCalledWith(branchId, 1, date);
+        });
+
+        it("returns undefined when the repository has no status for that employee/date", async () => {
+            const result = await usecase.resolveStatus(branchId, 999, new Date("2026-09-24T00:00:00.000Z"));
+
+            expect(result).toBeUndefined();
+        });
+    });
 });

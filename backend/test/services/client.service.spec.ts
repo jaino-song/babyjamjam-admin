@@ -204,6 +204,7 @@ describe("ClientService", () => {
         findWithIncompleteContractsStartingWithinDays: jest.fn().mockResolvedValue([]),
         findWithoutContractSentStartingWithinDays: jest.fn().mockResolvedValue([]),
         findByPhone: jest.fn().mockResolvedValue(null),
+        findNamesByIds: jest.fn().mockResolvedValue([]),
     });
 
     const createClientEntity = (): ClientEntity => new ClientEntity(
