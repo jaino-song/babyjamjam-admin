@@ -155,6 +155,9 @@ gcloud iam workload-identity-pools providers create-oidc babyjamjam-gh \
 
 - `event_name`·`job_workflow_ref` 조건은 2026-09-24 사후 리뷰로 추가됐다: repository+ref만 검사하면
   `preview`에 push할 수 있는 누구나 `id-token: write` 워크플로를 새로 추가해 프로덕션 시크릿을 읽을 수 있다.
+  단, `job_workflow_ref`는 경로와 ref만 고정하고 파일 내용은 고정하지 않는다 — `preview`에 push할 수 있으면
+  `backend-ci.yml` 자체를 수정해 토큰을 받을 수 있다. 이 조건은 "새 워크플로 추가" 경로만 막으므로
+  `preview` 브랜치 보호(직접 push 제한·필수 리뷰)가 나머지를 담당해야 한다.
   이미 만든 provider는 같은 `--attribute-condition`으로 `gcloud iam workload-identity-pools providers update-oidc babyjamjam-gh --location=global --workload-identity-pool=github --project="$PROJECT_ID"`를 실행해 갱신한다.
 
 - `google.subject` 매핑은 필수다. `attribute.repository`/`attribute.ref`는 attribute condition과

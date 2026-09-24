@@ -151,9 +151,14 @@ cannot provide come exclusively from an operator-authored JSON file
   v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
   the text together with the request state (`targetConfirmed`,
   `missingFields`), so a follow-up turn that supplies the value for an
-  already-confirmed record is not sent back for clarification. Clarification
-  fixtures may carry that state as `state: { missingFields, targetConfirmed }`,
-  and the live runner sends it.
+  already-confirmed record is not *advised* to clarify. This changes the advice
+  only: under `enforce`, `decideClarification` still suppresses model writes
+  whenever the runtime's `missingFields` is non-empty, and the runtime
+  currently fills it with every client write field not yet set (BJJ-344
+  follow-up), so partially filled tasks are still sent back regardless of the
+  advice. Clarification fixtures may carry state as
+  `state: { missingFields, targetConfirmed }`, and the live runner sends it;
+  those states are synthetic and do not yet match runtime state.
   Treat `ineligible` under `enforce` as the stale-profile symptom and compare
   the stored profile's `questionVersion` with `DECISION_QUESTION_VERSION`.
   `question-mismatch` is a different failure: a permitted route domain has no
@@ -206,7 +211,9 @@ radius, smallest first:
 
 0. **Deployment disable** — remove the deployment from `environments` in
    `agent.decisions.jev`, or unset its `AGENT_DECISION_ENVIRONMENT`. Every kind
-   is `off` there on the next config read (≤ 30 s cache).
+   is `off` there on the next config read (≤ 30 s cache) when you edit
+   `environments`; unsetting the variable takes effect only after a redeploy
+   (on preview: a manifest commit and a CI deploy).
 1. **Per-kind disable** — set the offending kind's mode to `off` in the
    `agent.decisions.jev` setting (`kinds.<kind>.mode: "off"`). Other kinds
    keep running.

@@ -1019,7 +1019,8 @@ async function runLiveCase(
                 redactedText: item.text,
             }));
         case DECISION_KINDS.evaluateClarification: {
-            // Mirrors the runtime request shape exactly
+            // Same request fields as the runtime, but not the same values: the runtime
+            // sends redacted text and its own missingFields (see BJJ-344 follow-up)
             // (typesafe-jev-decision.service.ts:434-438 builds
             // `state: { text, missingFields, targetConfirmed }` from the
             // same two fields). A case with no explicit `state` falls back
