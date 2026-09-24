@@ -1,10 +1,13 @@
 "use client";
 
 import type { UIMessage } from "ai";
+import Link from "next/link";
 import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
 import { ChatMarkdown } from "../ChatMarkdown";
+import { remarkAgentLineBreaks } from "../remarkAgentLineBreaks";
 import { ActionResultPart } from "./ActionResultPart";
 import { FormRequestPart } from "./FormRequestPart";
 import { ErrorPart } from "./ErrorPart";
@@ -65,6 +68,7 @@ function isSameOriginPath(href: string): boolean {
         return false;
     }
 }
+const AGENT_TEXT_REMARK_PLUGINS = [remarkGfm, remarkAgentLineBreaks];
 const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
     img: ({ alt }) => <>{alt ?? ""}</>,
     // `node` is react-markdown's AST node; spreading it would add a junk DOM attribute.
@@ -77,10 +81,13 @@ const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
             );
         }
         if (typeof href === "string" && isSameOriginPath(href)) {
+            // prefetch=false: a same-origin link is model-authored and could be
+            // prompt-injected. next/link prefetches on render/viewport by default
+            // in production, which would fire an authenticated GET with no click.
             return (
-                <a href={href} {...props}>
+                <Link href={href} prefetch={false} {...props}>
                     {children}
-                </a>
+                </Link>
             );
         }
         return <>{children}</>;
@@ -102,7 +109,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                 if (part.type === "text") {
                     return (
                         <div key={index} data-component={component("text")} data-slot="text" className="markdown-content break-words">
-                            <ChatMarkdown components={AGENT_TEXT_MARKDOWN_COMPONENTS}>{part.text}</ChatMarkdown>
+                            <ChatMarkdown remarkPlugins={AGENT_TEXT_REMARK_PLUGINS} components={AGENT_TEXT_MARKDOWN_COMPONENTS}>{part.text}</ChatMarkdown>
                         </div>
                     );
                 }

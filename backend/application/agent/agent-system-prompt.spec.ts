@@ -93,6 +93,14 @@ describe("buildAgentSystemPrompt", () => {
         }
     });
 
+    it("does not tell the model that caregiver lists or recent contracts are unavailable", () => {
+        const prompt = samplePrompt();
+        expect(prompt).not.toContain("전체 관리사 목록·인원 수");
+        expect(prompt).not.toContain("최근 계약서 전체 목록");
+        // A days-off calendar genuinely does not exist, so that limit stays honest.
+        expect(prompt).toContain("휴무일·휴가 일정 달력");
+    });
+
     it("includes today's KST date", () => {
         const prompt = samplePrompt({ today: "2026-12-31" });
         expect(prompt).toContain("2026-12-31");

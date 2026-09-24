@@ -2,6 +2,7 @@
 export * from "./find-eformsign-doc-by-id.usecase";
 export * from "./find-eformsign-doc-by-document-id.usecase";
 export * from "./find-eformsign-docs-by-client-id.usecase";
+export * from "./find-recent-contracts.usecase";
 export * from "./list-eformsign-docs.usecase";
 export * from "./list-other-branch-document-ids.usecase";
 export * from "./list-eformsign-doc-display-fields.usecase";
