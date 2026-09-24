@@ -319,7 +319,7 @@ describe("heuristicHasQuestion", () => {
         ["연락처를 알려주세요", true], // 주세요
         ["새 주소를 알려 주시겠어요", true], // 주시겠어요
         ["같이 확인해 주실래요", true], // 주실래요
-        ["예약 여부가 궁금한지요", true], // 는지요
+        ["예약 시간이 맞는지요", true], // 는지요
         ["담당자가 누구인지요", true], // 인지요
         ["새 전화번호를 알려 주시겠습니까", true], // 습니까
         ["오늘 방문이 됩니까", true], // ㅂ니까 스타일 (됩니까)
@@ -338,7 +338,7 @@ describe("heuristicHasQuestion", () => {
         ["확인했으니까.", false], // bare 니까 (no ㅂ 받침 앞말) must NOT count
         ["내일 가요.", false], // bare 가요 must NOT count
         ["하래요.", false], // bare 래요 (전달/인용) must NOT count
-        ["질문: \"언제 오시나요?\"\n네, 알겠습니다. 확인 후 안내드리겠습니다.", false], // "?" only in an earlier paragraph
+        ["질문: \"언제 오시나요?\"\n\n네, 알겠습니다. 확인 후 안내드리겠습니다.", false], // "?" only in an earlier paragraph
         ["| 항목 | 값 |\n| --- | --- |\n| 이름 | 홍길동 |", false], // table-only answer, no question
     ])("%s -> %s", (text, expected) => {
         expect(heuristicHasQuestion(text)).toBe(expected);
