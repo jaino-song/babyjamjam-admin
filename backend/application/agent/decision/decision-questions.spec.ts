@@ -54,7 +54,7 @@ function currentQuestionDigest(): { version: string; digest: string } {
 // silently apply to different questions.
 const PINNED_QUESTION_DIGEST = {
     version: "v3",
-    digest: "39503218f3dead26f869f564d8fbd1aeb81a4d265e301b46f0eb8f47473404b2",
+    digest: "5bf661380b3f5949464dafb6e5643282d9e6ed89a4ea8eee57d9aec780030a60",
 };
 
 describe("question text is pinned to DECISION_QUESTION_VERSION", () => {

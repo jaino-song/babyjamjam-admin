@@ -80,7 +80,7 @@ export const CLARIFICATION_JUDGMENT_QUESTIONS: Readonly<Record<ClarificationJudg
         sufficientEvidence:
             "Is there enough information in the text and state to carry out the request without guessing?",
         clarificationRequired:
-            "Does the text ask to change something but, taking the text and the state together, still leave the record unidentified (not named in the text and not already confirmed by the state) or still leave a needed value missing (not given in the text and still listed as missing in the state)? Answer no for requests that only look something up, and no when the record is named in the text or already confirmed by the state, and every needed value is given in the text or is not listed as missing in the state.",
+            "Does the text ask to change something but, taking the text and the state together, still leave the record unidentified (not named in the text and not already confirmed by the state) or still leave a needed value missing (not given in the text, unless the state confirms the record and lists no missing fields)? Answer no for requests that only look something up, and no when the record is named in the text or confirmed by the state and every needed value is given in the text or the state confirms the record with no missing fields.",
     });
 
 export const CANDIDATE_OUTCOME_LABELS = [
