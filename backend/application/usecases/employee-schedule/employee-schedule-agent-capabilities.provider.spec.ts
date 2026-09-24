@@ -100,4 +100,56 @@ describe("EmployeeScheduleAgentCapabilitiesProvider", () => {
         const bySecondaryEmployee = await schedulesList!.execute(context, { employeeId: 4 }) as { schedules: Array<{ id: number }> };
         expect(bySecondaryEmployee.schedules.map(({ id }) => id)).toEqual([2]);
     });
+
+    describe("without a date", () => {
+        beforeEach(() => {
+            jest.useFakeTimers();
+            jest.setSystemTime(new Date("2026-09-24T03:00:00.000Z")); // 12:00 KST on 2026-09-24
+        });
+        afterEach(() => jest.useRealTimers());
+
+        function day(iso: string): Date {
+            return new Date(`${iso}T00:00:00.000Z`);
+        }
+
+        it("returns current and upcoming schedules first, so 50 old rows never crowd them out", async () => {
+            const past = Array.from({ length: 60 }, (_, index) => ({
+                id: 1000 + index, clientId: 10, primaryEmployeeId: 2, secondaryEmployeeId: null,
+                startDate: day("2025-01-01"), endDate: day("2025-01-14"), replaced: false,
+            }));
+            const listSchedules = {
+                execute: jest.fn().mockResolvedValue([
+                    ...past,
+                    { id: 2, clientId: 11, primaryEmployeeId: 3, secondaryEmployeeId: null, startDate: day("2026-10-01"), endDate: day("2026-10-14"), replaced: false },
+                    { id: 1, clientId: 12, primaryEmployeeId: 4, secondaryEmployeeId: null, startDate: day("2026-09-20"), endDate: day("2026-09-24"), replaced: false },
+                ]),
+            };
+            const repository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+            const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(
+                listSchedules as never, repository as never, repository as never,
+            ).getCapabilities();
+
+            const output = await schedulesList!.execute(context, {}) as { schedules: Array<{ id: number }> };
+
+            expect(output.schedules).toHaveLength(50);
+            expect(output.schedules.slice(0, 2).map(({ id }) => id)).toEqual([1, 2]);
+        });
+
+        it("still returns a finished client's past schedules, most recent first", async () => {
+            const listSchedules = {
+                execute: jest.fn().mockResolvedValue([
+                    { id: 1, clientId: 10, primaryEmployeeId: 2, secondaryEmployeeId: null, startDate: day("2026-06-01"), endDate: day("2026-06-14"), replaced: false },
+                    { id: 2, clientId: 10, primaryEmployeeId: 2, secondaryEmployeeId: null, startDate: day("2026-08-01"), endDate: day("2026-08-14"), replaced: false },
+                ]),
+            };
+            const repository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+            const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(
+                listSchedules as never, repository as never, repository as never,
+            ).getCapabilities();
+
+            const output = await schedulesList!.execute(context, { clientId: 10 }) as { schedules: Array<{ id: number }> };
+
+            expect(output.schedules.map(({ id }) => id)).toEqual([2, 1]);
+        });
+    });
 });

@@ -789,7 +789,7 @@
       "name": "schedules.list",
       "domain": "schedules",
       "renderer": "activity",
-      "description": "List employee work schedules (client assignments) for the current branch, optionally filtered to one calendar date, client, or employee. Use for: 오늘 일정, 이번주 스케줄, 방문 일정 확인, 특정 날짜 배정 확인. Input: optional date (YYYY-MM-DD; when given, only schedules overlapping that date are returned), optional clientId, optional employeeId (matches primary or secondary) — up to 50 rows sorted by start date. Returns: id, clientId, clientName, primaryEmployeeId, primaryEmployeeName, secondaryEmployeeId, secondaryEmployeeName, startDate, endDate, replaced. Names resolve even for a soft-deleted client or employee so history stays readable.",
+      "description": "List employee work schedules (client assignments) for the current branch, optionally filtered to one calendar date, client, or employee. Use for: 오늘 일정, 이번주 스케줄, 방문 일정 확인, 특정 날짜 배정 확인. Input: optional date (YYYY-MM-DD; when given, only schedules overlapping that date are returned), optional clientId, optional employeeId (matches primary or secondary) — up to 50 rows. With a date, sorted by start date; without one, current/upcoming schedules come first (soonest first), then past schedules (most recent first). Returns: id, clientId, clientName, primaryEmployeeId, primaryEmployeeName, secondaryEmployeeId, secondaryEmployeeName, startDate, endDate, replaced. Names resolve even for a soft-deleted client or employee so history stays readable.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -801,7 +801,7 @@
       "flagKey": "agent.capability.schedules.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee-schedule/employee-schedule-agent-capabilities.provider.ts",
-      "sourceDigest": "f59edcd7b7847fd9e5b97b8fbe0bf4aacefd09744df19153f45f68ec043be258"
+      "sourceDigest": "fff4d6bd89dd0970a598a5889f355f039831db8fd3b0090e68ac67455d7d3fcd"
     },
     {
       "name": "service-records.oversight",
