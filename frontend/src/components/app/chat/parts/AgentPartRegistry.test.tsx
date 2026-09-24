@@ -4,6 +4,13 @@ import { CLIENT_WRITE_FIELD_NAMES, type AgentTask } from "@babyjamjam/shared";
 
 import { AgentPartRegistry } from "./AgentPartRegistry";
 
+jest.mock("next/link", () => ({
+    __esModule: true,
+    default: ({ children, href }: { children: React.ReactNode; href: string }) => (
+        <a href={href} data-testid="next-link">{children}</a>
+    ),
+}));
+
 if (typeof globalThis.ResizeObserver === "undefined") {
     Object.defineProperty(globalThis, "ResizeObserver", {
         configurable: true,
@@ -380,6 +387,60 @@ describe("AgentPartRegistry", () => {
         for (const anchor of Array.from(document.querySelectorAll("a"))) {
             expect(new URL(anchor.getAttribute("href") ?? "", "https://app.test").origin).toBe("https://app.test");
         }
+    });
+
+    it("renders a single newline inside a paragraph as a line break", () => {
+        const message = {
+            id: "assistant-markdown-break",
+            role: "assistant",
+            parts: [{ type: "text", text: "줄1\n줄2" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const wrapper = document.querySelector(`[data-component="${dataComponent}_text"]`);
+        expect(wrapper?.querySelector("br")).toBeInTheDocument();
+        expect(wrapper?.textContent).toContain("줄1");
+        expect(wrapper?.textContent).toContain("줄2");
+    });
+
+    it("keeps a fenced code block's newlines literal, without inserting a <br>", () => {
+        const message = {
+            id: "assistant-markdown-code",
+            role: "assistant",
+            parts: [{ type: "text", text: "```\nline1\nline2\n```" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const wrapper = document.querySelector(`[data-component="${dataComponent}_text"]`);
+        expect(wrapper?.querySelector("br")).not.toBeInTheDocument();
+        const codeEl = wrapper?.querySelector("code");
+        expect(codeEl).toBeInTheDocument();
+        expect(codeEl?.textContent).toContain("line1\nline2");
+    });
+
+    it("navigates a same-origin link client-side through next/link", () => {
+        const message = {
+            id: "assistant-markdown-next-link",
+            role: "assistant",
+            parts: [{ type: "text", text: "[내부](/clients/1)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const internal = screen.getByRole("link", { name: "내부" });
+        expect(internal).toHaveAttribute("href", "/clients/1");
+        expect(internal).toHaveAttribute("data-testid", "next-link");
+        expect(internal).not.toHaveAttribute("target");
+    });
+
+    it("still opens an external http(s) link in a new tab unchanged", () => {
+        const message = {
+            id: "assistant-markdown-external-link",
+            role: "assistant",
+            parts: [{ type: "text", text: "[외부](https://example.com/doc)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const external = screen.getByRole("link", { name: "외부" });
+        expect(external).toHaveAttribute("href", "https://example.com/doc");
+        expect(external).toHaveAttribute("target", "_blank");
+        expect(external).toHaveAttribute("rel", "noopener noreferrer");
+        expect(external).not.toHaveAttribute("data-testid", "next-link");
     });
 
     it("still falls back for a genuinely unknown data-* part", () => {
