@@ -5,6 +5,13 @@
  * writes a JSON report and a markdown transcript (or, in `--compare` mode, a
  * side-by-side comparison table).
  *
+ * The scenarios in `evals/agent/quality/scenarios-v1.json` reference fictional
+ * people (도하린, 서윤아, 명수빈, 여채린, 봉하율, 문가온, 탁은서, 채다온,
+ * 남궁솔, 예소담, 백나래) and assume `scripts/agent/seed-chat-quality-fixtures.ts`
+ * has already seeded those fixtures into the eval user's branch. Run that
+ * script's dry run first to confirm the fixtures exist, or `--apply` it in the
+ * target dev DB before running this suite.
+ *
  * Usage:
  *   TS_NODE_COMPILER_OPTIONS='{"module":"commonjs"}' \
  *     pnpm --filter ./backend exec ts-node scripts/agent/run-chat-quality-eval.ts \
