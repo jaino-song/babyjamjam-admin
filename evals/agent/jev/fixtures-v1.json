@@ -268,7 +268,8 @@
       "acceptable": ["clarification-not-required"],
       "unacceptable": ["clarification-required"],
       "labelProvenance": "synthetic-authored",
-      "notes": "Follow-up turn on an already-established task: the record (테스트산모) was confirmed in an earlier turn (state.targetConfirmed=true, state.missingFields=[]) and this turn's text supplies only the new memo value, with no record named. Requires the evaluateClarification request to actually carry targetConfirmed=true for this case; the live corpus runner (run-jev-evaluation.ts runLiveCase) currently hardcodes targetConfirmed=false and missingFields=[] for every evaluate-clarification case, so this scenario cannot be genuinely exercised against the live model until per-case state is threaded through the runner. Recorded here as the intended acceptance criterion, not yet live-verifiable."
+      "state": { "missingFields": [], "targetConfirmed": true },
+      "notes": "Follow-up turn on an already-established task: the record (테스트산모) was confirmed in an earlier turn (state.targetConfirmed=true, state.missingFields=[]) and this turn's text supplies only the new memo value, with no record named."
     },
     {
       "id": "clarify-007",
@@ -280,7 +281,8 @@
       "acceptable": ["clarification-required"],
       "unacceptable": ["clarification-not-required"],
       "labelProvenance": "synthetic-authored",
-      "notes": "Follow-up turn where the record (테스트산모) is already confirmed (state.targetConfirmed=true) but the text still gives no new value and state.missingFields still lists the value as missing, so clarification is still required. Same live-runner state-wiring caveat as clarify-006: today's harness always sends targetConfirmed=false, so this case is not yet live-verifiable until per-case state is wired through run-jev-evaluation.ts."
+      "state": { "missingFields": ["value"], "targetConfirmed": true },
+      "notes": "Follow-up turn where the record (테스트산모) is already confirmed (state.targetConfirmed=true) but the text still gives no new value and state.missingFields still lists the value as missing, so clarification is still required."
     },
     {
       "id": "clarify-008",
