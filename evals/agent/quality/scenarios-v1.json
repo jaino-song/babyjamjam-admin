@@ -38,16 +38,16 @@
       "category": "implicit",
       "turns": ["쉬는 관리사 있어?"],
       "intent": "현재 근무 가능/휴무 상태의 관리사를 알고 싶다",
-      "rubric": "employees.search로 관리사 목록을 조회하고, 휴무 여부를 알 수 있는 별도 조회 기능이 없다면 그 사실을 솔직히 밝히면서 open_to_next_work 같은 확인 가능한 정보로 최대한 답한다",
-      "checks": { "expectToolsAnyOf": ["employees.search"] }
+      "rubric": "employees.list(상태 필터)나 employees.search로 조회하고, 휴무일 달력은 없다는 사실을 솔직히 밝히면서 오늘 일하지 않는·일을 받지 않는 관리사 같은 확인 가능한 정보로 답한다",
+      "checks": { "expectToolsAnyOf": ["employees.list", "employees.search"] }
     },
     {
       "id": "implicit-2",
       "category": "implicit",
       "turns": ["요즘 바쁜 관리사 누구야?"],
       "intent": "현재 배정이 많아 바쁜 관리사를 알고 싶다",
-      "rubric": "employees.search로 관리사 정보를 조회하고, 바쁨 여부를 직접 판단할 근거가 부족하면 그 한계를 밝힌다",
-      "checks": { "expectToolsAnyOf": ["employees.search"] }
+      "rubric": "employees.list(근무 중 상태)나 일정으로 오늘 배정된 관리사를 보여주고, '요즘 바쁨'을 오늘 배정 기준으로 판단했다는 한계를 밝힌다",
+      "checks": { "expectToolsAnyOf": ["employees.list", "employees.search", "schedules.list"] }
     },
     {
       "id": "implicit-3",
@@ -126,8 +126,8 @@
       "category": "synthesis",
       "turns": ["최근 계약서 상태 어때?"],
       "intent": "최근 전자서명 계약서들의 진행 상태를 요약해서 알고 싶다",
-      "rubric": "contracts.status로 확인하고, 상태별로 요약해서 답한다 (표시 상태 단어 기준: 대부분 완료(completed), 명수빈은 진행 중(pending))",
-      "checks": { "expectToolsAnyOf": ["contracts.status"] }
+      "rubric": "contracts.recent(또는 contracts.status)로 확인하고, 상태별로 요약해서 답한다 (표시 상태 단어 기준: 대부분 완료(completed), 명수빈은 진행 중(pending))",
+      "checks": { "expectToolsAnyOf": ["contracts.recent", "contracts.status"] }
     },
     {
       "id": "synthesis-4",
@@ -150,8 +150,8 @@
       "category": "count",
       "turns": ["관리사 몇 명이야?"],
       "intent": "현재 지점의 전체 관리사 수를 알고 싶다",
-      "rubric": "dashboard.summary나 employees.search로 조회한 숫자를 답한다",
-      "checks": { "expectToolsAnyOf": ["dashboard.summary", "employees.search"] }
+      "rubric": "employees.list의 total이나 조회한 숫자로 관리사 수를 답한다",
+      "checks": { "expectToolsAnyOf": ["employees.list", "dashboard.summary", "employees.search"] }
     },
     {
       "id": "follow-up-1",
