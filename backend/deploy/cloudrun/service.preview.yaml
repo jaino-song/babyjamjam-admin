@@ -65,6 +65,11 @@ spec:
               value: "https://preview.admin.babyjamjam.com"
             - name: PRODUCTION_FRONTEND_URL
               value: "https://preview.admin.babyjamjam.com"
+            # Plain literal, not a secret: with NODE_ENV=production the mobile Kakao
+            # login redirects here and CORS allows it, so a copied production value
+            # would send preview logins to production mobile.
+            - name: PRODUCTION_MOBILE_FRONTEND_URL
+              value: "https://preview.m.admin.babyjamjam.com"
             - name: SENTRY_ENVIRONMENT
               value: "preview"
             # Aligo disabled (operator decision 2026-09-23): Cloud Run has no
@@ -107,11 +112,6 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: KAKAO_CALLBACK_URL
-                  key: latest
-            - name: PRODUCTION_MOBILE_FRONTEND_URL
-              valueFrom:
-                secretKeyRef:
-                  name: PRODUCTION_MOBILE_FRONTEND_URL
                   key: latest
             - name: SUPABASE_URL
               valueFrom:

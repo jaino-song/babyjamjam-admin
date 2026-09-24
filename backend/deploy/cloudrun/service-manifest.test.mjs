@@ -226,6 +226,7 @@ const EXPECTED_PLAIN_ENV = new Map([
     ["SERVICE_RECORD_AUTO_FINALIZE_ENABLED", "false"],
     ["PREVIEW_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
     ["PRODUCTION_FRONTEND_URL", "https://preview.admin.babyjamjam.com"],
+    ["PRODUCTION_MOBILE_FRONTEND_URL", "https://preview.m.admin.babyjamjam.com"],
     ["SENTRY_ENVIRONMENT", "preview"],
     ["ALIGO_API_KEY", ""],
     ["ALIGO_USER_ID", ""],
@@ -362,9 +363,21 @@ function makeTempEnvFile(testName, lines) {
     return { dir, file };
 }
 
-function dummyLine(name, i) {
+// sync-secrets.sh validates KAKAO_CALLBACK_URL's shape, so its dummy is a
+// run.app callback URL that still carries the dummy marker for leak checks.
+function dummyValue(name) {
     const v = `dummy-${name}-value`;
-    switch (i % 4) {
+    return name === "KAKAO_CALLBACK_URL" ? `https://${v}.a.run.app/auth/kakao/callback` : v;
+}
+
+// The "x=" form would break the callback URL shape; use the quoted form there.
+function dummyForm(name, i) {
+    return name === "KAKAO_CALLBACK_URL" && i % 4 === 2 ? 0 : i % 4;
+}
+
+function dummyLine(name, i) {
+    const v = dummyValue(name);
+    switch (dummyForm(name, i)) {
         case 0: return `${name}="${v}"`;
         case 1: return `export ${name}=${v}`;
         case 2: return `${name}=x=${v}=end`;
@@ -586,6 +599,27 @@ test("undeployed env keys exit 3 without --allow-undeployed and 0 with it", () =
     }
 });
 
+test("sync-secrets.sh rejects a KAKAO_CALLBACK_URL that is not a run.app callback, naming only the key", () => {
+    for (const bad of [
+        "https://api.babyjamjam.com/auth/kakao/callback",
+        "https://dummy-kakao-value.a.run.app/auth/kakao/callback/extra",
+        "http://dummy-kakao-value.a.run.app/auth/kakao/callback",
+    ]) {
+        const lines = secrets.map((name, i) => (name === "KAKAO_CALLBACK_URL" ? `${name}=${bad}` : dummyLine(name, i)));
+        const { dir, file } = makeTempEnvFile("kakao", lines);
+        try {
+            const res = runScript(file, ["--dry-run"]);
+            assert.equal(res.status, 1, `expected exit 1 for ${bad}; stderr: ${res.stderr}`);
+            const combined = res.stdout + res.stderr;
+            assert.ok(combined.includes("invalid-preview-value: KAKAO_CALLBACK_URL"));
+            assert.ok(!combined.includes(bad), "the rejected value must never be printed");
+            assert.ok(!combined.includes("would-sync"), "must fail before listing any sync");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }
+});
+
 test("malformed env lines report only the line number and never the content", () => {
     const [k1, k2, k3] = secrets;
     const lines = [
@@ -623,8 +657,8 @@ test("malformed env lines report only the line number and never the content", ()
 // the plain value; the "x=" form proves values containing "=" survive the
 // first-"=" split (only the first "=" separates key from value).
 function intendedDummyValue(name, i) {
-    const v = `dummy-${name}-value`;
-    return i % 4 === 2 ? `x=${v}=end` : v;
+    const v = dummyValue(name);
+    return dummyForm(name, i) === 2 ? `x=${v}=end` : v;
 }
 
 test("sync-secrets.sh real (non-dry-run) path via stub gcloud: created/unchanged/updated, values never leak", () => {

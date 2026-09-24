@@ -10,7 +10,8 @@
 #
 # Exit codes:
 #   0  success (or dry-run success / undeployed keys allowed)
-#   1  usage error, unreadable env file, parse error, or missing/empty secret value
+#   1  usage error, unreadable env file, parse error, missing/empty secret value,
+#      or a KAKAO_CALLBACK_URL that is not a run.app callback URL
 #   3  undeployed env-file keys found and --allow-undeployed was not passed
 #
 # Secret values are never printed, logged, or passed as command-line
@@ -199,6 +200,18 @@ check_required_secrets() {
     fi
 }
 
+# Preview must not reuse production's Kakao callback: the nonce cookie is
+# host-only, so the callback has to land on this Cloud Run service itself.
+check_preview_values() {
+    local callback_re='^https://[A-Za-z0-9._-]+[.]run[.]app/auth/kakao/callback$'
+    if find_env_index "KAKAO_CALLBACK_URL"; then
+        if ! [[ "${ENV_VALUES[$REPLY_INDEX]}" =~ $callback_re ]]; then
+            echo "invalid-preview-value: KAKAO_CALLBACK_URL (expected https://<service>.run.app/auth/kakao/callback)" >&2
+            exit 1
+        fi
+    fi
+}
+
 guard_undeployed() {
     local i j n="${#ENV_KEYS[@]}" nm ne key found violations=0
     [ "$n" -eq 0 ] && return 0
@@ -311,6 +324,7 @@ main() {
 
     # Before touching GCP: every manifest secret must exist with a value.
     check_required_secrets
+    check_preview_values
     guard_undeployed
 
     if [ "$dry_run" -eq 1 ]; then

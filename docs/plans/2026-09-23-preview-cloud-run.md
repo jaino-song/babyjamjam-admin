@@ -208,9 +208,13 @@ echo "$SERVICE_URL"
 
 - [ ] env 파일은 프로덕션 백엔드 env(프로덕션 호스트 `/opt/babyjamjam-fallback-server/backend.env`,
       프로덕션이 LightNode fallback에서 운영되는 동안)에서 만든다 — preview는 프로덕션과 같은 값
-- [ ] preview 전용 오버라이드 두 개만 env 파일에서 바꾼다: `KAKAO_CALLBACK_URL` =
-      `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로), `PRODUCTION_MOBILE_FRONTEND_URL`
-      = `https://preview.m.admin.babyjamjam.com` (preview 모바일 프론트엔드; `NODE_ENV=production`에서 모바일 카카오 로그인이 여기로 redirect한다)
+- [ ] preview 전용 오버라이드는 `KAKAO_CALLBACK_URL` 하나만 env 파일에서 바꾼다:
+      `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로). `sync-secrets.sh`는
+      `https://<service>.run.app/auth/kakao/callback` 형태가 아니면 exit 1로 거부한다.
+      `PRODUCTION_MOBILE_FRONTEND_URL`은 시크릿이 아니라 `service.preview.yaml`의 평문 값
+      `https://preview.m.admin.babyjamjam.com`으로 고정되어 있다 (`NODE_ENV=production`에서 모바일 카카오
+      로그인이 여기로 redirect하고 CORS도 이 값을 허용하므로, 프로덕션 값이 그대로 복사돼도 preview에 적용되지 않게 함).
+      예전 Secret Manager의 `PRODUCTION_MOBILE_FRONTEND_URL` 시크릿은 더 이상 참조되지 않는다.
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
 - [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
       둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고
