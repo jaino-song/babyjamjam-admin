@@ -4,8 +4,9 @@ import { z } from "zod";
 import { AgentCapabilityProvider } from "application/agent/capability.decorator";
 import type { AgentCapabilityProviderContract, CapabilityDefinition } from "application/agent/capability.types";
 import { resolveEformsignDocDisplayStatus, type EformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
+import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import { FindEformsignDocsByClientIdUsecase } from "./find-eformsign-docs-by-client-id.usecase";
-import { FindRecentContractsUsecase } from "./find-recent-contracts.usecase";
+import { FindRecentContractsUsecase, type RecentContractRow } from "./find-recent-contracts.usecase";
 
 const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
@@ -35,6 +36,30 @@ const RecentDocSchema = z.object({
 });
 const RecentOutputSchema = z.object({ documents: z.array(RecentDocSchema) });
 const RECENT_CONTRACTS_FILTERED_WINDOW = 200;
+
+/**
+ * Same inputs the rest of the app passes when it resolves a contract's display
+ * status (see `FindEformsignDocsByClientIdUsecase.executeWithContractEndDates`
+ * and the mirror list service): the unassigned marker for a client-less row, and
+ * the mirrored contract end date so a provider-review-step document can resolve
+ * to "signed" once the review window has not yet opened, not just "review".
+ *
+ * The `expired` column is layered on top rather than fed into the resolver —
+ * `resolveEformsignDocDisplayStatus` only ever derives "expired" from the vendor
+ * status code, so a row whose `expired` column is true for a reason the status
+ * code does not capture would otherwise silently resolve to "pending". Mirrors
+ * the resolver's own precedence: a terminal "completed" status is never
+ * downgraded.
+ */
+function resolveRecentContractDisplayStatus(doc: RecentContractRow): EformsignDocDisplayStatus {
+    const resolved = resolveEformsignDocDisplayStatus({
+        id: doc.documentId,
+        current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName },
+        ...(doc.clientId === null ? { [MIRROR_UNASSIGNED_KEY]: true } : {}),
+        ...(doc.contractEndDate ? { contract_end_date: doc.contractEndDate } : {}),
+    });
+    return doc.expired && resolved !== "completed" ? "expired" : resolved;
+}
 
 @Injectable()
 @AgentCapabilityProvider()
@@ -72,10 +97,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
 
                     const withDisplayStatus = docs.map((doc) => ({
                         ...doc,
-                        displayStatus: resolveEformsignDocDisplayStatus({
-                            id: doc.documentId,
-                            current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName },
-                        }),
+                        displayStatus: resolveRecentContractDisplayStatus(doc),
                     }));
                     const filtered = input.status
                         ? withDisplayStatus.filter((doc) => doc.displayStatus === input.status)

@@ -79,14 +79,24 @@ export interface IEmployeeRepository {
      * itself must not change — its output is byte-identical for `employees.search`.
      */
     findAllForDate?(branchid: string, date: Date): Promise<EmployeeEntity[]>;
-    /** Single-row equivalent of `findAllForDate`, status computed for the given date. */
-    findByIdForDate?(branchid: string, id: number, date: Date): Promise<EmployeeEntity | null>;
+    /**
+     * Single-row equivalent of `findAllForDate`, status computed for the given date.
+     *
+     * Required (not optional): `employees.get`'s status lookup depends on it, and an
+     * optional method here let a missing implementation degrade silently to "no
+     * status" with nothing failing. Every implementer (`SbEmployeeRepository`,
+     * `MockEmployeeRepository`) already provides it.
+     */
+    findByIdForDate(branchid: string, id: number, date: Date): Promise<EmployeeEntity | null>;
     /**
      * Batch id -> name lookup for display purposes only (e.g. cross-referencing a
      * schedule row). Deliberately ignores soft-deletion so historical rows still
      * resolve a name.
+     *
+     * Required (not optional): same reasoning as `findByIdForDate` above —
+     * `schedules.list` depends on it to resolve employee names.
      */
-    findNamesByIds?(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>>;
+    findNamesByIds(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>>;
     findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]>;
     findByGrade(branchid: string, grade: string): Promise<EmployeeEntity[]>;
     findByOpenToNextWork(branchid: string, openToNextWork: boolean): Promise<EmployeeEntity[]>;

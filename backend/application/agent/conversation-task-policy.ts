@@ -363,12 +363,22 @@ const IMPERATIVE_CHANGE_REQUEST = new RegExp(
     "u",
 );
 const IMPERATIVE_CHANGE_REQUEST_NARROW = /(?:하게|으로|로)\s*해\s*(?:줘|주세요)\s*[.!！。]*\s*$/u;
+/**
+ * A genuine interrogative word makes the whole text a how-to/what/when-style question no
+ * matter how it ends — "계약서 어떻게 만들어" is a question about a trailing imperative verb,
+ * not a write request. The imperative override below must never fire over one of these.
+ */
+const INTERROGATIVE_WORD = /(?:어떻게|무엇|뭐|언제|어디|왜|누가|누구|몇)/u;
 
 export function isQuestionLike(text: string): boolean {
     const normalized = text.trim();
     if (normalized.endsWith("?") || normalized.endsWith("？")) return true;
-    if (IMPERATIVE_CHANGE_REQUEST.test(normalized) || IMPERATIVE_CHANGE_REQUEST_NARROW.test(normalized)) return false;
-    return /(?:알려|조회|확인|가능|어떻게|무엇|언제|어디|왜|찾아|보여|정리해|답해)/u.test(normalized);
+    const hasInterrogative = INTERROGATIVE_WORD.test(normalized);
+    if (
+        !hasInterrogative
+        && (IMPERATIVE_CHANGE_REQUEST.test(normalized) || IMPERATIVE_CHANGE_REQUEST_NARROW.test(normalized))
+    ) return false;
+    return hasInterrogative || /(?:알려|조회|확인|가능|찾아|보여|정리해|답해)/u.test(normalized);
 }
 
 /** A topic-labelled answer is grounded in the original text, never in model output. */

@@ -128,7 +128,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                     const input = GetInputSchema.parse(rawInput);
                     const employee = await this.findEmployee.execute(context.principal.branchId, input.id);
                     if (!employee || employee.deletedAt) throw new Error("Employee not found");
-                    const status = await this.findEmployee.resolveStatus?.(
+                    const status = await this.findEmployee.resolveStatus(
                         context.principal.branchId,
                         input.id,
                         new Date(`${isoDateInKorea()}T00:00:00.000Z`),

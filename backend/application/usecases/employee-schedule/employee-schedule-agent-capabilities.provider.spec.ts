@@ -13,7 +13,11 @@ describe("EmployeeScheduleAgentCapabilitiesProvider", () => {
                 { id: 12, clientId: 83, primaryEmployeeId: 5, secondaryEmployeeId: 0, startDate: new Date("2026-07-31T00:00:00.000Z"), endDate: new Date("2026-08-13T00:00:00.000Z"), replaced: false },
             ]),
         };
-        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(listSchedules as never).getCapabilities();
+        const clientRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const employeeRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(
+            listSchedules as never, clientRepository as never, employeeRepository as never,
+        ).getCapabilities();
 
         const output = await schedulesList!.execute(context, { date: "2026-09-24" });
         const parsed = schedulesList!.outputSchema.parse(output) as { schedules: Array<{ id: number; primaryEmployeeId: number }> };
@@ -61,13 +65,17 @@ describe("EmployeeScheduleAgentCapabilitiesProvider", () => {
         expect(output.schedules).toEqual([expect.objectContaining({ clientName: "삭제된 산모", primaryEmployeeName: "삭제된 관리사" })]);
     });
 
-    it("falls back to null names without throwing when no name repository is wired", async () => {
+    it("still resolves without throwing when the name repositories have nothing to return", async () => {
         const listSchedules = {
             execute: jest.fn().mockResolvedValue([
                 { id: 1, clientId: 10, primaryEmployeeId: 2, secondaryEmployeeId: null, startDate: new Date("2026-09-01T00:00:00.000Z"), endDate: new Date("2026-09-30T00:00:00.000Z"), replaced: false },
             ]),
         };
-        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(listSchedules as never).getCapabilities();
+        const clientRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const employeeRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(
+            listSchedules as never, clientRepository as never, employeeRepository as never,
+        ).getCapabilities();
 
         const output = await schedulesList!.execute(context, {}) as { schedules: Array<Record<string, unknown>> };
         expect(output.schedules).toEqual([expect.objectContaining({ clientName: null, primaryEmployeeName: null, secondaryEmployeeName: null })]);
@@ -80,7 +88,11 @@ describe("EmployeeScheduleAgentCapabilitiesProvider", () => {
                 { id: 2, clientId: 11, primaryEmployeeId: 3, secondaryEmployeeId: 4, startDate: new Date("2026-09-01T00:00:00.000Z"), endDate: new Date("2026-09-30T00:00:00.000Z"), replaced: false },
             ]),
         };
-        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(listSchedules as never).getCapabilities();
+        const clientRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const employeeRepository = { findNamesByIds: jest.fn().mockResolvedValue([]) };
+        const [schedulesList] = new EmployeeScheduleAgentCapabilitiesProvider(
+            listSchedules as never, clientRepository as never, employeeRepository as never,
+        ).getCapabilities();
 
         const byClient = await schedulesList!.execute(context, { clientId: 11 }) as { schedules: Array<{ id: number }> };
         expect(byClient.schedules.map(({ id }) => id)).toEqual([2]);

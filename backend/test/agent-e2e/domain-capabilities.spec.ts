@@ -45,11 +45,14 @@ describe("Release A domain read capabilities", () => {
     it("guards direct employee reads to active rows in the current branch", async () => {
         const active = EmployeeEntity.reconstitute(7, "관리사", ["서울"], "010-1234-5678", "A", true, new Date());
         const deleted = EmployeeEntity.reconstitute(8, "삭제 관리사", ["서울"], "010-9876-5432", "A", true, new Date(), undefined, new Date());
-        const find = { execute: jest.fn()
-            .mockResolvedValueOnce(active)
-            .mockResolvedValueOnce(deleted)
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce(null) };
+        const find = {
+            execute: jest.fn()
+                .mockResolvedValueOnce(active)
+                .mockResolvedValueOnce(deleted)
+                .mockResolvedValueOnce(null)
+                .mockResolvedValueOnce(null),
+            resolveStatus: jest.fn().mockResolvedValue(undefined),
+        };
         const provider = new EmployeeAgentCapabilitiesProvider({ execute: jest.fn() } as never, find as never);
         const capability = provider.getCapabilities().find(({ meta }) => meta.name === "employees.get")!;
 
@@ -65,7 +68,7 @@ describe("Release A domain read capabilities", () => {
 
     it("filters schedules by date without returning work addresses", async () => {
         const list = { execute: jest.fn().mockResolvedValue([{ id: 1, clientId: 10, primaryEmployeeId: 2, secondaryEmployeeId: null, workAddress: "비공개", startDate: new Date("2026-08-01T00:00:00Z"), endDate: new Date("2026-08-10T00:00:00Z"), replaced: false }]) };
-        const provider = new EmployeeScheduleAgentCapabilitiesProvider(list as never);
+        const provider = new EmployeeScheduleAgentCapabilitiesProvider(list as never, { findNamesByIds: jest.fn().mockResolvedValue([]) } as never, { findNamesByIds: jest.fn().mockResolvedValue([]) } as never);
         const capability = provider.getCapabilities()[0]!;
         const output = await capability.execute(context, { date: "2026-08-03" });
         expect(output).toMatchObject({ schedules: [{ id: 1, clientId: 10 }] });
@@ -98,7 +101,7 @@ describe("Release A domain read capabilities", () => {
                 ...firstEndDateGroup.slice().reverse(),
             ]),
         };
-        const provider = new EmployeeScheduleAgentCapabilitiesProvider(list as never);
+        const provider = new EmployeeScheduleAgentCapabilitiesProvider(list as never, { findNamesByIds: jest.fn().mockResolvedValue([]) } as never, { findNamesByIds: jest.fn().mockResolvedValue([]) } as never);
         const capability = provider.getCapabilities()[0]!;
 
         const output = await capability.execute(context, { date: "2026-08-03" }) as { schedules: Array<{ id: number }> };
