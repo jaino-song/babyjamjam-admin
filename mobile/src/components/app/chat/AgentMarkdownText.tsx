@@ -1,8 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { remarkAgentLineBreaks } from "./remarkAgentLineBreaks";
+
+const AGENT_MARKDOWN_REMARK_PLUGINS = [remarkGfm, remarkAgentLineBreaks];
 
 // Agent chat text can come from a model and must be treated as untrusted:
 // - no raw HTML (react-markdown does not render mdast "html" nodes unless
@@ -32,7 +36,10 @@ function AgentMarkdownLink({ href, children }: { href?: string; children?: React
         return <a href={url} target="_blank" rel="noopener noreferrer">{children}</a>;
     }
     if (isSameOriginPath(url)) {
-        return <a href={url}>{children}</a>;
+        // prefetch=false: a same-origin link is model-authored and could be
+        // prompt-injected. next/link prefetches on render/viewport by default
+        // in production, which would fire an authenticated GET with no click.
+        return <Link href={url} prefetch={false}>{children}</Link>;
     }
     return <>{children}</>;
 }
@@ -52,7 +59,7 @@ type Props = {
 export function AgentMarkdownText({ "data-component": dataComponent, text }: Props) {
     return (
         <div data-component={dataComponent} data-slot="text" className="markdown-content break-words">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={agentMarkdownComponents}>
+            <ReactMarkdown remarkPlugins={AGENT_MARKDOWN_REMARK_PLUGINS} components={agentMarkdownComponents}>
                 {text}
             </ReactMarkdown>
         </div>

@@ -279,6 +279,88 @@ export class SbEmployeeRepository implements IEmployeeRepository {
         });
     }
 
+    async findAllForDate(branchid: string, date: Date): Promise<EmployeeEntity[]> {
+        const employees = await this.prismaService.employee.findMany({
+            where: { branchId: branchid, deletedAt: null },
+            include: {
+                primaryEmployeeSchedules: {
+                    where: {
+                        startDate: { lte: date },
+                        endDate: { gte: date },
+                        replaced: false,
+                        terminatedAt: null,
+                    },
+                    take: 1,
+                },
+                secondaryEmployeeSchedules: {
+                    where: {
+                        startDate: { lte: date },
+                        endDate: { gte: date },
+                        replaced: false,
+                        terminatedAt: null,
+                    },
+                    take: 1,
+                },
+            },
+        });
+
+        return employees.map((emp) => {
+            const entity = EmployeeMapper.toDomain(emp);
+
+            const hasActiveAssignment =
+                emp.primaryEmployeeSchedules.length > 0 ||
+                emp.secondaryEmployeeSchedules.length > 0;
+            entity.status = deriveEmployeeStatus(
+                hasActiveAssignment,
+                entity.openToNextWork,
+            );
+
+            return entity;
+        });
+    }
+
+    async findByIdForDate(branchid: string, id: number, date: Date): Promise<EmployeeEntity | null> {
+        const employee = await this.prismaService.employee.findFirst({
+            where: { id, branchId: branchid },
+            include: {
+                primaryEmployeeSchedules: {
+                    where: {
+                        startDate: { lte: date },
+                        endDate: { gte: date },
+                        replaced: false,
+                        terminatedAt: null,
+                    },
+                    take: 1,
+                },
+                secondaryEmployeeSchedules: {
+                    where: {
+                        startDate: { lte: date },
+                        endDate: { gte: date },
+                        replaced: false,
+                        terminatedAt: null,
+                    },
+                    take: 1,
+                },
+            },
+        });
+        if (!employee) return null;
+
+        const entity = EmployeeMapper.toDomain(employee);
+        const hasActiveAssignment =
+            employee.primaryEmployeeSchedules.length > 0 ||
+            employee.secondaryEmployeeSchedules.length > 0;
+        entity.status = deriveEmployeeStatus(hasActiveAssignment, entity.openToNextWork);
+        return entity;
+    }
+
+    async findNamesByIds(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>> {
+        if (ids.length === 0) return [];
+        return this.prismaService.employee.findMany({
+            where: { branchId: branchid, id: { in: ids } },
+            select: { id: true, name: true },
+        });
+    }
+
     async findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]> {
         const employees = await this.prismaService.employee.findMany({
             where: { workArea: { has: workArea }, branchId: branchid, deletedAt: null },

@@ -26,7 +26,7 @@ describe("capability catalog", () => {
         const providers: AgentCapabilityProviderContract[] = [
             new ClientAgentCapabilitiesProvider(stub(), stub()),
             new EmployeeAgentCapabilitiesProvider(stub(), stub()),
-            new EmployeeScheduleAgentCapabilitiesProvider(stub()),
+            new EmployeeScheduleAgentCapabilitiesProvider(stub(), stub(), stub()),
             new DashboardAgentCapabilitiesProvider(stub()),
             new EformsignAgentCapabilitiesProvider(stub()),
             new VoucherAgentCapabilitiesProvider(stub()),

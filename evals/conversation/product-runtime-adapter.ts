@@ -921,6 +921,7 @@ class DeterministicProductClientRepository implements IClientRepository {
     async findWithIncompleteContractsStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findWithoutContractSentStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findByPhone(): Promise<ClientEntity | null> { return null; }
+    async findNamesByIds(): Promise<Array<{ id: number; name: string }>> { return []; }
 }
 
 type ProductCapabilityDefinition = {

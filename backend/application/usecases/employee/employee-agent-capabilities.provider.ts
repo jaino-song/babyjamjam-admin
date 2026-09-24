@@ -3,8 +3,10 @@ import { z } from "zod";
 
 import { AgentCapabilityProvider } from "application/agent/capability.decorator";
 import type { AgentCapabilityProviderContract, CapabilityDefinition } from "application/agent/capability.types";
+import { isoDateInKorea } from "domain/utils/business-days";
 import { FindEmployeeByIdUsecase } from "./find-employee-by-id.usecase";
 import { ListEmployeesUsecase } from "./list-employees.usecase";
+import { ListEmployeesForDateUsecase } from "./list-employees-for-date.usecase";
 
 const EmployeeSummarySchema = z.object({
     // Legacy data includes employee id 0, so ids are non-negative, not positive.
@@ -33,6 +35,22 @@ const GetInputSchema = z.object({
     id: z.number().int().nonnegative().describe("The employee's numeric id, from employees.search — not a name."),
 });
 const GetOutputSchema = z.object({ kind: z.literal("entity"), entity: EmployeeSummarySchema });
+const ListInputSchema = z.object({
+    status: z.enum(["available", "working", "unavailable"]).optional().describe(
+        "Filter to employees whose computed status equals this value."
+    ),
+    date: z.string().date().optional().describe(
+        "ISO date (YYYY-MM-DD) the status is computed for. Defaults to today's Korean calendar date."
+    ),
+    workArea: z.string().trim().min(1).max(100).optional().describe("Partial, case-insensitive match against an employee's work area."),
+    grade: z.string().trim().min(1).max(50).optional().describe("Exact match against an employee's grade."),
+    limit: z.number().int().min(1).max(50).optional().describe("Max rows to return, default 50."),
+});
+const ListOutputSchema = z.object({
+    date: z.string(),
+    total: z.number().int().nonnegative(),
+    employees: z.array(EmployeeSummarySchema),
+});
 
 const toSummary = (employee: {
     id: number;
@@ -56,6 +74,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
     constructor(
         private readonly listEmployees: ListEmployeesUsecase,
         private readonly findEmployee: FindEmployeeByIdUsecase,
+        private readonly listEmployeesForDate?: ListEmployeesForDateUsecase,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -99,7 +118,7 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                 meta: {
                     ...common,
                     name: "employees.get",
-                    description: "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork. Unlike employees.search, this does not include a computed working/available status.",
+                    description: "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) for today's Korean calendar date when it can be computed.",
                     renderer: "text",
                     flagKey: "agent.capability.employees.get",
                 },
@@ -109,7 +128,44 @@ export class EmployeeAgentCapabilitiesProvider implements AgentCapabilityProvide
                     const input = GetInputSchema.parse(rawInput);
                     const employee = await this.findEmployee.execute(context.principal.branchId, input.id);
                     if (!employee || employee.deletedAt) throw new Error("Employee not found");
-                    return { kind: "entity" as const, entity: toSummary(employee) };
+                    const status = await this.findEmployee.resolveStatus(
+                        context.principal.branchId,
+                        input.id,
+                        new Date(`${isoDateInKorea()}T00:00:00.000Z`),
+                    );
+                    return { kind: "entity" as const, entity: toSummary(status ? { ...employee, status } : employee) };
+                },
+            },
+            {
+                meta: {
+                    ...common,
+                    name: "employees.list",
+                    description: "List employees (caregivers/staff) in the current branch, optionally filtered by computed status, work area, or grade. Use for: 관리사 목록, 관리사 몇 명, 쉬는 관리사, 일 없는 관리사, 배정 가능한 관리사. Input: optional status (available/working/unavailable), date (YYYY-MM-DD, defaults to today's Korean calendar date — the status is computed for this date), workArea (partial match), grade (exact match), limit (1-50, default 50). Returns: date, total (count after filters, before limit), employees (sorted by name; excludes soft-deleted employees). There is no rest-day or leave calendar — status only reflects an active client assignment on the given date.",
+                    renderer: "text",
+                    flagKey: "agent.capability.employees.list",
+                },
+                inputSchema: ListInputSchema,
+                outputSchema: ListOutputSchema,
+                execute: async (context, rawInput) => {
+                    const input = ListInputSchema.parse(rawInput);
+                    const date = input.date ?? isoDateInKorea();
+                    if (!this.listEmployeesForDate) throw new Error("employees.list is not available");
+                    const employees = await this.listEmployeesForDate.execute(
+                        context.principal.branchId,
+                        new Date(`${date}T00:00:00.000Z`),
+                    );
+
+                    const workAreaQuery = input.workArea?.toLocaleLowerCase();
+                    const filtered = employees.filter((employee) => (
+                        (!input.status || employee.status === input.status)
+                        && (!workAreaQuery || employee.workArea.some((area) => area.toLocaleLowerCase().includes(workAreaQuery)))
+                        && (!input.grade || employee.grade === input.grade)
+                    ));
+                    const total = filtered.length;
+                    const sorted = [...filtered].sort((left, right) => left.name.localeCompare(right.name, "ko"));
+                    const limited = sorted.slice(0, input.limit ?? 50).map(toSummary);
+
+                    return { date, total, employees: limited };
                 },
             },
         ];
