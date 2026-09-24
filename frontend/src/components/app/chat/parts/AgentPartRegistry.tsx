@@ -81,8 +81,11 @@ const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
             );
         }
         if (typeof href === "string" && isSameOriginPath(href)) {
+            // prefetch=false: a same-origin link is model-authored and could be
+            // prompt-injected. next/link prefetches on render/viewport by default
+            // in production, which would fire an authenticated GET with no click.
             return (
-                <Link href={href} {...props}>
+                <Link href={href} prefetch={false} {...props}>
                     {children}
                 </Link>
             );
