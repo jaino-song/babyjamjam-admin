@@ -361,6 +361,12 @@ describe("heuristicHasQuestion", () => {
 
         // --- a "?" inside an unquoted mid-sentence quote must not count when the paragraph's real final sentence is a statement ---
         ["고객님이 언제 오나요? 하고 물으셨던 건은 처리했어요.", false],
+        ["고객님이 언제 오나요? 라고 물으셔서 안내드렸어요.", false],
+
+        // --- a clarifying question followed by an offer or example sentence still counts (live eval vague-1 / write-2) ---
+        ["어느 산모님을 찾으시나요? 이름이나 연락처 뒷자리를 알려주시면 바로 찾아드릴게요.", true],
+        ["전화번호가 바뀌었군요! 어느 산모님의 전화번호인지 알려주시면 변경해 드릴게요. (예: 산모님 성함이나 연락처 뒷자리)", true],
+        ["산모님의 성함과 **새로 변경할 전화번호**를 함께 알려주세요. 확인 후 바로 처리해 드릴게요!", true],
     ])("%s -> %s", (text, expected) => {
         expect(heuristicHasQuestion(text)).toBe(expected);
     });

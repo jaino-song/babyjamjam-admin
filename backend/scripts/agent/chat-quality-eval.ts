@@ -508,30 +508,29 @@ export function assembleLegacyTurn(events: readonly RawStreamEvent[]): LegacyTur
  * gets checked as the paragraph's real final sentence.
  *
  * Within the chosen paragraph, split into sentences on `. ! ?` and line
- * breaks. Only two sentences can decide the result: the paragraph's FINAL
- * sentence, and — only when the final sentence doesn't itself ask a
- * question — the second-to-last sentence, but only if the final sentence is
- * a short trailing line (e.g. "감사합니다!", "확인 부탁드려요"; at most 8
- * non-space characters after trailing filler is stripped). This is what
- * lets "...알려주시겠어요?\n감사합니다!" still count, while stopping a `?`
- * that only appears inside an earlier, unquoted, mid-sentence quote (e.g.
- * "고객님이 언제 오나요? 하고 물으셨던 건은 처리했어요.") from counting: its
- * trailing sentence is a real continuation, not a short throwaway line.
+ * breaks. Any sentence that asks a question counts, so a clarifying question
+ * followed by an offer or example still counts (e.g. "어느 산모님을
+ * 찾으시나요? 이름을 알려주시면 찾아드릴게요."). The one exception is a
+ * question the next sentence continues as a quote (it starts with 하고,
+ * 라고, 라며, 라는, 고 물…), e.g. "고객님이 언제 오나요? 하고 물으셨던 건은
+ * 처리했어요." — that `?` is reported speech, not a question to the user.
  *
  * A sentence "asks a question" if it ends with a literal `?` or one of the
  * Korean asking-sentence endings this app's clarifying questions use in
  * practice (까요, 나요, 인가요/은가요/는가요/던가요, 할래요/을래요/주실래요,
  * 주세요/주시겠어요, 인지요/는지요, or the formal "-습니까 / -ㅂ니까"
- * question form, e.g. 됩니까/합니까) — ignoring trailing markdown emphasis
+ * question form, e.g. 됩니까/합니까), or if it contains one of the request
+ * forms the app uses to ask for missing input, "알려/말씀해 주시면" or
+ * "알려/말씀해 주세요" (e.g. "성함을 알려주시면 변경해 드릴게요.",
+ * "성함을 알려주세요. 확인 후 처리해 드릴게요!") — ignoring trailing markdown emphasis
  * (`*`, `_`), punctuation (`:`, `^`, `…`, `~`, `.`, `!`), closing quotes,
  * trailing ㅎ/ㅋ laughter runs, and emoji (including skin-tone modifiers and
  * ZWJ sequences), plus whitespace, when checking the ending. Bare "니까"
  * (e.g. "...했으니까."), bare "가요" (e.g. "내일 가요."), and bare "래요" as
  * reported speech (e.g. "하래요.") intentionally do NOT count — only the
- * specific asking forms above do. "주세요" is additionally restricted to
- * only ever count when it ends the paragraph's actual final sentence (never
- * via the short-trailing-line exception above) — any-sentence matching was
- * too loose for it, since it is a common closing courtesy on plain
+ * specific asking forms above do. Any other "주세요" is additionally
+ * restricted to only count when it ends the paragraph's actual final sentence —
+ * any-sentence matching was too loose for it, since it is a common closing courtesy on plain
  * statements too (e.g. "고객님께 전화해 주세요. 감사합니다!" is not a
  * question).
  */
@@ -565,8 +564,11 @@ const TRAILING_FILLER_RE =
 
 const TABLE_OR_LIST_LINE_RE = /^(\|.*\||[-*+]\s+.*|\d+[.)]\s+.*|[-:|\s]+)$/;
 
-/** At most this many non-space characters (after trailing filler is stripped) counts as a "short trailing line". */
-const SHORT_TRAILING_LINE_MAX_CHARS = 8;
+/** A sentence that starts like this continues the previous sentence's `?` as reported speech (see doc comment above). */
+const QUOTATIVE_CONTINUATION_RE = /^(?:하고|라고|라며|라는|이라고|고\s*물)/u;
+
+/** The request forms the app uses to ask for missing input, in any sentence (see doc comment above). */
+const CONDITIONAL_REQUEST_RE = /(?:알려|말씀해)\s*주(?:시면|세요)/u;
 
 /** A Hangul syllable with the "ㅂ" final consonant (batchim), e.g. 습/됩/합. */
 function hasBieupBatchim(char: string | undefined): boolean {
@@ -627,29 +629,17 @@ function sentenceAsksQuestion(sentence: string, isFinalSentence: boolean): boole
         if (core.endsWith(ending)) return true;
     }
     if (core.endsWith("니까") && hasBieupBatchim(core[core.length - 3])) return true;
-    return false;
-}
-
-/** Whether `sentence`, after trailing filler is stripped, is a short throwaway trailing line (see doc comment above). */
-function isShortTrailingLine(sentence: string): boolean {
-    const core = sentence.replace(TRAILING_FILLER_RE, "").replace(/\s+/g, "");
-    return core.length > 0 && core.length <= SHORT_TRAILING_LINE_MAX_CHARS;
+    return CONDITIONAL_REQUEST_RE.test(core);
 }
 
 function paragraphAsksQuestion(paragraph: string): boolean {
     const sentences = splitSentences(paragraph);
-    if (sentences.length === 0) return false;
-
-    const lastSentence = sentences[sentences.length - 1] as string;
-    if (sentenceAsksQuestion(lastSentence, true)) return true;
-
-    if (sentences.length >= 2) {
-        const previousSentence = sentences[sentences.length - 2] as string;
-        if (isShortTrailingLine(lastSentence) && sentenceAsksQuestion(previousSentence, false)) {
-            return true;
-        }
-    }
-    return false;
+    return sentences.some((sentence, index) => {
+        const isFinalSentence = index === sentences.length - 1;
+        if (!sentenceAsksQuestion(sentence, isFinalSentence)) return false;
+        const next = sentences[index + 1];
+        return next === undefined || !QUOTATIVE_CONTINUATION_RE.test(next);
+    });
 }
 
 export function heuristicHasQuestion(text: string): boolean {
