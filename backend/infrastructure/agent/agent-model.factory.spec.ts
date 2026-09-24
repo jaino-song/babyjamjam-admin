@@ -36,4 +36,75 @@ describe("AgentModelFactory", () => {
             expect.objectContaining({ toolCallId: "deterministic-tool-1" }),
         );
     });
+
+    describe("thinkingLevel", () => {
+        it("is null when AGENT_THINKING_LEVEL is unset", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test" }));
+            expect(factory.thinkingLevel).toBeNull();
+        });
+
+        it("is null when AGENT_THINKING_LEVEL is an empty string", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "" }));
+            expect(factory.thinkingLevel).toBeNull();
+        });
+
+        it("accepts a valid override", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "medium" }));
+            expect(factory.thinkingLevel).toBe("medium");
+        });
+
+        it("falls back to null and logs one warning for an invalid value", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "extreme" }));
+            const logger = { warn: jest.fn() };
+            (factory as unknown as { logger: { warn: (message: string) => void } }).logger = logger;
+            expect(factory.thinkingLevel).toBeNull();
+            expect(factory.thinkingLevel).toBeNull();
+            expect(logger.warn).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("providerOptions", () => {
+        it("returns no thinkingLevel when AGENT_THINKING_LEVEL is unset (model default)", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test" }));
+            expect(factory.providerOptions()).toEqual({
+                google: { thinkingConfig: { includeThoughts: false } },
+            });
+        });
+
+        it("passes through a valid override", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "high" }));
+            expect(factory.providerOptions()).toEqual({
+                google: { thinkingConfig: { includeThoughts: false, thinkingLevel: "high" } },
+            });
+        });
+
+        it("returns no thinkingLevel for an invalid value (same as unset)", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "bogus" }));
+            expect(factory.providerOptions()).toEqual({
+                google: { thinkingConfig: { includeThoughts: false } },
+            });
+        });
+
+        it("returns no provider options at all in E2E stub mode", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", E2E_VENDOR_STUBS: "1", AGENT_THINKING_LEVEL: "high" }));
+            expect(factory.providerOptions()).toEqual({});
+        });
+    });
+
+    describe("maxOutputTokens", () => {
+        it("is 8192 when thinkingLevel is unset, since the model then picks its own thinking depth", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test" }));
+            expect(factory.maxOutputTokens()).toBe(8192);
+        });
+
+        it("is 4096 for low/medium", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "medium" }));
+            expect(factory.maxOutputTokens()).toBe(4096);
+        });
+
+        it("is 8192 when thinkingLevel is high", () => {
+            const factory = new AgentModelFactory(new ConfigService({ GEMINI_API_KEY: "test", AGENT_THINKING_LEVEL: "high" }));
+            expect(factory.maxOutputTokens()).toBe(8192);
+        });
+    });
 });

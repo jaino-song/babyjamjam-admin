@@ -43,6 +43,7 @@ interface MutableCase {
     unacceptable?: string[];
     labelProvenance: string;
     notes?: string;
+    state?: unknown;
 }
 
 function baseCase(overrides: Partial<MutableCase> = {}): MutableCase {
@@ -218,6 +219,144 @@ describe("parseJevCorpus", () => {
             "t-1",
             "duplicate label",
         );
+    });
+
+    it("accepts a well-formed clarification state and defaults it to null when absent", () => {
+        const withState = parseCases([
+            baseCase({
+                id: "clar-state-1",
+                decisionKind: "evaluate-clarification",
+                acceptable: ["clarification-not-required"],
+                state: { missingFields: ["phone"], targetConfirmed: true },
+            }),
+        ]);
+        expect(withState.cases[0]?.state).toEqual({ missingFields: ["phone"], targetConfirmed: true });
+
+        const withoutState = parseCases([
+            baseCase({
+                id: "clar-state-2",
+                decisionKind: "evaluate-clarification",
+                acceptable: ["clarification-not-required"],
+            }),
+        ]);
+        expect(withoutState.cases[0]?.state).toBeNull();
+    });
+
+    it("accepts an empty missingFields array on a clarification state", () => {
+        const corpus = parseCases([
+            baseCase({
+                id: "clar-state-empty",
+                decisionKind: "evaluate-clarification",
+                acceptable: ["clarification-not-required"],
+                state: { missingFields: [], targetConfirmed: false },
+            }),
+        ]);
+        expect(corpus.cases[0]?.state).toEqual({ missingFields: [], targetConfirmed: false });
+    });
+
+    it("rejects a state field on any decision kind other than evaluate-clarification", () => {
+        expectCorpusError(
+            () => parseCases([
+                baseCase({
+                    id: "t-1",
+                    state: { missingFields: [], targetConfirmed: false },
+                }),
+            ]),
+            "t-1",
+            "\"state\" is only valid for decisionKind \"evaluate-clarification\"",
+        );
+    });
+
+    it("rejects malformed clarification state shapes", () => {
+        const clarificationCase = (state: unknown) =>
+            ({
+                ...baseCase({ id: "t-1", decisionKind: "evaluate-clarification", acceptable: ["clarification-not-required"] }),
+                state,
+            }) as unknown as MutableCase;
+
+        expectCorpusError(() => parseCases([clarificationCase("not-an-object")]), "t-1", "\"state\" must be a JSON object");
+        expectCorpusError(() => parseCases([clarificationCase(["array"])]), "t-1", "\"state\" must be a JSON object");
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: [] })]),
+            "t-1",
+            "missing required key \"targetConfirmed\"",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ targetConfirmed: false })]),
+            "t-1",
+            "missing required key \"missingFields\"",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: [], targetConfirmed: false, extra: 1 })]),
+            "t-1",
+            "Unknown state key \"extra\"",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: "value", targetConfirmed: false })]),
+            "t-1",
+            "\"state.missingFields\" must be an array of strings",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: [""], targetConfirmed: false })]),
+            "t-1",
+            "\"state.missingFields\" must contain only non-empty strings",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: ["a", "a"], targetConfirmed: false })]),
+            "t-1",
+            "duplicate label",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: [], targetConfirmed: "false" })]),
+            "t-1",
+            "\"state.targetConfirmed\" must be a boolean",
+        );
+    });
+
+    it("rejects a missingFields entry that is not a CLIENT_WRITE_FIELD_NAMES member (BJJ-344 part 2)", () => {
+        const clarificationCase = (state: unknown) =>
+            ({
+                ...baseCase({ id: "t-1", decisionKind: "evaluate-clarification", acceptable: ["clarification-not-required"] }),
+                state,
+            }) as unknown as MutableCase;
+
+        // "value" and "메모" (memo) are not client write fields — a fixture
+        // author cannot invent a placeholder token here, only name one of
+        // the 18 real fields `deriveMissingFields` (agent-runtime.service.ts)
+        // can actually report.
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: ["value"], targetConfirmed: true })]),
+            "t-1",
+            "is not a client write field",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: ["메모"], targetConfirmed: true })]),
+            "t-1",
+            "is not a client write field",
+        );
+        // Every real CLIENT_WRITE_FIELD_NAMES member is accepted.
+        const accepted = parseCases([clarificationCase({ missingFields: ["name", "phone", "address"], targetConfirmed: false })]);
+        expect(accepted.cases[0]?.state?.missingFields).toEqual(["name", "phone", "address"]);
+    });
+
+    it("includes state in the dataset digest so a state-only edit changes the digest", () => {
+        const baseline = parseCases([
+            baseCase({
+                id: "clar-digest",
+                decisionKind: "evaluate-clarification",
+                acceptable: ["clarification-not-required"],
+                state: { missingFields: [], targetConfirmed: false },
+            }),
+        ]);
+        const changed = parseCases([
+            baseCase({
+                id: "clar-digest",
+                decisionKind: "evaluate-clarification",
+                acceptable: ["clarification-not-required"],
+                state: { missingFields: [], targetConfirmed: true },
+            }),
+        ]);
+        expect(changed.datasetDigest).not.toBe(baseline.datasetDigest);
     });
 
     it("rejects unknown keys at the corpus root and inside cases", () => {

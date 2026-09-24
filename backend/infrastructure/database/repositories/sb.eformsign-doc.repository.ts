@@ -17,6 +17,7 @@ import {
     EformsignDocStaleUpdateError,
     EformsignDocUnscopedResult,
     IEformsignDocRepository,
+    RecentEformsignDocRow,
     ReviewStageContract,
     UpsertEformsignDocByDocumentIdOptions,
     UpsertUnassignedEformsignDocOptions,
@@ -294,6 +295,46 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             branchId: branchid,
             permanentPurgeRequestedAt: null,
         });
+    }
+
+    async findRecentContracts(branchid: string, take: number): Promise<RecentEformsignDocRow[]> {
+        const docs = await this.prismaService.eformsign_doc.findMany({
+            where: {
+                branchId: branchid,
+                permanentPurgeRequestedAt: null,
+                statusType: { not: "deleted" },
+                OR: [
+                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                    { documentKind: null },
+                ],
+            },
+            orderBy: { updatedDate: "desc" },
+            take,
+            select: {
+                documentId: true,
+                documentName: true,
+                clientId: true,
+                statusType: true,
+                statusDetail: true,
+                stepType: true,
+                stepName: true,
+                updatedDate: true,
+                expired: true,
+                client: { select: { name: true } },
+            },
+        });
+        return docs.map((doc) => ({
+            documentId: doc.documentId,
+            documentName: doc.documentName,
+            clientId: doc.clientId,
+            clientName: doc.client?.name ?? null,
+            statusType: doc.statusType,
+            statusDetail: doc.statusDetail,
+            stepType: doc.stepType,
+            stepName: doc.stepName,
+            updatedDate: doc.updatedDate,
+            expired: doc.expired,
+        }));
     }
 
     async findAll(branchid: string): Promise<EformsignDocEntity[]> {

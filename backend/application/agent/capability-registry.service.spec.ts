@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AgentCapabilityProvider } from "./capability.decorator";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import type { AgentCapabilityProviderContract } from "./capability.types";
+import { ClientAgentCapabilitiesProvider } from "application/usecases/client/client-agent-capabilities.provider";
 
 const definition = {
     meta: {
@@ -76,5 +77,18 @@ describe("CapabilityRegistryService", () => {
         const registry = new CapabilityRegistryService({} as DiscoveryService);
 
         expect(() => registry.registerProviders([{ getCapabilities: () => [write] }])).toThrow("restart-safe reconciliation");
+    });
+
+    it("serves the catalog's sharpened description for a real read capability at runtime", () => {
+        // Proves that a real provider's registered meta.description is the
+        // catalog string an agent tool call actually sees (declared meta is
+        // always overridden by CAPABILITY_CATALOG_BY_NAME in
+        // registerProviders), not just the provider's own literal.
+        const provider = new ClientAgentCapabilitiesProvider(jest.fn() as never, jest.fn() as never);
+        const registry = new CapabilityRegistryService({} as DiscoveryService);
+
+        registry.registerProviders([provider]);
+
+        expect(registry.get("clients.search").meta.description).toContain("Use for:");
     });
 });

@@ -5,7 +5,8 @@ import { DeterministicAgentLanguageModel } from "infrastructure/agent/determinis
 
 import { AgentRuntimeService } from "../agent-runtime.service";
 import { CapabilityRouterService } from "../capability-router.service";
-import type { DecisionTurnContext } from "./agent-decision.service";
+import { AgentDecisionService, type DecisionTurnContext } from "./agent-decision.service";
+import { AgentDecisionConfigService, AGENT_DECISION_ENVIRONMENT_ENV_VAR } from "./agent-decision-config.service";
 import { createDecisionTraceCollector, type DecisionTraceCollector } from "./decision-trace";
 import { DECISION_KINDS, DECISION_MODES, type DecisionMode, type DecisionPolicyResult } from "./decision-contracts";
 
@@ -119,16 +120,24 @@ interface RuntimeHarnessOptions {
     capabilities?: ReturnType<typeof clientWriteCapability | typeof clientSearchCapability | typeof readCapability>[];
     routeDomainsResult?: DecisionPolicyResult<readonly string[]>;
     modelScript?: Array<{ type: "tool-call"; toolName: string; input: Record<string, unknown> } | { type: "text"; text: string }>;
+    /**
+     * Real `AgentDecisionService`/`AgentDecisionConfigService` instances, used
+     * by the out-of-scope-branch tests below in place of the mocked doubles
+     * built from `options.modes`/`options.intentResult` above. When present,
+     * `options.modes` is still required by the type but ignored.
+     */
+    decisionsOverride?: AgentDecisionService;
+    decisionConfigOverride?: AgentDecisionConfigService;
 }
 
 interface RuntimeHarness {
     runtime: AgentRuntimeService;
-    decisions: {
-        createTurnContext: jest.Mock;
-        routeDomains: jest.Mock;
-        classifyClientIntent: jest.Mock;
-    };
-    decisionConfig: { getKindMode: jest.Mock };
+    // Existing callers rely on jest.Mock members (.mockImplementation/
+    // .mock.calls); decisionsOverride/decisionConfigOverride below
+    // substitute real service instances, so this field can't stay
+    // statically typed to the mock shape.
+    decisions: any;
+    decisionConfig: any;
     taskOrchestrator: {
         resolveTurnOwnership: jest.Mock;
         handleUserTurn: jest.Mock;
@@ -147,12 +156,12 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
     const capabilities = options.capabilities ?? [clientWriteCapability("clients.create"), clientSearchCapability()];
     const taskMode = capabilities.some((capability) => capability.meta.name === "clients.create" || capability.meta.name === "clients.update");
     const turnContexts: DecisionTurnContext[] = [];
-    const decisions = {
-        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => {
+    const mockedDecisions = {
+        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => {
             const context: DecisionTurnContext = {
-                deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
+                inScope: true,
                 collector: createDecisionTraceCollector(),
             };
             turnContexts.push(context);
@@ -173,11 +182,13 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
             profileVersion: "profile-v1",
         }),
     };
-    const decisionConfig = {
+    const mockedDecisionConfig = {
         getKindMode: jest.fn().mockImplementation(async (kind: string) => (
             kind === DECISION_KINDS.routeDomains ? options.modes.routeDomains : options.modes.classifyClientIntent
         )),
     };
+    const decisions = options.decisionsOverride ?? mockedDecisions;
+    const decisionConfig = options.decisionConfigOverride ?? mockedDecisionConfig;
     const taskOrchestrator = {
         resolveTurnOwnership: jest.fn().mockResolvedValue(options.ownership ?? {
             replayed: false, activeTask: false, formBound: false, command: false, isQuestion: false,
@@ -223,7 +234,7 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
         { list: () => capabilities } as never,
         { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
         sessions as never,
-        { modelId: "deterministic-agent-v1", create: () => model } as never,
+        { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => model } as never,
         router as never,
         traces as never,
         undefined,
@@ -350,7 +361,12 @@ describe("Jev runtime integration (P0 decision layer)", () => {
     it("enforce routing abstention answers a zero-tool clarification turn, not the feature-disabled refusal", async () => {
         const harness = buildHarness({
             modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
-            capabilities: [clientSearchCapability()],
+            // An enabled, unrouted-domain core read (dashboard.summary) must
+            // still be absent from a "clarify" turn's offer: the router's
+            // core-reads addition is gated on a non-empty routed domain list
+            // (agent-chat-quality-router M4), and this turn's domains stay
+            // empty on abstention.
+            capabilities: [clientSearchCapability(), readCapability("dashboard.summary", "dashboard")],
             modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
         });
         // Record one route-domains observation into the turn's collector, the
@@ -523,7 +539,11 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         ]) {
             const harness = buildHarness({
                 modes,
-                capabilities: [clientSearchCapability()],
+                // clients.search plus an unrouted-domain core read
+                // (dashboard.summary) proves the router's always-offered
+                // core-reads addition reaches this selected ("clients")
+                // turn's tool surface (agent-chat-quality-router M4).
+                capabilities: [clientSearchCapability(), readCapability("dashboard.summary", "dashboard")],
                 routeDomainsResult: { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" },
                 modelScript: [{ type: "text", text: "완료했습니다." }],
             });
@@ -540,6 +560,10 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             // The router contract guarantees off/shadow never return
             // "clarify": the incumbent read capability stays offered.
             expect(JSON.stringify(streamOptions.tools)).toContain("clients_search");
+            // Core reads are appended on top of the routed ("clients")
+            // selection even though dashboard.summary's own domain was
+            // never routed for this turn.
+            expect(JSON.stringify(streamOptions.tools)).toContain("dashboard_summary");
             const systemPrompt = streamOptions.prompt?.[0]?.content ?? "";
             expect(systemPrompt).not.toContain("Ask the user one short clarifying question about what they want to do");
         }
@@ -557,10 +581,10 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         for (const routeMode of [DECISION_MODES.shadow, DECISION_MODES.off]) {
             const capabilities = [clientSearchCapability()];
             const decisions = {
-                createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
-                    deadlineAt: Date.now() + 800,
+                createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                     signal: createOptions.signal,
                     sampleKey: createOptions.sampleKey,
+                    inScope: true,
                     collector: createDecisionTraceCollector(),
                 })),
                 routeDomains: jest.fn(),
@@ -581,7 +605,7 @@ describe("Jev runtime integration (P0 decision layer)", () => {
                 { list: () => capabilities } as never,
                 { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
                 sessions as never,
-                { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+                { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
                 router as never,
                 { start: jest.fn(), finish: jest.fn() } as never,
                 undefined,
@@ -776,10 +800,10 @@ describe("Jev runtime integration (P0 decision layer)", () => {
     it("feature-disabled preservation: disabled routing keeps the exact incumbent refusal", async () => {
         const capabilities = [clientSearchCapability()];
         const decisions = {
-            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
-                deadlineAt: Date.now() + 800,
+            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
+                inScope: true,
                 collector: createDecisionTraceCollector(),
             })),
             routeDomains: jest.fn(),
@@ -799,7 +823,7 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             { list: () => capabilities } as never,
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
             sessions as never,
-            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+            { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
             router as never,
             { start: jest.fn(), finish: jest.fn() } as never,
             undefined,
@@ -827,5 +851,204 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         // `disabled` is never `clarify`: a session created on this turn is
         // still removed, exactly as the incumbent feature-disabled refusal.
         expect(sessions.remove).toHaveBeenCalledWith("session-disabled", expect.objectContaining({ userId: PRINCIPAL.userId, branchId: PRINCIPAL.branchId }));
+    });
+});
+
+/**
+ * Out-of-scope-branch scope gate (BJJ-346 audit fix).
+ *
+ * `AgentRuntimeService` reads `routeMode`/`intentMode`/`clarificationMode`
+ * from `AgentDecisionConfigService.getKindMode`, which has no notion of the
+ * caller's branch: it resolves a kind's mode from global config alone. Only
+ * `DecisionTurnContext.inScope` (set once per turn in
+ * `AgentDecisionService.createTurnContext` from `config.allowedBranchIds`)
+ * knows whether the principal's branch is allowed to run the decision layer
+ * at all. Before the runtime fix, an out-of-scope branch with a kind set to
+ * "enforce" still drove the runtime's enforce-only code paths (the façade
+ * itself abstains via its own `!ctx.inScope` defense-in-depth guard, but the
+ * *caller* — the router's `routeEnforce`, the intent block, and the
+ * clarification block — does not fall back to its incumbent baseline the
+ * way an in-scope abstention does): routing could collapse to a zero-tool
+ * "clarify" turn, client-intent could erase a text-matched write capability,
+ * and clarification could suppress model mutation, none of which is
+ * "off"-equivalent.
+ *
+ * These tests use REAL `AgentDecisionConfigService` + `AgentDecisionService`
+ * instances (via `buildHarness`'s `decisionsOverride`/`decisionConfigOverride`)
+ * so the assertion exercises the actual `createTurnContext`/`evaluate` gating,
+ * not a mocked façade result. `CapabilityRouterService` is also real (as in
+ * every other test in this file). Only `taskOrchestrator`, `traces`, and
+ * `sessions` stay mocked doubles, same as the rest of the suite.
+ */
+describe("Jev runtime out-of-scope branch (BJJ-346 scope-gate audit fix, real decision services)", () => {
+    const ENV_NAME = "jev-scope-audit-env";
+    const originalEnvironmentValue = process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+    const ALLOWED_BRANCH = "pilot-branch";
+    const OUT_OF_SCOPE_PRINCIPAL = { ...PRINCIPAL, branchId: "other-branch" };
+
+    beforeEach(() => {
+        process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = ENV_NAME;
+    });
+
+    afterEach(() => {
+        if (originalEnvironmentValue === undefined) {
+            delete process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+        } else {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = originalEnvironmentValue;
+        }
+    });
+
+    /** A real decision layer whose environment/branch gate is open for the env var but never for `OUT_OF_SCOPE_PRINCIPAL`'s branch. */
+    function buildRealDecisionLayer(kinds: Partial<Record<"route-domains" | "classify-client-intent" | "evaluate-clarification", DecisionMode>>) {
+        const port = {
+            routeDomains: jest.fn(),
+            classifyClientIntent: jest.fn(),
+            evaluateClarification: jest.fn(),
+            rankCandidates: jest.fn(),
+        };
+        const decisionConfig = new AgentDecisionConfigService({
+            execute: jest.fn().mockResolvedValue(JSON.stringify({
+                environments: [ENV_NAME],
+                allowedBranchIds: [ALLOWED_BRANCH],
+                kinds: Object.fromEntries(Object.entries(kinds).map(([kind, mode]) => [kind, { mode }])),
+            })),
+        } as never);
+        const decisions = new AgentDecisionService(decisionConfig, port as never);
+        return { decisions, decisionConfig, port };
+    }
+
+    it("passes the principal's own branch to createTurnContext, never a hardcoded value", async () => {
+        const { decisions, decisionConfig } = buildRealDecisionLayer({});
+        const createTurnContextSpy = jest.spyOn(decisions, "createTurnContext");
+        const harness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            decisionsOverride: decisions,
+            decisionConfigOverride: decisionConfig,
+        });
+        await drainStream((await harness.runtime.stream({
+            principal: OUT_OF_SCOPE_PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-branch-passthrough", "도와줘")],
+        })).stream);
+
+        expect(createTurnContextSpy).toHaveBeenCalledWith(expect.objectContaining({ branchId: OUT_OF_SCOPE_PRINCIPAL.branchId }));
+        // Negative-control note: hardcoding `branchId` in the runtime's
+        // `createTurnContext({ ..., branchId: input.principal.branchId })`
+        // call (agent-runtime.service.ts) to a literal string makes this
+        // assertion fail, since `OUT_OF_SCOPE_PRINCIPAL.branchId` would then
+        // never appear in the call args. Verified manually; restored.
+    });
+
+    it("route-domains: an out-of-scope enforce turn routes exactly like off, never collapsing to a zero-tool clarify turn", async () => {
+        const offHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            modelScript: [{ type: "text", text: "완료했습니다." }],
+        });
+        const { decisions, decisionConfig, port } = buildRealDecisionLayer({ "route-domains": DECISION_MODES.enforce });
+        const scopeHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            decisionsOverride: decisions,
+            decisionConfigOverride: decisionConfig,
+            modelScript: [{ type: "text", text: "완료했습니다." }],
+        });
+
+        const offDoStreamSpy = jest.spyOn(offHarness.model, "doStream");
+        const scopeDoStreamSpy = jest.spyOn(scopeHarness.model, "doStream");
+
+        await drainStream((await offHarness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-route-off", "도와줘")],
+        })).stream);
+        await drainStream((await scopeHarness.runtime.stream({
+            principal: OUT_OF_SCOPE_PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-route-scope", "도와줘")],
+        })).stream);
+
+        const offTools = JSON.stringify((offDoStreamSpy.mock.calls[0]?.[0] as { tools?: unknown }).tools);
+        const scopeOptions = scopeDoStreamSpy.mock.calls[0]?.[0] as { tools?: unknown; prompt?: Array<{ role: string; content: string }> };
+        const scopeTools = JSON.stringify(scopeOptions.tools);
+        // Both must offer the routed "clients" domain's tools — never the
+        // empty/undefined tool set a "clarify" disposition would produce.
+        expect(scopeTools).toContain("clients_search");
+        expect(offTools).toContain("clients_search");
+        const scopeSystemPrompt = scopeOptions.prompt?.[0]?.content ?? "";
+        expect(scopeSystemPrompt).not.toContain("Ask the user one short clarifying question about what they want to do");
+        // Defense-in-depth: evaluate()'s own `!ctx.inScope` guard means the
+        // port is never reached regardless of the runtime-level fix, but it
+        // must hold here too.
+        expect(port.routeDomains).not.toHaveBeenCalled();
+    });
+
+    it("classify-client-intent: an out-of-scope enforce turn keeps the text-matched write capability, never erasing it to abstain", async () => {
+        const offHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+        });
+        const { decisions, decisionConfig, port } = buildRealDecisionLayer({ "classify-client-intent": DECISION_MODES.enforce });
+        const scopeHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            decisionsOverride: decisions,
+            decisionConfigOverride: decisionConfig,
+        });
+
+        await drainStream((await offHarness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-intent-off", "새 고객 등록해줘")],
+        })).stream);
+        await drainStream((await scopeHarness.runtime.stream({
+            principal: OUT_OF_SCOPE_PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-intent-scope", "새 고객 등록해줘")],
+        })).stream);
+
+        expect(offHarness.taskOrchestrator.handleUserTurn).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: "clients.create" }));
+        // The bug this pins: without the runtime-level scope fix, the
+        // enforce client-intent block still runs on this out-of-scope turn,
+        // the façade abstains (inScope guard), and `decideClientIntent`
+        // maps a null intent to "abstain" — erasing the incumbent
+        // text-matched "clients.create" to `undefined`.
+        expect(scopeHarness.taskOrchestrator.handleUserTurn).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: "clients.create" }));
+        expect(port.classifyClientIntent).not.toHaveBeenCalled();
+    });
+
+    it("evaluate-clarification: an out-of-scope enforce turn never suppresses model mutation", async () => {
+        const offHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+        });
+        const { decisions, decisionConfig, port } = buildRealDecisionLayer({ "evaluate-clarification": DECISION_MODES.enforce });
+        const scopeHarness = buildHarness({
+            modes: { routeDomains: DECISION_MODES.off, classifyClientIntent: DECISION_MODES.off },
+            decisionsOverride: decisions,
+            decisionConfigOverride: decisionConfig,
+        });
+
+        await drainStream((await offHarness.runtime.stream({
+            principal: PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-clarify-off", "새 고객 등록해줘")],
+        })).stream);
+        await drainStream((await scopeHarness.runtime.stream({
+            principal: OUT_OF_SCOPE_PRINCIPAL,
+            locale: "ko",
+            messages: [userMessage("message-clarify-scope", "새 고객 등록해줘")],
+        })).stream);
+
+        await until(() => offHarness.taskOrchestrator.applyModelMutation.mock.calls.length > 0);
+        // The bug this pins: the default task fixture has empty
+        // confirmed/tentative fields, so every client-write field reports
+        // `missing`. Without the runtime-level scope fix, the enforce
+        // clarification block still runs on this out-of-scope turn, the
+        // façade abstains (inScope guard) to `advice: null`, and
+        // `decideClarification`'s deterministic-recovery rule (missing
+        // fields always win, regardless of advice) sets
+        // `suppressModelMutation: true` — hiding the `clients_create` task
+        // tool so the model's scripted tool call never reaches
+        // `applyModelMutation`.
+        await until(() => scopeHarness.taskOrchestrator.applyModelMutation.mock.calls.length > 0);
+        expect(offHarness.taskOrchestrator.applyModelMutation).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: "clients.create" }));
+        expect(scopeHarness.taskOrchestrator.applyModelMutation).toHaveBeenCalledWith(expect.objectContaining({ capabilityId: "clients.create" }));
+        expect(port.evaluateClarification).not.toHaveBeenCalled();
     });
 });

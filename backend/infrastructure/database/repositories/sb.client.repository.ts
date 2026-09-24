@@ -136,6 +136,14 @@ export class SbClientRepository implements IClientRepository {
         return clients.map((client) => ClientMapper.toDomain(client as any));
     }
 
+    async findNamesByIds(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>> {
+        if (ids.length === 0) return [];
+        return this.prismaService.client.findMany({
+            where: { branchId: branchid, id: { in: ids } },
+            select: { id: true, name: true },
+        });
+    }
+
     async findAllPaginated(
         branchid: string,
         page: number,

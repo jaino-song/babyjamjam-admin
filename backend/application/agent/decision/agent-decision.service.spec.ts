@@ -27,11 +27,16 @@ const DEFAULT_LIMITS: AgentDecisionConfig["limits"] = {
     maxCandidates: 10,
 };
 
+/** Default in-scope branch for tests that are not exercising the branch gate itself. */
+const DEFAULT_BRANCH_ID = "branch-default";
+
 interface FakeConfigOptions {
     mode?: DecisionMode;
     samplingFraction?: number;
     limits?: Partial<AgentDecisionConfig["limits"]>;
     profiles?: Partial<Record<DecisionKind, DecisionAcceptanceProfile>>;
+    /** Defaults to [DEFAULT_BRANCH_ID] so every existing scenario stays in scope. */
+    allowedBranchIds?: readonly string[];
 }
 
 function fakeConfigService(options: FakeConfigOptions = {}): AgentDecisionConfigService {
@@ -39,11 +44,14 @@ function fakeConfigService(options: FakeConfigOptions = {}): AgentDecisionConfig
     const samplingFraction = options.samplingFraction ?? 0;
     const limits = { ...DEFAULT_LIMITS, ...options.limits };
     const profiles = options.profiles ?? {};
+    const allowedBranchIds = options.allowedBranchIds ?? [DEFAULT_BRANCH_ID];
     return {
         getConfig: jest.fn().mockResolvedValue({
             globalDisabled: false,
             modelId: MODEL_ID,
             samplingFraction,
+            environments: [],
+            allowedBranchIds,
             limits,
             kinds: {},
             profiles,
@@ -79,8 +87,12 @@ function portAsDecisionPort(port: MockedPort): AgentDecisionPort {
     return port as unknown as AgentDecisionPort;
 }
 
-async function turnContext(service: AgentDecisionService, sampleKey = "turn-key"): Promise<DecisionTurnContext> {
-    return service.createTurnContext({ signal: new AbortController().signal, sampleKey });
+async function turnContext(
+    service: AgentDecisionService,
+    sampleKey = "turn-key",
+    branchId = DEFAULT_BRANCH_ID,
+): Promise<DecisionTurnContext> {
+    return service.createTurnContext({ signal: new AbortController().signal, sampleKey, branchId });
 }
 
 function routeEvidence(overrides: Partial<DomainRoutingEvidence> = {}): DomainRoutingEvidence {
@@ -240,9 +252,13 @@ describe("AgentDecisionService", () => {
             kind: "route-domains",
             permittedDomains: ["clients"],
             questionVersion: DECISION_QUESTION_VERSION,
-            deadlineAt: ctx.deadlineAt,
             signal: ctx.signal,
         });
+        // Per-call deadline, computed fresh at call admission (see the
+        // fake-timer-pinned assertion below for the exact
+        // `Date.now() + turnDeadlineMs` bound); the turn context itself no
+        // longer carries a deadline field.
+        expect(request?.deadlineAt).toBeGreaterThanOrEqual(Date.now());
         expect(request?.redactedText).not.toContain("client-alpha");
 
         // Shadow never applies: the caller keeps its baseline.
@@ -399,32 +415,47 @@ describe("AgentDecisionService", () => {
         expect(result.baselineSelection).toBeNull();
     });
 
-    it("budget-exhausted once the turn deadline has passed, with zero calls", async () => {
-        const port = fakePort();
-        port.evaluateClarification.mockResolvedValue(clarificationEvidence());
-        const service = serviceWith(
-            fakeConfigService({
-                mode: DECISION_MODES.enforce,
-                limits: { turnDeadlineMs: -1000 },
-                profiles: { [DECISION_KINDS.evaluateClarification]: profileFor(DECISION_KINDS.evaluateClarification) },
-            }),
-            portAsDecisionPort(port),
-        );
-        const ctx = await turnContext(service);
-        expect(ctx.deadlineAt).toBeLessThanOrEqual(Date.now());
+    it("computes a fresh per-call deadline at admission time, not at turn creation (BJJ-347)", async () => {
+        jest.useFakeTimers();
+        try {
+            jest.setSystemTime(new Date("2026-09-24T00:00:00.000Z"));
+            const port = fakePort();
+            port.evaluateClarification.mockResolvedValue(clarificationEvidence());
+            const service = serviceWith(
+                fakeConfigService({
+                    mode: DECISION_MODES.enforce,
+                    limits: { turnDeadlineMs: 800 },
+                    profiles: {
+                        [DECISION_KINDS.evaluateClarification]: profileFor(DECISION_KINDS.evaluateClarification),
+                    },
+                }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service);
 
-        const result: DecisionPolicyResult<ClarificationAdvice> = await service.evaluateClarification(ctx, {
-            text: "text",
-            knownValues: [],
-            missingFields: ["phone"],
-            targetConfirmed: false,
-            baseline: null,
-        });
+            // Admit the call 900ms after turn-context creation: past the old
+            // (now-removed) turn-deadline window. The deadline is per call,
+            // so this call still reaches the port.
+            jest.advanceTimersByTime(900);
+            const callStart = Date.now();
 
-        expect(port.evaluateClarification).not.toHaveBeenCalled();
-        expect(result.status).toBe("not-evaluated");
-        expect(result.reason).toBe("budget-exhausted");
+            const result: DecisionPolicyResult<ClarificationAdvice> = await service.evaluateClarification(ctx, {
+                text: "text",
+                knownValues: [],
+                missingFields: ["phone"],
+                targetConfirmed: false,
+                baseline: null,
+            });
+
+            expect(port.evaluateClarification).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("accepted");
+            const request = port.evaluateClarification.mock.calls[0]?.[0] as { deadlineAt: number };
+            expect(request.deadlineAt).toBe(callStart + 800);
+        } finally {
+            jest.useRealTimers();
+        }
     });
+
 
     it("blocks P0 kinds after the P0 cap and keeps the P1 budget independent", async () => {
         const port = fakePort();
@@ -509,6 +540,28 @@ describe("AgentDecisionService", () => {
         release();
         const applied = await inFlight;
         expect(applied.status).toBe("accepted");
+
+        // Exactly one skip-trace event for the concurrency-saturated call,
+        // alongside the in-flight call's own accepted observation.
+        const events = ctx.collector.drain().events;
+        expect(events).toHaveLength(2);
+        const skipEvents = events.filter((event) => event.reason === "concurrency-saturated");
+        expect(skipEvents).toHaveLength(1);
+        expect(skipEvents[0]).toMatchObject({
+            decisionKind: "route-domains",
+            mode: "enforce",
+            model: null,
+            profileVersion: null,
+            labels: [],
+            scores: [],
+            latencyMs: 0,
+            outcome: "not-evaluated",
+            reason: "concurrency-saturated",
+            disagreement: null,
+            usage: null,
+            missing: true,
+            droppedReason: null,
+        });
     });
 
     it("maps a port throw to unavailable/provider-error and preserves the baseline", async () => {
@@ -597,8 +650,17 @@ describe("AgentDecisionService", () => {
         const b1 = await service.routeDomains(ctxB, input);
         expect(b1.status).toBe("accepted");
 
-        // Collectors are per-context too.
-        expect(ctxA.collector.drain().events).toHaveLength(1);
+        // Collectors are per-context too. ctxA additionally drains the one
+        // skip-trace event recorded for its budget-exhausted second call.
+        const drainedA = ctxA.collector.drain().events;
+        expect(drainedA).toHaveLength(2);
+        expect(drainedA[1]).toMatchObject({
+            decisionKind: "route-domains",
+            mode: "enforce",
+            outcome: "not-evaluated",
+            reason: "budget-exhausted",
+            missing: true,
+        });
         expect(ctxB.collector.drain().events).toHaveLength(1);
     });
 
@@ -630,5 +692,139 @@ describe("AgentDecisionService", () => {
         expect(port.rankCandidates).not.toHaveBeenCalled();
         expect(result.status).toBe("not-evaluated");
         expect(result.reason).toBe("budget-exhausted");
+
+        // The kind-specific exceedsLimits skip also drains exactly one event.
+        const events = ctx.collector.drain().events;
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({
+            decisionKind: "rank-candidates",
+            mode: "enforce",
+            outcome: "not-evaluated",
+            reason: "budget-exhausted",
+            missing: true,
+        });
+    });
+
+    describe("skip traces (BJJ-347)", () => {
+        it("records nothing for a disabled skip", async () => {
+            const port = fakePort();
+            const service = serviceWith(fakeConfigService({ mode: DECISION_MODES.off }), portAsDecisionPort(port));
+            const ctx = await turnContext(service);
+            await service.routeDomains(ctx, {
+                text: "text",
+                knownValues: [],
+                permittedDomains: ["clients"],
+                baseline: [],
+            });
+            expect(ctx.collector.drain().events).toEqual([]);
+        });
+
+        it("records nothing for a not-sampled skip", async () => {
+            const port = fakePort();
+            const service = serviceWith(
+                fakeConfigService({ mode: DECISION_MODES.shadow, samplingFraction: 0 }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service);
+            await service.routeDomains(ctx, {
+                text: "text",
+                knownValues: [],
+                permittedDomains: ["clients"],
+                baseline: [],
+            });
+            expect(ctx.collector.drain().events).toEqual([]);
+        });
+    });
+
+    describe("branch allowlist (BJJ-346)", () => {
+        it.each([DECISION_MODES.shadow, DECISION_MODES.enforce])(
+            "skips with zero port calls when the turn's branch is not in allowedBranchIds (%s)",
+            async (mode) => {
+                const port = fakePort();
+                port.routeDomains.mockResolvedValue(routeEvidence());
+                const service = serviceWith(
+                    fakeConfigService({
+                        mode,
+                        samplingFraction: 1,
+                        allowedBranchIds: ["other-branch"],
+                        profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                    }),
+                    portAsDecisionPort(port),
+                );
+                const ctx = await turnContext(service, "turn-key", "branch-out-of-scope");
+                expect(ctx.inScope).toBe(false);
+
+                const result = await service.routeDomains(ctx, {
+                    text: "text",
+                    knownValues: [],
+                    permittedDomains: ["clients"],
+                    baseline: ["clients"],
+                });
+
+                expect(port.routeDomains).not.toHaveBeenCalled();
+                expect(result).toEqual({
+                    status: "not-evaluated",
+                    selection: null,
+                    baselineSelection: ["clients"],
+                    reason: "disabled",
+                    profileVersion: null,
+                });
+                expect(ctx.collector.drain().events).toEqual([]);
+            },
+        );
+
+        it("empty allowedBranchIds puts every branch out of scope", async () => {
+            const port = fakePort();
+            const service = serviceWith(
+                fakeConfigService({ mode: DECISION_MODES.enforce, allowedBranchIds: [] }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service, "turn-key", "any-branch");
+            expect(ctx.inScope).toBe(false);
+        });
+
+        it("runs normally when the turn's branch is listed", async () => {
+            const port = fakePort();
+            port.routeDomains.mockResolvedValue(routeEvidence());
+            const service = serviceWith(
+                fakeConfigService({
+                    mode: DECISION_MODES.enforce,
+                    allowedBranchIds: ["branch-in-scope"],
+                    profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service, "turn-key", "branch-in-scope");
+            expect(ctx.inScope).toBe(true);
+
+            const result = await service.routeDomains(ctx, {
+                text: "text",
+                knownValues: [],
+                permittedDomains: ["clients"],
+                baseline: [],
+            });
+
+            expect(port.routeDomains).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("accepted");
+        });
+
+        it("normalises branch comparison with String() for a numeric-like principal branchId", async () => {
+            const port = fakePort();
+            port.routeDomains.mockResolvedValue(routeEvidence());
+            const service = serviceWith(
+                fakeConfigService({
+                    mode: DECISION_MODES.enforce,
+                    allowedBranchIds: ["42"],
+                    profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await service.createTurnContext({
+                signal: new AbortController().signal,
+                sampleKey: "turn-key",
+                branchId: 42 as unknown as string,
+            });
+            expect(ctx.inScope).toBe(true);
+        });
     });
 });

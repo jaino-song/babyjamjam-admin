@@ -208,7 +208,8 @@
       "acceptable": ["clarification-required"],
       "unacceptable": ["clarification-not-required"],
       "labelProvenance": "synthetic-authored",
-      "notes": "same utterance as intent-001: an update without a new value requires clarification"
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": false },
+      "notes": "same utterance as intent-001: an update without a new value requires clarification. No target resolved yet (targetConfirmed=false) and no proposed change given, so deriveMissingFields (agent-runtime.service.ts, BJJ-344 part 2) reports the full CLIENT_WRITE_FIELD_NAMES set: the update capability's un-scoped task.required issue names no single field."
     },
     {
       "id": "clarify-002",
@@ -216,11 +217,12 @@
       "split": "calibration",
       "scenarioFamily": "clarify-complete-command",
       "language": "ko",
-      "text": "윤지우 산모 메모를 '방문 시간 변경 요청'으로 수정해줘",
+      "text": "윤지우 산모 주소를 '서울시 강남구 테헤란로 1'로 수정해줘",
       "acceptable": ["clarification-not-required"],
       "unacceptable": ["clarification-required"],
       "labelProvenance": "synthetic-authored",
-      "notes": "target and value are both explicit"
+      "state": { "missingFields": [], "targetConfirmed": true },
+      "notes": "target and value are both explicit; the record (윤지우) is confirmed (state.targetConfirmed=true) and this turn supplies a real client write field (address), so hasProposedChange is true and deriveMissingFields reports no missing fields. Previously used a memo/note value, which is not a CLIENT_WRITE_FIELD_NAMES member; replaced with address."
     },
     {
       "id": "clarify-003",
@@ -232,7 +234,8 @@
       "acceptable": ["clarification-required"],
       "unacceptable": [],
       "labelProvenance": "synthetic-authored",
-      "notes": "unresolved target reference requires clarification"
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": false },
+      "notes": "unresolved target reference requires clarification; no target resolved and no value given, so deriveMissingFields reports the full write-field set."
     },
     {
       "id": "clarify-004",
@@ -244,7 +247,7 @@
       "acceptable": ["clarification-not-required"],
       "unacceptable": [],
       "labelProvenance": "synthetic-authored",
-      "notes": "plain read request needs no clarification"
+      "notes": "plain read request needs no clarification; a lookup carries no client-write task at all, so no state is declared here (the harness default of no missing fields, no confirmed target, applies vacuously)."
     },
     {
       "id": "clarify-005",
@@ -256,7 +259,59 @@
       "acceptable": ["clarification-required"],
       "unacceptable": [],
       "labelProvenance": "synthetic-authored",
-      "notes": "no target and no value"
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": false },
+      "notes": "no target and no value; deriveMissingFields reports the full write-field set."
+    },
+    {
+      "id": "clarify-006",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-confirmed-target-followup-value",
+      "language": "ko",
+      "text": "산후조리원을 '테스트 조리원'으로 수정해줘",
+      "acceptable": ["clarification-not-required"],
+      "unacceptable": ["clarification-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": [], "targetConfirmed": true },
+      "notes": "Follow-up turn on an already-established task: the record (테스트산모) was confirmed in an earlier turn (state.targetConfirmed=true) and this turn's text supplies a real client write field (careCenter), with no record named, so hasProposedChange is true and deriveMissingFields reports no missing fields. Previously used a memo/note value, which is not a CLIENT_WRITE_FIELD_NAMES member; replaced with careCenter."
+    },
+    {
+      "id": "clarify-007",
+      "decisionKind": "evaluate-clarification",
+      "split": "holdout",
+      "scenarioFamily": "clarify-confirmed-target-value-still-missing",
+      "language": "ko",
+      "text": "그 정보를 업데이트해줘",
+      "acceptable": ["clarification-required"],
+      "unacceptable": ["clarification-not-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": true },
+      "notes": "Follow-up turn where the record (테스트산모) is already confirmed (state.targetConfirmed=true) but the text still gives no new value; updateIssues' own un-scoped task.required issue fires (no proposed change), so deriveMissingFields reports the full CLIENT_WRITE_FIELD_NAMES set rather than an invented placeholder like \"value\" — clarification is still required."
+    },
+    {
+      "id": "clarify-008",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-no-target-value-given",
+      "language": "ko",
+      "text": "주소를 '테스트 사옥 3층'으로 바꿔줘",
+      "acceptable": ["clarification-required"],
+      "unacceptable": [],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": false },
+      "notes": "A new value is given but no record is named in the text and none is confirmed by state (targetConfirmed=false); updateIssues' target-missing check fires unconditionally, independent of any proposed change, so deriveMissingFields reports the full write-field set and clarification is required regardless of the value being present. Fully decidable from text alone, so this case is live-verifiable under today's harness defaults."
+    },
+    {
+      "id": "clarify-009",
+      "decisionKind": "evaluate-clarification",
+      "split": "holdout",
+      "scenarioFamily": "clarify-lookup-named-target",
+      "language": "ko",
+      "text": "테스트산모 정보 좀 보여줘",
+      "acceptable": ["clarification-not-required"],
+      "unacceptable": [],
+      "labelProvenance": "synthetic-authored",
+      "notes": "A lookup request (mutationRequested=false) naming a record; no clarification is required because it only looks something up, independent of any missing-field or unconfirmed-target state. Fully decidable from text alone, so this case is live-verifiable under today's harness defaults."
     },
     {
       "id": "route-001",

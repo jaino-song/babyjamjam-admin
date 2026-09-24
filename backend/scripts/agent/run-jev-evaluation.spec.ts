@@ -20,6 +20,8 @@ import { join, resolve } from "node:path";
 
 import type { Fetch } from "@typesafe-ai/sdk";
 
+import { CLIENT_WRITE_FIELD_NAMES } from "@babyjamjam/shared";
+import { buildRedactedDecisionText } from "../../application/agent/decision/decision-input";
 import { DECISION_KINDS } from "../../application/agent/decision/decision-contracts";
 import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
 import {
@@ -68,8 +70,10 @@ const RAW_FIXTURE = JSON.parse(readFileSync(FIXTURE_PATH, "utf8")) as {
         text: string;
         decisionKind: string;
         split: string;
+        state?: { missingFields: string[]; targetConfirmed: boolean };
     }>;
 };
+const RAW_CASES_BY_ID = new Map(RAW_FIXTURE.cases.map((item) => [item.id, item]));
 const CORPUS_TEXTS = new Set(RAW_FIXTURE.cases.map((item) => item.text));
 const FULL_KIND_COUNTS: Record<string, number> = {};
 for (const item of RAW_FIXTURE.cases) {
@@ -105,18 +109,30 @@ function throwingFetch(): { fetch: Fetch; calls: string[] } {
     return { fetch, calls };
 }
 
+/** Request body shape captured by {@link liveStubFetch}, loose enough to cover every decision kind's `state`. */
+interface CapturedRequestBody {
+    readonly state?: {
+        readonly text?: string;
+        readonly missingFields?: readonly string[];
+        readonly targetConfirmed?: boolean;
+    };
+    readonly questions: Record<string, { type?: string; criteria?: Record<string, unknown> }>;
+}
+
 /**
  * Generic live stub: answers every noul question with 0.5 and every choice
  * question with the first criteria label at argmax, so the whole fixture
- * corpus completes through the production adapter deterministically.
+ * corpus completes through the production adapter deterministically. Every
+ * request body is captured verbatim in `bodies` so a test can assert exactly
+ * what state/text the adapter sent, without re-parsing `init.body` itself.
  */
-function liveStubFetch(): { fetch: Fetch; calls: string[] } {
+function liveStubFetch(): { fetch: Fetch; calls: string[]; bodies: CapturedRequestBody[] } {
     const calls: string[] = [];
+    const bodies: CapturedRequestBody[] = [];
     const fetch: Fetch = async (url, init) => {
         calls.push(String(url));
-        const body = JSON.parse(String(init?.body ?? "{}")) as {
-            questions: Record<string, { type?: string; criteria?: Record<string, unknown> }>;
-        };
+        const body = JSON.parse(String(init?.body ?? "{}")) as CapturedRequestBody;
+        bodies.push(body);
         const answers: Record<string, unknown> = {};
         for (const [key, question] of Object.entries(body.questions)) {
             if (question.type === "choice") {
@@ -139,7 +155,7 @@ function liveStubFetch(): { fetch: Fetch; calls: string[] } {
             { status: 200, headers: { "content-type": "application/json" } },
         );
     };
-    return { fetch, calls };
+    return { fetch, calls, bodies };
 }
 
 function requireOk(result: JevRunResult): Extract<JevRunResult, { ok: true }> {
@@ -514,6 +530,76 @@ describe("live mode with an injected fetch stub", () => {
             judgments: { clarificationRequired: CLARIFICATION_BINARIZATION_THRESHOLD },
         });
         expect(byId.get("intent-001")?.reference.acceptable).toEqual(["update_related"]);
+    });
+
+    it("passes each clarification case's declared state through to the live request, defaulting when the case declares none, with the runtime's own text redaction applied", async () => {
+        const dir = newWorkDir();
+        const output = join(dir, "live-report.json");
+        const stub = liveStubFetch();
+
+        requireOk(await runJevEvaluation(liveOptions(output, { fetchImpl: stub.fetch })));
+
+        // Only evaluate-clarification requests carry missingFields/targetConfirmed
+        // in `state` (typesafe-jev-decision.service.ts:434-438); other kinds'
+        // state shapes never include targetConfirmed, so this filter isolates
+        // exactly the clarification calls. `selected`/`stub.bodies` both
+        // iterate the corpus in file order (run-jev-evaluation.ts's
+        // `for (const item of selected)`), so zipping the clarification
+        // cases against the clarification bodies by position pairs each
+        // case with its own request deterministically — text alone can no
+        // longer key this map now that the request carries redacted, not
+        // raw, text.
+        const clarificationCases = RAW_FIXTURE.cases.filter((item) => item.decisionKind === "evaluate-clarification");
+        const clarificationBodies = stub.bodies
+            .filter((body) => typeof body.state?.targetConfirmed === "boolean")
+            .map((body) => body.state);
+        expect(clarificationBodies.length).toBe(FULL_KIND_COUNTS["evaluate-clarification"]);
+        expect(clarificationBodies.length).toBe(clarificationCases.length);
+        const stateByCaseId = new Map(clarificationCases.map((item, index) => [item.id, clarificationBodies[index]]));
+
+        // The request's `state.text` is the runtime's own redaction
+        // (`buildRedactedDecisionText`, decision-input.ts) applied to the
+        // case's raw text with no known values — never the raw corpus text.
+        for (const item of clarificationCases) {
+            expect(stateByCaseId.get(item.id)?.text).toBe(buildRedactedDecisionText(item.text, []));
+        }
+
+        // clarify-006 declares an explicit state in the corpus
+        // (targetConfirmed: true, no proposed change still missing) — the
+        // live request must carry it verbatim, not the harness's old
+        // hardcoded targetConfirmed: false.
+        const case006 = RAW_CASES_BY_ID.get("clarify-006");
+        expect(case006?.state).toEqual({ missingFields: [], targetConfirmed: true });
+        expect(stateByCaseId.get("clarify-006")).toEqual({
+            text: buildRedactedDecisionText(case006?.text ?? "", []),
+            missingFields: [],
+            targetConfirmed: true,
+        });
+
+        // clarify-007: target confirmed but no proposed change was given
+        // this turn — `deriveMissingFields` (agent-runtime.service.ts)
+        // reports the full CLIENT_WRITE_FIELD_NAMES set in that state, not
+        // an invented field-shaped token like "value".
+        const case007 = RAW_CASES_BY_ID.get("clarify-007");
+        expect(case007?.state?.missingFields).toEqual(CLIENT_WRITE_FIELD_NAMES);
+        expect(case007?.state?.targetConfirmed).toBe(true);
+        expect(stateByCaseId.get("clarify-007")).toEqual({
+            text: buildRedactedDecisionText(case007?.text ?? "", []),
+            missingFields: CLIENT_WRITE_FIELD_NAMES,
+            targetConfirmed: true,
+        });
+
+        // clarify-004 is a pure lookup with no client-write task at all, so
+        // it declares no state — the request must fall back to the
+        // documented default (missingFields: [], targetConfirmed: false),
+        // so cases authored before this field existed evaluate unchanged.
+        const case004 = RAW_CASES_BY_ID.get("clarify-004");
+        expect(case004?.state).toBeUndefined();
+        expect(stateByCaseId.get("clarify-004")).toEqual({
+            text: buildRedactedDecisionText(case004?.text ?? "", []),
+            missingFields: [],
+            targetConfirmed: false,
+        });
     });
 
     it("shares the fixture report shape so both modes are comparable", async () => {

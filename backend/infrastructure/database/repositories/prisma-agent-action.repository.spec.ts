@@ -82,6 +82,11 @@ describe("PrismaAgentActionRepository", () => {
 
         await expect(repository.createInActiveSession(input)).resolves.toEqual(expect.objectContaining({ status: "created" }));
         expect(transaction.$queryRaw).toHaveBeenCalledWith(expect.anything());
+        // agent_session.user_id/branch_id are uuid columns; an uncast text
+        // parameter fails in Postgres with "operator does not exist: uuid = text".
+        const lockSql = (transaction.$queryRaw.mock.calls[0]?.[0] as { strings: string[] }).strings.join("?");
+        expect(lockSql).toMatch(/"user_id" = CAST\(\? AS uuid\)/);
+        expect(lockSql).toMatch(/"branch_id" = CAST\(\? AS uuid\)/);
         expect(transaction.agent_action.create).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({ id: input.id, sessionId: input.sessionId, userId: owner.userId, branchId: owner.branchId }),
         }));

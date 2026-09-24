@@ -149,9 +149,16 @@ gcloud iam workload-identity-pools providers create-oidc babyjamjam-gh \
   --workload-identity-pool=github \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
-  --attribute-condition="assertion.repository=='${REPO_OWNER}/${REPO}' && assertion.ref=='refs/heads/preview'" \
+  --attribute-condition="assertion.repository=='${REPO_OWNER}/${REPO}' && assertion.ref=='refs/heads/preview' && assertion.event_name=='push' && assertion.job_workflow_ref=='${REPO_OWNER}/${REPO}/.github/workflows/backend-ci.yml@refs/heads/preview'" \
   --project="$PROJECT_ID"
 ```
+
+- `event_name`·`job_workflow_ref` 조건은 2026-09-24 사후 리뷰로 추가됐다: repository+ref만 검사하면
+  `preview`에 push할 수 있는 누구나 `id-token: write` 워크플로를 새로 추가해 프로덕션 시크릿을 읽을 수 있다.
+  단, `job_workflow_ref`는 경로와 ref만 고정하고 파일 내용은 고정하지 않는다 — `preview`에 push할 수 있으면
+  `backend-ci.yml` 자체를 수정해 토큰을 받을 수 있다. 이 조건은 "새 워크플로 추가" 경로만 막으므로
+  `preview` 브랜치 보호(직접 push 제한·필수 리뷰)가 나머지를 담당해야 한다.
+  이미 만든 provider는 같은 `--attribute-condition`으로 `gcloud iam workload-identity-pools providers update-oidc babyjamjam-gh --location=global --workload-identity-pool=github --project="$PROJECT_ID"`를 실행해 갱신한다.
 
 - `google.subject` 매핑은 필수다. `attribute.repository`/`attribute.ref`는 attribute condition과
   아래 바인딩에서 쓰인다.
@@ -208,9 +215,14 @@ echo "$SERVICE_URL"
 
 - [ ] env 파일은 프로덕션 백엔드 env(프로덕션 호스트 `/opt/babyjamjam-fallback-server/backend.env`,
       프로덕션이 LightNode fallback에서 운영되는 동안)에서 만든다 — preview는 프로덕션과 같은 값
-- [ ] preview 전용 오버라이드 두 개만 env 파일에서 바꾼다: `KAKAO_CALLBACK_URL` =
-      `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로), `PRODUCTION_MOBILE_FRONTEND_URL`
-      = `https://preview.m.admin.babyjamjam.com` (preview 모바일 프론트엔드; `NODE_ENV=production`에서 모바일 카카오 로그인이 여기로 redirect한다)
+- [ ] preview 전용 오버라이드는 `KAKAO_CALLBACK_URL` 하나만 env 파일에서 바꾼다:
+      `${SERVICE_URL}/auth/kakao/callback` (§3.6의 `SERVICE_URL` 그대로). `sync-secrets.sh`는
+      `https://<service>.run.app/auth/kakao/callback` 형태가 아니면 exit 1로 거부한다.
+      `PRODUCTION_MOBILE_FRONTEND_URL`은 시크릿이 아니라 `service.preview.yaml`의 평문 값
+      `https://preview.m.admin.babyjamjam.com`으로 고정되어 있다 (`NODE_ENV=production`에서 모바일 카카오
+      로그인이 여기로 redirect하고 CORS도 이 값을 허용하므로, 프로덕션 값이 그대로 복사돼도 preview에 적용되지 않게 함).
+      예전 Secret Manager의 `PRODUCTION_MOBILE_FRONTEND_URL` 시크릿은 더 이상 참조되지 않으므로
+      이 manifest가 배포된 뒤 `gcloud secrets delete PRODUCTION_MOBILE_FRONTEND_URL --project=$PROJECT_ID`로 지운다.
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
 - [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
       둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고

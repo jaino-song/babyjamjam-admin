@@ -154,7 +154,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
 
         const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
             .overrideProvider(AgentModelFactory)
-            .useValue({ modelId: "unused-service-record-planner-proof", create: jest.fn(() => { throw new Error("No model call is allowed in service-record planner proof"); }) })
+            .useValue({ modelId: "unused-service-record-planner-proof", providerOptions: () => ({}), create: jest.fn(() => { throw new Error("No model call is allowed in service-record planner proof"); }) })
             .compile();
         app = moduleRef.createNestApplication();
         await app.init();

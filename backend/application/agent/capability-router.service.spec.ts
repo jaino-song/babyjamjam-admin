@@ -1,5 +1,5 @@
 import { generateText } from "ai";
-import { CapabilityRouterService, minimizeClassifierText, type RouterDecisionContext } from "./capability-router.service";
+import { CapabilityRouterService, CORE_READ_CAPABILITIES, minimizeClassifierText, type RouterDecisionContext } from "./capability-router.service";
 import type { DecisionMode } from "./decision/decision-contracts";
 import type { DecisionTurnContext } from "./decision/agent-decision.service";
 
@@ -27,6 +27,11 @@ describe("CapabilityRouterService", () => {
     }
 
     const principal = { userId: "u", branchId: "b", globalRole: "admin", branchRole: "admin" } as const;
+
+    /** Full-meta fixture: `risk`/`sideEffect` matter to the core-reads gate. */
+    function readCap(name: string, domain: string, requiredRoles: readonly string[] = ["admin"]) {
+        return { meta: { name, domain, risk: "read" as const, sideEffect: false, requiredRoles } };
+    }
 
     it("routes Korean and English terms only to enabled capabilities", async () => {
         const registry = {
@@ -321,7 +326,6 @@ describe("CapabilityRouterService", () => {
     describe("decision facade routing", () => {
         function stubTurn(): DecisionTurnContext {
             return {
-                deadlineAt: Date.now() + 60_000,
                 signal: new AbortController().signal,
                 sampleKey: "spec-turn",
                 collector: { record: jest.fn() },
@@ -621,5 +625,203 @@ describe("CapabilityRouterService", () => {
                 knownValues: ["서울시 강남구"],
             }));
         });
+
+        // Nested inside "decision facade routing" so these tests can reuse
+        // `facadeStub`/`principal`/`readCap` from that closure.
+        describe("core read capabilities", () => {
+        it("appends every enabled core read after the routed prefix, deduplicated, domains unchanged", async () => {
+            // Registry order deliberately differs from CORE_READ_CAPABILITIES
+            // tuple order to prove the suffix follows the tuple, not the
+            // registry (M2).
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients"),
+                    readCap("clients.get", "clients"),
+                    readCap("dashboard.summary", "dashboard"),
+                    readCap("contracts.status", "contracts"),
+                    readCap("schedules.list", "schedules"),
+                    readCap("employees.search", "employees"),
+                    readCap("employees.get", "employees"),
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            const result = await router.route("산모 몇 명이야?", principal);
+
+            expect(result.domains).toEqual(["clients"]);
+            expect(result.disposition).toBe("selected");
+            // Routed (clients.*) first, then the rest of the core tuple in
+            // its own declared order, each capability appearing exactly once.
+            expect(result.capabilities.map((capability) => capability.meta.name)).toEqual([
+                "clients.search",
+                "clients.get",
+                "employees.search",
+                "employees.get",
+                "schedules.list",
+                "dashboard.summary",
+                "contracts.status",
+            ]);
+            expect(result.capabilities.map((capability) => capability.meta.name)).toEqual([...CORE_READ_CAPABILITIES]);
+        });
+
+        it("keeps a routed write capability and never adds a write capability from an unrouted domain", async () => {
+            const registry = {
+                list: () => [
+                    { meta: { name: "clients.update", domain: "clients", risk: "reversible-write", sideEffect: true, requiredRoles: ["admin"] } },
+                    { meta: { name: "schedules.create", domain: "schedules", risk: "reversible-write", sideEffect: true, requiredRoles: ["admin"] } },
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            const result = await router.route("산모 정보 수정", principal);
+
+            expect(result.domains).toEqual(["clients"]);
+            expect(result.capabilities.map((capability) => capability.meta.name)).toEqual(["clients.update"]);
+        });
+
+        it("does not offer a core capability disabled by flag for the principal, while a domain sibling stays offered", async () => {
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients"),
+                    readCap("employees.search", "employees"),
+                    readCap("employees.get", "employees"),
+                ],
+            };
+            const flags = {
+                getSnapshot: jest.fn().mockResolvedValue({ config: {}, emergencyDisabled: false }),
+                isCapabilityEnabledFromSnapshot: jest.fn().mockImplementation((meta: { name: string }) => meta.name !== "employees.search"),
+            };
+            const router = new CapabilityRouterService(registry as never, flags as never);
+
+            const result = await router.route("산모 검색", principal);
+
+            const names = result.capabilities.map((capability) => capability.meta.name);
+            expect(names).not.toContain("employees.search");
+            expect(names).toContain("employees.get");
+        });
+
+        it("does not offer a core capability whose requiredRoles exclude the principal's branchRole", async () => {
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients", ["admin", "staff"]),
+                    readCap("employees.search", "employees", ["admin"]),
+                    readCap("employees.get", "employees", ["admin", "staff"]),
+                ],
+            };
+            const flags = {
+                getSnapshot: jest.fn().mockResolvedValue({ config: {}, emergencyDisabled: false }),
+                isCapabilityEnabledFromSnapshot: jest.fn().mockImplementation(
+                    (meta: { requiredRoles: readonly string[] }, p: { branchRole: string }) => meta.requiredRoles.includes(p.branchRole),
+                ),
+            };
+            const staffPrincipal = { userId: "u", branchId: "b", globalRole: "staff", branchRole: "staff" } as const;
+            const router = new CapabilityRouterService(registry as never, flags as never);
+
+            const result = await router.route("산모 검색", staffPrincipal);
+
+            const names = result.capabilities.map((capability) => capability.meta.name);
+            expect(names).not.toContain("employees.search");
+            expect(names).toContain("employees.get");
+        });
+
+        it("keeps clarify disposition free of core reads even when core capabilities are enabled", async () => {
+            const facade = facadeStub(["clients", "employees"]);
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients"),
+                    readCap("employees.search", "employees"),
+                    readCap("schedules.search", "schedules"),
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            await expect(router.route("산모 관리사 일정", principal, 12, [], facade.context("enforce"))).resolves.toMatchObject({
+                domains: [],
+                capabilities: [],
+                disposition: "clarify",
+            });
+        });
+
+        it("still returns zero capabilities for a 'selected' disposition with no routed domain (M1)", async () => {
+            // Only employees.search is enabled; "도와줘" matches no keyword
+            // domain and no classifier model is configured, so the incumbent
+            // path's `domains` stays empty even though the result is
+            // "selected" (not "disabled" — employees is enabled).
+            const registry = { list: () => [readCap("employees.search", "employees")] };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            await expect(router.route("도와줘", principal)).resolves.toEqual({
+                domains: [],
+                capabilities: [],
+                disposition: "selected",
+            });
+        });
+
+        it("never adds a core-named registry entry whose risk/sideEffect metadata is not a genuine read (M2 negative)", async () => {
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients"),
+                    { meta: { name: "dashboard.summary", domain: "dashboard", risk: "reversible-write", sideEffect: true, requiredRoles: ["admin"] } },
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            const result = await router.route("산모 검색", principal);
+
+            expect(result.capabilities.map((capability) => capability.meta.name)).not.toContain("dashboard.summary");
+        });
+
+        it("enforce's selected result also offers enabled core read capabilities, appended after the routed selection", async () => {
+            const facade = facadeStub(["employees"]);
+            const registry = {
+                list: () => [
+                    readCap("clients.search", "clients"),
+                    readCap("employees.search", "employees"),
+                    readCap("dashboard.summary", "dashboard"),
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            const result = await router.route("고객 직원", principal, 12, [], facade.context("enforce"));
+
+            expect(result.domains).toEqual(["employees"]);
+            expect(result.disposition).toBe("selected");
+            expect(result.capabilities.map((capability) => capability.meta.name)).toEqual([
+                "employees.search",
+                "clients.search",
+                "dashboard.summary",
+            ]);
+        });
+
+        it("appends the core suffix on top of `max`, without evicting or shrinking the routed prefix (m1)", async () => {
+            const registry = {
+                list: () => [
+                    readCap("clients.read0", "clients"),
+                    readCap("clients.read1", "clients"),
+                    readCap("clients.read2", "clients"),
+                    readCap("clients.read3", "clients"),
+                    readCap("clients.read4", "clients"),
+                    readCap("dashboard.summary", "dashboard"),
+                    readCap("contracts.status", "contracts"),
+                    readCap("schedules.list", "schedules"),
+                    readCap("employees.search", "employees"),
+                    readCap("employees.get", "employees"),
+                ],
+            };
+            const router = new CapabilityRouterService(registry as never, enabledFlags() as never);
+
+            const result = await router.route("client", principal, 2);
+
+            expect(result.capabilities.map((capability) => capability.meta.name)).toEqual([
+                "clients.read0",
+                "clients.read1",
+                "employees.search",
+                "employees.get",
+                "schedules.list",
+                "dashboard.summary",
+                "contracts.status",
+            ]);
+        });
     });
+});
 });

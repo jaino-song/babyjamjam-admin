@@ -921,6 +921,7 @@ class DeterministicProductClientRepository implements IClientRepository {
     async findWithIncompleteContractsStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findWithoutContractSentStartingWithinDays(): Promise<ClientEntity[]> { return []; }
     async findByPhone(): Promise<ClientEntity | null> { return null; }
+    async findNamesByIds(): Promise<Array<{ id: number; name: string }>> { return []; }
 }
 
 type ProductCapabilityDefinition = {
@@ -1040,6 +1041,7 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
         this.taskService = new AgentTaskService(this.taskRepository, policy, new DeterministicProductClientRepository());
         const modelFactory = {
             modelId: "deterministic-product-v1",
+            providerOptions: () => ({}),
             create: () => {
                 this.modelInvocations += 1;
                 return new DeterministicAgentLanguageModel([{ type: "text", text: "결정론적 제품 런타임 응답" }]);

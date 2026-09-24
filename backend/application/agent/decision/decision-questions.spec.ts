@@ -49,12 +49,12 @@ function currentQuestionDigest(): { version: string; digest: string } {
 // Question text changed — bump DECISION_QUESTION_VERSION, regenerate
 // evaluation evidence and stored acceptance profiles, then re-pin this
 // digest. This pin exists because rewording any description/question
-// while leaving the version at "v2" would otherwise keep every other test
-// green: a v2 acceptance profile calibrated on the old wording would then
+// while leaving the version unchanged would otherwise keep every other test
+// green: an acceptance profile calibrated on the old wording would then
 // silently apply to different questions.
 const PINNED_QUESTION_DIGEST = {
-    version: "v2",
-    digest: "0cf08a2d1796d9c4860dd7ac552dbe761fcb8cac63e0e798fdd1a2a33fcb2027",
+    version: "v3",
+    digest: "5bf661380b3f5949464dafb6e5643282d9e6ed89a4ea8eee57d9aec780030a60",
 };
 
 describe("question text is pinned to DECISION_QUESTION_VERSION", () => {

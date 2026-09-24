@@ -352,11 +352,33 @@ export function extractExplicitUserOperations(text: string): ClientInputOperatio
     return operations;
 }
 
+/**
+ * A trailing imperative mutation verb ("바꿔줘", "수정해 주세요", ...) makes the whole text a
+ * write request even when an earlier clause contains a question-like keyword (e.g. "확인하고
+ * ... 바꿔줘"). Matched only at the end of the (trimmed) text.
+ */
+const IMPERATIVE_CHANGE_REQUEST = new RegExp(
+    "(?:바꿔|바꾸어|변경해|수정해|고쳐|등록해|추가해|만들어|생성해|설정해|지정해|해제해|삭제해|지워|넣어|입력해|저장해|전환해|돌려)"
+    + "\\s*(?:줘|주세요|줄래|주라|주십시오)?\\s*[.!！。]*\\s*$",
+    "u",
+);
+const IMPERATIVE_CHANGE_REQUEST_NARROW = /(?:하게|으로|로)\s*해\s*(?:줘|주세요)\s*[.!！。]*\s*$/u;
+/**
+ * A genuine interrogative word makes the whole text a how-to/what/when-style question no
+ * matter how it ends — "계약서 어떻게 만들어" is a question about a trailing imperative verb,
+ * not a write request. The imperative override below must never fire over one of these.
+ */
+const INTERROGATIVE_WORD = /(?:어떻게|무엇|뭐|언제|어디|왜|누가|누구|몇)/u;
+
 export function isQuestionLike(text: string): boolean {
     const normalized = text.trim();
-    return normalized.endsWith("?")
-        || normalized.endsWith("？")
-        || /(?:알려|조회|확인|가능|어떻게|무엇|언제|어디|왜|찾아|보여|정리해|답해)/u.test(normalized);
+    if (normalized.endsWith("?") || normalized.endsWith("？")) return true;
+    const hasInterrogative = INTERROGATIVE_WORD.test(normalized);
+    if (
+        !hasInterrogative
+        && (IMPERATIVE_CHANGE_REQUEST.test(normalized) || IMPERATIVE_CHANGE_REQUEST_NARROW.test(normalized))
+    ) return false;
+    return hasInterrogative || /(?:알려|조회|확인|가능|찾아|보여|정리해|답해)/u.test(normalized);
 }
 
 /** A topic-labelled answer is grounded in the original text, never in model output. */

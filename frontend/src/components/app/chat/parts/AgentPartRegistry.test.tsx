@@ -4,6 +4,13 @@ import { CLIENT_WRITE_FIELD_NAMES, type AgentTask } from "@babyjamjam/shared";
 
 import { AgentPartRegistry } from "./AgentPartRegistry";
 
+jest.mock("next/link", () => ({
+    __esModule: true,
+    default: ({ children, href, prefetch }: { children: React.ReactNode; href: string; prefetch?: boolean }) => (
+        <a href={href} data-testid="next-link" data-prefetch={String(prefetch)}>{children}</a>
+    ),
+}));
+
 if (typeof globalThis.ResizeObserver === "undefined") {
     Object.defineProperty(globalThis, "ResizeObserver", {
         configurable: true,
@@ -307,5 +314,145 @@ describe("AgentPartRegistry", () => {
         fireEvent.click(checkbox);
         fireEvent.submit(form!);
         expect(onSubmitForm).toHaveBeenNthCalledWith(2, "settings-form", { enabled: false });
+    });
+
+    it("does not show the fallback for step-start parts around a tool call in a normal reply", () => {
+        const message = {
+            id: "assistant-step-start",
+            role: "assistant",
+            parts: [
+                { type: "step-start" },
+                { type: "text", text: "조회할게요." },
+                { type: "tool-clients_search", state: "output-available", output: { kind: "entity", entity: { id: 1, name: "홍길동" } } },
+                { type: "step-start" },
+                { type: "text", text: "결과예요." },
+            ],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.getByText("조회할게요.")).toBeInTheDocument();
+        expect(screen.getByText("결과예요.")).toBeInTheDocument();
+    });
+
+    it("renders nothing for reasoning parts, never the fallback or the thinking text", () => {
+        const message = {
+            id: "assistant-reasoning",
+            role: "assistant",
+            parts: [{ type: "reasoning", text: "내부 사고 과정 비밀" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+        expect(screen.queryByText("내부 사고 과정 비밀")).not.toBeInTheDocument();
+    });
+
+    it("renders markdown text parts as real markdown, not raw syntax", () => {
+        const message = {
+            id: "assistant-markdown",
+            role: "assistant",
+            parts: [{ type: "text", text: "**중요**\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.getByText("중요").tagName).toBe("STRONG");
+        expect(screen.getByRole("table")).toBeInTheDocument();
+        expect(screen.getByText("1").closest("td, th")).toBeTruthy();
+        expect(screen.queryByText(/\| --- \|/)).not.toBeInTheDocument();
+        expect(document.querySelector(`[data-component="${dataComponent}_text"]`)).toBeInTheDocument();
+    });
+
+    it("does not render an <img> element or a <script> element from a malicious text part", () => {
+        const message = {
+            id: "assistant-markdown-unsafe",
+            role: "assistant",
+            parts: [{ type: "text", text: "![a](https://evil.test/x.png)\n\n<script>alert(1)</script>\n\n<img src=x onerror=alert(1)>" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(document.querySelector("img")).not.toBeInTheDocument();
+        expect(document.querySelector("script")).not.toBeInTheDocument();
+        expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+    });
+
+    it("keeps same-origin paths as same-tab links but never protocol-relative hosts", () => {
+        const message = {
+            id: "assistant-markdown-links",
+            role: "assistant",
+            parts: [{ type: "text", text: "[내부](/clients/1) [외부1](//evil.test/x) [외부2](/\\evil.test/x)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const internal = screen.getByRole("link", { name: "내부" });
+        expect(internal).toHaveAttribute("href", "/clients/1");
+        expect(internal).not.toHaveAttribute("target");
+        expect(internal).not.toHaveAttribute("node");
+        expect(screen.queryByRole("link", { name: "외부1" })).not.toBeInTheDocument();
+        expect(screen.getByText("외부1")).toBeInTheDocument();
+        for (const anchor of Array.from(document.querySelectorAll("a"))) {
+            expect(new URL(anchor.getAttribute("href") ?? "", "https://app.test").origin).toBe("https://app.test");
+        }
+    });
+
+    it("renders a single newline inside a paragraph as a line break", () => {
+        const message = {
+            id: "assistant-markdown-break",
+            role: "assistant",
+            parts: [{ type: "text", text: "줄1\n줄2" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const wrapper = document.querySelector(`[data-component="${dataComponent}_text"]`);
+        expect(wrapper?.querySelector("br")).toBeInTheDocument();
+        expect(wrapper?.textContent).toContain("줄1");
+        expect(wrapper?.textContent).toContain("줄2");
+    });
+
+    it("keeps a fenced code block's newlines literal, without inserting a <br>", () => {
+        const message = {
+            id: "assistant-markdown-code",
+            role: "assistant",
+            parts: [{ type: "text", text: "```\nline1\nline2\n```" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const wrapper = document.querySelector(`[data-component="${dataComponent}_text"]`);
+        expect(wrapper?.querySelector("br")).not.toBeInTheDocument();
+        const codeEl = wrapper?.querySelector("code");
+        expect(codeEl).toBeInTheDocument();
+        expect(codeEl?.textContent).toContain("line1\nline2");
+    });
+
+    it("navigates a same-origin link client-side through next/link", () => {
+        const message = {
+            id: "assistant-markdown-next-link",
+            role: "assistant",
+            parts: [{ type: "text", text: "[내부](/clients/1)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const internal = screen.getByRole("link", { name: "내부" });
+        expect(internal).toHaveAttribute("href", "/clients/1");
+        expect(internal).toHaveAttribute("data-testid", "next-link");
+        expect(internal).not.toHaveAttribute("target");
+        // Model-authored links must never prefetch: a prompt-injected same-origin
+        // link would otherwise fire an authenticated GET on render, with no click.
+        expect(internal).toHaveAttribute("data-prefetch", "false");
+    });
+
+    it("still opens an external http(s) link in a new tab unchanged", () => {
+        const message = {
+            id: "assistant-markdown-external-link",
+            role: "assistant",
+            parts: [{ type: "text", text: "[외부](https://example.com/doc)" }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        const external = screen.getByRole("link", { name: "외부" });
+        expect(external).toHaveAttribute("href", "https://example.com/doc");
+        expect(external).toHaveAttribute("target", "_blank");
+        expect(external).toHaveAttribute("rel", "noopener noreferrer");
+        expect(external).not.toHaveAttribute("data-testid", "next-link");
+    });
+
+    it("still falls back for a genuinely unknown data-* part", () => {
+        const message = {
+            id: "assistant-unknown-data-part",
+            role: "assistant",
+            parts: [{ type: "data-xyz", data: { anything: true } }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.getByText(/새 형식/)).toBeInTheDocument();
     });
 });

@@ -9,6 +9,7 @@ import {
     type DecisionAcceptanceProfile,
     type DecisionEvidence,
     type DecisionFailureReason,
+    type DecisionKind,
     type DecisionMode,
     type DecisionPolicyResult,
     type DecisionProfileMismatchReason,
@@ -376,4 +377,39 @@ export function toDecisionTraceEvent(input: DecisionTraceInput): DecisionTraceEv
 /** Exhaustiveness helper for status handling at call sites. */
 export function isDecisionStatusAccepted(status: DecisionStatus): status is "accepted" {
     return status === DECISION_STATUSES.accepted;
+}
+
+export interface SkipTraceInput {
+    readonly decisionKind: DecisionKind;
+    readonly mode: DecisionMode;
+    readonly questionVersion: string;
+    readonly reason: DecisionFailureReason;
+}
+
+/**
+ * Trace event for a call skipped by a budget/concurrency gate, before any
+ * provider call was made: no evidence exists, so every evidence-shaped field
+ * is the bounded placeholder the strict trace validator already accepts
+ * (`model`/`profileVersion` null, empty labels/scores, `latencyMs: 0`). Used
+ * only for `budget-exhausted` and `concurrency-saturated` skips — `disabled`
+ * and `not-sampled` skips stay unrecorded, per the façade's contract.
+ */
+export function buildSkipTraceEvent(input: SkipTraceInput): DecisionTraceEventV1 {
+    return {
+        kind: "semantic-decision-v1",
+        decisionKind: input.decisionKind,
+        mode: input.mode,
+        model: null,
+        profileVersion: null,
+        questionVersion: input.questionVersion,
+        labels: [],
+        scores: [],
+        latencyMs: 0,
+        outcome: DECISION_STATUSES.notEvaluated,
+        reason: input.reason,
+        disagreement: null,
+        usage: null,
+        missing: true,
+        droppedReason: null,
+    };
 }

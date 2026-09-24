@@ -6,7 +6,9 @@ import type { AgentCapabilityProviderContract, CapabilityDefinition } from "appl
 import { ListBankAccountInfoUsecase } from "./list-bank-account-info.usecase";
 
 const AccountSchema = z.object({ area: z.string(), bankName: z.string().nullable(), accountLast4: z.string().nullable() });
-const InputSchema = z.object({ area: z.string().trim().max(80).optional() });
+const InputSchema = z.object({
+    area: z.string().trim().max(80).optional().describe("Optional partial, case-insensitive match against the branch area label."),
+});
 const OutputSchema = z.object({ accounts: z.array(AccountSchema) });
 
 function maskAccount(account: string | null): string | null {
@@ -21,7 +23,7 @@ export class BankAccountAgentCapabilitiesProvider implements AgentCapabilityProv
 
     getCapabilities(): CapabilityDefinition[] {
         return [{
-            meta: { name: "bank.accounts", domain: "bank", version: "1.0.0", description: "Read branch bank account references without exposing full account numbers", risk: "read", requiredRoles: ["owner", "admin"], renderer: "text", flagKey: "agent.capability.bank.accounts", sideEffect: false },
+            meta: { name: "bank.accounts", domain: "bank", version: "1.0.0", description: "Read the branch's registered bank account references, with account numbers masked to the last 4 digits — never the full account number. Use for: 계좌 정보, 입금 계좌, 은행 확인. Input: optional area keyword, matched partially. Returns: area, bankName, accountLast4.", risk: "read", requiredRoles: ["owner", "admin"], renderer: "text", flagKey: "agent.capability.bank.accounts", sideEffect: false },
             inputSchema: InputSchema, outputSchema: OutputSchema,
             execute: async (context, rawInput) => {
                 const input = InputSchema.parse(rawInput);

@@ -2,6 +2,7 @@ import { GetSettingUsecase } from "application/usecases/system-setting";
 
 import { DECISION_KINDS, type DecisionAcceptanceProfile } from "./decision-contracts";
 import {
+    AGENT_DECISION_ENVIRONMENT_ENV_VAR,
     AGENT_DECISION_SETTING_KEY,
     AgentDecisionConfigService,
 } from "./agent-decision-config.service";
@@ -18,10 +19,15 @@ const ALL_OFF_DEFAULT = {
     globalDisabled: false,
     modelId: "jev-1.13.0",
     samplingFraction: 0,
+    environments: [],
+    allowedBranchIds: [],
     limits: DEFAULT_LIMITS,
     kinds: {},
     profiles: {},
 };
+
+/** Test environment name used wherever a scenario needs the env gate open. */
+const TEST_ENVIRONMENT = "test-env";
 
 function makeService(stored: string | null): {
     service: AgentDecisionConfigService;
@@ -51,6 +57,16 @@ function validStoredProfile(
 }
 
 describe("AgentDecisionConfigService", () => {
+    const originalEnvironmentValue = process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+
+    afterEach(() => {
+        if (originalEnvironmentValue === undefined) {
+            delete process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+        } else {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = originalEnvironmentValue;
+        }
+    });
+
     it("reads the agent.decisions.jev key through GetSettingUsecase", async () => {
         const { service, execute } = makeService(null);
         await service.getConfig();
@@ -90,15 +106,19 @@ describe("AgentDecisionConfigService", () => {
     });
 
     it("gives globalDisabled precedence over a per-kind enforce mode", async () => {
+        process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
         const { service } = makeService(JSON.stringify({
             globalDisabled: true,
+            environments: [TEST_ENVIRONMENT],
             kinds: { [DECISION_KINDS.routeDomains]: { mode: "enforce" } },
         }));
         await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("off");
     });
 
     it("resolves per-kind modes and defaults unlisted kinds to off", async () => {
+        process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
         const { service } = makeService(JSON.stringify({
+            environments: [TEST_ENVIRONMENT],
             kinds: {
                 [DECISION_KINDS.routeDomains]: { mode: "shadow" },
                 [DECISION_KINDS.classifyClientIntent]: { mode: "enforce" },
@@ -160,7 +180,9 @@ describe("AgentDecisionConfigService", () => {
     });
 
     it("keeps mode resolution working when a stored profile is invalid", async () => {
+        process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
         const { service } = makeService(JSON.stringify({
+            environments: [TEST_ENVIRONMENT],
             kinds: { [DECISION_KINDS.routeDomains]: { mode: "shadow" } },
             profiles: { [DECISION_KINDS.routeDomains]: { modelId: "" } },
         }));
@@ -200,5 +222,92 @@ describe("AgentDecisionConfigService", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    describe("environment gate (BJJ-345)", () => {
+        const storedEnforceEverywhere = JSON.stringify({
+            environments: [TEST_ENVIRONMENT],
+            kinds: { [DECISION_KINDS.routeDomains]: { mode: "enforce" } },
+        });
+
+        it("is off when the env var is unset, even though the stored config says enforce", async () => {
+            delete process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+            const { service } = makeService(storedEnforceEverywhere);
+            for (const kind of Object.values(DECISION_KINDS)) {
+                await expect(service.getKindMode(kind)).resolves.toBe("off");
+            }
+        });
+
+        it.each(["", "   "])("is off when the env var is blank (%j)", async (blank) => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = blank;
+            const { service } = makeService(storedEnforceEverywhere);
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("off");
+        });
+
+        it("is off when the env var is set but not listed in environments", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = "some-other-env";
+            const { service } = makeService(storedEnforceEverywhere);
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("off");
+        });
+
+        it("is off for every kind when environments is empty, even with the env var set", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
+            const { service } = makeService(JSON.stringify({
+                environments: [],
+                kinds: { [DECISION_KINDS.routeDomains]: { mode: "enforce" } },
+            }));
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("off");
+        });
+
+        it("resolves the stored mode once the env var is set and listed", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
+            const { service } = makeService(storedEnforceEverywhere);
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("enforce");
+        });
+
+        it("trims the env var before comparing against environments", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = `  ${TEST_ENVIRONMENT}  `;
+            const { service } = makeService(storedEnforceEverywhere);
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("enforce");
+        });
+
+        it("negative control: the environment gate check is load-bearing", async () => {
+            // Sanity check that this suite would actually catch a removed
+            // gate: with the guard bypassed (env unset, stored mode enforce),
+            // a broken implementation that skipped the gate would return
+            // "enforce" here instead of "off".
+            delete process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+            const { service } = makeService(storedEnforceEverywhere);
+            const mode = await service.getKindMode(DECISION_KINDS.routeDomains);
+            expect(mode).not.toBe("enforce");
+            expect(mode).toBe("off");
+        });
+    });
+
+    describe("environments/allowedBranchIds sanitization (m4)", () => {
+        it("trims whitespace and drops blank entries from environments", async () => {
+            const { service } = makeService(JSON.stringify({
+                environments: [`  ${TEST_ENVIRONMENT}  `, "", "   ", "other-env"],
+            }));
+            const config = await service.getConfig();
+            expect(config.environments).toEqual([TEST_ENVIRONMENT, "other-env"]);
+        });
+
+        it("trims whitespace and drops blank entries from allowedBranchIds", async () => {
+            const { service } = makeService(JSON.stringify({
+                allowedBranchIds: ["  branch-a  ", "", "   ", "branch-b"],
+            }));
+            const config = await service.getConfig();
+            expect(config.allowedBranchIds).toEqual(["branch-a", "branch-b"]);
+        });
+
+        it("a sanitized environments entry still opens the gate for an untrimmed stored value", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
+            const { service } = makeService(JSON.stringify({
+                environments: [`  ${TEST_ENVIRONMENT}  `],
+                kinds: { [DECISION_KINDS.routeDomains]: { mode: "enforce" } },
+            }));
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("enforce");
+        });
     });
 });
