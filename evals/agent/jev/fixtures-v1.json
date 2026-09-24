@@ -314,6 +314,32 @@
       "notes": "A lookup request (mutationRequested=false) naming a record; no clarification is required because it only looks something up, independent of any missing-field or unconfirmed-target state. Fully decidable from text alone, so this case is live-verifiable under today's harness defaults."
     },
     {
+      "id": "clarify-010",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-confirmed-target-freeform-value",
+      "language": "ko",
+      "text": "생일 정보 지워서 수정해줘",
+      "acceptable": ["clarification-not-required"],
+      "unacceptable": ["clarification-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": true },
+      "notes": "BJJ-348 repro: the real runtime shape for a confirmed target with no committed change yet. The record is already resolved (state.targetConfirmed=true), but nothing has been written to task.confirmed this turn, so updateIssues' own un-scoped task.required issue still fires and deriveMissingFields reports the full CLIENT_WRITE_FIELD_NAMES set — exactly like clarify-007. The difference is the text: here the user's free text explicitly supplies the value (clear the birthday field), so clarification is not required — the model can extract the value from the text and the write still ends at the mandatory approval card. decideClarification's deterministic recovery no longer suppresses on missingFields alone (AC-18, BJJ-348); only an unconfirmed target does."
+    },
+    {
+      "id": "clarify-011",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-redaction-control",
+      "language": "ko",
+      "text": "test.parent@example.com으로 연락처를 보내줘",
+      "acceptable": ["clarification-required"],
+      "unacceptable": ["clarification-not-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": ["name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice", "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate", "serviceStatus", "breastPump", "areaId"], "targetConfirmed": false },
+      "notes": "Redaction control (BJJ-348): this text contains a bare email-address pattern that the runtime's generic free-text redaction (redactFreeText, agent-model-redaction.ts) replaces with [redacted] unconditionally, independent of any server-known value — buildRedactedDecisionText(text, []) therefore differs from the raw text. An obviously-placeholder email (example.com) is used rather than a phone-number pattern so this fixture does not trip the committed corpus's own no-real-looking-phone-number invariant (jev-evaluation.spec.ts). Without a fixture like this one, run-jev-evaluation.spec.ts's redaction-passthrough test would pass even if the runtime stopped redacting, because every other clarification case's text happens to be unchanged by the generic patterns. No record is named and none is confirmed by state, so clarification is still required regardless."
+    },
+    {
       "id": "route-001",
       "decisionKind": "route-domains",
       "split": "calibration",

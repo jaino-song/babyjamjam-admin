@@ -191,11 +191,18 @@ function deriveTaskIssues(params: {
         const readiness = evaluateClientReadiness(params.confirmed as never, null);
         return readiness.issues.map((issue) => {
             const field = issue === "name_required" ? "name" as const : issue.startsWith("phone") ? "phone" as const : undefined;
+            // Mirrors agent-task.service.ts's issues(): a malformed phone is
+            // task.invalid (a value was given but rejected), not
+            // task.required (BJJ-348).
             const code = issue === "phone_duplicate" ? "task.duplicate" as const
                 : issue === "phone_duplicate_check_failed" ? "task.invalid" as const
                     : issue === "phone_duplicate_check_required" ? "task.invalid" as const
-                        : "task.required" as const;
-            return { code, ...(field ? { field } : {}), severity: "error" as const, message: "Additional task information is required" };
+                        : issue === "phone_must_be_11_digits" ? "task.invalid" as const
+                            : "task.required" as const;
+            const message = code === "task.invalid" && issue === "phone_must_be_11_digits"
+                ? "A valid phone number is required"
+                : "Additional task information is required";
+            return { code, ...(field ? { field } : {}), severity: "error" as const, message };
         });
     }
     const issues: AgentTask["issues"] = [];
@@ -531,22 +538,28 @@ describe("Jev runtime integration (P1 clarification)", () => {
         expect(shadowEvents[0]).toMatchObject({ decisionKind: DECISION_KINDS.evaluateClarification, mode: DECISION_MODES.shadow });
     });
 
-    it("enforce suppression: no conversational task write tool is exposed and a model-origin mutation is refused; reads remain", async () => {
+    it("enforce suppression: an unconfirmed write target hides the conversational task write tool and refuses a model-origin mutation; reads remain (AC-18, BJJ-348)", async () => {
         const harness = buildHarness({
             modes: CLARIFICATION_ENFORCE,
             clarificationResult: RECOMMEND_TRUE,
-            // Default turn task: collecting with every field missing, no
-            // accepted input this turn → the decision suppresses mutation.
+            capabilities: [clientWriteCapability("clients.update"), clientSearchCapability()],
+            // Update task with no confirmed target: the record is unknown, so
+            // deterministic recovery owns the turn (BJJ-348 — only an
+            // unconfirmed target suppresses model mutation, not a missing
+            // value).
+            turn: {
+                task: taskSnapshot({ capabilityId: "clients.update", kind: "clients.update", target: null, confirmed: {} }),
+            },
             modelScript: [
-                { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
-                { type: "text", text: "필요한 정보를 여쭤보겠습니다." },
+                { type: "tool-call", toolName: "clients_update", input: { operations: [{ op: "clear", field: "address" }] } },
+                { type: "text", text: "어느 고객인지 확인이 필요합니다." },
             ],
         });
         const result = await harness.runtime.stream({
             principal: PRINCIPAL,
             sessionId: SESSION_ID,
             locale: "ko",
-            messages: [userMessage("message-p1-suppressed", "새 고객 등록해줘")],
+            messages: [userMessage("message-p1-suppressed", "고객 정보를 수정해줘")],
         });
         await drainStream(result.stream);
 
@@ -587,8 +600,14 @@ describe("Jev runtime integration (P1 clarification)", () => {
     // BJJ-344 part 2: missingFields now derives from the task's own
     // `task.required` issues (agent-runtime.service.ts's
     // `deriveMissingFields`) instead of "every field not yet
-    // confirmed/tentative". These three cases pin the corrected behavior
-    // end to end through `decideClarification`'s real (unchanged) rule.
+    // confirmed/tentative".
+    // BJJ-348: `decideClarification`'s deterministic-recovery rule no longer
+    // reads `missingFields` at all — only an unconfirmed write target
+    // (`targetMissing`) suppresses model mutation. A missing VALUE is sent
+    // to the provider as state but never hides the write tool; the model may
+    // extract the value from free text, and every write still ends at the
+    // mandatory approval card. These cases pin the corrected behavior end to
+    // end through `decideClarification`'s real rule.
     it("update with a confirmed target and a given change value: clients_update stays exposed and the mutation applies", async () => {
         const harness = buildHarness({
             modes: CLARIFICATION_ENFORCE,
@@ -630,25 +649,75 @@ describe("Jev runtime integration (P1 clarification)", () => {
         expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
     });
 
-    it("create task missing a required field (name/phone unset): suppressed", async () => {
+    it("create missing name/phone: the model may still supply them via free text this turn, exposed and applied (BJJ-348)", async () => {
         const harness = buildHarness({
             modes: CLARIFICATION_ENFORCE,
             clarificationResult: ADVICE_NO_CLARIFICATION,
             // Default turn task: clients.create with confirmed: {} — neither
-            // name nor phone is given, so evaluateClientReadiness's
+            // name nor phone is given yet, so evaluateClientReadiness's
             // name_required/phone_required issues surface as missingFields.
+            // clients.create never has a target, so targetMissing is always
+            // false and a missing VALUE never suppresses on its own.
+            modelScript: [
+                // "name"/"phone" are reference fields (require a
+                // server-resolved valueRef, not a raw model value); "clear"
+                // needs neither, so it exercises the tool call without
+                // tripping that schema branch, exactly like the update
+                // fixtures below.
+                { type: "tool-call", toolName: "clients_create", input: { operations: [{ op: "clear", field: "address" }] } },
+                { type: "text", text: "등록했습니다." },
+            ],
         });
-        await runTurn(harness, "message-p1-create-missing");
+        await runTurnWithText(harness, "message-p1-create-missing", "김민지 010-1111-2222로 등록해줘");
 
         expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
         expect(clarificationFacadeInput(harness).missingFields).toEqual(expect.arrayContaining(["name", "phone"]));
-        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
-        const tools = exposedTools(harness);
-        expect(tools).not.toContain("clients_create");
-        expect(tools).toContain("clients_search");
+        expect(exposedTools(harness)).toContain("clients_create");
+        expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
+        const mutationArg = (harness.taskOrchestrator.applyModelMutation.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+        expect("allowMutation" in mutationArg).toBe(false);
     });
 
-    it("update with a confirmed target but no change value given: suppressed", async () => {
+    it("update with a confirmed target but no committed change yet: the model may still supply the value via free text, exposed and applied (BJJ-348)", async () => {
+        for (const clarificationResult of [ADVICE_NO_CLARIFICATION, ADVICE_UNAVAILABLE]) {
+            const harness = buildHarness({
+                modes: CLARIFICATION_ENFORCE,
+                clarificationResult,
+                capabilities: [clientWriteCapability("clients.update"), clientSearchCapability()],
+                turn: {
+                    task: taskSnapshot({
+                        capabilityId: "clients.update",
+                        kind: "clients.update",
+                        target: CONFIRMED_TARGET,
+                        confirmed: {},
+                    }),
+                },
+                modelScript: [
+                    { type: "tool-call", toolName: "clients_update", input: { operations: [{ op: "clear", field: "birthday" }] } },
+                    { type: "text", text: "생일 정보를 지웠습니다." },
+                ],
+            });
+            const messageId = `message-p1-update-freeform-${clarificationResult === ADVICE_UNAVAILABLE ? "advice-null" : "advice-no-req"}`;
+            await runTurnWithText(harness, messageId, "생일 정보 지워서 수정해줘");
+
+            // Target confirmed but zero committed changes yet: updateIssues'
+            // own un-scoped task.required issue still fires, so
+            // missingFields is non-empty (the exact BJJ-348 repro) — but a
+            // missing VALUE never suppresses model mutation on its own.
+            // Only an unconfirmed TARGET does, and targetMissing is false
+            // here because the target is confirmed.
+            expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
+            const facts = clarificationFacadeInput(harness);
+            expect(facts.targetConfirmed).toBe(true);
+            expect(facts.missingFields.length).toBeGreaterThan(0);
+            expect(exposedTools(harness)).toContain("clients_update");
+            expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
+            const mutationArg = (harness.taskOrchestrator.applyModelMutation.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
+            expect("allowMutation" in mutationArg).toBe(false);
+        }
+    });
+
+    it("update with NO confirmed target: clients_update stays hidden — an unknown record still owns the turn (AC-18, BJJ-348)", async () => {
         const harness = buildHarness({
             modes: CLARIFICATION_ENFORCE,
             clarificationResult: ADVICE_NO_CLARIFICATION,
@@ -657,22 +726,16 @@ describe("Jev runtime integration (P1 clarification)", () => {
                 task: taskSnapshot({
                     capabilityId: "clients.update",
                     kind: "clients.update",
-                    target: CONFIRMED_TARGET,
+                    target: null,
                     confirmed: {},
                 }),
             },
         });
-        await runTurnWithText(harness, "message-p1-update-no-change", "고객 정보를 수정해줘");
+        await runTurnWithText(harness, "message-p1-update-no-target", "고객 정보를 수정해줘");
 
-        // Target confirmed but zero proposed changes: updateIssues' own
-        // un-scoped task.required issue fires; no single field can be
-        // blamed, so deriveMissingFields reports the full write-field set
-        // rather than an invented placeholder — either way it is non-empty,
-        // which is all decideClarification's rule 1 needs to suppress.
         expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
         const facts = clarificationFacadeInput(harness);
-        expect(facts.targetConfirmed).toBe(true);
-        expect(facts.missingFields.length).toBeGreaterThan(0);
+        expect(facts.targetConfirmed).toBe(false);
         expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
         const tools = exposedTools(harness);
         expect(tools).not.toContain("clients_update");
@@ -729,7 +792,7 @@ describe("Jev runtime integration (P1 clarification)", () => {
         expect(recordSpy).toHaveBeenNthCalledWith(2, SESSION_ID, TASK_ID, 2);
     });
 
-    it("precedence preserved: question and replay turns behave exactly as in off while a plain turn is suppressed", async () => {
+    it("precedence preserved: question and replay turns behave exactly as in off while a plain unconfirmed-target turn is suppressed", async () => {
         const runScenario = async (modes: RuntimeHarnessOptions["modes"], turn: TurnResultOverrides, messageId: string) => {
             const harness = buildHarness({ modes, turn, clarificationResult: RECOMMEND_TRUE });
             const drained = await runTurn(harness, messageId);
@@ -759,17 +822,44 @@ describe("Jev runtime integration (P1 clarification)", () => {
             expect(persisted[0]?.role).toBe("assistant");
         }
 
-        // (c) Plain missing-field turn with no explicit input: off exposes and
-        // accepts the model mutation (with the existing correction-evidence
-        // argument), enforce suppresses both. This is the only intended
-        // difference between the modes.
-        const cleanOff = await runScenario(ALL_OFF, {}, "m-clean-off");
-        const cleanEnforce = await runScenario(CLARIFICATION_ENFORCE, {}, "m-clean-enforce");
-        expect(exposedTools(cleanOff.harness)).toContain("clients_create");
-        expect(cleanOff.harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
-        expect((cleanOff.harness.taskOrchestrator.applyModelMutation.mock.calls[0] as unknown[])[0]).toMatchObject({ userCorrectionEvidence: [] });
-        expect(exposedTools(cleanEnforce.harness)).not.toContain("clients_create");
-        expect(cleanEnforce.harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+        // (c) Plain unconfirmed-target update turn with no explicit input:
+        // off exposes and accepts the model mutation (with the existing
+        // correction-evidence argument), enforce suppresses both. Under
+        // BJJ-348 an unconfirmed write target is the only thing that still
+        // triggers deterministic recovery — a missing VALUE (the old
+        // scenario here: create with name/phone unset) no longer does, so
+        // this scenario switches to the one case that still differs between
+        // the modes.
+        const unconfirmedTargetCapabilities = [clientWriteCapability("clients.update"), clientSearchCapability()];
+        const unconfirmedTargetTurn: TurnResultOverrides = {
+            task: taskSnapshot({ capabilityId: "clients.update", kind: "clients.update", target: null, confirmed: {} }),
+        };
+        const unconfirmedTargetModelScript: RuntimeHarnessOptions["modelScript"] = [
+            { type: "tool-call", toolName: "clients_update", input: { operations: [{ op: "clear", field: "address" }] } },
+            { type: "text", text: "수정했습니다." },
+        ];
+        const cleanOffHarness = buildHarness({
+            modes: ALL_OFF,
+            turn: unconfirmedTargetTurn,
+            clarificationResult: RECOMMEND_TRUE,
+            capabilities: unconfirmedTargetCapabilities,
+            modelScript: unconfirmedTargetModelScript,
+        });
+        await runTurnWithText(cleanOffHarness, "m-clean-off", "고객 정보를 수정해줘");
+        const cleanEnforceHarness = buildHarness({
+            modes: CLARIFICATION_ENFORCE,
+            turn: unconfirmedTargetTurn,
+            clarificationResult: RECOMMEND_TRUE,
+            capabilities: unconfirmedTargetCapabilities,
+            modelScript: unconfirmedTargetModelScript,
+        });
+        await runTurnWithText(cleanEnforceHarness, "m-clean-enforce", "고객 정보를 수정해줘");
+
+        expect(exposedTools(cleanOffHarness)).toContain("clients_update");
+        expect(cleanOffHarness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
+        expect((cleanOffHarness.taskOrchestrator.applyModelMutation.mock.calls[0] as unknown[])[0]).toMatchObject({ userCorrectionEvidence: [] });
+        expect(exposedTools(cleanEnforceHarness)).not.toContain("clients_update");
+        expect(cleanEnforceHarness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
     });
 
     it("candidates not built: chooser, option order, and revision binding unchanged; no candidate surface exists", async () => {
