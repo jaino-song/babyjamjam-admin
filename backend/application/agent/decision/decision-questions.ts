@@ -4,7 +4,7 @@ import {
     type DecisionKind,
 } from "./decision-contracts";
 
-export const DECISION_QUESTION_VERSION = "v3";
+export const DECISION_QUESTION_VERSION = "v4";
 
 /**
  * User text is data, never instructions: it must not modify the question
@@ -80,7 +80,7 @@ export const CLARIFICATION_JUDGMENT_QUESTIONS: Readonly<Record<ClarificationJudg
         sufficientEvidence:
             "Is there enough information in the text and state to carry out the request without guessing?",
         clarificationRequired:
-            "Does the text ask to change something but, taking the text and the state together, still leave the record unidentified (not named in the text and not already confirmed by the state) or still leave a needed value missing (not given in the text, unless the state confirms the record and lists no missing fields)? Answer no for requests that only look something up, and no when the record is named in the text or confirmed by the state and every needed value is given in the text or the state confirms the record with no missing fields.",
+            "Does the text ask to change a record while the record or the new value is still unknown? Decide in this order. First, if the text only asks to look something up, answer no. Second, if the text does not name the record and the state does not confirm it, answer yes, even when the text gives a new value. Third, if the text gives a new value, answer no; clearing or deleting a field counts as giving a value, and the state's missing fields describe the task before this text, so they never cancel a value given here. Otherwise answer yes, unless the state confirms the record and lists no missing fields.",
     });
 
 export const CANDIDATE_OUTCOME_LABELS = [

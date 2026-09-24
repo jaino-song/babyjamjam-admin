@@ -7,7 +7,7 @@
     {
       "decisionKind": "route-domains",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "datasetDigest": "f07448077019e494a24d88b35109aafb5cf8f67121b5493a33558de7b0fda862",
       "thresholds": {
         "minCoverage": 0.9,
@@ -23,7 +23,7 @@
     {
       "decisionKind": "classify-client-intent",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "datasetDigest": "f07448077019e494a24d88b35109aafb5cf8f67121b5493a33558de7b0fda862",
       "thresholds": {
         "minCoverage": 0.9,
@@ -39,7 +39,7 @@
     {
       "decisionKind": "evaluate-clarification",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "datasetDigest": "f07448077019e494a24d88b35109aafb5cf8f67121b5493a33558de7b0fda862",
       "thresholds": {
         "minCoverage": 0.9,
@@ -55,7 +55,7 @@
     {
       "decisionKind": "rank-candidates",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "datasetDigest": "f07448077019e494a24d88b35109aafb5cf8f67121b5493a33558de7b0fda862",
       "thresholds": {
         "minCoverage": 0.9,

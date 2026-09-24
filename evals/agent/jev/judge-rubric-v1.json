@@ -11,7 +11,7 @@
   },
   "decisionKinds": {
     "route-domains": {
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "criteria": [
         "Each permitted domain carries an independent yesProbability in [0,1]; the values are never normalized into a distribution.",
         "A high probability on a domain the corpus labels unacceptable is a judge finding to report, never a relabeling of the case.",
@@ -21,7 +21,7 @@
       "notes": "Reference labels are corpus domain names. The evaluation CLI derives a selection deterministically (argmax yesProbability, ties keep corpus declaration order); a judge scores the full score vector, not only the argmax."
     },
     "classify-client-intent": {
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "criteria": [
         "Exactly one intent label from the fixed five-label vocabulary is chosen.",
         "Per-label probabilities are complete over the criteria and each lies in [0,1].",
@@ -32,7 +32,7 @@
       "notes": "Reference labels come from the corpus acceptable/unacceptable lists. Judges may flag near-miss distributions (for example a narrow margin between the chosen and an unacceptable label) as advisory findings only."
     },
     "evaluate-clarification": {
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "criteria": [
         "Each of the five judgment aspects (mutationRequested, targetUnambiguous, valueUnambiguous, sufficientEvidence, clarificationRequired) is answered independently in [0,1].",
         "The judgments are never normalized into a distribution.",
@@ -42,7 +42,7 @@
       "notes": "The evaluation CLI binarizes with the deterministic convention clarificationRequired >= 0.5 maps to clarification-required; this threshold is an evaluation-harness convention, not a production policy, and judges must report raw judgments alongside any outcome opinion."
     },
     "rank-candidates": {
-      "questionVersion": "v3",
+      "questionVersion": "v4",
       "criteria": [
         "The answer is one of the supplied candidate labels or the fixed alternatives none / insufficient_evidence.",
         "Per-label probabilities are complete over the criteria and each lies in [0,1].",

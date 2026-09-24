@@ -137,7 +137,7 @@ cannot provide come exclusively from an operator-authored JSON file
   profile is metadata, not authority (§6), and the human gates of §1 remain.
 - **Question version.** Evidence and acceptance profiles are bound to the
   decision question version (`DECISION_QUESTION_VERSION` in
-  `backend/application/agent/decision/decision-questions.ts`, currently `v3`;
+  `backend/application/agent/decision/decision-questions.ts`, currently `v4`;
   carried as `questionVersion` in reports, evidence, profiles and traces). A
   version bump invalidates every earlier evaluation report, evidence document
   and stored `agent.decisions.jev` acceptance profile for all four kinds:
@@ -151,7 +151,17 @@ cannot provide come exclusively from an operator-authored JSON file
   v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
   the text together with the request state (`targetConfirmed`,
   `missingFields`), so a follow-up turn that supplies the value for an
-  already-confirmed record is not *advised* to clarify. **BJJ-348 (2026-09-24)
+  already-confirmed record is not *advised* to clarify. v4 (2026-09-24,
+  BJJ-348) again changed only `clarificationRequired`, into ordered checks:
+  lookup → no; record neither named nor confirmed → yes (even with a value);
+  a value given in this text → no, even when the state lists its field as
+  missing (the state describes the task before this text; clearing or deleting
+  counts as a value); otherwise yes unless the state confirms the record with
+  no missing fields. A live probe at v3 showed any non-empty `missingFields`
+  list made the model answer "required" even when the text supplied the value.
+  Two live runs at v4 (35 cases): clarification 11/11, required 0.76–0.94 vs
+  not required 0.07–0.34; other kinds unchanged.
+  **BJJ-348 (2026-09-24)
   resolved the enforce-mode gate that previously blocked `evaluate-clarification`
   from going to `enforce`:** only an *unknown record* (`clients.update` with no
   confirmed target) still makes `decideClarification` deterministically
