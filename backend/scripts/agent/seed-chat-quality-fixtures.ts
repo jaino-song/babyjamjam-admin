@@ -938,6 +938,8 @@ async function applyPlan(prisma: PrismaClient, plan: FixturePlan, diff: FixtureD
     });
 }
 
+const COMPLETED_STATUS_TYPES: ReadonlySet<string> = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
+
 async function countActiveMessageTriggerRules(prisma: PrismaClient, branchId: string): Promise<number> {
     return prisma.message_trigger_rule.count({
         where: { isActive: true, OR: [{ branchId }, { branchId: null }] },
@@ -946,7 +948,7 @@ async function countActiveMessageTriggerRules(prisma: PrismaClient, branchId: st
 
 async function inspectMirrorReadinessImpact(prisma: PrismaClient): Promise<{ completedWithoutDocumentPdf: number }> {
     const completedRows = await prisma.eformsign_doc.findMany({
-        where: { statusType: { in: ["003", "012", "022", "032", "050", "062", "072", "092"] } },
+        where: { statusType: { in: [...COMPLETED_STATUS_TYPES] } },
         select: { syncStatus: true, detailSourceUpdatedDate: true, files: { select: { fileType: true, sourceUpdatedDate: true } } },
     });
     const hasCurrentFile = (row: (typeof completedRows)[number], fileType: "document" | "audit_trail"): boolean =>
@@ -1009,8 +1011,8 @@ async function main(argv: readonly string[]): Promise<number> {
             `Branch has ${activeTriggerRuleCount} active message_trigger_rule row(s) (global + branch-scoped). `
             + "rebuildJobsForRule selects EVERY client in the branch with no suppress filter when a rule is "
             + "created/edited/activated — fixture clients WILL be included in rule jobs if any rule fires.",
-            `EformsignMirrorReadinessService.inspect() will report completedWithoutDocumentPdf=${mirrorImpact.completedWithoutDocumentPdf} `
-            + "DB-wide after this plan applies (each completed fixture doc has no eformsign_doc_file row; this script adds none).",
+            `EformsignMirrorReadinessService.inspect() currently reports completedWithoutDocumentPdf=${mirrorImpact.completedWithoutDocumentPdf} `
+            + `DB-wide; each completed fixture doc created by this plan adds 1 (${diff.contractDocs.filter((entry) => entry.kind === "create" && COMPLETED_STATUS_TYPES.has(entry.spec.statusType)).length} here), since this script adds no eformsign_doc_file rows.`,
         ];
 
         printPlan(diff, warnings);
