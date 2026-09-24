@@ -497,18 +497,101 @@ export function assembleLegacyTurn(events: readonly RawStreamEvent[]): LegacyTur
 // ---------------------------------------------------------------------------
 
 /**
- * Simple, documented heuristic: the trimmed final text ends with a literal
- * `?`, or with one of the Korean question-ending particles this app's
- * clarifying questions use in practice. It intentionally checks only the
- * suffix, so a `?` appearing mid-answer (e.g. quoting the user) does not
- * count.
+ * Documented heuristic: look only at the *last paragraph* of the answer
+ * (text after the final blank line), so a `?` appearing in an earlier
+ * paragraph (e.g. quoting the user's own message back to them) never
+ * counts. If that last paragraph is nothing but a markdown table or list
+ * (no actual sentence), fall back to the paragraph before it.
+ *
+ * Within the chosen paragraph, split into sentences on `. ! ?` and line
+ * breaks, and return true if ANY of those sentences ends with a literal
+ * `?` or one of the Korean asking-sentence endings this app's clarifying
+ * questions use in practice (까요, 나요, 인가요/은가요/는가요/던가요,
+ * 할래요/을래요/주실래요, 주세요/주시겠어요, 인지요/는지요, or the
+ * formal "-습니까 / -ㅂ니까" question form, e.g. 됩니까/합니까) — ignoring
+ * trailing `.`, `!`, `~`, closing quotes, emoji, and whitespace when
+ * checking the ending. Bare "니까" (e.g. "...했으니까."), bare "가요"
+ * (e.g. "내일 가요."), and bare "래요" as reported speech (e.g. "하래요.")
+ * intentionally do NOT count — only the specific asking forms above do.
  */
-const QUESTION_END_MARKERS = ["?", "까요?", "나요?", "인가요", "주세요"] as const;
+const KOREAN_QUESTION_ENDINGS = [
+    "까요",
+    "나요",
+    "인가요",
+    "은가요",
+    "는가요",
+    "던가요",
+    "할래요",
+    "을래요",
+    "주세요",
+    "주시겠어요",
+    "주실래요",
+    "인지요",
+    "는지요",
+] as const;
+
+// Trailing characters ignored when checking a sentence's ending: `.`, `!`,
+// `~`, closing quotes (ASCII + Korean brackets + curly quotes), emoji, and
+// whitespace. Deliberately excludes `?`, which is itself a marker we check for.
+const TRAILING_FILLER_RE =
+    /[.!~"'“”‘’「」『』)\]\s\p{Extended_Pictographic}️]+$/u;
+
+const TABLE_OR_LIST_LINE_RE = /^(\|.*\||[-*+]\s+.*|\d+[.)]\s+.*|[-:|\s]+)$/;
+
+/** A Hangul syllable with the "ㅂ" final consonant (batchim), e.g. 습/됩/합. */
+function hasBieupBatchim(char: string | undefined): boolean {
+    if (!char) return false;
+    const code = char.codePointAt(0);
+    if (code === undefined) return false;
+    if (code < 0xac00 || code > 0xd7a3) return false;
+    return (code - 0xac00) % 28 === 17;
+}
+
+function splitParagraphs(text: string): string[] {
+    return text
+        .split(/\n\s*\n+/)
+        .map((paragraph) => paragraph.trim())
+        .filter((paragraph) => paragraph.length > 0);
+}
+
+function isTableOrListOnly(paragraph: string): boolean {
+    const lines = paragraph
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    if (lines.length === 0) return false;
+    return lines.every((line) => TABLE_OR_LIST_LINE_RE.test(line));
+}
+
+function splitSentences(paragraph: string): string[] {
+    return paragraph
+        .split(/(?<=[.!?])\s+|\n+/)
+        .map((sentence) => sentence.trim())
+        .filter((sentence) => sentence.length > 0);
+}
+
+function sentenceAsksQuestion(sentence: string): boolean {
+    const core = sentence.replace(TRAILING_FILLER_RE, "");
+    if (core.length === 0) return false;
+    if (core.endsWith("?")) return true;
+    if (KOREAN_QUESTION_ENDINGS.some((ending) => core.endsWith(ending))) return true;
+    if (core.endsWith("니까") && hasBieupBatchim(core[core.length - 3])) return true;
+    return false;
+}
 
 export function heuristicHasQuestion(text: string): boolean {
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
-    return QUESTION_END_MARKERS.some((marker) => trimmed.endsWith(marker));
+
+    const paragraphs = splitParagraphs(trimmed);
+    if (paragraphs.length === 0) return false;
+
+    let target = paragraphs[paragraphs.length - 1] as string;
+    if (paragraphs.length > 1 && isTableOrListOnly(target)) {
+        target = paragraphs[paragraphs.length - 2] as string;
+    }
+
+    return splitSentences(target).some((sentence) => sentenceAsksQuestion(sentence));
 }
 
 // ---------------------------------------------------------------------------
