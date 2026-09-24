@@ -137,7 +137,7 @@ cannot provide come exclusively from an operator-authored JSON file
   profile is metadata, not authority (§6), and the human gates of §1 remain.
 - **Question version.** Evidence and acceptance profiles are bound to the
   decision question version (`DECISION_QUESTION_VERSION` in
-  `backend/application/agent/decision/decision-questions.ts`, currently `v3`;
+  `backend/application/agent/decision/decision-questions.ts`, currently `v4`;
   carried as `questionVersion` in reports, evidence, profiles and traces). A
   version bump invalidates every earlier evaluation report, evidence document
   and stored `agent.decisions.jev` acceptance profile for all four kinds:
@@ -151,23 +151,44 @@ cannot provide come exclusively from an operator-authored JSON file
   v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
   the text together with the request state (`targetConfirmed`,
   `missingFields`), so a follow-up turn that supplies the value for an
-  already-confirmed record is not *advised* to clarify. Under `enforce`,
-  `decideClarification` still suppresses model writes whenever `missingFields`
-  is non-empty, whatever the advice — so an update whose change has not been
-  applied yet (all client write fields listed) or a create missing name/phone
-  is still sent back, and a freeform follow-up cannot supply the value because
-  the write tool is hidden. **`evaluate-clarification` must not go to
-  `enforce` until that rule is resolved (BJJ-348).** The runtime's
-  `missingFields` (`deriveMissingFields` in `agent-runtime.service.ts`) now
-  lists only what the task still needs, from its `task.required` issues: for
-  create, the unmet required fields (name, phone); for update, nothing once a
-  target is confirmed and at least one change is given. Clarification
-  fixtures carry that same state (`state: { missingFields, targetConfirmed }`,
-  field names restricted to the client write fields), and the live runner
-  sends it with the same redacted text the runtime sends.
-  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs,
-  2026-09-24) `clarificationRequired` scored 0.85–0.97 where clarification is
-  needed and 0.11–0.36 where it is not. The stored clarification profile's
+  already-confirmed record is not *advised* to clarify. v4 (2026-09-24,
+  BJJ-348) again changed only `clarificationRequired`, into ordered checks:
+  lookup → no; record neither named nor confirmed → yes (even with a value);
+  a value given in this text → no, even when the state lists its field as
+  missing (the state describes the task before this text; clearing or deleting
+  counts as a value); otherwise yes unless the state confirms the record with
+  no missing fields. A live probe at v3 showed any non-empty `missingFields`
+  list made the model answer "required" even when the text supplied the value.
+  Two live runs at v4 (35 cases): clarification 11/11, required 0.76–0.94 vs
+  not required 0.07–0.34; other kinds unchanged.
+  **BJJ-348 (2026-09-24)
+  resolved the enforce-mode gate that previously blocked `evaluate-clarification`
+  from going to `enforce`:** only an *unknown record* (`clients.update` with no
+  confirmed target, or with a stale one — an un-scoped `task.stale` issue)
+  still makes `decideClarification` deterministically
+  suppress model writes (AC-18). A *missing value* never does — the model may
+  extract it from the text, and every write still ends at the mandatory
+  approval card, the sole point at which the user sees exactly what will
+  change. So an update whose change has not been committed to the task yet, or
+  a create missing name/phone, no longer hides the write tool by itself; a
+  freeform follow-up can supply the value and the model's mutation reaches the
+  approval flow unchanged. Only an update with no confirmed (or a stale) target
+  still hides `clients_update`. The runtime's `missingFields` (`deriveMissingFields` in
+  `agent-runtime.service.ts`) still lists only what the task still needs, from
+  its `task.required` issues: for create, the unmet required fields (name,
+  phone); for update, nothing once a target is confirmed and at least one
+  change is given — but it is now sent to the provider as state only, never
+  consulted by `decideClarification`. A malformed phone
+  (`phone_must_be_11_digits`) is reported as `task.invalid`, not
+  `task.required`, so it was never counted as "missing" either, and it still
+  blocks create/apply through the same issues-based readiness gate regardless
+  of which code it carries. Clarification fixtures carry that same state
+  (`state: { missingFields, targetConfirmed }`, field names restricted to the
+  client write fields), and the live runner sends it with the same redacted
+  text the runtime sends.
+  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs
+  at question v4, 2026-09-24) `clarificationRequired` scored 0.76–0.94 where
+  clarification is needed and 0.07–0.34 where it is not. The stored clarification profile's
   `thresholds.acceptProbability` must sit inside that window (e.g. 0.6), and
   must be re-derived from human-reviewed evidence before `enforce`.
   Treat `ineligible` under `enforce` as the stale-profile symptom and compare

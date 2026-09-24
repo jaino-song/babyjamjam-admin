@@ -11,8 +11,12 @@ import type { ClarificationAdvice } from "./decision-policy";
  * mutation authority**. It can never relax a deterministic restriction,
  * erase accepted user input, or retarget a task:
  *
- * - Missing required fields always own the turn via deterministic recovery
- *   (AC-18); advice is never consulted for them.
+ * - An unconfirmed write target always owns the turn via deterministic
+ *   recovery (AC-18); advice is never consulted for it. A value the user
+ *   supplied in free text is never "missing" in the sense that matters here
+ *   — the model can extract it, and every write still ends at the mandatory
+ *   approval card, so a missing *value* never suppresses model mutation on
+ *   its own (BJJ-348). Only an unknown *record* (no confirmed target) does.
  * - An existing deterministic mutation block is never cleared (AC-19);
  *   advice may at most add a question on top of the suppressed turn.
  * - Explicit accepted user input is retained — a probabilistic judgment is
@@ -45,8 +49,21 @@ export type ClarificationDecisionReason = (typeof CLARIFICATION_DECISION_REASONS
  */
 export interface ClarificationFacts {
     readonly taskRevision: number;
-    /** Structural missing required fields (existing draft/issue facts). */
+    /**
+     * Structural missing required fields (existing draft/issue facts). Sent
+     * to the provider as state only — no rule in this helper suppresses on
+     * it (BJJ-348). A missing value is never authority to hide the write
+     * tool; only an unconfirmed target is (see `targetMissing`).
+     */
     readonly missingFields: readonly string[];
+    /**
+     * True when the task's capability requires a write target (anything but
+     * `clients.create`) and none is confirmed yet, or the confirmed one is
+     * stale (un-scoped `task.stale`). `clients.create` never
+     * has a target, so this is always false for it. This is the sole
+     * deterministic-recovery trigger (AC-18, BJJ-348).
+     */
+    readonly targetMissing: boolean;
     /** Present for the caller's own deterministic logic; no rule in this helper consumes it. */
     readonly targetConfirmed: boolean;
     /** Explicit, server-validated user input already accepted for this task. */
@@ -71,7 +88,8 @@ export interface ClarificationDecision {
  * structural facts plus sanitized advice only. Rules are evaluated in a
  * fixed order so deterministic checks always outrank semantic advice:
  *
- * 1. missing required fields → deterministic recovery owns the turn (AC-18)
+ * 1. unconfirmed write target → deterministic recovery owns the turn
+ *    (AC-18, BJJ-348); a missing *value* never suppresses on its own
  * 2. existing mutation block → never cleared (AC-19); advice may add a
  *    question on top of the suppressed turn
  * 3. accepted user input → retained, never suppressed
@@ -80,8 +98,10 @@ export interface ClarificationDecision {
  * 5. advice unavailable → no behavior change
  * 6. otherwise → advice may add exactly one question and nothing else
  *
- * `targetConfirmed` is part of the facts for the caller's own deterministic
- * logic; deliberately none of the rules above consume it.
+ * `targetConfirmed` and `missingFields` are part of the facts for the
+ * caller's own deterministic logic and for provider state; deliberately no
+ * rule above consumes them directly (see `targetMissing`, which is derived
+ * from the same target state but is the one signal that owns the turn).
  */
 export function decideClarification(input: {
     readonly facts: ClarificationFacts;
@@ -90,9 +110,11 @@ export function decideClarification(input: {
 }): ClarificationDecision {
     const { facts, advice } = input;
 
-    // 1. Deterministic checks outrank advice: structural missing fields own
-    //    the turn and forbid model mutation (AC-18).
-    if (facts.missingFields.length > 0) {
+    // 1. Deterministic checks outrank advice: an unconfirmed write target
+    //    owns the turn and forbids model mutation (AC-18). A missing value
+    //    never does — the model may extract it from the text, and every
+    //    write still ends at the mandatory approval card (BJJ-348).
+    if (facts.targetMissing) {
         return {
             recommendClarification: false,
             suppressModelMutation: true,

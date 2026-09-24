@@ -2031,9 +2031,20 @@ export class AgentTaskService {
         const readiness = evaluateClientReadiness(state.confirmed, duplicateCheck);
         for (const issue of readiness.issues) {
             const field = issue === "name_required" ? "name" : issue.startsWith("phone") ? "phone" : undefined;
-            const code = issue === "phone_duplicate" ? "task.duplicate" : issue === "phone_duplicate_check_failed" ? "task.invalid" : issue === "phone_duplicate_check_required" ? "task.invalid" : "task.required";
+            // A malformed phone is `task.invalid`, not `task.required`: a
+            // value WAS given, it was just rejected (BJJ-348). Only
+            // `phone_required` (no value at all) and `name_required` are
+            // still "missing".
+            const code = issue === "phone_duplicate" ? "task.duplicate" as const
+                : issue === "phone_duplicate_check_failed" ? "task.invalid" as const
+                    : issue === "phone_duplicate_check_required" ? "task.invalid" as const
+                        : issue === "phone_must_be_11_digits" ? "task.invalid" as const
+                            : "task.required" as const;
+            const message = code === "task.invalid" && issue === "phone_must_be_11_digits"
+                ? "A valid phone number is required"
+                : "Additional task information is required";
             if (issues.some((candidate) => candidate.code === code && candidate.field === field)) continue;
-            issues.push({ code, ...(field ? { field } : {}), severity: "error", message: "Additional task information is required" });
+            issues.push({ code, ...(field ? { field } : {}), severity: "error", message });
         }
         return issues;
     }
