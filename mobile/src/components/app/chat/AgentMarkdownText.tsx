@@ -36,7 +36,10 @@ function AgentMarkdownLink({ href, children }: { href?: string; children?: React
         return <a href={url} target="_blank" rel="noopener noreferrer">{children}</a>;
     }
     if (isSameOriginPath(url)) {
-        return <Link href={url}>{children}</Link>;
+        // prefetch=false: a same-origin link is model-authored and could be
+        // prompt-injected. next/link prefetches on render/viewport by default
+        // in production, which would fire an authenticated GET with no click.
+        return <Link href={url} prefetch={false}>{children}</Link>;
     }
     return <>{children}</>;
 }

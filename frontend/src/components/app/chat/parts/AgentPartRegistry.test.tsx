@@ -6,8 +6,8 @@ import { AgentPartRegistry } from "./AgentPartRegistry";
 
 jest.mock("next/link", () => ({
     __esModule: true,
-    default: ({ children, href }: { children: React.ReactNode; href: string }) => (
-        <a href={href} data-testid="next-link">{children}</a>
+    default: ({ children, href, prefetch }: { children: React.ReactNode; href: string; prefetch?: boolean }) => (
+        <a href={href} data-testid="next-link" data-prefetch={String(prefetch)}>{children}</a>
     ),
 }));
 
@@ -427,6 +427,9 @@ describe("AgentPartRegistry", () => {
         expect(internal).toHaveAttribute("href", "/clients/1");
         expect(internal).toHaveAttribute("data-testid", "next-link");
         expect(internal).not.toHaveAttribute("target");
+        // Model-authored links must never prefetch: a prompt-injected same-origin
+        // link would otherwise fire an authenticated GET on render, with no click.
+        expect(internal).toHaveAttribute("data-prefetch", "false");
     });
 
     it("still opens an external http(s) link in a new tab unchanged", () => {
