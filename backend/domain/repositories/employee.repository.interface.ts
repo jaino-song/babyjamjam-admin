@@ -73,6 +73,20 @@ export interface IEmployeeRepository {
         limit: number,
     ): Promise<PaginatedEmployeeWorkHistory>;
     findAll(branchid: string): Promise<EmployeeEntity[]>;
+    /**
+     * Same shape as `findAll` (status computed for the given calendar date), but
+     * parameterised so callers are not bound to process-local midnight. `findAll`
+     * itself must not change — its output is byte-identical for `employees.search`.
+     */
+    findAllForDate?(branchid: string, date: Date): Promise<EmployeeEntity[]>;
+    /** Single-row equivalent of `findAllForDate`, status computed for the given date. */
+    findByIdForDate?(branchid: string, id: number, date: Date): Promise<EmployeeEntity | null>;
+    /**
+     * Batch id -> name lookup for display purposes only (e.g. cross-referencing a
+     * schedule row). Deliberately ignores soft-deletion so historical rows still
+     * resolve a name.
+     */
+    findNamesByIds?(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>>;
     findByWorkArea(branchid: string, workArea: string): Promise<EmployeeEntity[]>;
     findByGrade(branchid: string, grade: string): Promise<EmployeeEntity[]>;
     findByOpenToNextWork(branchid: string, openToNextWork: boolean): Promise<EmployeeEntity[]>;
