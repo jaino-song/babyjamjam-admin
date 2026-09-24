@@ -232,11 +232,12 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
     const taskMode = capabilities.some((capability) => capability.meta.name === "clients.create" || capability.meta.name === "clients.update");
     const turnContexts: DecisionTurnContext[] = [];
     const decisions = {
-        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => {
+        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => {
             const context: DecisionTurnContext = {
                 deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
+                inScope: true,
                 collector: createDecisionTraceCollector(),
             };
             turnContexts.push(context);
