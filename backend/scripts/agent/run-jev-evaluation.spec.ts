@@ -20,6 +20,8 @@ import { join, resolve } from "node:path";
 
 import type { Fetch } from "@typesafe-ai/sdk";
 
+import { CLIENT_WRITE_FIELD_NAMES } from "@babyjamjam/shared";
+import { buildRedactedDecisionText } from "../../application/agent/decision/decision-input";
 import { DECISION_KINDS } from "../../application/agent/decision/decision-contracts";
 import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
 import {
@@ -530,7 +532,7 @@ describe("live mode with an injected fetch stub", () => {
         expect(byId.get("intent-001")?.reference.acceptable).toEqual(["update_related"]);
     });
 
-    it("passes each clarification case's declared state through to the live request, defaulting when the case declares none", async () => {
+    it("passes each clarification case's declared state through to the live request, defaulting when the case declares none, with the runtime's own text redaction applied", async () => {
         const dir = newWorkDir();
         const output = join(dir, "live-report.json");
         const stub = liveStubFetch();
@@ -540,40 +542,61 @@ describe("live mode with an injected fetch stub", () => {
         // Only evaluate-clarification requests carry missingFields/targetConfirmed
         // in `state` (typesafe-jev-decision.service.ts:434-438); other kinds'
         // state shapes never include targetConfirmed, so this filter isolates
-        // exactly the clarification calls.
-        const clarificationBodiesByText = new Map(
-            stub.bodies
-                .filter((body) => typeof body.state?.targetConfirmed === "boolean")
-                .map((body) => [body.state?.text, body.state]),
-        );
-        expect(clarificationBodiesByText.size).toBe(FULL_KIND_COUNTS["evaluate-clarification"]);
+        // exactly the clarification calls. `selected`/`stub.bodies` both
+        // iterate the corpus in file order (run-jev-evaluation.ts's
+        // `for (const item of selected)`), so zipping the clarification
+        // cases against the clarification bodies by position pairs each
+        // case with its own request deterministically — text alone can no
+        // longer key this map now that the request carries redacted, not
+        // raw, text.
+        const clarificationCases = RAW_FIXTURE.cases.filter((item) => item.decisionKind === "evaluate-clarification");
+        const clarificationBodies = stub.bodies
+            .filter((body) => typeof body.state?.targetConfirmed === "boolean")
+            .map((body) => body.state);
+        expect(clarificationBodies.length).toBe(FULL_KIND_COUNTS["evaluate-clarification"]);
+        expect(clarificationBodies.length).toBe(clarificationCases.length);
+        const stateByCaseId = new Map(clarificationCases.map((item, index) => [item.id, clarificationBodies[index]]));
 
-        // clarify-006 and clarify-007 declare an explicit state in the corpus
-        // (targetConfirmed: true) — the live request must carry it verbatim,
-        // not the harness's old hardcoded targetConfirmed: false.
+        // The request's `state.text` is the runtime's own redaction
+        // (`buildRedactedDecisionText`, decision-input.ts) applied to the
+        // case's raw text with no known values — never the raw corpus text.
+        for (const item of clarificationCases) {
+            expect(stateByCaseId.get(item.id)?.text).toBe(buildRedactedDecisionText(item.text, []));
+        }
+
+        // clarify-006 declares an explicit state in the corpus
+        // (targetConfirmed: true, no proposed change still missing) — the
+        // live request must carry it verbatim, not the harness's old
+        // hardcoded targetConfirmed: false.
         const case006 = RAW_CASES_BY_ID.get("clarify-006");
-        const case007 = RAW_CASES_BY_ID.get("clarify-007");
         expect(case006?.state).toEqual({ missingFields: [], targetConfirmed: true });
-        expect(case007?.state).toEqual({ missingFields: ["value"], targetConfirmed: true });
-
-        expect(clarificationBodiesByText.get(case006?.text)).toEqual({
-            text: case006?.text,
+        expect(stateByCaseId.get("clarify-006")).toEqual({
+            text: buildRedactedDecisionText(case006?.text ?? "", []),
             missingFields: [],
             targetConfirmed: true,
         });
-        expect(clarificationBodiesByText.get(case007?.text)).toEqual({
-            text: case007?.text,
-            missingFields: ["value"],
+
+        // clarify-007: target confirmed but no proposed change was given
+        // this turn — `deriveMissingFields` (agent-runtime.service.ts)
+        // reports the full CLIENT_WRITE_FIELD_NAMES set in that state, not
+        // an invented field-shaped token like "value".
+        const case007 = RAW_CASES_BY_ID.get("clarify-007");
+        expect(case007?.state?.missingFields).toEqual(CLIENT_WRITE_FIELD_NAMES);
+        expect(case007?.state?.targetConfirmed).toBe(true);
+        expect(stateByCaseId.get("clarify-007")).toEqual({
+            text: buildRedactedDecisionText(case007?.text ?? "", []),
+            missingFields: CLIENT_WRITE_FIELD_NAMES,
             targetConfirmed: true,
         });
 
-        // clarify-001 declares no state at all — the request must fall back
-        // to the documented default (missingFields: [], targetConfirmed: false),
+        // clarify-004 is a pure lookup with no client-write task at all, so
+        // it declares no state — the request must fall back to the
+        // documented default (missingFields: [], targetConfirmed: false),
         // so cases authored before this field existed evaluate unchanged.
-        const case001 = RAW_CASES_BY_ID.get("clarify-001");
-        expect(case001?.state).toBeUndefined();
-        expect(clarificationBodiesByText.get(case001?.text)).toEqual({
-            text: case001?.text,
+        const case004 = RAW_CASES_BY_ID.get("clarify-004");
+        expect(case004?.state).toBeUndefined();
+        expect(stateByCaseId.get("clarify-004")).toEqual({
+            text: buildRedactedDecisionText(case004?.text ?? "", []),
             missingFields: [],
             targetConfirmed: false,
         });

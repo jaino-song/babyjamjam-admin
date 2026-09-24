@@ -66,6 +66,7 @@ import {
     type DecisionStatus,
 } from "../../application/agent/decision/decision-contracts";
 import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
+import { buildRedactedDecisionText } from "../../application/agent/decision/decision-input";
 import {
     PINNED_MODEL_ID,
     TypeSafeJevDecisionService,
@@ -1003,35 +1004,50 @@ async function runLiveCase(
         deadlineAt,
         signal,
     } as const;
+    // The runtime redacts the text it sends for every decision kind alike —
+    // `agent-decision.service.ts` calls `buildRedactedDecisionText(input.text,
+    // input.knownValues)` at each of its four `callPort` call sites (lines
+    // ~171, ~204, ~231, ~263 route-domains / classify-client-intent /
+    // evaluate-clarification / rank-candidates in turn), with no per-kind
+    // branch. The offline corpus carries no prior-turn "known values" (there
+    // is no real conversation state backing a fixture case), so this passes
+    // an empty `knownValues` list — the same call the runtime makes for a
+    // fresh session with nothing confirmed yet. `buildRedactedDecisionText`
+    // still applies its unconditional generic redaction (free-text patterns,
+    // explicit-labeled fields, the 240-char cap) even with no known values,
+    // so this is not a no-op: it is genuine parity with what the runtime
+    // sends, not merely a stand-in for it.
+    const redactedText = buildRedactedDecisionText(item.text, []);
 
     switch (item.decisionKind) {
         case DECISION_KINDS.routeDomains:
             return outcomeFromEvidence(await service.routeDomains({
                 ...base,
                 kind: DECISION_KINDS.routeDomains,
-                redactedText: item.text,
+                redactedText,
                 permittedDomains: [...domains],
             }));
         case DECISION_KINDS.classifyClientIntent:
             return outcomeFromEvidence(await service.classifyClientIntent({
                 ...base,
                 kind: DECISION_KINDS.classifyClientIntent,
-                redactedText: item.text,
+                redactedText,
             }));
         case DECISION_KINDS.evaluateClarification: {
-            // Same request fields as the runtime, but not the same values: the runtime
-            // sends redacted text and its own missingFields (see BJJ-344 follow-up)
-            // (typesafe-jev-decision.service.ts:434-438 builds
-            // `state: { text, missingFields, targetConfirmed }` from the
-            // same two fields). A case with no explicit `state` falls back
-            // to the harness's long-standing default (no missing fields, no
-            // confirmed target) so every case authored before this field
-            // existed evaluates identically to before.
+            // Same request fields as the runtime, and now the same
+            // redaction too (see the module-level `redactedText` comment
+            // above). The runtime additionally supplies its own
+            // `missingFields`/`targetConfirmed` derived from
+            // `buildClarificationFacts` (BJJ-344 part 2,
+            // agent-runtime.service.ts); a fixture case with no explicit
+            // `state` falls back to the harness's long-standing default (no
+            // missing fields, no confirmed target) so every case authored
+            // before this field existed evaluates identically to before.
             const clarificationState = item.state ?? DEFAULT_CLARIFICATION_STATE;
             return outcomeFromEvidence(await service.evaluateClarification({
                 ...base,
                 kind: DECISION_KINDS.evaluateClarification,
-                redactedText: item.text,
+                redactedText,
                 missingFields: [...clarificationState.missingFields],
                 targetConfirmed: clarificationState.targetConfirmed,
             }));
@@ -1040,7 +1056,7 @@ async function runLiveCase(
             return outcomeFromEvidence(await service.rankCandidates({
                 ...base,
                 kind: DECISION_KINDS.rankCandidates,
-                redactedText: item.text,
+                redactedText,
                 choiceSetRevision: EVAL_CHOICE_SET_REVISION,
                 candidates: [{ label: EVAL_PLACEHOLDER_CANDIDATE, facts: [] }],
             }));

@@ -227,10 +227,10 @@ describe("parseJevCorpus", () => {
                 id: "clar-state-1",
                 decisionKind: "evaluate-clarification",
                 acceptable: ["clarification-not-required"],
-                state: { missingFields: ["value"], targetConfirmed: true },
+                state: { missingFields: ["phone"], targetConfirmed: true },
             }),
         ]);
-        expect(withState.cases[0]?.state).toEqual({ missingFields: ["value"], targetConfirmed: true });
+        expect(withState.cases[0]?.state).toEqual({ missingFields: ["phone"], targetConfirmed: true });
 
         const withoutState = parseCases([
             baseCase({
@@ -311,6 +311,32 @@ describe("parseJevCorpus", () => {
             "t-1",
             "\"state.targetConfirmed\" must be a boolean",
         );
+    });
+
+    it("rejects a missingFields entry that is not a CLIENT_WRITE_FIELD_NAMES member (BJJ-344 part 2)", () => {
+        const clarificationCase = (state: unknown) =>
+            ({
+                ...baseCase({ id: "t-1", decisionKind: "evaluate-clarification", acceptable: ["clarification-not-required"] }),
+                state,
+            }) as unknown as MutableCase;
+
+        // "value" and "메모" (memo) are not client write fields — a fixture
+        // author cannot invent a placeholder token here, only name one of
+        // the 18 real fields `deriveMissingFields` (agent-runtime.service.ts)
+        // can actually report.
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: ["value"], targetConfirmed: true })]),
+            "t-1",
+            "is not a client write field",
+        );
+        expectCorpusError(
+            () => parseCases([clarificationCase({ missingFields: ["메모"], targetConfirmed: true })]),
+            "t-1",
+            "is not a client write field",
+        );
+        // Every real CLIENT_WRITE_FIELD_NAMES member is accepted.
+        const accepted = parseCases([clarificationCase({ missingFields: ["name", "phone", "address"], targetConfirmed: false })]);
+        expect(accepted.cases[0]?.state?.missingFields).toEqual(["name", "phone", "address"]);
     });
 
     it("includes state in the dataset digest so a state-only edit changes the digest", () => {
