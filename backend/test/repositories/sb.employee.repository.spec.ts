@@ -484,6 +484,99 @@ describe("SbEmployeeRepository", () => {
     });
 
     // ============================================
+    // findAllForDate
+    // ============================================
+    describe("findAllForDate", () => {
+        it("computes status for the given date, not process-local midnight, and does not soften findAll's own query", async () => {
+            const given = new Date("2026-09-24T00:00:00.000Z");
+            const row = createEmployeeRow({ id: 1, openToNextWork: true, primaryEmployeeSchedules: [{ id: 9 }] });
+            employeeModel.findMany.mockResolvedValue([row]);
+
+            const result = await repository.findAllForDate(branchId, given);
+
+            const query = employeeModel.findMany.mock.calls[0]?.[0];
+            expect(query).toEqual({
+                where: { branchId, deletedAt: null },
+                include: {
+                    primaryEmployeeSchedules: {
+                        where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
+                        take: 1,
+                    },
+                    secondaryEmployeeSchedules: {
+                        where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
+                        take: 1,
+                    },
+                },
+            });
+            expect(result[0]).toMatchObject({ id: 1, status: "working" });
+        });
+
+        it("excludes soft-deleted employees like findAll", async () => {
+            employeeModel.findMany.mockResolvedValue([]);
+            await repository.findAllForDate(branchId, new Date("2026-09-24T00:00:00.000Z"));
+            const query = employeeModel.findMany.mock.calls[0]?.[0];
+            expect(query.where).toEqual({ branchId, deletedAt: null });
+        });
+    });
+
+    // ============================================
+    // findByIdForDate
+    // ============================================
+    describe("findByIdForDate", () => {
+        it("returns null when no row matches", async () => {
+            employeeModel.findFirst.mockResolvedValue(null);
+            const result = await repository.findByIdForDate(branchId, 999, new Date("2026-09-24T00:00:00.000Z"));
+            expect(result).toBeNull();
+        });
+
+        it("computes status the same way findAllForDate does, scoped to one row", async () => {
+            const given = new Date("2026-09-24T00:00:00.000Z");
+            const row = createEmployeeRow({ id: 7, openToNextWork: true, secondaryEmployeeSchedules: [{ id: 3 }] });
+            employeeModel.findFirst.mockResolvedValue(row);
+
+            const result = await repository.findByIdForDate(branchId, 7, given);
+
+            expect(employeeModel.findFirst).toHaveBeenCalledWith({
+                where: { id: 7, branchId },
+                include: {
+                    primaryEmployeeSchedules: {
+                        where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
+                        take: 1,
+                    },
+                    secondaryEmployeeSchedules: {
+                        where: { startDate: { lte: given }, endDate: { gte: given }, replaced: false, terminatedAt: null },
+                        take: 1,
+                    },
+                },
+            });
+            expect(result).toMatchObject({ id: 7, status: "working" });
+        });
+    });
+
+    // ============================================
+    // findNamesByIds
+    // ============================================
+    describe("findNamesByIds", () => {
+        it("returns an empty array without querying when given no ids", async () => {
+            const result = await repository.findNamesByIds(branchId, []);
+            expect(result).toEqual([]);
+            expect(employeeModel.findMany).not.toHaveBeenCalled();
+        });
+
+        it("scopes the lookup to the branch and the given ids, without a deletedAt filter", async () => {
+            employeeModel.findMany.mockResolvedValue([{ id: 1, name: "Alice" }, { id: 0, name: "Legacy" }]);
+
+            const result = await repository.findNamesByIds(branchId, [1, 0]);
+
+            expect(employeeModel.findMany).toHaveBeenCalledWith({
+                where: { branchId, id: { in: [1, 0] } },
+                select: { id: true, name: true },
+            });
+            expect(result).toEqual([{ id: 1, name: "Alice" }, { id: 0, name: "Legacy" }]);
+        });
+    });
+
+    // ============================================
     // create
     // ============================================
     describe("create", () => {

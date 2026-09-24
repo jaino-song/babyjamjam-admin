@@ -9,7 +9,11 @@ import {
     UpdateEmployeeScheduleUsecase,
 } from "application/usecases/employee-schedule";
 import { EMPLOYEE_SCHEDULE_REPOSITORY } from "domain/repositories/employee-schedule.repository.interface";
+import { EMPLOYEE_REPOSITORY } from "domain/repositories/employee.repository.interface";
+import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { SbEmployeeScheduleRepository } from "infrastructure/database/repositories/sb.employee-schedule.repository";
+import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
@@ -33,6 +37,17 @@ import { EmployeeScheduleAgentCapabilitiesProvider } from "application/usecases/
         {
             provide: EMPLOYEE_SCHEDULE_REPOSITORY,
             useClass: SbEmployeeScheduleRepository,
+        },
+        // Read-only, for cross-referencing client/employee names on schedules.list —
+        // provided directly rather than importing ClientModule/EmployeeModule, the
+        // same pattern eformsign-doc.module.ts uses for CLIENT_REPOSITORY.
+        {
+            provide: EMPLOYEE_REPOSITORY,
+            useClass: SbEmployeeRepository,
+        },
+        {
+            provide: CLIENT_REPOSITORY,
+            useClass: SbClientRepository,
         },
     ],
     exports: [EmployeeScheduleService],

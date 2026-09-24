@@ -350,6 +350,24 @@
       "sourceDigest": "622841296eb46173f4b5f194185fc1fb7787aca2dca95b94262a4cab42cb12e3"
     },
     {
+      "name": "contracts.recent",
+      "domain": "contracts",
+      "renderer": "activity",
+      "description": "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
+      "version": "1.0.0",
+      "risk": "read",
+      "requiredRoles": [
+        "owner",
+        "admin",
+        "manager",
+        "user"
+      ],
+      "flagKey": "agent.capability.contracts.recent",
+      "sideEffect": false,
+      "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
+      "sourceDigest": "0eb3d24a77f02ebdd958e9ac8c87543ff4cf6f7dd71cbe712ade34e2375fcd3a"
+    },
+    {
       "name": "contracts.status",
       "domain": "contracts",
       "renderer": "activity",
@@ -365,7 +383,7 @@
       "flagKey": "agent.capability.contracts.status",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "ac21e0b8a8786aaac0c2c20c645e490122f1a333712f129d66a5663c294ab03c"
+      "sourceDigest": "0eb3d24a77f02ebdd958e9ac8c87543ff4cf6f7dd71cbe712ade34e2375fcd3a"
     },
     {
       "name": "dashboard.summary",
@@ -481,7 +499,7 @@
       "name": "employees.get",
       "domain": "employees",
       "renderer": "text",
-      "description": "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork. Unlike employees.search, this does not include a computed working/available status.",
+      "description": "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) for today's Korean calendar date when it can be computed.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -493,7 +511,25 @@
       "flagKey": "agent.capability.employees.get",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee/employee-agent-capabilities.provider.ts",
-      "sourceDigest": "ac8b18ad911eefbd6d510bf06a18b7383d7231e0005a291a4e944fe02ab1f11e"
+      "sourceDigest": "9382dc2ecc1f38195e4321e4a285a2ee81fb545ebe4119d5390a9d035e43d70c"
+    },
+    {
+      "name": "employees.list",
+      "domain": "employees",
+      "renderer": "text",
+      "description": "List employees (caregivers/staff) in the current branch, optionally filtered by computed status, work area, or grade. Use for: 관리사 목록, 관리사 몇 명, 쉬는 관리사, 일 없는 관리사, 배정 가능한 관리사. Input: optional status (available/working/unavailable), date (YYYY-MM-DD, defaults to today's Korean calendar date — the status is computed for this date), workArea (partial match), grade (exact match), limit (1-50, default 50). Returns: date, total (count after filters, before limit), employees (sorted by name; excludes soft-deleted employees). There is no rest-day or leave calendar — status only reflects an active client assignment on the given date.",
+      "version": "1.0.0",
+      "risk": "read",
+      "requiredRoles": [
+        "owner",
+        "admin",
+        "manager",
+        "user"
+      ],
+      "flagKey": "agent.capability.employees.list",
+      "sideEffect": false,
+      "sourceFile": "application/usecases/employee/employee-agent-capabilities.provider.ts",
+      "sourceDigest": "9382dc2ecc1f38195e4321e4a285a2ee81fb545ebe4119d5390a9d035e43d70c"
     },
     {
       "name": "employees.search",
@@ -511,7 +547,7 @@
       "flagKey": "agent.capability.employees.search",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee/employee-agent-capabilities.provider.ts",
-      "sourceDigest": "ac8b18ad911eefbd6d510bf06a18b7383d7231e0005a291a4e944fe02ab1f11e"
+      "sourceDigest": "9382dc2ecc1f38195e4321e4a285a2ee81fb545ebe4119d5390a9d035e43d70c"
     },
     {
       "name": "employees.update",
@@ -753,7 +789,7 @@
       "name": "schedules.list",
       "domain": "schedules",
       "renderer": "activity",
-      "description": "List employee work schedules (client assignments) for the current branch, optionally filtered to one calendar date. Use for: 오늘 일정, 이번주 스케줄, 방문 일정 확인, 특정 날짜 배정 확인. Input: optional date (YYYY-MM-DD); when given, only schedules overlapping that date are returned, up to 50 rows sorted by start date. Does not accept a client or employee name — cross-reference the returned ids with clients.get or employees.get. Returns: id, clientId, primaryEmployeeId, secondaryEmployeeId, startDate, endDate, replaced.",
+      "description": "List employee work schedules (client assignments) for the current branch, optionally filtered to one calendar date, client, or employee. Use for: 오늘 일정, 이번주 스케줄, 방문 일정 확인, 특정 날짜 배정 확인. Input: optional date (YYYY-MM-DD; when given, only schedules overlapping that date are returned), optional clientId, optional employeeId (matches primary or secondary) — up to 50 rows sorted by start date. Returns: id, clientId, clientName, primaryEmployeeId, primaryEmployeeName, secondaryEmployeeId, secondaryEmployeeName, startDate, endDate, replaced. Names resolve even for a soft-deleted client or employee so history stays readable.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -765,7 +801,7 @@
       "flagKey": "agent.capability.schedules.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee-schedule/employee-schedule-agent-capabilities.provider.ts",
-      "sourceDigest": "11dadf4a61a213a2670105f14645ea6940efd407b0744a0fee48015c84e69844"
+      "sourceDigest": "f662ca060ae240eec4e6f929e6b16b86428b2cf3251cec4c06e9473a1ebe00b2"
     },
     {
       "name": "service-records.oversight",

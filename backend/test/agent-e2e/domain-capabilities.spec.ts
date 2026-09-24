@@ -143,4 +143,39 @@ describe("Release A domain read capabilities", () => {
         expect(output).toMatchObject({ documents: [{ documentId: "doc-active", status: "completed" }] });
         expect(find.execute).toHaveBeenCalledWith("branch-a", 10);
     });
+
+    it("lists employees scoped to the branch with a computed status and total-before-limit", async () => {
+        const available = EmployeeEntity.reconstitute(1, "가용", ["서울"], "010-0000-0000", "A", true, new Date());
+        available.status = "available";
+        const working = EmployeeEntity.reconstitute(2, "근무", ["서울"], "010-1111-1111", "A", true, new Date());
+        working.status = "working";
+        const listForDate = { execute: jest.fn().mockResolvedValue([available, working]) };
+        const provider = new EmployeeAgentCapabilitiesProvider({ execute: jest.fn() } as never, { execute: jest.fn() } as never, listForDate as never);
+        const capability = provider.getCapabilities().find(({ meta }) => meta.name === "employees.list")!;
+
+        const output = await capability.execute(context, { status: "available" }) as { total: number; employees: Array<{ id: number }> };
+
+        expect(output.total).toBe(1);
+        expect(output.employees).toEqual([expect.objectContaining({ id: 1, status: "available" })]);
+        expect(listForDate.execute).toHaveBeenCalledWith("branch-a", expect.any(Date));
+    });
+
+    it("lists the most recently updated contracts across all clients with the raw status code hidden", async () => {
+        const findDocs = { execute: jest.fn() };
+        const findRecentContracts = {
+            execute: jest.fn().mockResolvedValue([{
+                documentId: "doc-1", documentName: "계약서", clientId: 10, clientName: "산모",
+                statusType: "050", statusDetail: "완료", stepType: "05", stepName: "이용자",
+                updatedDate: new Date("2026-09-20T00:00:00.000Z"), expired: false,
+            }]),
+        };
+        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, findRecentContracts as never);
+        const capability = provider.getCapabilities().find(({ meta }) => meta.name === "contracts.recent")!;
+
+        const output = await capability.execute(context, {}) as { documents: Array<Record<string, unknown>> };
+
+        expect(output.documents).toEqual([expect.objectContaining({ documentId: "doc-1", clientName: "산모", status: "completed" })]);
+        expect(JSON.stringify(output)).not.toContain('"050"');
+        expect(findRecentContracts.execute).toHaveBeenCalledWith("branch-a", 10);
+    });
 });

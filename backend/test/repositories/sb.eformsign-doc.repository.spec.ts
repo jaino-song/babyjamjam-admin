@@ -154,6 +154,88 @@ describe("SbEformsignDocRepository", () => {
         expect(select).not.toHaveProperty("syncError");
     });
 
+    describe("findRecentContracts", () => {
+        function recentRow({
+            documentId = "doc-1",
+            documentName = "계약서",
+            clientId = 55,
+            statusType = "050",
+            statusDetail = "완료",
+            stepType = "05",
+            stepName = "이용자",
+            updatedDate = new Date("2026-09-20T00:00:00.000Z"),
+            expired = false,
+            client = { name: "산모" },
+        }: Partial<{
+            documentId: string;
+            documentName: string | null;
+            clientId: number | null;
+            statusType: string;
+            statusDetail: string;
+            stepType: string;
+            stepName: string;
+            updatedDate: Date;
+            expired: boolean;
+            client: { name: string } | null;
+        }> = {}) {
+            // Default *parameters* (not `??`) so an explicit `null` override (e.g. an
+            // unassigned document) is not mistaken for "not provided".
+            return { documentId, documentName, clientId, statusType, statusDetail, stepType, stepName, updatedDate, expired, client };
+        }
+
+        it("scopes to the branch, excludes purged/deleted rows, keeps contract-or-unclassified kinds, orders newest first, and takes the given count", async () => {
+            eformsignDocModel.findMany.mockResolvedValue([recentRow()]);
+
+            const result = await repository.findRecentContracts("branch-1", 10);
+
+            expect(eformsignDocModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId: "branch-1",
+                    permanentPurgeRequestedAt: null,
+                    statusType: { not: "deleted" },
+                    OR: [
+                        { documentKind: "contract" },
+                        { documentKind: null },
+                    ],
+                },
+                orderBy: { updatedDate: "desc" },
+                take: 10,
+                select: {
+                    documentId: true,
+                    documentName: true,
+                    clientId: true,
+                    statusType: true,
+                    statusDetail: true,
+                    stepType: true,
+                    stepName: true,
+                    updatedDate: true,
+                    expired: true,
+                    client: { select: { name: true } },
+                },
+            });
+            expect(result).toEqual([{
+                documentId: "doc-1",
+                documentName: "계약서",
+                clientId: 55,
+                clientName: "산모",
+                statusType: "050",
+                statusDetail: "완료",
+                stepType: "05",
+                stepName: "이용자",
+                updatedDate: new Date("2026-09-20T00:00:00.000Z"),
+                expired: false,
+            }]);
+        });
+
+        it("resolves a null client name for an unassigned document without throwing", async () => {
+            eformsignDocModel.findMany.mockResolvedValue([recentRow({ clientId: null, client: null })]);
+
+            const [doc] = await repository.findRecentContracts("branch-1", 10);
+
+            expect(doc).toMatchObject({ clientId: null, clientName: null });
+        });
+    });
+
     it("excludes purge-pending rows from the headquarters list", async () => {
         eformsignDocModel.findMany.mockResolvedValue([legacyRow]);
 
