@@ -154,7 +154,7 @@ describe("decision-contracts constants", () => {
             "none",
             "insufficient_evidence",
         ]);
-        expect(DECISION_QUESTION_VERSION).toBe("v3");
+        expect(DECISION_QUESTION_VERSION).toBe("v4");
     });
 
     it("should list exactly the forbidden decision fields when the guard constant is read", () => {

@@ -149,7 +149,9 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
  * be applied, and that the user has not yet given. Single authoritative
  * source, for both create and update: the domain task's own `task.required`
  * issues (`agent-task.service.ts`'s `issues()`/`updateIssues()`, the same
- * dynamic issues recomputed on every turn — see `DYNAMIC_ISSUE_CODES`).
+ * dynamic issues — see `DYNAMIC_ISSUE_CODES` — recomputed when the task is
+ * mutated, a target/phone is selected, or review readiness is checked; not
+ * at the start of every turn).
  * `task.required` is never invented here; it is read as-is:
  *
  * - create: `evaluateClientReadiness` emits a field-scoped `task.required`
@@ -170,9 +172,17 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
  * - `task.invalid` / `task.duplicate` / `task.stale` are deliberately
  *   excluded: those mean a value WAS given but rejected, or the target
  *   decayed — a different meaning from "not yet given" and out of scope
- *   here (AC-18 only concerns missing input, not invalid input).
- *   Exception: the domain reports a malformed phone (`phone_must_be_11_digits`)
- *   as `task.required` on `phone`, so it is listed here as missing.
+ *   here. A malformed phone (`phone_must_be_11_digits`) is reported as
+ *   `task.invalid` on `phone`, not `task.required`, so it is never listed
+ *   here as missing (BJJ-348) — it still blocks create/apply via the
+ *   `task.invalid` issue itself.
+ *
+ * This list is sent to the provider as state only. Deterministic
+ * suppression of model mutation is no longer driven by `missingFields`
+ * (AC-18, BJJ-348): only an unconfirmed write target does that — see
+ * `ClarificationFacts.targetMissing` below. A missing value never suppresses
+ * on its own; the model may extract it from the text, and every write still
+ * ends at the mandatory approval card.
  *
  * This makes the normal path and the (former) fallback path identical: both
  * read `task.issues`, which is always present on a committed `AgentTask` and
@@ -193,7 +203,15 @@ export function deriveMissingFields(task: Parameters<typeof projectTaskForSafeCh
  * (P1 enforce wiring).
  *
  * - `taskRevision` ← the domain task revision.
- * - `missingFields` ← see `deriveMissingFields` above.
+ * - `missingFields` ← see `deriveMissingFields` above. Sent to the provider
+ *   as state only — no rule in `decideClarification` suppresses on it
+ *   (BJJ-348).
+ * - `targetMissing` ← true when the task's capability requires a write
+ *   target (anything but `clients.create`) and none is confirmed yet, or the
+ *   confirmed one is stale (un-scoped `task.stale`). `clients.create`
+ *   never has a target, so this is always false for it. This is the sole
+ *   deterministic-recovery trigger (AC-18, BJJ-348): only an unknown
+ *   *record* may hide the write tool, never a missing *value*.
  * - `targetConfirmed` ← the task's target presence. Consumed by the façade
  *   request only; no rule in `decideClarification` reads it.
  * - `hasAcceptedUserInput` ← explicit server-validated input accepted on
@@ -206,10 +224,18 @@ export function deriveMissingFields(task: Parameters<typeof projectTaskForSafeCh
 function buildClarificationFacts(turn: ConversationTaskTurnResult, askedAtRevision: number | null): ClarificationFacts {
     const task = turn.task;
     if (!task) throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
+    const targetConfirmed = task.target !== null;
+    // clients.create has no target at all, so it can never be "missing" one;
+    // every other capability needs a confirmed, current target before it can
+    // be applied. A target whose record changed elsewhere (un-scoped
+    // task.stale) is not confirmed either.
+    const targetStale = task.issues.some((issue) => issue.code === "task.stale" && issue.field === undefined);
+    const targetMissing = task.kind !== "clients.create" && (!targetConfirmed || targetStale);
     return {
         taskRevision: task.revision,
         missingFields: deriveMissingFields(task),
-        targetConfirmed: task.target !== null,
+        targetMissing,
+        targetConfirmed,
         hasAcceptedUserInput: turn.mutated === true && turn.operations.length > 0,
         mutationBlocked: turn.mutationBlocked === true,
         clarificationAskedAtRevision: askedAtRevision,

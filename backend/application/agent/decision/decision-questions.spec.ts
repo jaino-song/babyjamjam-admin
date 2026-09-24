@@ -53,8 +53,8 @@ function currentQuestionDigest(): { version: string; digest: string } {
 // green: an acceptance profile calibrated on the old wording would then
 // silently apply to different questions.
 const PINNED_QUESTION_DIGEST = {
-    version: "v3",
-    digest: "5bf661380b3f5949464dafb6e5643282d9e6ed89a4ea8eee57d9aec780030a60",
+    version: "v4",
+    digest: "1744ea490453a135fe798f652855671e87dcc9e4a56148df83d03b99abfa71eb",
 };
 
 describe("question text is pinned to DECISION_QUESTION_VERSION", () => {
