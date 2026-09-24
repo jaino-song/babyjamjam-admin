@@ -182,24 +182,93 @@ is_script_owned_key() {
     return 1
 }
 
+# Every non-script-owned key this loop blanks, so step 6b can re-export each
+# one (empty) into the isolated environment the child commands run under —
+# otherwise ConfigModule would read its real value straight out of the env
+# file inside that clean environment.
+BLANKED_KEYS=()
+is_blanked_key() {
+    local candidate="$1"
+    # Guard the (likely empty, early on) array expansion: under `set -u` on
+    # bash 3.2 (macOS's /usr/bin/env bash), expanding an empty array's [@] is
+    # an unbound-variable error, not an empty expansion.
+    (( ${#BLANKED_KEYS[@]} == 0 )) && return 1
+    local k
+    for k in "${BLANKED_KEYS[@]}"; do
+        [[ "$candidate" == "$k" ]] && return 0
+    done
+    return 1
+}
+blank_and_record_key() {
+    local key_name="$1"
+    is_script_owned_key "$key_name" && return 0
+    export "$key_name"=""
+    is_blanked_key "$key_name" || BLANKED_KEYS+=("$key_name")
+}
+
 # Parse key names the way dotenv does (optional leading whitespace and an
-# optional `export ` prefix; blank and comment lines ignored). Any other
-# assignment-looking line whose key is not a valid shell name cannot be
-# blanked, so fail closed rather than let its value reach the process.
+# optional `export ` prefix; blank and comment lines ignored). @nestjs/config's
+# dotenv loader also accepts `KEY: value` (YAML-flavoured) in addition to
+# `KEY=value`, so both shapes must be recognised here or a colon-style secret
+# would pass through unblanked. A colon-style key with characters that are not
+# a valid shell identifier cannot be safely exported, so it fails closed. Any
+# other assignment-looking line whose key is not a valid shell name also fails
+# closed, rather than letting its value reach the process.
 for env_file in "${ENV_FILES[@]}"; do
     [[ -f "$env_file" ]] || continue
     log "blanking every non-script-owned key declared in $(basename "$(dirname "$env_file")")/$(basename "$env_file") (names only, no values read)"
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
         if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+            blank_and_record_key "${BASH_REMATCH[2]}"
+        elif [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.-]*)[[:space:]]*: ]]; then
             key_name="${BASH_REMATCH[2]}"
-            is_script_owned_key "$key_name" && continue
-            export "$key_name"=""
-        elif [[ "$line" =~ = ]]; then
+            if [[ "$key_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                blank_and_record_key "$key_name"
+            else
+                fail "cannot safely blank an entry in $env_file (unrecognised key shape); fix that line before running this script"
+            fi
+        elif [[ "$line" =~ [=:] ]]; then
             fail "cannot safely blank an entry in $env_file (unrecognised key shape); fix that line before running this script"
         fi
     done < "$env_file"
 done
+
+# --- 6b. Build the minimal explicit environment for the isolated commands --
+#
+# The two commands below (migrate deploy, jest) must never inherit the
+# caller's whole shell environment: an exported credential (e.g.
+# GOOGLE_GENERATIVE_AI_API_KEY, AWS_*, REDIS_URL) that this script never
+# referenced would otherwise still reach prisma/jest. `env -i` starts each
+# command with a fully empty environment, so everything it legitimately needs
+# — the base shell plumbing, this script's own exported values, and every
+# key blanked above (so ConfigModule cannot load the real value back out of
+# the env file inside that clean environment) — must be listed explicitly.
+ISOLATED_ENV_ARGS=()
+add_isolated_env() {
+    local key="$1"
+    if [[ -n "${!key+x}" ]]; then
+        ISOLATED_ENV_ARGS+=("${key}=${!key}")
+    fi
+}
+for base_var in PATH HOME TMPDIR USER LANG; do
+    add_isolated_env "$base_var"
+done
+[[ -n "${TERM:-}" ]] && add_isolated_env TERM
+# backend/package.json's test:agent-e2e ("jest --config jest.agent-e2e.config.ts")
+# does not read NODE_OPTIONS, so it is deliberately not forwarded.
+for owned in "${SCRIPT_OWNED_KEYS[@]}"; do
+    add_isolated_env "$owned"
+done
+if (( ${#BLANKED_KEYS[@]} > 0 )); then
+    for blanked in "${BLANKED_KEYS[@]}"; do
+        ISOLATED_ENV_ARGS+=("${blanked}=")
+    done
+fi
+
+run_isolated() {
+    env -i "${ISOLATED_ENV_ARGS[@]}" "$@"
+}
 
 # --- 7. Migrate then run the isolated conversation-task E2E suite ----------
 
@@ -207,10 +276,10 @@ cd "$BACKEND_DIR"
 
 assert_approved_database_target
 log "running prisma migrate deploy against the throwaway database"
-pnpm run db:migrate:deploy
+run_isolated pnpm run db:migrate:deploy
 
 assert_approved_database_target
 log "running the isolated agent-task persistence E2E suite"
-pnpm run test:agent-e2e --testPathPatterns='test/agent-e2e/runtime/agent-task-.*\.e2e\.spec\.ts$' "$@"
+run_isolated pnpm run test:agent-e2e --testPathPatterns='test/agent-e2e/runtime/agent-task-.*\.e2e\.spec\.ts$' "$@"
 
 log "done"
