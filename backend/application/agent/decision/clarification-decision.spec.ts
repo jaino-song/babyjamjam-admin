@@ -10,10 +10,11 @@ import {
 
 const TASK_REVISION = 7;
 
-/** No missing fields, no block, no accepted input, nothing asked yet. */
+/** No missing target, no missing fields, no block, no accepted input, nothing asked yet. */
 const CLEAN_FACTS: ClarificationFacts = {
     taskRevision: TASK_REVISION,
     missingFields: [],
+    targetMissing: false,
     targetConfirmed: true,
     hasAcceptedUserInput: false,
     mutationBlocked: false,
@@ -51,18 +52,21 @@ function allFactCombinations(): ClarificationFacts[] {
     const combinations: ClarificationFacts[] = [];
     const missingFieldSets: ReadonlyArray<readonly string[]> = [[], ...MISSING_FIELD_SETS];
     for (const missingFields of missingFieldSets) {
-        for (const targetConfirmed of [true, false]) {
-            for (const hasAcceptedUserInput of [true, false]) {
-                for (const mutationBlocked of [true, false]) {
-                    for (const askedAt of ASKED_REVISION_CASES) {
-                        combinations.push({
-                            taskRevision: TASK_REVISION,
-                            missingFields,
-                            targetConfirmed,
-                            hasAcceptedUserInput,
-                            mutationBlocked,
-                            clarificationAskedAtRevision: askedAt,
-                        });
+        for (const targetMissing of [true, false]) {
+            for (const targetConfirmed of [true, false]) {
+                for (const hasAcceptedUserInput of [true, false]) {
+                    for (const mutationBlocked of [true, false]) {
+                        for (const askedAt of ASKED_REVISION_CASES) {
+                            combinations.push({
+                                taskRevision: TASK_REVISION,
+                                missingFields,
+                                targetMissing,
+                                targetConfirmed,
+                                hasAcceptedUserInput,
+                                mutationBlocked,
+                                clarificationAskedAtRevision: askedAt,
+                            });
+                        }
                     }
                 }
             }
@@ -72,25 +76,54 @@ function allFactCombinations(): ClarificationFacts[] {
 }
 
 describe("decideClarification", () => {
-    describe("rule 1: missing required fields own the turn (deterministic recovery, AC-18)", () => {
-        it("ignores advice entirely whenever required fields are missing", () => {
+    describe("rule 1: an unconfirmed write target owns the turn (deterministic recovery, AC-18, BJJ-348)", () => {
+        it("ignores advice entirely whenever the write target is missing, regardless of missingFields", () => {
+            for (const missingFields of [[], ...MISSING_FIELD_SETS]) {
+                for (const advice of ADVICE_CASES) {
+                    const decision = decideClarification({
+                        facts: { ...CLEAN_FACTS, targetMissing: true, targetConfirmed: false, missingFields },
+                        advice,
+                    });
+
+                    expect(decision).toEqual({
+                        recommendClarification: false,
+                        suppressModelMutation: true,
+                        deterministicRecovery: true,
+                        reason: "deterministic-recovery",
+                    });
+                    expectClosedShape(decision);
+                }
+            }
+        });
+
+        it("never suppresses on missingFields alone when the target is known (BJJ-348: a missing value never hides the write tool)", () => {
             for (const missingFields of MISSING_FIELD_SETS) {
                 for (const advice of ADVICE_CASES) {
-                    for (const targetConfirmed of [true, false]) {
-                        const decision = decideClarification({
-                            facts: { ...CLEAN_FACTS, missingFields, targetConfirmed },
-                            advice,
-                        });
+                    const decision = decideClarification({
+                        facts: { ...CLEAN_FACTS, targetMissing: false, missingFields },
+                        advice,
+                    });
 
-                        expect(decision).toEqual({
-                            recommendClarification: false,
-                            suppressModelMutation: true,
-                            deterministicRecovery: true,
-                            reason: "deterministic-recovery",
-                        });
-                        expectClosedShape(decision);
-                    }
+                    expect(decision.deterministicRecovery).toBe(false);
+                    expect(decision.suppressModelMutation).toBe(false);
+                    // Advice may still recommend a question; it just never suppresses.
+                    expect(decision.recommendClarification).toBe(advice?.recommendClarification === true);
                 }
+            }
+        });
+
+        it("create (no target at all) with missing name/phone is never suppressed", () => {
+            // clients.create never has a target, so targetMissing is always
+            // false for it even while name/phone are still missing.
+            for (const advice of ADVICE_CASES) {
+                const decision = decideClarification({
+                    facts: { ...CLEAN_FACTS, targetMissing: false, missingFields: ["name", "phone"] },
+                    advice,
+                });
+
+                expect(decision.deterministicRecovery).toBe(false);
+                expect(decision.suppressModelMutation).toBe(false);
+                expect(decision.recommendClarification).toBe(advice?.recommendClarification === true);
             }
         });
     });
@@ -109,6 +142,19 @@ describe("decideClarification", () => {
                 // The block may not erase the advice; advice may only add a
                 // question on top of the suppressed turn.
                 expect(decision.recommendClarification).toBe(advice?.recommendClarification === true);
+            }
+        });
+
+        it("still wins even when missingFields is non-empty and the target is known", () => {
+            for (const advice of ADVICE_CASES) {
+                const decision = decideClarification({
+                    facts: { ...CLEAN_FACTS, mutationBlocked: true, targetMissing: false, missingFields: ["name", "phone"] },
+                    advice,
+                });
+
+                expect(decision.suppressModelMutation).toBe(true);
+                expect(decision.deterministicRecovery).toBe(false);
+                expect(decision.reason).toBe("mutation-blocked");
             }
         });
     });
@@ -218,9 +264,9 @@ describe("decideClarification", () => {
     describe("global invariants over the full input space", () => {
         const FACTS = allFactCombinations();
 
-        it("exhaustively: no combination relaxes deterministic recovery while fields are missing (AC-18)", () => {
+        it("exhaustively: no combination relaxes deterministic recovery while the target is missing (AC-18)", () => {
             for (const facts of FACTS) {
-                if (facts.missingFields.length === 0) continue;
+                if (!facts.targetMissing) continue;
                 for (const advice of ADVICE_CASES) {
                     const decision = decideClarification({ facts, advice });
 
@@ -232,8 +278,25 @@ describe("decideClarification", () => {
             }
         });
 
+        it("exhaustively: missingFields alone never triggers deterministic recovery or suppression when the target is not missing (BJJ-348)", () => {
+            for (const facts of FACTS) {
+                if (facts.targetMissing) continue;
+                if (facts.missingFields.length === 0) continue;
+                if (facts.mutationBlocked) continue;
+                if (facts.hasAcceptedUserInput) continue;
+                if (facts.clarificationAskedAtRevision === facts.taskRevision) continue;
+                for (const advice of ADVICE_CASES) {
+                    const decision = decideClarification({ facts, advice });
+
+                    expect(decision.deterministicRecovery).toBe(false);
+                    expect(decision.suppressModelMutation).toBe(false);
+                }
+            }
+        });
+
         it("exhaustively: no combination clears a mutation block while blocked (AC-19)", () => {
             for (const facts of FACTS) {
+                if (facts.targetMissing) continue;
                 if (!facts.mutationBlocked) continue;
                 for (const advice of ADVICE_CASES) {
                     const decision = decideClarification({ facts, advice });
@@ -246,7 +309,7 @@ describe("decideClarification", () => {
         it("exhaustively: accepted input is never suppressed unless a pre-existing deterministic rule owns the turn", () => {
             for (const facts of FACTS) {
                 if (!facts.hasAcceptedUserInput) continue;
-                if (facts.missingFields.length > 0) continue;
+                if (facts.targetMissing) continue;
                 for (const advice of ADVICE_CASES) {
                     const decision = decideClarification({ facts, advice });
 
@@ -282,6 +345,7 @@ describe("decideClarification", () => {
                 readonly advice: ClarificationAdvice | null;
             }[] = [
                 { facts: CLEAN_FACTS, advice: { recommendClarification: true } },
+                { facts: { ...CLEAN_FACTS, targetMissing: true, targetConfirmed: false }, advice: { recommendClarification: true } },
                 { facts: { ...CLEAN_FACTS, missingFields: ["phoneNumber"] }, advice: { recommendClarification: true } },
                 { facts: { ...CLEAN_FACTS, mutationBlocked: true }, advice: null },
                 { facts: { ...CLEAN_FACTS, hasAcceptedUserInput: true }, advice: { recommendClarification: false } },

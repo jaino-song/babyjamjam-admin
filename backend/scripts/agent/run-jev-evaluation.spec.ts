@@ -600,6 +600,44 @@ describe("live mode with an injected fetch stub", () => {
             missingFields: [],
             targetConfirmed: false,
         });
+
+        // clarify-010 (BJJ-348): a confirmed target with the full write-field
+        // set still reported missing (the real "confirmed target, no
+        // committed change yet" shape) — the request must still carry that
+        // exact state verbatim; only decideClarification's rule, not the
+        // state derivation, changed under BJJ-348.
+        const case010 = RAW_CASES_BY_ID.get("clarify-010");
+        expect(case010?.state?.missingFields).toEqual(CLIENT_WRITE_FIELD_NAMES);
+        expect(case010?.state?.targetConfirmed).toBe(true);
+        expect(stateByCaseId.get("clarify-010")).toEqual({
+            text: buildRedactedDecisionText(case010?.text ?? "", []),
+            missingFields: CLIENT_WRITE_FIELD_NAMES,
+            targetConfirmed: true,
+        });
+
+        // clarify-011: redaction negative control (BJJ-348). This fixture's
+        // raw text contains a bare (obviously-placeholder) email-address
+        // pattern that the runtime's generic free-text redaction always
+        // strips, independent of any server-known value. Every OTHER
+        // clarification case's text happens
+        // to be unchanged by that generic redaction, so without this case
+        // the equality check above (`stateByCaseId.get(item.id)?.text` vs.
+        // `buildRedactedDecisionText(item.text, [])`) would pass even if the
+        // production code stopped calling `buildRedactedDecisionText`
+        // entirely and sent the raw corpus text instead — both sides of that
+        // comparison would just be the same unredacted string. Proving this
+        // fixture's raw text actually differs from its redacted form, and
+        // that the live request carries the redacted form rather than the
+        // raw text, is what makes the earlier loop an effective negative
+        // control: if redaction were removed, this specific assertion would
+        // fail because the live request would then equal the raw text below.
+        const case011 = RAW_CASES_BY_ID.get("clarify-011");
+        expect(case011).toBeDefined();
+        const rawText011 = case011?.text ?? "";
+        const redactedText011 = buildRedactedDecisionText(rawText011, []);
+        expect(redactedText011).not.toBe(rawText011);
+        expect(stateByCaseId.get("clarify-011")?.text).toBe(redactedText011);
+        expect(stateByCaseId.get("clarify-011")?.text).not.toBe(rawText011);
     });
 
     it("shares the fixture report shape so both modes are comparable", async () => {
