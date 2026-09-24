@@ -149,7 +149,9 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
  * be applied, and that the user has not yet given. Single authoritative
  * source, for both create and update: the domain task's own `task.required`
  * issues (`agent-task.service.ts`'s `issues()`/`updateIssues()`, the same
- * dynamic issues recomputed on every turn — see `DYNAMIC_ISSUE_CODES`).
+ * dynamic issues — see `DYNAMIC_ISSUE_CODES` — recomputed when the task is
+ * mutated, a target/phone is selected, or review readiness is checked; not
+ * at the start of every turn).
  * `task.required` is never invented here; it is read as-is:
  *
  * - create: `evaluateClientReadiness` emits a field-scoped `task.required`

@@ -57,8 +57,9 @@ export interface ClarificationFacts {
      */
     readonly missingFields: readonly string[];
     /**
-     * True when the task's capability requires a write target
-     * (`clients.update`) and none is confirmed yet. `clients.create` never
+     * True when the task's capability requires a write target (anything but
+     * `clients.create`) and none is confirmed yet, or the confirmed one is
+     * stale (un-scoped `task.stale`). `clients.create` never
      * has a target, so this is always false for it. This is the sole
      * deterministic-recovery trigger (AC-18, BJJ-348).
      */

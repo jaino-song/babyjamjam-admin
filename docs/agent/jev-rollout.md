@@ -164,15 +164,16 @@ cannot provide come exclusively from an operator-authored JSON file
   **BJJ-348 (2026-09-24)
   resolved the enforce-mode gate that previously blocked `evaluate-clarification`
   from going to `enforce`:** only an *unknown record* (`clients.update` with no
-  confirmed target) still makes `decideClarification` deterministically
+  confirmed target, or with a stale one — an un-scoped `task.stale` issue)
+  still makes `decideClarification` deterministically
   suppress model writes (AC-18). A *missing value* never does — the model may
   extract it from the text, and every write still ends at the mandatory
   approval card, the sole point at which the user sees exactly what will
   change. So an update whose change has not been committed to the task yet, or
   a create missing name/phone, no longer hides the write tool by itself; a
   freeform follow-up can supply the value and the model's mutation reaches the
-  approval flow unchanged. Only an update with no confirmed target still hides
-  `clients_update`. The runtime's `missingFields` (`deriveMissingFields` in
+  approval flow unchanged. Only an update with no confirmed (or a stale) target
+  still hides `clients_update`. The runtime's `missingFields` (`deriveMissingFields` in
   `agent-runtime.service.ts`) still lists only what the task still needs, from
   its `task.required` issues: for create, the unmet required fields (name,
   phone); for update, nothing once a target is confirmed and at least one
@@ -185,9 +186,9 @@ cannot provide come exclusively from an operator-authored JSON file
   (`state: { missingFields, targetConfirmed }`, field names restricted to the
   client write fields), and the live runner sends it with the same redacted
   text the runtime sends.
-  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs,
-  2026-09-24) `clarificationRequired` scored 0.85–0.97 where clarification is
-  needed and 0.11–0.36 where it is not. The stored clarification profile's
+  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs
+  at question v4, 2026-09-24) `clarificationRequired` scored 0.76–0.94 where
+  clarification is needed and 0.07–0.34 where it is not. The stored clarification profile's
   `thresholds.acceptProbability` must sit inside that window (e.g. 0.6), and
   must be re-derived from human-reviewed evidence before `enforce`.
   Treat `ineligible` under `enforce` as the stale-profile symptom and compare
