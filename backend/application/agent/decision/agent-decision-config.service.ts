@@ -72,6 +72,16 @@ const AgentDecisionLimitsSchema = z.object({
      * Per-call deadline budget in ms, applied fresh to each admitted port
      * call (`Date.now() + turnDeadlineMs` at admission time) — not a single
      * deadline for the whole turn. See AgentDecisionService.evaluate().
+     *
+     * Bound: at most 3 awaited decision calls are made per runtime turn
+     * (route-domains, classify-client-intent, evaluate-clarification — see
+     * AgentRuntimeService.stream, which awaits each sequentially/in
+     * parallel before the response stream starts), each a single attempt
+     * (`maxRetries: 0`, clamped to `MAX_ATTEMPT_TIMEOUT_MS` in the TypeSafe
+     * adapter). Worst-case added latency from the decision layer is
+     * therefore approximately `3 * turnDeadlineMs`, in both shadow and
+     * enforce mode (shadow still awaits its calls; only their outcome is
+     * discarded).
      */
     turnDeadlineMs: z.number().int().min(1).max(10000).default(800),
     maxP0PerTurn: z.number().int().min(0).max(10).default(2),
@@ -100,13 +110,22 @@ export const AgentDecisionConfigSchema = z.object({
     /**
      * Deployment environments where JEV may run at all. Empty (the default)
      * means all-off everywhere: see {@link AGENT_DECISION_ENVIRONMENT_ENV_VAR}.
+     * Entries are trimmed and blank entries are dropped so a stray
+     * whitespace-only or empty string in the stored setting can never widen
+     * the deployment scope; comparison in {@link isEnvironmentInScope} is
+     * against the trimmed env var value, so a stored untrimmed entry would
+     * otherwise silently never match.
      */
-    environments: z.array(z.string().min(1)).default([]),
+    environments: z.array(z.string()).default([]).transform((values) => values.map((value) => value.trim()).filter((value) => value.length > 0)),
     /**
      * Branch allowlist. Empty (the default) means no branch is in scope, so
-     * every kind resolves as if disabled for every turn.
+     * every kind resolves as if disabled for every turn. Entries are
+     * trimmed and blank entries are dropped, matching `environments` above;
+     * {@link AgentDecisionService.createTurnContext} compares against
+     * `String(principal.branchId)` unchanged, so an untrimmed stored entry
+     * would otherwise silently never match a real branch id.
      */
-    allowedBranchIds: z.array(z.string().min(1)).default([]),
+    allowedBranchIds: z.array(z.string()).default([]).transform((values) => values.map((value) => value.trim()).filter((value) => value.length > 0)),
     limits: AgentDecisionLimitsSchema
         .optional()
         .transform((value) => AgentDecisionLimitsSchema.parse(value ?? {})),

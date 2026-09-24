@@ -283,4 +283,31 @@ describe("AgentDecisionConfigService", () => {
             expect(mode).toBe("off");
         });
     });
+
+    describe("environments/allowedBranchIds sanitization (m4)", () => {
+        it("trims whitespace and drops blank entries from environments", async () => {
+            const { service } = makeService(JSON.stringify({
+                environments: [`  ${TEST_ENVIRONMENT}  `, "", "   ", "other-env"],
+            }));
+            const config = await service.getConfig();
+            expect(config.environments).toEqual([TEST_ENVIRONMENT, "other-env"]);
+        });
+
+        it("trims whitespace and drops blank entries from allowedBranchIds", async () => {
+            const { service } = makeService(JSON.stringify({
+                allowedBranchIds: ["  branch-a  ", "", "   ", "branch-b"],
+            }));
+            const config = await service.getConfig();
+            expect(config.allowedBranchIds).toEqual(["branch-a", "branch-b"]);
+        });
+
+        it("a sanitized environments entry still opens the gate for an untrimmed stored value", async () => {
+            process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR] = TEST_ENVIRONMENT;
+            const { service } = makeService(JSON.stringify({
+                environments: [`  ${TEST_ENVIRONMENT}  `],
+                kinds: { [DECISION_KINDS.routeDomains]: { mode: "enforce" } },
+            }));
+            await expect(service.getKindMode(DECISION_KINDS.routeDomains)).resolves.toBe("enforce");
+        });
+    });
 });

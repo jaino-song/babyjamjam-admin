@@ -252,9 +252,13 @@ describe("AgentDecisionService", () => {
             kind: "route-domains",
             permittedDomains: ["clients"],
             questionVersion: DECISION_QUESTION_VERSION,
-            deadlineAt: ctx.deadlineAt,
             signal: ctx.signal,
         });
+        // Per-call deadline, computed fresh at call admission (see the
+        // fake-timer-pinned assertion below for the exact
+        // `Date.now() + turnDeadlineMs` bound); the turn context itself no
+        // longer carries a deadline field.
+        expect(request?.deadlineAt).toBeGreaterThanOrEqual(Date.now());
         expect(request?.redactedText).not.toContain("client-alpha");
 
         // Shadow never applies: the caller keeps its baseline.

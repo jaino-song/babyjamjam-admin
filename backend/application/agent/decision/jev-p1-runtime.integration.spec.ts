@@ -234,7 +234,6 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
     const decisions = {
         createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => {
             const context: DecisionTurnContext = {
-                deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
                 inScope: true,
