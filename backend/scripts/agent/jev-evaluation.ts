@@ -107,6 +107,19 @@ function predictionError(message: string, caseId: string | null): JevEvaluationE
 // Corpus model
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional per-case clarification state for `evaluate-clarification` cases,
+ * mirroring the shape `TypeSafeJevDecisionService.evaluateClarification`
+ * sends as `state.missingFields` / `state.targetConfirmed`
+ * (infrastructure/agent/typesafe-jev-decision.service.ts:434-438). Absent on
+ * a case means today's evaluation-harness default: no missing fields, no
+ * confirmed target (see `DEFAULT_CLARIFICATION_STATE` below).
+ */
+export interface JevClarificationState {
+    readonly missingFields: readonly string[];
+    readonly targetConfirmed: boolean;
+}
+
 export interface JevCase {
     readonly id: string;
     readonly decisionKind: DecisionKind;
@@ -118,7 +131,15 @@ export interface JevCase {
     readonly unacceptable: readonly string[];
     readonly labelProvenance: JevLabelProvenance;
     readonly notes: string | null;
+    /** Only ever non-null for decisionKind "evaluate-clarification". */
+    readonly state: JevClarificationState | null;
 }
+
+/** The evaluation harness's long-standing default when a case carries no explicit state. */
+export const DEFAULT_CLARIFICATION_STATE: JevClarificationState = Object.freeze({
+    missingFields: [],
+    targetConfirmed: false,
+});
 
 export interface JevCorpus {
     readonly cases: readonly JevCase[];
@@ -137,7 +158,10 @@ const CASE_REQUIRED_KEYS = [
     "text",
 ] as const;
 
-const CASE_OPTIONAL_KEYS = ["notes", "unacceptable"] as const;
+const CASE_OPTIONAL_KEYS = ["notes", "unacceptable", "state"] as const;
+
+/** Exact key set for a case's optional `state` object. Both keys are required when `state` is present at all. */
+const CLARIFICATION_STATE_KEYS = ["missingFields", "targetConfirmed"] as const;
 
 // ---------------------------------------------------------------------------
 // Generic validation helpers
@@ -177,6 +201,13 @@ function requireStringArray(
         seen.add(item);
     }
     return [...value];
+}
+
+function requireBoolean(value: unknown, field: string, caseId: string | null): boolean {
+    if (typeof value !== "boolean") {
+        throw corpusError(`Field "${field}" must be a boolean`, caseId);
+    }
+    return value;
 }
 
 function requireEnum<T extends string>(
@@ -356,6 +387,10 @@ function parseCase(
         ? requireNonEmptyString(entry["notes"], "notes", id)
         : null;
 
+    const state = "state" in entry
+        ? parseCaseState(entry["state"], decisionKind, id)
+        : null;
+
     return {
         id,
         decisionKind,
@@ -365,9 +400,37 @@ function parseCase(
         text,
         acceptable,
         unacceptable,
+        state,
         labelProvenance,
         notes,
     };
+}
+
+/**
+ * Validates a case's optional `state` object. `state` is only meaningful for
+ * `evaluate-clarification` cases (it mirrors the request shape
+ * `evaluateClarification` sends the model); any other decision kind carrying
+ * a `state` key is a corpus authoring error, not a differently-shaped case.
+ */
+function parseCaseState(
+    value: unknown,
+    decisionKind: DecisionKind,
+    caseId: string | null,
+): JevClarificationState {
+    if (decisionKind !== DECISION_KINDS.evaluateClarification) {
+        throw corpusError(
+            `Field "state" is only valid for decisionKind "${DECISION_KINDS.evaluateClarification}", `
+            + `got "${decisionKind}"`,
+            caseId,
+        );
+    }
+    if (!isPlainObject(value)) {
+        throw corpusError('Field "state" must be a JSON object', caseId);
+    }
+    requireExactKeys(value, CLARIFICATION_STATE_KEYS, [], "state", caseId);
+    const missingFields = requireStringArray(value["missingFields"], "state.missingFields", caseId, true);
+    const targetConfirmed = requireBoolean(value["targetConfirmed"], "state.targetConfirmed", caseId);
+    return { missingFields, targetConfirmed };
 }
 
 /**

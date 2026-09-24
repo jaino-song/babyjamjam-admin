@@ -259,6 +259,56 @@
       "notes": "no target and no value"
     },
     {
+      "id": "clarify-006",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-confirmed-target-followup-value",
+      "language": "ko",
+      "text": "메모를 '방문 시간 변경 요청'으로 수정해줘",
+      "acceptable": ["clarification-not-required"],
+      "unacceptable": ["clarification-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": [], "targetConfirmed": true },
+      "notes": "Follow-up turn on an already-established task: the record (테스트산모) was confirmed in an earlier turn (state.targetConfirmed=true, state.missingFields=[]) and this turn's text supplies only the new memo value, with no record named."
+    },
+    {
+      "id": "clarify-007",
+      "decisionKind": "evaluate-clarification",
+      "split": "holdout",
+      "scenarioFamily": "clarify-confirmed-target-value-still-missing",
+      "language": "ko",
+      "text": "그 정보를 업데이트해줘",
+      "acceptable": ["clarification-required"],
+      "unacceptable": ["clarification-not-required"],
+      "labelProvenance": "synthetic-authored",
+      "state": { "missingFields": ["value"], "targetConfirmed": true },
+      "notes": "Follow-up turn where the record (테스트산모) is already confirmed (state.targetConfirmed=true) but the text still gives no new value and state.missingFields still lists the value as missing, so clarification is still required."
+    },
+    {
+      "id": "clarify-008",
+      "decisionKind": "evaluate-clarification",
+      "split": "calibration",
+      "scenarioFamily": "clarify-no-target-value-given",
+      "language": "ko",
+      "text": "주소를 '테스트 사옥 3층'으로 바꿔줘",
+      "acceptable": ["clarification-required"],
+      "unacceptable": [],
+      "labelProvenance": "synthetic-authored",
+      "notes": "A new value is given but no record is named in the text and none is confirmed by state (targetConfirmed=false); clarification is required regardless of the value being present. Fully decidable from text alone, so this case is live-verifiable under today's harness defaults."
+    },
+    {
+      "id": "clarify-009",
+      "decisionKind": "evaluate-clarification",
+      "split": "holdout",
+      "scenarioFamily": "clarify-lookup-named-target",
+      "language": "ko",
+      "text": "테스트산모 정보 좀 보여줘",
+      "acceptable": ["clarification-not-required"],
+      "unacceptable": [],
+      "labelProvenance": "synthetic-authored",
+      "notes": "A lookup request (mutationRequested=false) naming a record; no clarification is required because it only looks something up, independent of any missing-field or unconfirmed-target state. Fully decidable from text alone, so this case is live-verifiable under today's harness defaults."
+    },
+    {
       "id": "route-001",
       "decisionKind": "route-domains",
       "split": "calibration",

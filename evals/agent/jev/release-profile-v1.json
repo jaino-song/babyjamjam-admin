@@ -7,8 +7,8 @@
     {
       "decisionKind": "route-domains",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v2",
-      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "questionVersion": "v3",
+      "datasetDigest": "a5cf6c789db7d70e3e52c25d62b134459a52a4746d4a9c88bae4f5c5d59174d3",
       "thresholds": {
         "minCoverage": 0.9,
         "minAgreement": 0.95,
@@ -23,8 +23,8 @@
     {
       "decisionKind": "classify-client-intent",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v2",
-      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "questionVersion": "v3",
+      "datasetDigest": "a5cf6c789db7d70e3e52c25d62b134459a52a4746d4a9c88bae4f5c5d59174d3",
       "thresholds": {
         "minCoverage": 0.9,
         "minAgreement": 0.95,
@@ -39,8 +39,8 @@
     {
       "decisionKind": "evaluate-clarification",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v2",
-      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "questionVersion": "v3",
+      "datasetDigest": "a5cf6c789db7d70e3e52c25d62b134459a52a4746d4a9c88bae4f5c5d59174d3",
       "thresholds": {
         "minCoverage": 0.9,
         "minAgreement": 0.95,
@@ -55,8 +55,8 @@
     {
       "decisionKind": "rank-candidates",
       "modelId": "jev-1.13.0",
-      "questionVersion": "v2",
-      "datasetDigest": "a40a13bdff4a8e4475f438b37c1334197b1581bf13af55b459923815b3abeb54",
+      "questionVersion": "v3",
+      "datasetDigest": "a5cf6c789db7d70e3e52c25d62b134459a52a4746d4a9c88bae4f5c5d59174d3",
       "thresholds": {
         "minCoverage": 0.9,
         "minAgreement": 0.95,

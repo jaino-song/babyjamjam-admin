@@ -78,6 +78,7 @@ import {
     computeEvaluationReport,
     parseJevCorpus,
     detectScenarioLeakage,
+    DEFAULT_CLARIFICATION_STATE,
     type JevCase,
     type JevCorpus,
     type JevLevelMetrics,
@@ -128,7 +129,7 @@ const REQUEST_CONVENTIONS: Readonly<Record<DecisionKind, string>> = Object.freez
     [DECISION_KINDS.classifyClientIntent]:
         "request carries the corpus text only; selection = the returned intent label",
     [DECISION_KINDS.evaluateClarification]:
-        "request carries the corpus text with missingFields=[] and targetConfirmed=false; selection = clarificationRequired >= 0.5 (documented evaluation binarization, not a production policy)",
+        "request carries the corpus text plus the case's optional state (missingFields/targetConfirmed), defaulting to missingFields=[] and targetConfirmed=false when the case declares no state; selection = clarificationRequired >= 0.5 (documented evaluation binarization, not a production policy)",
     [DECISION_KINDS.rankCandidates]:
         "request carries a single deterministic placeholder candidate (label candidate-1, no facts) with choiceSetRevision jev-eval-v1; selection = the returned outcome token — measures the synthetic scenario only, never production candidate ranking",
 });
@@ -1017,14 +1018,23 @@ async function runLiveCase(
                 kind: DECISION_KINDS.classifyClientIntent,
                 redactedText: item.text,
             }));
-        case DECISION_KINDS.evaluateClarification:
+        case DECISION_KINDS.evaluateClarification: {
+            // Mirrors the runtime request shape exactly
+            // (typesafe-jev-decision.service.ts:434-438 builds
+            // `state: { text, missingFields, targetConfirmed }` from the
+            // same two fields). A case with no explicit `state` falls back
+            // to the harness's long-standing default (no missing fields, no
+            // confirmed target) so every case authored before this field
+            // existed evaluates identically to before.
+            const clarificationState = item.state ?? DEFAULT_CLARIFICATION_STATE;
             return outcomeFromEvidence(await service.evaluateClarification({
                 ...base,
                 kind: DECISION_KINDS.evaluateClarification,
                 redactedText: item.text,
-                missingFields: [],
-                targetConfirmed: false,
+                missingFields: [...clarificationState.missingFields],
+                targetConfirmed: clarificationState.targetConfirmed,
             }));
+        }
         case DECISION_KINDS.rankCandidates:
             return outcomeFromEvidence(await service.rankCandidates({
                 ...base,
