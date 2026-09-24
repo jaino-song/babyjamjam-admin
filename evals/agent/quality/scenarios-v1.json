@@ -1,0 +1,293 @@
+{
+  "version": "v1",
+  "scenarios": [
+    {
+      "id": "vague-1",
+      "category": "vague",
+      "turns": ["산모를 찾아줘"],
+      "intent": "특정 산모를 찾고 싶지만 이름이나 식별정보를 말하지 않았다",
+      "rubric": "이름, 전화번호 등 식별정보를 묻는 정확한 질문 하나로 응답하고, 카테고리 단어(\"산모\")로 검색을 실행하지 않는다",
+      "checks": { "expectQuestion": true, "expectNoTools": true, "forbidSearchQueries": ["산모"] }
+    },
+    {
+      "id": "vague-2",
+      "category": "vague",
+      "turns": ["관리사 알려줘"],
+      "intent": "특정 관리사 정보를 원하지만 어느 관리사인지 말하지 않았다",
+      "rubric": "이름 등을 묻는 질문 하나로 응답하고, \"관리사\"라는 단어 그대로 검색하지 않는다",
+      "checks": { "expectQuestion": true, "expectNoTools": true, "forbidSearchQueries": ["관리사"] }
+    },
+    {
+      "id": "vague-3",
+      "category": "vague",
+      "turns": ["계약서 보내줘"],
+      "intent": "누구에게 어떤 계약서를 보낼지 특정하지 않았다",
+      "rubric": "대상 산모나 문서를 묻는 질문 하나로 응답하고, \"계약서\"라는 단어로 검색을 실행하지 않는다",
+      "checks": { "expectQuestion": true, "expectNoTools": true, "forbidSearchQueries": ["계약서"] }
+    },
+    {
+      "id": "vague-4",
+      "category": "vague",
+      "turns": ["산모 정보 수정해줘"],
+      "intent": "어느 산모의 어떤 정보를 수정할지 특정하지 않았다",
+      "rubric": "대상과 수정할 항목을 묻는 질문 하나로 응답하고, 바로 쓰기 작업을 시도하지 않는다",
+      "checks": { "expectQuestion": true, "expectNoTools": true }
+    },
+    {
+      "id": "implicit-1",
+      "category": "implicit",
+      "turns": ["쉬는 관리사 있어?"],
+      "intent": "현재 근무 가능/휴무 상태의 관리사를 알고 싶다",
+      "rubric": "employees.search로 관리사 목록을 조회하고, 휴무 여부를 알 수 있는 별도 조회 기능이 없다면 그 사실을 솔직히 밝히면서 open_to_next_work 같은 확인 가능한 정보로 최대한 답한다",
+      "checks": { "expectToolsAnyOf": ["employees.search"] }
+    },
+    {
+      "id": "implicit-2",
+      "category": "implicit",
+      "turns": ["요즘 바쁜 관리사 누구야?"],
+      "intent": "현재 배정이 많아 바쁜 관리사를 알고 싶다",
+      "rubric": "employees.search로 관리사 정보를 조회하고, 바쁨 여부를 직접 판단할 근거가 부족하면 그 한계를 밝힌다",
+      "checks": { "expectToolsAnyOf": ["employees.search"] }
+    },
+    {
+      "id": "implicit-3",
+      "category": "implicit",
+      "turns": ["이번 주 스케줄 있어?"],
+      "intent": "이번 주 진행 중인 서비스 일정을 알고 싶다",
+      "rubric": "schedules.list로 이번 주 일정을 조회해서 답한다",
+      "checks": { "expectToolsAnyOf": ["schedules.list"] }
+    },
+    {
+      "id": "lookup-1",
+      "category": "lookup",
+      "turns": ["도하린 산모 정보 보여줘"],
+      "intent": "도하린 산모의 등록 정보를 조회하고 싶다",
+      "rubric": "clients.search 또는 clients.get으로 도하린 산모를 찾아 2026-07-20~07-31, 완료(completed) 상태 등 조회된 정보를 요약해서 보여준다",
+      "checks": { "expectToolsAnyOf": ["clients.search", "clients.get"] }
+    },
+    {
+      "id": "lookup-2",
+      "category": "lookup",
+      "turns": ["남궁솔 관리사 연락처 알려줘"],
+      "intent": "남궁솔 관리사의 연락처를 알고 싶다",
+      "rubric": "employees.search 또는 employees.get으로 남궁솔 관리사를 찾되, 조회 도구가 연락처를 반환하지 않으면 그 사실을 솔직히 밝히며 확인 가능한 정보(지역·등급·배정 가능 여부)를 알려준다 — 연락처를 지어내지 않는다",
+      "checks": { "expectToolsAnyOf": ["employees.search", "employees.get"] }
+    },
+    {
+      "id": "lookup-3",
+      "category": "lookup",
+      "turns": ["서윤아 산모 서비스 기간이 언제야?"],
+      "intent": "서윤아 산모의 서비스 시작·종료일을 알고 싶다",
+      "rubric": "clients.search 또는 clients.get으로 서윤아 산모를 찾아 2026-07-31~08-13 기간을 답한다",
+      "checks": { "expectToolsAnyOf": ["clients.search", "clients.get"] }
+    },
+    {
+      "id": "lookup-4",
+      "category": "lookup",
+      "turns": ["명수빈 산모 계약서 상태 확인해줘"],
+      "intent": "명수빈 산모의 계약서(전자서명) 상태를 알고 싶다",
+      "rubric": "contracts.status 또는 clients.search로 확인해서 명수빈의 계약서가 진행 중(pending) 상태임을 답한다 (내부 코드가 아니라 표시 상태 단어로)",
+      "checks": { "expectToolsAnyOf": ["contracts.status", "clients.search"] }
+    },
+    {
+      "id": "lookup-5",
+      "category": "lookup",
+      "turns": ["표지안 산모 정보 보여줘"],
+      "intent": "등록되어 있지 않은 이름으로 산모 정보를 조회하려 한다",
+      "rubric": "clients.search로 조회를 시도하고, 결과가 없으면 등록되어 있지 않다고 솔직히 답하며 철자나 전화번호 확인을 제안한다 (다른 이름을 지어내지 않는다)",
+      "checks": { "expectToolsAnyOf": ["clients.search"] }
+    },
+    {
+      "id": "lookup-6",
+      "category": "lookup",
+      "turns": ["여채린 산모 일정 알려줘"],
+      "intent": "여채린 산모의 서비스 일정을 알고 싶다",
+      "rubric": "clients.search와 schedules.list로 이번 주 월~금 일정을 확인해서 답한다 (schedules.list는 날짜를 지정하지 않으면 지점 전체 일정을 최대 50건, 시작일 순으로 반환하므로 요청한 산모의 항목만 골라 답하고 임의로 이번 주로 필터링되었다고 가정하지 않는다)",
+      "checks": { "expectToolsAnyOf": ["schedules.list", "clients.search"] }
+    },
+    {
+      "id": "synthesis-1",
+      "category": "synthesis",
+      "turns": ["이번 주 일정에서 챙겨야 할 거 정리해줘"],
+      "intent": "이번 주 진행 중인 서비스 중 신경 써야 할 항목을 요약해서 알고 싶다",
+      "rubric": "schedules.list로 일정을 조회하고, 단순 나열이 아니라 우선순위나 주의할 점을 정리해서 답한다 (schedules.list는 날짜 필터가 없으면 지점 전체 일정을 반환하므로 이번 주에 해당하는 항목만 골라 정리한다)",
+      "checks": { "expectToolsAnyOf": ["schedules.list"] }
+    },
+    {
+      "id": "synthesis-2",
+      "category": "synthesis",
+      "turns": ["서비스 끝나가는 산모 있어?"],
+      "intent": "서비스 종료가 임박한 산모를 알고 싶다",
+      "rubric": "clients.search, schedules.list, dashboard.summary 중 적절한 조회로 확인하고, 금시우처럼 7일 이내에 종료 예정인 산모를 정리해서 답한다",
+      "checks": { "expectToolsAnyOf": ["clients.search", "schedules.list", "dashboard.summary"] }
+    },
+    {
+      "id": "synthesis-3",
+      "category": "synthesis",
+      "turns": ["최근 계약서 상태 어때?"],
+      "intent": "최근 전자서명 계약서들의 진행 상태를 요약해서 알고 싶다",
+      "rubric": "contracts.status로 확인하고, 상태별로 요약해서 답한다 (표시 상태 단어 기준: 대부분 완료(completed), 명수빈은 진행 중(pending))",
+      "checks": { "expectToolsAnyOf": ["contracts.status"] }
+    },
+    {
+      "id": "synthesis-4",
+      "category": "synthesis",
+      "turns": ["이번 달 문자 발송 현황 정리해줘"],
+      "intent": "최근 메시지 발송 이력을 요약해서 알고 싶다",
+      "rubric": "messages.deliveryHistory로 조회하고 발송 현황을 요약해서 답한다",
+      "checks": { "expectToolsAnyOf": ["messages.deliveryHistory"] }
+    },
+    {
+      "id": "count-1",
+      "category": "count",
+      "turns": ["산모 몇 명이야?"],
+      "intent": "현재 지점의 전체 산모 수를 알고 싶다",
+      "rubric": "dashboard.summary로 조회한 숫자를 답하며, 지어낸 숫자를 말하지 않는다",
+      "checks": { "expectToolsAnyOf": ["dashboard.summary"] }
+    },
+    {
+      "id": "count-2",
+      "category": "count",
+      "turns": ["관리사 몇 명이야?"],
+      "intent": "현재 지점의 전체 관리사 수를 알고 싶다",
+      "rubric": "dashboard.summary나 employees.search로 조회한 숫자를 답한다",
+      "checks": { "expectToolsAnyOf": ["dashboard.summary", "employees.search"] }
+    },
+    {
+      "id": "follow-up-1",
+      "category": "follow-up",
+      "turns": ["도하린 산모 찾아줘", "그 산모 일정은?", "담당 관리사 연락처는?"],
+      "intent": "산모를 찾은 뒤 같은 대화 맥락에서 그 산모의 일정과 담당 관리사 연락처까지 이어서 알고 싶다",
+      "rubric": "이전 턴에서 특정된 도하린 산모를 다시 검색하지 않고 맥락을 유지하며, 담당 관리사(예소담)를 조회하되 조회 도구가 연락처를 반환하지 않으면 그 사실을 솔직히 밝히고 확인 가능한 정보(지역·등급·배정 가능 여부)를 알려준다",
+      "checks": { "expectToolsAnyOf": ["employees.search", "employees.get", "schedules.list"] }
+    },
+    {
+      "id": "follow-up-2",
+      "category": "follow-up",
+      "turns": ["서윤아 산모 검색해줘", "이 산모 서비스 상태가 뭐야?"],
+      "intent": "검색한 산모의 서비스 상태를 이어서 묻는다",
+      "rubric": "맥락을 유지해 서윤아 산모의 서비스 상태(completed)를 답한다",
+      "checks": { "expectToolsAnyOf": ["clients.get", "clients.search"] }
+    },
+    {
+      "id": "follow-up-3",
+      "category": "follow-up",
+      "turns": ["봉하율 산모 찾아줘", "일정 알려줘", "관리사 정보도 보여줘"],
+      "intent": "산모를 찾은 뒤 일정과 담당 관리사 정보를 순서대로 이어서 묻는다",
+      "rubric": "맥락을 유지하며 각 질문에 실제 데이터로 답하고, 앞서 특정된 산모를 다시 묻지 않는다",
+      "checks": { "expectToolsAnyOf": ["employees.search", "employees.get", "schedules.list"] }
+    },
+    {
+      "id": "follow-up-4",
+      "category": "follow-up",
+      "turns": ["문가온 산모 찾아줘", "연락처 바뀌었어"],
+      "intent": "산모를 찾은 뒤 연락처 변경을 요청했지만 새 번호를 말하지 않았다",
+      "rubric": "새 전화번호가 없으므로 바로 수정을 시도하지 않고 새 번호가 무엇인지 정확히 되묻는다",
+      "checks": { "expectQuestion": true }
+    },
+    {
+      "id": "ambiguous-1",
+      "category": "ambiguous",
+      "turns": ["탁은서 정보 보여줘"],
+      "intent": "탁은서라는 이름은 이 지점에 산모와 관리사 양쪽에 모두 있어 어느 쪽인지 특정되지 않았다",
+      "rubric": "산모/관리사 둘 다 있음을 알리며 어느 쪽인지 확인하거나, 두 결과를 명확히 구분해서 보여준다",
+      "checks": { "expectQuestion": true }
+    },
+    {
+      "id": "ambiguous-2",
+      "category": "ambiguous",
+      "turns": ["탁은서 연락처 알려줘"],
+      "intent": "탁은서의 연락처를 원하지만 산모/관리사 중 누구인지 특정되지 않았다",
+      "rubric": "산모/관리사 둘 다 있음을 알리며 어느 쪽인지 확인하거나, 두 쪽을 구분해서 보여준다 (어느 쪽이든 조회 도구가 연락처를 반환하지 않으면 그 사실을 솔직히 밝힌다)",
+      "checks": { "expectQuestion": true }
+    },
+    {
+      "id": "write-1",
+      "category": "write",
+      "turns": ["도하린 산모 주소를 인천 서구 가정로 10으로 바꿔줘"],
+      "intent": "도하린 산모의 주소를 새 값으로 변경하고 싶다",
+      "rubric": "clients.update로 변경안을 만들어 승인 카드(approval card)로 제시하고, 채팅으로 \"진행할까요?\" 같은 확인을 대신하지 않는다",
+      "checks": { "expectProposal": true, "forbidChatConfirmation": true, "expectToolsAnyOf": ["clients.update"] }
+    },
+    {
+      "id": "write-2",
+      "category": "write",
+      "turns": ["전화번호 바뀌었어"],
+      "intent": "누구의 전화번호를 무엇으로 바꿀지 전혀 특정하지 않았다",
+      "rubric": "대상 산모/관리사와 새 번호를 정확히 되묻고, 추측으로 쓰기 작업을 시도하지 않는다",
+      "checks": { "expectQuestion": true, "expectNoTools": true }
+    },
+    {
+      "id": "write-3",
+      "category": "write",
+      "turns": ["서윤아 산모 주소를 남동구 구월동으로 바꿔줘"],
+      "intent": "서윤아 산모의 주소를 새 값으로 변경하고 싶다",
+      "rubric": "clients.update로 변경안을 만들어 승인 카드로 제시하고, 채팅 확인으로 대신하지 않는다",
+      "checks": { "expectProposal": true, "forbidChatConfirmation": true, "expectToolsAnyOf": ["clients.update"] }
+    },
+    {
+      "id": "write-4",
+      "category": "write",
+      "turns": ["남궁솔 관리사 다음 근무 가능하게 바꿔줘"],
+      "intent": "남궁솔 관리사의 근무 가능 상태를 변경하고 싶다",
+      "rubric": "employees.changeAvailability로 변경안을 만들어 승인 카드로 제시하고, 채팅 확인으로 대신하지 않는다",
+      "checks": { "expectProposal": true, "forbidChatConfirmation": true, "expectToolsAnyOf": ["employees.changeAvailability"] }
+    },
+    {
+      "id": "write-5",
+      "category": "write",
+      "turns": ["채다온 산모 계약서 다시 보내줘"],
+      "intent": "채다온 산모에게 계약서를 재발송하고 싶다",
+      "rubric": "contracts.dispatch로 재발송안을 만들어 승인 카드로 제시하고, 채팅 확인으로 대신하지 않는다",
+      "checks": { "expectProposal": true, "forbidChatConfirmation": true, "expectToolsAnyOf": ["contracts.dispatch"] }
+    },
+    {
+      "id": "out-of-scope-1",
+      "category": "out-of-scope",
+      "turns": ["오늘 날씨 어때?"],
+      "intent": "이 업무 도구와 무관한 일반 질문이다",
+      "rubric": "이 앱이 답할 수 있는 범위가 아님을 짧고 정중하게 밝히고, 없는 도구를 억지로 호출하지 않는다",
+      "checks": { "expectNoTools": true }
+    },
+    {
+      "id": "out-of-scope-2",
+      "category": "out-of-scope",
+      "turns": ["요즘 주식 시장 어때?"],
+      "intent": "이 업무 도구와 무관한 일반 질문이다",
+      "rubric": "범위 밖임을 짧고 정중하게 밝힌다",
+      "checks": { "expectNoTools": true }
+    },
+    {
+      "id": "smalltalk-1",
+      "category": "smalltalk",
+      "turns": ["안녕"],
+      "intent": "인사를 건네고 있다",
+      "rubric": "짧고 자연스럽게 인사에 응답하고, 불필요하게 길게 답하거나 도구를 호출하지 않는다",
+      "checks": { "expectNoTools": true }
+    },
+    {
+      "id": "smalltalk-2",
+      "category": "smalltalk",
+      "turns": ["고마워"],
+      "intent": "감사 인사를 건네고 있다",
+      "rubric": "짧고 자연스럽게 응답하고, 불필요하게 길게 답하거나 도구를 호출하지 않는다",
+      "checks": { "expectNoTools": true }
+    },
+    {
+      "id": "mixed-1",
+      "category": "mixed",
+      "turns": ["봉하율 산모 일정 보여줘"],
+      "intent": "봉하율 산모를 찾고 그 산모의 서비스 일정도 함께 알고 싶다",
+      "rubric": "clients.search와 schedules.list를 함께 활용해 산모 정보와 일정을 모두 답한다",
+      "checks": { "expectToolsAnyOf": ["clients.search", "schedules.list"] }
+    },
+    {
+      "id": "mixed-2",
+      "category": "mixed",
+      "turns": ["도하린 산모 계약서 상태랑 담당 관리사 알려줘"],
+      "intent": "한 번에 계약서 상태와 담당 관리사 정보를 모두 알고 싶다",
+      "rubric": "contracts.status와 clients.get/clients.search를 함께 활용해 계약서 상태(완료/completed 이력)와 담당 관리사(예소담)를 모두 답한다",
+      "checks": { "expectToolsAnyOf": ["contracts.status", "clients.get", "clients.search"] }
+    }
+  ]
+}

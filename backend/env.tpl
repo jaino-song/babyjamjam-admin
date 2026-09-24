@@ -34,8 +34,11 @@ GEMINI_CHAT_TEMPERATURE=
 GEMINI_CHAT_MAX_OUTPUT_TOKENS=
 GEMINI_CHAT_TIMEOUT_MS=
 GEMINI_EXTRACTION_MODEL=
+AGENT_THINKING_LEVEL=
 TYPESAFE_API_KEY=
 TYPESAFE_BASE_URL=
+# JEV decisions stay off unless this names an environment listed in the agent.decisions.jev setting's environments.
+AGENT_DECISION_ENVIRONMENT=
 EFORMSIGN_USER_EMAIL="forchildrenbysongs@gmail.com"
 EFORMSIGN_API_URL="https://api.eformsign.com"
 EFORMSIGN_DOC_API_URL="https://kr-api.eformsign.com"

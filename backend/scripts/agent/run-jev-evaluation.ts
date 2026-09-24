@@ -66,6 +66,7 @@ import {
     type DecisionStatus,
 } from "../../application/agent/decision/decision-contracts";
 import { DECISION_QUESTION_VERSION } from "../../application/agent/decision/decision-questions";
+import { buildRedactedDecisionText } from "../../application/agent/decision/decision-input";
 import {
     PINNED_MODEL_ID,
     TypeSafeJevDecisionService,
@@ -78,6 +79,7 @@ import {
     computeEvaluationReport,
     parseJevCorpus,
     detectScenarioLeakage,
+    DEFAULT_CLARIFICATION_STATE,
     type JevCase,
     type JevCorpus,
     type JevLevelMetrics,
@@ -128,7 +130,7 @@ const REQUEST_CONVENTIONS: Readonly<Record<DecisionKind, string>> = Object.freez
     [DECISION_KINDS.classifyClientIntent]:
         "request carries the corpus text only; selection = the returned intent label",
     [DECISION_KINDS.evaluateClarification]:
-        "request carries the corpus text with missingFields=[] and targetConfirmed=false; selection = clarificationRequired >= 0.5 (documented evaluation binarization, not a production policy)",
+        "request carries the corpus text plus the case's optional state (missingFields/targetConfirmed), defaulting to missingFields=[] and targetConfirmed=false when the case declares no state; selection = clarificationRequired >= 0.5 (documented evaluation binarization, not a production policy)",
     [DECISION_KINDS.rankCandidates]:
         "request carries a single deterministic placeholder candidate (label candidate-1, no facts) with choiceSetRevision jev-eval-v1; selection = the returned outcome token — measures the synthetic scenario only, never production candidate ranking",
 });
@@ -1002,34 +1004,61 @@ async function runLiveCase(
         deadlineAt,
         signal,
     } as const;
+    // The runtime redacts the text it sends for every decision kind alike —
+    // `agent-decision.service.ts` calls `buildRedactedDecisionText(input.text,
+    // input.knownValues)` at each of its four `callPort` call sites (lines
+    // ~171, ~204, ~231, ~263 route-domains / classify-client-intent /
+    // evaluate-clarification / rank-candidates in turn), with no per-kind
+    // branch. The offline corpus carries no prior-turn "known values" (there
+    // is no real conversation state backing a fixture case), so this passes
+    // an empty `knownValues` list — the same call the runtime makes for a
+    // fresh session with nothing confirmed yet. `buildRedactedDecisionText`
+    // still applies its unconditional generic redaction (free-text patterns,
+    // explicit-labeled fields, the 240-char cap) even with no known values,
+    // so it matches the runtime only for a fresh session with no known values.
+    // In a real follow-up the runtime also masks the confirmed target's name
+    // and values, which this corpus does not model; none of today's fixture
+    // texts is changed by the generic redaction.
+    const redactedText = buildRedactedDecisionText(item.text, []);
 
     switch (item.decisionKind) {
         case DECISION_KINDS.routeDomains:
             return outcomeFromEvidence(await service.routeDomains({
                 ...base,
                 kind: DECISION_KINDS.routeDomains,
-                redactedText: item.text,
+                redactedText,
                 permittedDomains: [...domains],
             }));
         case DECISION_KINDS.classifyClientIntent:
             return outcomeFromEvidence(await service.classifyClientIntent({
                 ...base,
                 kind: DECISION_KINDS.classifyClientIntent,
-                redactedText: item.text,
+                redactedText,
             }));
-        case DECISION_KINDS.evaluateClarification:
+        case DECISION_KINDS.evaluateClarification: {
+            // Same request fields as the runtime, and now the same
+            // redaction too (see the module-level `redactedText` comment
+            // above). The runtime additionally supplies its own
+            // `missingFields`/`targetConfirmed` derived from
+            // `buildClarificationFacts` (BJJ-344 part 2,
+            // agent-runtime.service.ts); a fixture case with no explicit
+            // `state` falls back to the harness's long-standing default (no
+            // missing fields, no confirmed target) so every case authored
+            // before this field existed evaluates identically to before.
+            const clarificationState = item.state ?? DEFAULT_CLARIFICATION_STATE;
             return outcomeFromEvidence(await service.evaluateClarification({
                 ...base,
                 kind: DECISION_KINDS.evaluateClarification,
-                redactedText: item.text,
-                missingFields: [],
-                targetConfirmed: false,
+                redactedText,
+                missingFields: [...clarificationState.missingFields],
+                targetConfirmed: clarificationState.targetConfirmed,
             }));
+        }
         case DECISION_KINDS.rankCandidates:
             return outcomeFromEvidence(await service.rankCandidates({
                 ...base,
                 kind: DECISION_KINDS.rankCandidates,
-                redactedText: item.text,
+                redactedText,
                 choiceSetRevision: EVAL_CHOICE_SET_REVISION,
                 candidates: [{ label: EVAL_PLACEHOLDER_CANDIDATE, facts: [] }],
             }));

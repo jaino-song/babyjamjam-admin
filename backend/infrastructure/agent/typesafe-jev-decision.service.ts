@@ -67,7 +67,9 @@ import type { AgentDecisionPort } from "../../application/agent/decision/agent-d
  * - The pinned model id is explicit on every request; a moving alias can
  *   never be sent and a mismatched returned model is never accepted.
  * - Every request is single-attempt (`maxRetries: 0`) with a per-attempt
- *   timeout clamped to the caller's remaining turn deadline.
+ *   timeout clamped to the per-call deadline (see
+ *   {@link AgentDecisionService.evaluate}, which computes a fresh deadline
+ *   for each admitted call — never a single deadline for the whole turn).
  * - A missing `TYPESAFE_API_KEY` degrades to `unavailable`/`auth-error`
  *   without constructing a client or touching the network; startup never
  *   breaks because the key is absent.

@@ -17,13 +17,13 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "analytics.summary",
       "domain": "analytics",
       "renderer": "text",
-      "description": "Read operational analytics for the current branch",
+      "description": "Read branch-wide client analytics: total and voucher-client counts plus a breakdown by service status. Use for: 서비스 상태별 통계, 바우처 고객 수, 운영 현황 분석. Input: none. Returns: totalClients, voucherClients, byServiceStatus (status and count per service stage). For a simple total/active headline count, use dashboard.summary instead.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -35,7 +35,7 @@
       "flagKey": "agent.capability.analytics.summary",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "automation.create",
@@ -135,7 +135,7 @@
       "name": "bank.accounts",
       "domain": "bank",
       "renderer": "text",
-      "description": "Read branch bank account references without exposing full account numbers",
+      "description": "Read the branch's registered bank account references, with account numbers masked to the last 4 digits — never the full account number. Use for: 계좌 정보, 입금 계좌, 은행 확인. Input: optional area keyword, matched partially. Returns: area, bankName, accountLast4.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -145,7 +145,7 @@
       "flagKey": "agent.capability.bank.accounts",
       "sideEffect": false,
       "sourceFile": "application/usecases/bank-account-info/bank-account-agent-capabilities.provider.ts",
-      "sourceDigest": "9a09377ed5d4f67f1e65fd62e0f50f092b0f2e240c2b82bba0790d2db6032cc3"
+      "sourceDigest": "e3607fed212e524c5f5239bd6af7c32e0581ae25b1c34e7463ec65fcfd02d2af"
     },
     {
       "name": "calls.list",
@@ -163,7 +163,7 @@
       "flagKey": "agent.capability.calls.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "calls.transcriptSummary",
@@ -181,7 +181,7 @@
       "flagKey": "agent.capability.calls.transcriptSummary",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "clients.create",
@@ -206,7 +206,7 @@
       "name": "clients.get",
       "domain": "clients",
       "renderer": "text",
-      "description": "Get a client from the current branch by canonical client id",
+      "description": "Get one client's summary from the current branch by their numeric client id, not by name — use this after clients.search has resolved the id. Use for: 산모 상세정보, 고객 정보 조회, 특정 산모 확인. Input: id (the client's positive integer id). Returns: id, name, serviceStatus, startDate, endDate, voucherClient.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -218,13 +218,13 @@
       "flagKey": "agent.capability.clients.get",
       "sideEffect": false,
       "sourceFile": "application/usecases/client/client-agent-capabilities.provider.ts",
-      "sourceDigest": "b01131ef7679c642012cf4b96753e17b5d74a2f133307402d99d268332e23ef4"
+      "sourceDigest": "f779255a76ed69b41425da4c310a739807262c16a3b859395af960257e00959e"
     },
     {
       "name": "clients.search",
       "domain": "clients",
       "renderer": "entity-choice",
-      "description": "Search clients in the current branch by name or identifier",
+      "description": "Search for one client (산모) in the current branch by name, phone number, or address, and return a single match or a short list to pick from. Use for: 산모 찾기, 고객 조회, 산모님 성함으로 검색. Input: query text is matched partially, case-insensitively, against the client's name, address, and phone number. Returns: id, name, serviceStatus, startDate, endDate, voucherClient. Requires a specific name, phone number or address; never pass a generic word such as 산모, 고객, 관리사 or 직원 as the query — ask the user instead.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -236,7 +236,7 @@
       "flagKey": "agent.capability.clients.search",
       "sideEffect": false,
       "sourceFile": "application/usecases/client/client-agent-capabilities.provider.ts",
-      "sourceDigest": "b01131ef7679c642012cf4b96753e17b5d74a2f133307402d99d268332e23ef4"
+      "sourceDigest": "f779255a76ed69b41425da4c310a739807262c16a3b859395af960257e00959e"
     },
     {
       "name": "clients.update",
@@ -261,7 +261,7 @@
       "name": "consultations.list",
       "domain": "consultations",
       "renderer": "text",
-      "description": "List consultation inquiries for the current branch",
+      "description": "List consultation inquiries (pre-registration leads) for the current branch, newest first. Use for: 상담 문의 목록, 전체 문의 확인, 최근 문의. Input: optional query — when given, matched partially, case-insensitively, against the mother's name, status, or preferred caregiver name; omit it to list everything. Optional limit (max 50, default 20). Returns: id, motherName, dueDate, voucherType, preferredCaregiverName, referralSource, source, status, readAt, createdAt, updatedAt.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -273,7 +273,7 @@
       "flagKey": "agent.capability.consultations.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "consultations.markRead",
@@ -292,13 +292,13 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "consultations.search",
       "domain": "consultations",
       "renderer": "text",
-      "description": "Search consultation inquiries for the current branch",
+      "description": "Search consultation inquiries (pre-registration leads) for the current branch by a specific keyword — behaves like consultations.list but is meant for when you already have a name, status, or caregiver to filter by. Use for: 특정 산모 상담 찾기, 상담 상태로 검색, 담당 관리사로 검색. Input: query, matched partially, case-insensitively, against the mother's name, status, or preferred caregiver name. Returns the same fields as consultations.list. Requires a specific value; a generic word such as 산모 or 고객 will match too broadly — use consultations.list without a query to browse everything instead.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -310,13 +310,13 @@
       "flagKey": "agent.capability.consultations.search",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "consultations.unread",
       "domain": "consultations",
       "renderer": "text",
-      "description": "List unread consultation inquiries",
+      "description": "List only unread consultation inquiries for the current branch, newest first. Use for: 안읽은 상담, 미확인 문의, 새 문의 확인. Input: optional query (same match fields as consultations.list: mother's name, status, or preferred caregiver name) and optional limit (max 50, default 20). Returns the same fields as consultations.list; every row has readAt = null.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -328,7 +328,7 @@
       "flagKey": "agent.capability.consultations.unread",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "contracts.dispatch",
@@ -353,7 +353,7 @@
       "name": "contracts.status",
       "domain": "contracts",
       "renderer": "activity",
-      "description": "Read active contract status for a client",
+      "description": "Read the eformsign contract/e-signature document status for one specific client. Use for: 계약서 상태, 전자서명 진행상황, 서명 완료 여부 확인. Input: clientId — the client's numeric id; look it up via clients.search first, this does not accept a client name. Returns, per non-deleted document: documentId, documentName, status, statusDetail, updatedDate, expired.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -365,13 +365,13 @@
       "flagKey": "agent.capability.contracts.status",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "3f7be5dc880a91eb2e930fdf805ef1f8520d2c240223f7907b6a6ac3fcd48cf8"
+      "sourceDigest": "ac21e0b8a8786aaac0c2c20c645e490122f1a333712f129d66a5663c294ab03c"
     },
     {
       "name": "dashboard.summary",
       "domain": "dashboard",
       "renderer": "activity",
-      "description": "Summarize branch client counts without exposing personal contact data",
+      "description": "Give a quick headline count of clients in the current branch, without exposing any personal contact data. Use for: 전체 산모 수, 진행중인 고객 수, 대시보드 요약. Input: none. Returns: totalClients, activeClients. For a breakdown by service status, use analytics.summary instead.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -383,7 +383,7 @@
       "flagKey": "agent.capability.dashboard.summary",
       "sideEffect": false,
       "sourceFile": "application/usecases/client/dashboard-agent-capabilities.provider.ts",
-      "sourceDigest": "1fab0d9add6e4ef7799e0fad9792b35856c7bb78cc82a1dd40e67881b4bc115c"
+      "sourceDigest": "652946e3bc0a12c21b91a408b1a7bcd475750ec5b65fdf02e01023490c1435d6"
     },
     {
       "name": "drafts.confirm",
@@ -402,7 +402,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "drafts.list",
@@ -420,7 +420,7 @@
       "flagKey": "agent.capability.drafts.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "drafts.update",
@@ -439,7 +439,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "employees.changeAvailability",
@@ -481,7 +481,7 @@
       "name": "employees.get",
       "domain": "employees",
       "renderer": "text",
-      "description": "Get an employee in the current branch",
+      "description": "Get one employee's summary from the current branch by their numeric employee id, not by name — use this after employees.search has resolved the id. Use for: 관리사 상세정보, 직원 정보 조회. Input: id (the employee's positive integer id). Returns: id, name, grade, workArea, openToNextWork. Unlike employees.search, this does not include a computed working/available status.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -493,13 +493,13 @@
       "flagKey": "agent.capability.employees.get",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee/employee-agent-capabilities.provider.ts",
-      "sourceDigest": "9f5fc95a7f7eeacd6ae294570c0637c00a4d98719b447344cc402f0fa77cdae9"
+      "sourceDigest": "ac8b18ad911eefbd6d510bf06a18b7383d7231e0005a291a4e944fe02ab1f11e"
     },
     {
       "name": "employees.search",
       "domain": "employees",
       "renderer": "entity-choice",
-      "description": "Search employees in the current branch",
+      "description": "Search for one employee (caregiver/staff) in the current branch by name or work area, and return a single match or a short list to pick from. Use for: 관리사 찾기, 제공인력 조회, 도우미 검색, 선생님 성함으로 찾기. Input: query text is matched partially, case-insensitively, against the employee's name or work area. Returns: id, name, grade, workArea, openToNextWork, and status (available/working/unavailable) when the search can compute it. Does not expose rest days, leave schedules or a detailed availability calendar. Requires a specific name or area; never pass a generic word such as 관리사, 직원 or 도우미 as the query — ask the user instead.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -511,7 +511,7 @@
       "flagKey": "agent.capability.employees.search",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee/employee-agent-capabilities.provider.ts",
-      "sourceDigest": "9f5fc95a7f7eeacd6ae294570c0637c00a4d98719b447344cc402f0fa77cdae9"
+      "sourceDigest": "ac8b18ad911eefbd6d510bf06a18b7383d7231e0005a291a4e944fe02ab1f11e"
     },
     {
       "name": "employees.update",
@@ -548,7 +548,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "files.metadata",
@@ -566,7 +566,7 @@
       "flagKey": "agent.capability.files.metadata",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "files.search",
@@ -584,7 +584,7 @@
       "flagKey": "agent.capability.files.search",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "messages.createTemplate",
@@ -747,13 +747,13 @@
       "flagKey": "agent.capability.policy.retrieve",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "schedules.list",
       "domain": "schedules",
       "renderer": "activity",
-      "description": "List schedules in the current branch",
+      "description": "List employee work schedules (client assignments) for the current branch, optionally filtered to one calendar date. Use for: 오늘 일정, 이번주 스케줄, 방문 일정 확인, 특정 날짜 배정 확인. Input: optional date (YYYY-MM-DD); when given, only schedules overlapping that date are returned, up to 50 rows sorted by start date. Does not accept a client or employee name — cross-reference the returned ids with clients.get or employees.get. Returns: id, clientId, primaryEmployeeId, secondaryEmployeeId, startDate, endDate, replaced.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -765,13 +765,13 @@
       "flagKey": "agent.capability.schedules.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/employee-schedule/employee-schedule-agent-capabilities.provider.ts",
-      "sourceDigest": "f0d695770e6c8784b2cf7931b389f77a136293258d7f03a80ffbfe4115a60828"
+      "sourceDigest": "11dadf4a61a213a2670105f14645ea6940efd407b0744a0fee48015c84e69844"
     },
     {
       "name": "service-records.oversight",
       "domain": "service-records",
       "renderer": "text",
-      "description": "Read service-record oversight rows for the current branch",
+      "description": "Read service-record case oversight rows (session-count and finalization/document tracking) for the current branch — operational status, not the submitted form content. Use for: 제공기록지 진행상황, 서비스 종료 처리 현황, 최종 승인 여부. Input: optional limit (max 50, default 20); any query text is ignored — this capability has no search field. Resolve a client's id via clients.search first, then match it against the returned clientId. Returns: id, clientId, status, startDate, endDate, requiredSessionCount, formVersion, plus finalization/completion timestamps and retry metadata.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -783,7 +783,7 @@
       "flagKey": "agent.capability.service-records.oversight",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "settings.read",
@@ -801,13 +801,13 @@
       "flagKey": "agent.capability.settings.read",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "vouchers.prices",
       "domain": "vouchers",
       "renderer": "text",
-      "description": "Read voucher price information",
+      "description": "Read the branch's voucher price list (government voucher service pricing by type, duration and year) — not an individual client's voucher balance or usage. Use for: 바우처 단가, 정부지원 가격표, 서비스 요금 확인. Input: optional year (2000-2100) and optional type keyword, matched partially. Returns, up to 100 rows: id, type, duration, fullPrice, grant, actualPrice, year.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -818,7 +818,7 @@
       "flagKey": "agent.capability.vouchers.prices",
       "sideEffect": false,
       "sourceFile": "application/usecases/voucher-price-info/voucher-agent-capabilities.provider.ts",
-      "sourceDigest": "008071f68d43308eedf2385ee6dae6e6dd8d37001555d26c08372f3decc19a83"
+      "sourceDigest": "4f2faff38dfc00b02ea6d0b81ef85108c689cd220214555af374cc5ac07019ab"
     },
     {
       "name": "website.settings",
@@ -836,7 +836,7 @@
       "flagKey": "agent.capability.website.settings",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     },
     {
       "name": "website.updateSettings",
@@ -853,7 +853,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "13beadc8a8e4b707cc0c1cd30ae4f9717f3efe2b2c17fffc9dfbb3ed645888d2"
+      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
     }
   ]
 }

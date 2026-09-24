@@ -21,6 +21,7 @@ import {
 } from "@babyjamjam/shared";
 
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
+import { AgentMarkdownText } from "./AgentMarkdownText";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -73,7 +74,9 @@ type Props = {
 };
 
 export function MobileAgentPartRegistry({ "data-component": dataComponent, part, onEntitySelect, onApproveAction, onRejectAction, onSubmitForm, onTaskEntitySelect, task, terminalActionIds, taskBusy = false, taskNeedsReconciliation = false, onTaskPatch, onTaskCommand }: Props) {
-    if (part.type === "text") return <p data-slot="text" className="whitespace-pre-wrap break-words">{part.text ?? ""}</p>;
+    if (part.type === "step-start") return null;
+    if (part.type === "reasoning") return null;
+    if (part.type === "text") return <AgentMarkdownText data-component={dataComponent} text={part.text ?? ""} />;
     if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
         if (part.state === "output-error") return <p data-slot="tool-error" className="text-sm text-muted-foreground">{part.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
         if (part.state === "output-available") return <details data-slot="tool-result" className="rounded-lg border p-2"><summary className="text-sm font-medium">{part.toolName ?? part.type.replace(/^tool-/, "").replaceAll("_", ".")} 결과</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(part.output, null, 2)?.slice(0, 4000)}</pre></details>;

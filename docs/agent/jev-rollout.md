@@ -26,8 +26,10 @@ step; never skip or reorder:
    attestation file it additionally emits the readiness evidence document
    (`schemaVersion: "jev-evidence-v1"`). See "Producing evidence" below for
    the exact commands and the attestation the operator must author.
-3. **Approved shadow scope** — per-kind mode `shadow` under the branch/internal
-   allowlist; disagreements and abstentions are observed, not applied.
+3. **Approved shadow scope** — per-kind mode `shadow`, limited to the branches
+   listed in `allowedBranchIds`, on a deployment whose
+   `AGENT_DECISION_ENVIRONMENT` is listed in `environments` (see "Where JEV may
+   run" below); disagreements and abstentions are observed, not applied.
 4. **Calibration/holdout** — evidence must attest a non-empty held-out split
    and a human-reviewed reference, with coverage/agreement floors and the
    abstention ceiling from the profile.
@@ -135,23 +137,94 @@ cannot provide come exclusively from an operator-authored JSON file
   profile is metadata, not authority (§6), and the human gates of §1 remain.
 - **Question version.** Evidence and acceptance profiles are bound to the
   decision question version (`DECISION_QUESTION_VERSION` in
-  `backend/application/agent/decision/decision-questions.ts`, currently `v2`;
+  `backend/application/agent/decision/decision-questions.ts`, currently `v3`;
   carried as `questionVersion` in reports, evidence, profiles and traces). A
   version bump invalidates every earlier evaluation report, evidence document
   and stored `agent.decisions.jev` acceptance profile for all four kinds:
   regenerate evidence at the new version and re-author the profiles before any
   shadow/enforce step, and move any kind running in `enforce` with an older
   profile to `shadow`/`off` before deploying. A stored profile at an older
-  version is refused at runtime with `question-mismatch` (fail closed). The
-  same `question-mismatch` token is also returned when a permitted route domain
-  has no question text in `ROUTE_DOMAIN_DESCRIPTIONS`, so check both causes
-  when it appears.
+  version is refused at runtime (fail closed): under `enforce`,
+  `AgentDecisionService.evaluate` returns `not-evaluated` with reason
+  `ineligible` and falls back to the baseline selection, and the observation is
+  recorded before that compatibility check, so it carries no mismatch token.
+  v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
+  the text together with the request state (`targetConfirmed`,
+  `missingFields`), so a follow-up turn that supplies the value for an
+  already-confirmed record is not *advised* to clarify. Under `enforce`,
+  `decideClarification` still suppresses model writes whenever `missingFields`
+  is non-empty, whatever the advice — so an update whose change has not been
+  applied yet (all client write fields listed) or a create missing name/phone
+  is still sent back, and a freeform follow-up cannot supply the value because
+  the write tool is hidden. **`evaluate-clarification` must not go to
+  `enforce` until that rule is resolved (BJJ-348).** The runtime's
+  `missingFields` (`deriveMissingFields` in `agent-runtime.service.ts`) now
+  lists only what the task still needs, from its `task.required` issues: for
+  create, the unmet required fields (name, phone); for update, nothing once a
+  target is confirmed and at least one change is given. Clarification
+  fixtures carry that same state (`state: { missingFields, targetConfirmed }`,
+  field names restricted to the client write fields), and the live runner
+  sends it with the same redacted text the runtime sends.
+  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs,
+  2026-09-24) `clarificationRequired` scored 0.85–0.97 where clarification is
+  needed and 0.11–0.36 where it is not. The stored clarification profile's
+  `thresholds.acceptProbability` must sit inside that window (e.g. 0.6), and
+  must be re-derived from human-reviewed evidence before `enforce`.
+  Treat `ineligible` under `enforce` as the stale-profile symptom and compare
+  the stored profile's `questionVersion` with `DECISION_QUESTION_VERSION`.
+  `question-mismatch` is a different failure: a permitted route domain has no
+  question text in `ROUTE_DOMAIN_DESCRIPTIONS`.
+
+### Where JEV may run (environment and branch gate)
+
+The `agent.decisions.jev` setting is one database row, and preview shares the
+production database, so a mode stored there reaches every deployment that
+reads it. Two fields in the setting decide where it applies, and both fail
+closed:
+
+- `environments` — a deployment uses the stored modes only when its
+  `AGENT_DECISION_ENVIRONMENT` env var is set, non-empty and listed here.
+  Unset, blank or unlisted → every kind is `off` on that deployment, whatever
+  the stored modes say. The variable is unset on every deployment by default.
+  Preview is deployed from the committed `backend/deploy/cloudrun/service.preview.yaml`,
+  so enabling preview means adding the variable to that manifest; a console
+  edit is wiped by the next deploy.
+- `allowedBranchIds` — only turns from these branch ids are evaluated. A turn
+  from any other branch behaves exactly as if every kind were `off`: no
+  provider call, no enforce behaviour. Empty → no branch is in scope.
+
+Example (preview pilot on one branch):
+
+```json
+{
+  "environments": ["preview"],
+  "allowedBranchIds": ["<branch uuid>"],
+  "samplingFraction": 0.1,
+  "kinds": { "route-domains": { "mode": "shadow" } }
+}
+```
+
+Profiles' `approvedScope` (`["branch", "internal"]`) is readiness metadata
+checked by `check-jev-readiness.ts`; it is not the runtime allowlist.
+
+**Time budget.** `limits.turnDeadlineMs` (default 800 ms) is a per-call
+budget, started when a call is admitted. A runtime turn awaits at most three
+decision calls (route, intent, clarification), each a single attempt, so JEV
+can add up to about 3 × `turnDeadlineMs` to a turn — in `shadow` too. Calls
+skipped for `budget-exhausted` (per-turn cap) or `concurrency-saturated`
+record a trace event with `missing: true`; `disabled` and `not-sampled` record
+nothing.
 
 ## 2. Disable first (recovery order)
 
 When anything looks wrong, disable before investigating. In order of blast
 radius, smallest first:
 
+0. **Deployment disable** — remove the deployment from `environments` in
+   `agent.decisions.jev`, or unset its `AGENT_DECISION_ENVIRONMENT`. Every kind
+   is `off` there on the next config read (≤ 30 s cache) when you edit
+   `environments`; unsetting the variable takes effect only after a redeploy
+   (on preview: a manifest commit and a CI deploy).
 1. **Per-kind disable** — set the offending kind's mode to `off` in the
    `agent.decisions.jev` setting (`kinds.<kind>.mode: "off"`). Other kinds
    keep running.
@@ -170,7 +243,7 @@ enables.
 
 ## 3. Observational calls and what must never change
 
-Shadow-mode ("observational") decision calls are canceled at the turn
+Shadow-mode ("observational") decision calls are canceled at their per-call
 deadline (caller-owned `AbortSignal`); results that arrive after cancellation
 are discarded as trace-only. They never influence the turn.
 

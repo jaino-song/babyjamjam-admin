@@ -1040,6 +1040,7 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
         this.taskService = new AgentTaskService(this.taskRepository, policy, new DeterministicProductClientRepository());
         const modelFactory = {
             modelId: "deterministic-product-v1",
+            providerOptions: () => ({}),
             create: () => {
                 this.modelInvocations += 1;
                 return new DeterministicAgentLanguageModel([{ type: "text", text: "결정론적 제품 런타임 응답" }]);
