@@ -574,6 +574,33 @@ describe("Jev runtime integration (P1 clarification)", () => {
         expect(tools).toContain("clients_search");
     });
 
+    it("enforce suppression: a confirmed but stale target (record changed elsewhere) counts as unconfirmed and hides clients_update (BJJ-348)", async () => {
+        const stale = taskSnapshot({ capabilityId: "clients.update", kind: "clients.update", target: CONFIRMED_TARGET, confirmed: {} });
+        const harness = buildHarness({
+            modes: CLARIFICATION_ENFORCE,
+            clarificationResult: RECOMMEND_TRUE,
+            capabilities: [clientWriteCapability("clients.update"), clientSearchCapability()],
+            turn: {
+                task: { ...stale, issues: [...stale.issues, { code: "task.stale", severity: "error", message: "The customer target is stale" }] },
+            },
+            modelScript: [
+                { type: "tool-call", toolName: "clients_update", input: { operations: [{ op: "clear", field: "address" }] } },
+                { type: "text", text: "고객 정보가 바뀌었습니다. 다시 확인해 주세요." },
+            ],
+        });
+        const result = await harness.runtime.stream({
+            principal: PRINCIPAL,
+            sessionId: SESSION_ID,
+            locale: "ko",
+            messages: [userMessage("message-p1-stale", "주소 지워줘")],
+        });
+        await drainStream(result.stream);
+
+        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+        expect(exposedTools(harness)).not.toContain("clients_update");
+        expect(exposedTools(harness)).toContain("clients_search");
+    });
+
     it("explicit input retained: accepted explicit operations keep the write tool and mutation path despite recommending advice", async () => {
         const harness = buildHarness({
             modes: CLARIFICATION_ENFORCE,

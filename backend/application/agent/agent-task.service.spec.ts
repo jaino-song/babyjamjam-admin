@@ -528,7 +528,7 @@ describe("AgentTaskService", () => {
         ]));
 
         expect(created.snapshot.issues).toEqual(expect.arrayContaining([
-            expect.objectContaining({ field: "phone", code: "task.invalid" }),
+            expect.objectContaining({ field: "phone", code: "task.invalid", message: "A valid phone number is required" }),
         ]));
         expect(created.snapshot.issues).not.toEqual(expect.arrayContaining([
             expect.objectContaining({ field: "phone", code: "task.required" }),

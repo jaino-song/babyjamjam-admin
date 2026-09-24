@@ -205,7 +205,8 @@ export function deriveMissingFields(task: Parameters<typeof projectTaskForSafeCh
  *   as state only — no rule in `decideClarification` suppresses on it
  *   (BJJ-348).
  * - `targetMissing` ← true when the task's capability requires a write
- *   target (`clients.update`) and none is confirmed yet. `clients.create`
+ *   target (anything but `clients.create`) and none is confirmed yet, or the
+ *   confirmed one is stale (un-scoped `task.stale`). `clients.create`
  *   never has a target, so this is always false for it. This is the sole
  *   deterministic-recovery trigger (AC-18, BJJ-348): only an unknown
  *   *record* may hide the write tool, never a missing *value*.
@@ -223,8 +224,11 @@ function buildClarificationFacts(turn: ConversationTaskTurnResult, askedAtRevisi
     if (!task) throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
     const targetConfirmed = task.target !== null;
     // clients.create has no target at all, so it can never be "missing" one;
-    // clients.update requires a confirmed target before it can be applied.
-    const targetMissing = task.kind === "clients.update" && !targetConfirmed;
+    // every other capability needs a confirmed, current target before it can
+    // be applied. A target whose record changed elsewhere (un-scoped
+    // task.stale) is not confirmed either.
+    const targetStale = task.issues.some((issue) => issue.code === "task.stale" && issue.field === undefined);
+    const targetMissing = task.kind !== "clients.create" && (!targetConfirmed || targetStale);
     return {
         taskRevision: task.revision,
         missingFields: deriveMissingFields(task),
