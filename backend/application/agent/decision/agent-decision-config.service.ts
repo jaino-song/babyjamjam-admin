@@ -68,6 +68,11 @@ export const AgentDecisionAcceptanceProfileSchema = z.object({
 });
 
 const AgentDecisionLimitsSchema = z.object({
+    /**
+     * Per-call deadline budget in ms, applied fresh to each admitted port
+     * call (`Date.now() + turnDeadlineMs` at admission time) — not a single
+     * deadline for the whole turn. See AgentDecisionService.evaluate().
+     */
     turnDeadlineMs: z.number().int().min(1).max(10000).default(800),
     maxP0PerTurn: z.number().int().min(0).max(10).default(2),
     maxP1PerTurn: z.number().int().min(0).max(10).default(1),

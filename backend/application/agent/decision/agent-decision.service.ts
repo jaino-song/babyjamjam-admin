@@ -33,6 +33,7 @@ import {
     applyClarificationPolicy,
     applyClientIntentPolicy,
     applyDomainRoutingPolicy,
+    buildSkipTraceEvent,
     isProfileCompatible,
     toDecisionTraceEvent,
     type ClarificationAdvice,
@@ -169,11 +170,11 @@ export class AgentDecisionService {
             kind: DECISION_KINDS.routeDomains,
             tier: "p0",
             baseline: input.baseline,
-            callPort: (): Promise<DomainRoutingEvidence> =>
+            callPort: (deadlineAt: number): Promise<DomainRoutingEvidence> =>
                 this.port.routeDomains({
                     kind: DECISION_KINDS.routeDomains,
                     questionVersion: DECISION_QUESTION_VERSION,
-                    deadlineAt: ctx.deadlineAt,
+                    deadlineAt,
                     signal: ctx.signal,
                     redactedText: buildRedactedDecisionText(input.text, input.knownValues),
                     // Caller-supplied enabled set only — never widened from configuration.
@@ -202,11 +203,11 @@ export class AgentDecisionService {
             kind: DECISION_KINDS.classifyClientIntent,
             tier: "p0",
             baseline: input.baseline,
-            callPort: (): Promise<ClientIntentEvidence> =>
+            callPort: (deadlineAt: number): Promise<ClientIntentEvidence> =>
                 this.port.classifyClientIntent({
                     kind: DECISION_KINDS.classifyClientIntent,
                     questionVersion: DECISION_QUESTION_VERSION,
-                    deadlineAt: ctx.deadlineAt,
+                    deadlineAt,
                     signal: ctx.signal,
                     redactedText: buildRedactedDecisionText(input.text, input.knownValues),
                 } satisfies ClassifyClientIntentRequest),
@@ -229,11 +230,11 @@ export class AgentDecisionService {
             kind: DECISION_KINDS.evaluateClarification,
             tier: "p1",
             baseline: input.baseline,
-            callPort: (): Promise<ClarificationEvidence> =>
+            callPort: (deadlineAt: number): Promise<ClarificationEvidence> =>
                 this.port.evaluateClarification({
                     kind: DECISION_KINDS.evaluateClarification,
                     questionVersion: DECISION_QUESTION_VERSION,
-                    deadlineAt: ctx.deadlineAt,
+                    deadlineAt,
                     signal: ctx.signal,
                     redactedText: buildRedactedDecisionText(input.text, input.knownValues),
                     missingFields: input.missingFields,
@@ -261,11 +262,11 @@ export class AgentDecisionService {
             tier: "p1",
             baseline: input.baseline,
             exceedsLimits: (config) => input.candidates.length > config.limits.maxCandidates,
-            callPort: (): Promise<CandidateEvidence> =>
+            callPort: (deadlineAt: number): Promise<CandidateEvidence> =>
                 this.port.rankCandidates({
                     kind: DECISION_KINDS.rankCandidates,
                     questionVersion: DECISION_QUESTION_VERSION,
-                    deadlineAt: ctx.deadlineAt,
+                    deadlineAt,
                     signal: ctx.signal,
                     redactedText: buildRedactedDecisionText(input.text, input.knownValues),
                     choiceSetRevision: input.choiceSetRevision,
@@ -286,7 +287,7 @@ export class AgentDecisionService {
 
     /**
      * Shared per-call sequence for all four kinds:
-     * mode → shadow sampling → turn deadline + priority budgets →
+     * mode → branch scope → shadow sampling → priority budgets →
      * concurrency slot → provider call → observation → enforce gating →
      * policy application.
      */
@@ -297,7 +298,8 @@ export class AgentDecisionService {
         readonly baseline: TSelection | null;
         /** Kind-specific request bound (e.g. candidate-set size). */
         readonly exceedsLimits?: (config: AgentDecisionConfig) => boolean;
-        readonly callPort: () => Promise<TEvidence>;
+        /** Receives the per-call deadline computed at admission time. */
+        readonly callPort: (deadlineAt: number) => Promise<TEvidence>;
         readonly applyPolicy: (
             evidence: TEvidence,
             profile: DecisionAcceptanceProfile,
@@ -324,24 +326,26 @@ export class AgentDecisionService {
             return notEvaluated(baseline, DECISION_FAILURE_REASONS.notSampled, null);
         }
 
-        // (3) Budgets: turn deadline first, then the per-turn priority caps.
-        if (Date.now() >= ctx.deadlineAt) {
-            return notEvaluated(baseline, DECISION_FAILURE_REASONS.budgetExhausted, null);
-        }
+        // (3) Per-turn priority budgets. There is no pre-call turn-deadline
+        // skip here: the deadline is per call, computed once a call is
+        // actually admitted (below), never checked against the turn's start.
         const counters = this.countersFor(ctx);
         const cap = args.tier === "p0" ? config.limits.maxP0PerTurn : config.limits.maxP1PerTurn;
         const used = args.tier === "p0" ? counters.p0Used : counters.p1Used;
         if (used >= cap) {
+            this.recordSkip(ctx, kind, mode, DECISION_FAILURE_REASONS.budgetExhausted);
             return notEvaluated(baseline, DECISION_FAILURE_REASONS.budgetExhausted, null);
         }
         // Kind-specific request bound (fail-closed, no port call, no budget consumed).
         if (args.exceedsLimits !== undefined && args.exceedsLimits(config)) {
+            this.recordSkip(ctx, kind, mode, DECISION_FAILURE_REASONS.budgetExhausted);
             return notEvaluated(baseline, DECISION_FAILURE_REASONS.budgetExhausted, null);
         }
 
         // (4) Concurrency: at most maxConcurrentCalls provider calls in flight
         // per process. Saturated → skip, never queue.
         if (this.inFlightCalls >= config.limits.maxConcurrentCalls) {
+            this.recordSkip(ctx, kind, mode, DECISION_FAILURE_REASONS.concurrencySaturated);
             return notEvaluated(baseline, DECISION_FAILURE_REASONS.concurrencySaturated, null);
         }
 
@@ -350,12 +354,16 @@ export class AgentDecisionService {
         if (args.tier === "p0") counters.p0Used += 1;
         else counters.p1Used += 1;
         this.inFlightCalls += 1;
+        // (5) Per-call deadline, fixed at the moment the call is admitted —
+        // not at turn-context creation, so a call queued behind other work
+        // still gets a full budget from here.
+        const callDeadlineAt = Date.now() + config.limits.turnDeadlineMs;
         try {
             // (6) Provider call. The adapter returns evidence and should never
             // throw; a throw is bounded to `unavailable`/`provider-error`.
             let evidence: TEvidence;
             try {
-                evidence = await args.callPort();
+                evidence = await args.callPort(callDeadlineAt);
             } catch {
                 return {
                     status: DECISION_STATUSES.unavailable,
@@ -431,6 +439,29 @@ export class AgentDecisionService {
                 profileVersion,
                 missing: false,
                 droppedReason: null,
+            }));
+        } catch {
+            // Telemetry failures are swallowed by contract.
+        }
+    }
+
+    /**
+     * Records exactly one trace event for a call skipped by a budget/
+     * concurrency gate (never for `disabled`/`not-sampled`, which stay
+     * unrecorded). Never throws into the decision path.
+     */
+    private recordSkip(
+        ctx: DecisionTurnContext,
+        kind: DecisionKind,
+        mode: DecisionMode,
+        reason: DecisionFailureReason,
+    ): void {
+        try {
+            ctx.collector.record(buildSkipTraceEvent({
+                decisionKind: kind,
+                mode,
+                questionVersion: DECISION_QUESTION_VERSION,
+                reason,
             }));
         } catch {
             // Telemetry failures are swallowed by contract.
