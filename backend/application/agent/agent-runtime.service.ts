@@ -788,7 +788,12 @@ export class AgentRuntimeService {
                 && this.taskOrchestrator
                 && conversationTask?.task
                 && !conversationTask.replayed
-                && ["collecting", "confirming_target", "review_ready"].includes(conversationTask.task.state);
+                && ["collecting", "confirming_target", "review_ready"].includes(conversationTask.task.state)
+                // Core reads (clients.search included) are always offered regardless of the
+                // turn's routed domain (PR #751, CORE_READ_CAPABILITIES); only attach this
+                // result to the owned task when the turn was actually routed to clients, or an
+                // unrelated domain's search (e.g. schedules) would silently bind into the task.
+                && routed.domains.includes("clients");
             if (ownedTask && this.taskOrchestrator && conversationTask?.task) {
                 try {
                     const attached = await this.taskOrchestrator.attachDerivedChoices(
