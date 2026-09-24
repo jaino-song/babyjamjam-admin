@@ -423,6 +423,25 @@ export class AgentRuntimeService {
                 branchId: input.principal.branchId,
             });
             decisionCollector = turn.collector;
+            // Branch-scope enforcement, applied once, upstream of every mode
+            // read below (routing, client-intent, clarification, and the
+            // routing decision context handed to the capability router).
+            // `evaluate()` in AgentDecisionService already treats an
+            // out-of-scope turn as disabled (zero port calls), but that
+            // façade-internal guard is defense in depth only: every caller
+            // here reads the per-kind mode directly (routeMode/intentMode/
+            // clarificationMode, and the mode threaded into
+            // routingDecisionContext for the router), and none of those
+            // reads consult `turn.inScope` on their own. Forcing all three
+            // modes to `off` here, before any of them is read, is what makes
+            // an out-of-scope turn behave identically to the feature being
+            // off for every kind — no caller can bypass it by reading a
+            // stale mode.
+            if (!turn.inScope) {
+                routeMode = DECISION_MODES.off;
+                intentMode = DECISION_MODES.off;
+                clarificationMode = DECISION_MODES.off;
+            }
         }
         const routingDecisionContext = turn && this.decisions
             ? { decisions: this.decisions, turn, mode: routeMode }

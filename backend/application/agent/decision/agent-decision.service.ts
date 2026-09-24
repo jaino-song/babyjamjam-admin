@@ -53,13 +53,6 @@ const MAX_ROUTE_DOMAINS = 2;
  * NOT part of this public surface, so no caller can read or mutate them.
  */
 export interface DecisionTurnContext {
-    /**
-     * Absolute epoch-ms deadline for the whole turn, fixed at creation.
-     * Unused for gating (see {@link AgentDecisionService.evaluate}, which
-     * computes a fresh per-call deadline instead); kept only because nothing
-     * else in the turn needs it removed.
-     */
-    readonly deadlineAt: number;
     /** Caller-owned cancellation, forwarded to the port unchanged. */
     readonly signal: AbortSignal;
     /** Stable sampling key: the same key always produces the same sampling decision. */
@@ -146,7 +139,6 @@ export class AgentDecisionService {
         // the comparison stable regardless of the principal's branchId type.
         const inScope = config.allowedBranchIds.includes(String(options.branchId));
         const context: DecisionTurnContext = {
-            deadlineAt: Date.now() + config.limits.turnDeadlineMs,
             signal: options.signal,
             sampleKey: options.sampleKey,
             inScope,
