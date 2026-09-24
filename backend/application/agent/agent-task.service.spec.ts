@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { AgentTaskConflictException, AgentTaskService } from "./agent-task.service";
+import { deriveMissingFields } from "./agent-runtime.service";
 import { clientAgentTargetVersion } from "../../application/usecases/client/client-agent-target";
 import { createEmptyAgentTaskDraft, type AgentTaskEntity, type AgentTaskEventEntity } from "domain/entities/agent-task.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
@@ -515,6 +516,51 @@ describe("AgentTaskService", () => {
             ...createInput(),
             operations: [{ op: "set", field: "notAField", value: "raw" }],
         })).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("reports a malformed create phone as task.invalid, not task.required, and still blocks review readiness (BJJ-348)", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+
+        const created = await service.create(owner, createInput(randomUUID(), [
+            { op: "set", field: "name", value: "홍길동" },
+            { op: "set", field: "phone", value: "010-123-4567" }, // 10 digits: malformed, not missing
+        ]));
+
+        expect(created.snapshot.issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone", code: "task.invalid" }),
+        ]));
+        expect(created.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone", code: "task.required" }),
+        ]));
+
+        // Feed the REAL service's own issues() output into deriveMissingFields
+        // (agent-runtime.service.ts) — not a re-implementation of it — to
+        // prove the two stay in sync: a malformed phone is task.invalid, so
+        // it must never surface as "missing" (BJJ-348 minor).
+        expect(deriveMissingFields(created.snapshot)).not.toEqual(expect.arrayContaining(["phone"]));
+
+        // Still blocks create/apply exactly as today: reviewReadiness only
+        // checks `issues.length === 0`, so a malformed phone is exactly as
+        // unappliable as a missing one regardless of which code it carries.
+        await expect(service.command(owner, created.snapshot.taskId,
+            commandInput("prepare-review", created.snapshot.revision))).rejects.toMatchObject({
+            response: expect.objectContaining({ code: "AGENT_TASK_CONFLICT", reason: "state" }),
+        });
+    });
+
+    it("reports a valid 11-digit create phone with no issue at all", async () => {
+        const repository = new FakeTaskRepository();
+        const service = buildService(repository).service;
+
+        const created = await service.create(owner, createInput(randomUUID(), [
+            { op: "set", field: "name", value: "홍길동" },
+            { op: "set", field: "phone", value: "010-1234-5678" },
+        ]));
+
+        expect(created.snapshot.issues).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: "phone" }),
+        ]));
     });
 
     it("keeps update drafts partial and does not require create identifiers", async () => {
