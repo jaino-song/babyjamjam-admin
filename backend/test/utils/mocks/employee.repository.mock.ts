@@ -174,4 +174,18 @@ export class MockEmployeeRepository implements IEmployeeRepository {
             employee => employee.openToNextWork === true,
         );
     }
+
+    async findByIdForDate(_branchid: string, id: number, _date: Date): Promise<EmployeeEntity | null> {
+        // The mock does not compute a date-scoped working/available status; callers
+        // that need that assign `.status` on the entity themselves, as the real
+        // repository's row does after computing it for the given date.
+        return this.employees.get(id) ?? null;
+    }
+
+    async findNamesByIds(_branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>> {
+        const idSet = new Set(ids);
+        return Array.from(this.employees.values())
+            .filter((employee) => idSet.has(employee.id))
+            .map((employee) => ({ id: employee.id, name: employee.name }));
+    }
 }

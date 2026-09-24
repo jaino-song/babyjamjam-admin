@@ -19,7 +19,6 @@ export class FindEmployeeByIdUsecase {
      * lookup unchanged (e.g. writes) must keep calling `execute`.
      */
     async resolveStatus(branchid: string, id: number, date: Date): Promise<EmployeeStatus | undefined> {
-        if (!this.employeeRepository.findByIdForDate) return undefined;
         const employee = await this.employeeRepository.findByIdForDate(branchid, id, date);
         return employee?.status;
     }

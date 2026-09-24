@@ -1,4 +1,4 @@
-import { Injectable, Inject, Optional } from "@nestjs/common";
+import { Injectable, Inject } from "@nestjs/common";
 import { z } from "zod";
 
 import { AgentCapabilityProvider } from "application/agent/capability.decorator";
@@ -34,8 +34,8 @@ const OutputSchema = z.object({ schedules: z.array(ScheduleSchema) });
 export class EmployeeScheduleAgentCapabilitiesProvider implements AgentCapabilityProviderContract {
     constructor(
         private readonly listSchedules: ListEmployeeSchedulesUsecase,
-        @Optional() @Inject(CLIENT_REPOSITORY) private readonly clientRepository?: IClientRepository,
-        @Optional() @Inject(EMPLOYEE_REPOSITORY) private readonly employeeRepository?: IEmployeeRepository,
+        @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
+        @Inject(EMPLOYEE_REPOSITORY) private readonly employeeRepository: IEmployeeRepository,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -67,8 +67,8 @@ export class EmployeeScheduleAgentCapabilitiesProvider implements AgentCapabilit
                         : [schedule.primaryEmployeeId]
                 )))];
                 const [clientNames, employeeNames] = await Promise.all([
-                    this.clientRepository?.findNamesByIds?.(context.principal.branchId, clientIds) ?? [],
-                    this.employeeRepository?.findNamesByIds?.(context.principal.branchId, employeeIds) ?? [],
+                    this.clientRepository.findNamesByIds(context.principal.branchId, clientIds),
+                    this.employeeRepository.findNamesByIds(context.principal.branchId, employeeIds),
                 ]);
                 const clientNameById = new Map(clientNames.map(({ id, name }) => [id, name]));
                 const employeeNameById = new Map(employeeNames.map(({ id, name }) => [id, name]));

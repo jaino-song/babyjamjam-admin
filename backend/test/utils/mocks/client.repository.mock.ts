@@ -298,4 +298,11 @@ export class MockClientRepository implements IClientRepository {
             && (client.branchId === null || client.branchId === branchid),
         ) ?? null;
     }
+
+    async findNamesByIds(_branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>> {
+        const idSet = new Set(ids);
+        return Array.from(this.clients.values())
+            .filter((client) => idSet.has(client.id))
+            .map((client) => ({ id: client.id, name: client.name }));
+    }
 }
