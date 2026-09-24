@@ -85,5 +85,19 @@ describe("conversation task intake policy", () => {
         ])("still treats question-shaped text as question-like: %s", (text) => {
             expect(isQuestionLike(text)).toBe(true);
         });
+
+        it.each([
+            "계약서 어떻게 만들어",
+            "이거 누가 삭제해",
+            "언제 등록해",
+            "왜 안 바꿔",
+            "어디로 돌려",
+        ])("does not let a trailing imperative verb override a genuine interrogative: %s", (text) => {
+            expect(isQuestionLike(text)).toBe(true);
+        });
+
+        it("still treats an imperative change request with no interrogative word as not question-like", () => {
+            expect(isQuestionLike("주소 확인하고 인천 서구로 바꿔줘")).toBe(false);
+        });
     });
 });
