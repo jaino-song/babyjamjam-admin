@@ -497,22 +497,43 @@ export function assembleLegacyTurn(events: readonly RawStreamEvent[]): LegacyTur
 // ---------------------------------------------------------------------------
 
 /**
- * Documented heuristic: look only at the *last paragraph* of the answer
- * (text after the final blank line), so a `?` appearing in an earlier
- * paragraph (e.g. quoting the user's own message back to them) never
- * counts. If that last paragraph is nothing but a markdown table or list
- * (no actual sentence), fall back to the paragraph before it.
+ * Documented heuristic: normalize the fullwidth `？` to `?`, then look only
+ * at the *last paragraph* of the answer (text after the final blank line),
+ * so a `?` appearing in an earlier paragraph (e.g. quoting the user's own
+ * message back to them) never counts. If that last paragraph is nothing but
+ * a markdown table or list (no actual sentence), fall back to the paragraph
+ * before it; if the chosen paragraph is a lead-in sentence followed by a
+ * markdown table/list (e.g. "선택해 주세요:" followed by bullet options),
+ * the trailing table/list lines are dropped so the lead-in sentence is what
+ * gets checked as the paragraph's real final sentence.
  *
  * Within the chosen paragraph, split into sentences on `. ! ?` and line
- * breaks, and return true if ANY of those sentences ends with a literal
- * `?` or one of the Korean asking-sentence endings this app's clarifying
- * questions use in practice (까요, 나요, 인가요/은가요/는가요/던가요,
- * 할래요/을래요/주실래요, 주세요/주시겠어요, 인지요/는지요, or the
- * formal "-습니까 / -ㅂ니까" question form, e.g. 됩니까/합니까) — ignoring
- * trailing `.`, `!`, `~`, closing quotes, emoji, and whitespace when
- * checking the ending. Bare "니까" (e.g. "...했으니까."), bare "가요"
- * (e.g. "내일 가요."), and bare "래요" as reported speech (e.g. "하래요.")
- * intentionally do NOT count — only the specific asking forms above do.
+ * breaks. Only two sentences can decide the result: the paragraph's FINAL
+ * sentence, and — only when the final sentence doesn't itself ask a
+ * question — the second-to-last sentence, but only if the final sentence is
+ * a short trailing line (e.g. "감사합니다!", "확인 부탁드려요"; at most 8
+ * non-space characters after trailing filler is stripped). This is what
+ * lets "...알려주시겠어요?\n감사합니다!" still count, while stopping a `?`
+ * that only appears inside an earlier, unquoted, mid-sentence quote (e.g.
+ * "고객님이 언제 오나요? 하고 물으셨던 건은 처리했어요.") from counting: its
+ * trailing sentence is a real continuation, not a short throwaway line.
+ *
+ * A sentence "asks a question" if it ends with a literal `?` or one of the
+ * Korean asking-sentence endings this app's clarifying questions use in
+ * practice (까요, 나요, 인가요/은가요/는가요/던가요, 할래요/을래요/주실래요,
+ * 주세요/주시겠어요, 인지요/는지요, or the formal "-습니까 / -ㅂ니까"
+ * question form, e.g. 됩니까/합니까) — ignoring trailing markdown emphasis
+ * (`*`, `_`), punctuation (`:`, `^`, `…`, `~`, `.`, `!`), closing quotes,
+ * trailing ㅎ/ㅋ laughter runs, and emoji (including skin-tone modifiers and
+ * ZWJ sequences), plus whitespace, when checking the ending. Bare "니까"
+ * (e.g. "...했으니까."), bare "가요" (e.g. "내일 가요."), and bare "래요" as
+ * reported speech (e.g. "하래요.") intentionally do NOT count — only the
+ * specific asking forms above do. "주세요" is additionally restricted to
+ * only ever count when it ends the paragraph's actual final sentence (never
+ * via the short-trailing-line exception above) — any-sentence matching was
+ * too loose for it, since it is a common closing courtesy on plain
+ * statements too (e.g. "고객님께 전화해 주세요. 감사합니다!" is not a
+ * question).
  */
 const KOREAN_QUESTION_ENDINGS = [
     "까요",
@@ -530,13 +551,22 @@ const KOREAN_QUESTION_ENDINGS = [
     "는지요",
 ] as const;
 
-// Trailing characters ignored when checking a sentence's ending: `.`, `!`,
-// `~`, closing quotes (ASCII + Korean brackets + curly quotes), emoji, and
-// whitespace. Deliberately excludes `?`, which is itself a marker we check for.
+/** The one ending above that only counts when it ends the paragraph's actual final sentence (see doc comment above). */
+const FINAL_SENTENCE_ONLY_ENDING = "주세요";
+
+// Trailing characters ignored when checking a sentence's ending: markdown
+// emphasis (`*`, `_`), `.`, `!`, `~`, `:`, `^`, `…`, closing quotes (ASCII +
+// Korean brackets + curly quotes), trailing ㅎ/ㅋ laughter runs, emoji
+// (including skin-tone modifiers `\p{Emoji_Modifier}` and ZWJ `‍` /
+// combining-enclosing-keycap `⃣` sequence parts), and whitespace.
+// Deliberately excludes `?`, which is itself a marker we check for.
 const TRAILING_FILLER_RE =
-    /[.!~"'“”‘’「」『』)\]\s\p{Extended_Pictographic}️]+$/u;
+    /[.!~*_:^…"'“”‘’「」『』)\]\s\p{Extended_Pictographic}\p{Emoji_Modifier}‍⃣ㅎㅋ️]+$/u;
 
 const TABLE_OR_LIST_LINE_RE = /^(\|.*\||[-*+]\s+.*|\d+[.)]\s+.*|[-:|\s]+)$/;
+
+/** At most this many non-space characters (after trailing filler is stripped) counts as a "short trailing line". */
+const SHORT_TRAILING_LINE_MAX_CHARS = 8;
 
 /** A Hangul syllable with the "ㅂ" final consonant (batchim), e.g. 습/됩/합. */
 function hasBieupBatchim(char: string | undefined): boolean {
@@ -563,6 +593,23 @@ function isTableOrListOnly(paragraph: string): boolean {
     return lines.every((line) => TABLE_OR_LIST_LINE_RE.test(line));
 }
 
+/**
+ * Drops trailing markdown table/list lines from a paragraph that mixes a
+ * lead-in sentence with a list (e.g. "선택해 주세요:\n- A\n- B"), so the
+ * lead-in sentence — not the last bullet — is treated as the paragraph's
+ * real final sentence. A paragraph that is ENTIRELY list/table lines is left
+ * untouched here; `isTableOrListOnly` already handles that case by falling
+ * back to the previous paragraph.
+ */
+function stripTrailingListLines(paragraph: string): string {
+    const lines = paragraph.split("\n");
+    let end = lines.length;
+    while (end > 0 && TABLE_OR_LIST_LINE_RE.test((lines[end - 1] as string).trim())) {
+        end -= 1;
+    }
+    return end === 0 ? paragraph : lines.slice(0, end).join("\n");
+}
+
 function splitSentences(paragraph: string): string[] {
     return paragraph
         .split(/(?<=[.!?])\s+|\n+/)
@@ -570,17 +617,43 @@ function splitSentences(paragraph: string): string[] {
         .filter((sentence) => sentence.length > 0);
 }
 
-function sentenceAsksQuestion(sentence: string): boolean {
+/** @param isFinalSentence Whether `sentence` is the paragraph's actual final sentence (see FINAL_SENTENCE_ONLY_ENDING). */
+function sentenceAsksQuestion(sentence: string, isFinalSentence: boolean): boolean {
     const core = sentence.replace(TRAILING_FILLER_RE, "");
     if (core.length === 0) return false;
     if (core.endsWith("?")) return true;
-    if (KOREAN_QUESTION_ENDINGS.some((ending) => core.endsWith(ending))) return true;
+    for (const ending of KOREAN_QUESTION_ENDINGS) {
+        if (ending === FINAL_SENTENCE_ONLY_ENDING && !isFinalSentence) continue;
+        if (core.endsWith(ending)) return true;
+    }
     if (core.endsWith("니까") && hasBieupBatchim(core[core.length - 3])) return true;
     return false;
 }
 
+/** Whether `sentence`, after trailing filler is stripped, is a short throwaway trailing line (see doc comment above). */
+function isShortTrailingLine(sentence: string): boolean {
+    const core = sentence.replace(TRAILING_FILLER_RE, "").replace(/\s+/g, "");
+    return core.length > 0 && core.length <= SHORT_TRAILING_LINE_MAX_CHARS;
+}
+
+function paragraphAsksQuestion(paragraph: string): boolean {
+    const sentences = splitSentences(paragraph);
+    if (sentences.length === 0) return false;
+
+    const lastSentence = sentences[sentences.length - 1] as string;
+    if (sentenceAsksQuestion(lastSentence, true)) return true;
+
+    if (sentences.length >= 2) {
+        const previousSentence = sentences[sentences.length - 2] as string;
+        if (isShortTrailingLine(lastSentence) && sentenceAsksQuestion(previousSentence, false)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 export function heuristicHasQuestion(text: string): boolean {
-    const trimmed = text.trim();
+    const trimmed = text.replace(/？/g, "?").trim();
     if (trimmed.length === 0) return false;
 
     const paragraphs = splitParagraphs(trimmed);
@@ -590,8 +663,9 @@ export function heuristicHasQuestion(text: string): boolean {
     if (paragraphs.length > 1 && isTableOrListOnly(target)) {
         target = paragraphs[paragraphs.length - 2] as string;
     }
+    target = stripTrailingListLines(target);
 
-    return splitSentences(target).some((sentence) => sentenceAsksQuestion(sentence));
+    return paragraphAsksQuestion(target);
 }
 
 // ---------------------------------------------------------------------------

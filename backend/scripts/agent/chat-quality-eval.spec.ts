@@ -340,6 +340,27 @@ describe("heuristicHasQuestion", () => {
         ["하래요.", false], // bare 래요 (전달/인용) must NOT count
         ["질문: \"언제 오시나요?\"\n\n네, 알겠습니다. 확인 후 안내드리겠습니다.", false], // "?" only in an earlier paragraph
         ["| 항목 | 값 |\n| --- | --- |\n| 이름 | 홍길동 |", false], // table-only answer, no question
+
+        // --- fullwidth question mark normalization ---
+        ["담당자가 누구인가요？", true],
+
+        // --- trailing markdown emphasis / punctuation / laughter / emoji stripped before checking the ending ---
+        ["**방문하실까요?**", true], // bold-wrapped
+        ["_…?_", true], // italic-wrapped with a leading ellipsis
+        ["언제 방문하실까요…", true], // trailing ellipsis after an asking ending
+        ["언제 방문하실까요^^", true], // trailing caret emoticon
+        ["언제 방문하실까요?ㅎㅎ", true], // trailing ㅎ run after "?"
+        ["언제 방문하실까요 👍🏻", true], // trailing emoji with a skin-tone modifier
+        ["언제 방문하실까요 👨‍👩‍👧", true], // trailing ZWJ emoji sequence
+
+        // --- a colon-terminated lead-in line followed by a list still counts ---
+        ["선택해 주세요:\n- 옵션1\n- 옵션2", true],
+
+        // --- 주세요 only counts as the FINAL sentence of the last paragraph ---
+        ["고객님께 전화해 주세요. 감사합니다!", false], // 주세요 in a non-final sentence must not count
+
+        // --- a "?" inside an unquoted mid-sentence quote must not count when the paragraph's real final sentence is a statement ---
+        ["고객님이 언제 오나요? 하고 물으셨던 건은 처리했어요.", false],
     ])("%s -> %s", (text, expected) => {
         expect(heuristicHasQuestion(text)).toBe(expected);
     });
