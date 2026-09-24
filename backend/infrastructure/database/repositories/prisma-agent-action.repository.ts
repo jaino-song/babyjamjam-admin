@@ -63,8 +63,8 @@ export class PrismaAgentActionRepository implements IAgentActionRepository {
                 SELECT "id", "archived_at" AS "archivedAt", "expires_at" AS "expiresAt"
                 FROM "agent_session"
                 WHERE "id" = ${input.sessionId}
-                  AND "user_id" = ${input.userId}
-                  AND "branch_id" = ${input.branchId}
+                  AND "user_id" = CAST(${input.userId} AS uuid)
+                  AND "branch_id" = CAST(${input.branchId} AS uuid)
                 FOR UPDATE
             `);
             const session = locked[0];

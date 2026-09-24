@@ -40,6 +40,29 @@ export function minimizeClassifierText(text: string, knownValues: readonly unkno
 export type RouterDisposition = "selected" | "clarify" | "disabled";
 
 /**
+ * Always-offered core READ capabilities. A live graded eval showed the
+ * router's keyword/classifier routing offers tools from only the matched
+ * domain(s) per turn, so the model cannot chain obvious follow-up lookups
+ * (e.g. finding a client id before checking their contract status). These
+ * are appended to whatever the router already selected so the model can
+ * always look a name up, list a schedule, or check a summary — but ONLY
+ * read, non-side-effecting capabilities: write capabilities stay strictly
+ * routed by domain, unchanged.
+ *
+ * Order is significant: additions are appended in this tuple's order (not
+ * registry order), after the routed capabilities.
+ */
+export const CORE_READ_CAPABILITIES = [
+    "clients.search",
+    "clients.get",
+    "employees.search",
+    "employees.get",
+    "schedules.list",
+    "dashboard.summary",
+    "contracts.status",
+] as const;
+
+/**
  * Caller-supplied handle to the Jev decision layer. The router never
  * constructs the decision façade and never resolves it through Nest DI: the
  * caller owns construction and wiring.
@@ -125,7 +148,11 @@ export class CapabilityRouterService {
                 // A failed observation must never disturb the incumbent result.
             }
         }
-        return { domains, capabilities: this.offerCapabilities(domains, enabledCapabilities, max), disposition: "selected" };
+        return {
+            domains,
+            capabilities: this.offerCapabilitiesWithCoreReads(domains, enabledCapabilities, max),
+            disposition: "selected",
+        };
     }
 
     /**
@@ -147,7 +174,7 @@ export class CapabilityRouterService {
             // Single deterministic keyword match: fast path, no façade call.
             return {
                 domains: [...matched],
-                capabilities: this.offerCapabilities(matched, enabledCapabilities, max),
+                capabilities: this.offerCapabilitiesWithCoreReads(matched, enabledCapabilities, max),
                 disposition: "selected",
             };
         }
@@ -176,7 +203,7 @@ export class CapabilityRouterService {
         }
         return {
             domains: selection,
-            capabilities: this.offerCapabilities(selection, enabledCapabilities, max),
+            capabilities: this.offerCapabilitiesWithCoreReads(selection, enabledCapabilities, max),
             disposition: "selected",
         };
     }
@@ -228,6 +255,40 @@ export class CapabilityRouterService {
             if (!domains.includes(capability.meta.domain)) continue;
             offered.push(capability);
             if (offered.length >= max) break;
+        }
+        return offered;
+    }
+
+    /**
+     * Routed capabilities exactly as `offerCapabilities` returns them today
+     * (unchanged `max` behaviour), then every core READ capability appended
+     * on top — not counted against `max`, so core reads never evict routed
+     * tools and routed tools never evict core reads. Only reached with a
+     * non-empty `domains` (both call sites already imply `domains.length >
+     * 0`: the single-match and validated-selection enforce paths, and the
+     * incumbent path's `domains` guard below), so a "selected" disposition
+     * with an empty domain list (e.g. no keyword/classifier match and
+     * "clients" itself disabled) still offers zero capabilities, keeping the
+     * runtime's ACCESS_DENIED refusal behavior unchanged.
+     */
+    private offerCapabilitiesWithCoreReads(
+        domains: readonly string[],
+        enabledCapabilities: CapabilityDefinition[],
+        max: number,
+    ): CapabilityDefinition[] {
+        const routed = this.offerCapabilities(domains, enabledCapabilities, max);
+        if (domains.length === 0) return routed;
+        const offered = [...routed];
+        const offeredNames = new Set(offered.map((capability) => capability.meta.name));
+        for (const name of CORE_READ_CAPABILITIES) {
+            if (offeredNames.has(name)) continue;
+            const capability = enabledCapabilities.find((candidate) => candidate.meta.name === name);
+            if (!capability) continue; // not enabled for this principal (flag/role/allowlist)
+            // Defensive assertion: only ever add a genuine read, non-side-effecting
+            // capability from the core set, even if the registry entry drifts.
+            if (capability.meta.risk !== "read" || capability.meta.sideEffect !== false) continue;
+            offered.push(capability);
+            offeredNames.add(name);
         }
         return offered;
     }

@@ -318,7 +318,7 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
         { list: () => capabilities } as never,
         { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
         sessions as never,
-        { modelId: "deterministic-agent-v1", create: () => model } as never,
+        { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => model } as never,
         router as never,
         traces as never,
         undefined,

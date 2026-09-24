@@ -223,7 +223,7 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
         { list: () => capabilities } as never,
         { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
         sessions as never,
-        { modelId: "deterministic-agent-v1", create: () => model } as never,
+        { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => model } as never,
         router as never,
         traces as never,
         undefined,
@@ -350,7 +350,12 @@ describe("Jev runtime integration (P0 decision layer)", () => {
     it("enforce routing abstention answers a zero-tool clarification turn, not the feature-disabled refusal", async () => {
         const harness = buildHarness({
             modes: { routeDomains: DECISION_MODES.enforce, classifyClientIntent: DECISION_MODES.enforce },
-            capabilities: [clientSearchCapability()],
+            // An enabled, unrouted-domain core read (dashboard.summary) must
+            // still be absent from a "clarify" turn's offer: the router's
+            // core-reads addition is gated on a non-empty routed domain list
+            // (agent-chat-quality-router M4), and this turn's domains stay
+            // empty on abstention.
+            capabilities: [clientSearchCapability(), readCapability("dashboard.summary", "dashboard")],
             modelScript: [{ type: "text", text: "무엇을 도와드릴까요?" }],
         });
         // Record one route-domains observation into the turn's collector, the
@@ -523,7 +528,11 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         ]) {
             const harness = buildHarness({
                 modes,
-                capabilities: [clientSearchCapability()],
+                // clients.search plus an unrouted-domain core read
+                // (dashboard.summary) proves the router's always-offered
+                // core-reads addition reaches this selected ("clients")
+                // turn's tool surface (agent-chat-quality-router M4).
+                capabilities: [clientSearchCapability(), readCapability("dashboard.summary", "dashboard")],
                 routeDomainsResult: { status: "abstain", selection: null, baselineSelection: ["clients"], reason: "low-confidence", profileVersion: "profile-v1" },
                 modelScript: [{ type: "text", text: "완료했습니다." }],
             });
@@ -540,6 +549,10 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             // The router contract guarantees off/shadow never return
             // "clarify": the incumbent read capability stays offered.
             expect(JSON.stringify(streamOptions.tools)).toContain("clients_search");
+            // Core reads are appended on top of the routed ("clients")
+            // selection even though dashboard.summary's own domain was
+            // never routed for this turn.
+            expect(JSON.stringify(streamOptions.tools)).toContain("dashboard_summary");
             const systemPrompt = streamOptions.prompt?.[0]?.content ?? "";
             expect(systemPrompt).not.toContain("Ask the user one short clarifying question about what they want to do");
         }
@@ -581,7 +594,7 @@ describe("Jev runtime integration (P0 decision layer)", () => {
                 { list: () => capabilities } as never,
                 { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
                 sessions as never,
-                { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+                { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
                 router as never,
                 { start: jest.fn(), finish: jest.fn() } as never,
                 undefined,
@@ -799,7 +812,7 @@ describe("Jev runtime integration (P0 decision layer)", () => {
             { list: () => capabilities } as never,
             { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
             sessions as never,
-            { modelId: "deterministic-agent-v1", create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
+            { modelId: "deterministic-agent-v1", providerOptions: () => ({}), create: () => new DeterministicAgentLanguageModel([{ type: "text", text: "완료" }]) } as never,
             router as never,
             { start: jest.fn(), finish: jest.fn() } as never,
             undefined,

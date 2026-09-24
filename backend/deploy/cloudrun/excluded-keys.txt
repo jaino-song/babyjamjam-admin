@@ -12,6 +12,7 @@ GEMINI_CHAT_TEMPERATURE  # optional; code default applies when unset (see gemini
 GEMINI_CHAT_MAX_OUTPUT_TOKENS  # optional; code default applies when unset (see gemini-chat.gateway.ts)
 GEMINI_CHAT_TIMEOUT_MS  # optional; code default applies when unset (see gemini-chat.gateway.ts)
 GEMINI_EXTRACTION_MODEL  # optional; code default applies when unset (see gemini-chat.gateway.ts)
+AGENT_THINKING_LEVEL  # optional; unset lets the model pick its own thinking depth (see agent-model.factory.ts)
 NEXT_PUBLIC_API_BASE_URL  # frontend-only: no non-test backend/.ts source reads it
 ALIGO_API_URL  # not read by backend source
 ALIGO_SENDER_KEY  # not read by backend source

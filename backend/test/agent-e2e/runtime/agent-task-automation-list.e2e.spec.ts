@@ -79,7 +79,7 @@ describeAgentE2E("real automation.list with two eligible clients and missing def
             startDate: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
         })) });
         const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-            .overrideProvider(AgentModelFactory).useValue({ modelId: "unused-readonly-proof", create: createModel }).compile();
+            .overrideProvider(AgentModelFactory).useValue({ modelId: "unused-readonly-proof", providerOptions: () => ({}), create: createModel }).compile();
         app = moduleRef.createNestApplication();
         await app.init();
     }, 30_000);

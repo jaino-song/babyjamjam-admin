@@ -334,7 +334,7 @@ describeAgentE2E("employee-assignment automation authority adapter", () => {
 
         const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
             .overrideProvider(AgentModelFactory)
-            .useValue({ modelId: "unused-employee-authority-proof", create: jest.fn(() => { throw new Error("No model call is allowed in employee authority proof"); }) })
+            .useValue({ modelId: "unused-employee-authority-proof", providerOptions: () => ({}), create: jest.fn(() => { throw new Error("No model call is allowed in employee authority proof"); }) })
             .compile();
         app = moduleRef.createNestApplication();
         await app.init();

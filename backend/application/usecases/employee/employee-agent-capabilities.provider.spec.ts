@@ -38,6 +38,19 @@ describe("EmployeeAgentCapabilitiesProvider", () => {
         return { findEmployee, listEmployees, capabilities: provider.getCapabilities() };
     }
 
+    it("accepts the legacy employee id 0 in search output and get input", async () => {
+        const match = employee({ id: 0 });
+        match.status = "available";
+        const { capabilities } = setup(match, [match]);
+        const search = capabilities.find((entry) => entry.meta.name === "employees.search")!;
+        const get = capabilities.find((entry) => entry.meta.name === "employees.get")!;
+
+        const output = await search.execute(context, { query: "홍길동" });
+        expect(search.outputSchema.parse(output)).toMatchObject({ kind: "entity", entity: { id: 0 } });
+        expect(get.inputSchema.safeParse({ id: 0 }).success).toBe(true);
+        expect(get.inputSchema.safeParse({ id: -1 }).success).toBe(false);
+    });
+
     it("returns a discriminated none result for an empty search", async () => {
         const { listEmployees, capabilities } = setup(null);
         const search = capabilities.find((entry) => entry.meta.name === "employees.search")!;
