@@ -214,7 +214,8 @@ echo "$SERVICE_URL"
       `PRODUCTION_MOBILE_FRONTEND_URL`은 시크릿이 아니라 `service.preview.yaml`의 평문 값
       `https://preview.m.admin.babyjamjam.com`으로 고정되어 있다 (`NODE_ENV=production`에서 모바일 카카오
       로그인이 여기로 redirect하고 CORS도 이 값을 허용하므로, 프로덕션 값이 그대로 복사돼도 preview에 적용되지 않게 함).
-      예전 Secret Manager의 `PRODUCTION_MOBILE_FRONTEND_URL` 시크릿은 더 이상 참조되지 않는다.
+      예전 Secret Manager의 `PRODUCTION_MOBILE_FRONTEND_URL` 시크릿은 더 이상 참조되지 않으므로
+      이 manifest가 배포된 뒤 `gcloud secrets delete PRODUCTION_MOBILE_FRONTEND_URL --project=$PROJECT_ID`로 지운다.
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
 - [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
       둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고

@@ -604,6 +604,8 @@ test("sync-secrets.sh rejects a KAKAO_CALLBACK_URL that is not a run.app callbac
         "https://api.babyjamjam.com/auth/kakao/callback",
         "https://dummy-kakao-value.a.run.app/auth/kakao/callback/extra",
         "http://dummy-kakao-value.a.run.app/auth/kakao/callback",
+        "https://api.babyjamjam.com/x.run.app/auth/kakao/callback",
+        "xhttps://dummy-kakao-value.a.run.app/auth/kakao/callback",
     ]) {
         const lines = secrets.map((name, i) => (name === "KAKAO_CALLBACK_URL" ? `${name}=${bad}` : dummyLine(name, i)));
         const { dir, file } = makeTempEnvFile("kakao", lines);
@@ -617,6 +619,19 @@ test("sync-secrets.sh rejects a KAKAO_CALLBACK_URL that is not a run.app callbac
         } finally {
             rmSync(dir, { recursive: true, force: true });
         }
+    }
+});
+
+test("sync-secrets.sh accepts a real regional Cloud Run callback URL", () => {
+    const real = "https://babyjamjam-api-preview-123456789012.asia-northeast3.run.app/auth/kakao/callback";
+    const lines = secrets.map((name, i) => (name === "KAKAO_CALLBACK_URL" ? `${name}=${real}` : dummyLine(name, i)));
+    const { dir, file } = makeTempEnvFile("kakao-real", lines);
+    try {
+        const res = runScript(file, ["--dry-run"]);
+        assert.equal(res.status, 0, `exit ${res.status}; stderr: ${res.stderr}`);
+        assert.ok(!res.stderr.includes("invalid-preview-value"));
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
     }
 });
 
