@@ -23,12 +23,14 @@
 #      re-asserting the literal value before every migrate/jest invocation.
 #   5. Exports the same CI job-level env backend-ci.yml's auth-e2e job sets
 #      (dummy secrets, no live services) — see .github/workflows/backend-ci.yml.
-#   6. Reads ONLY the key names (never values) out of backend/.env and exports
-#      an EMPTY value for every key this script does not already set itself,
-#      so NestJS ConfigModule's env-file fallback (backend/.env holds the
-#      shared dev database address and real vendor credentials) cannot fill
-#      in anything real behind this script's back. dotenv-style loaders never
-#      override an already-exported variable, so an empty exported value wins.
+#   6. Reads ONLY the key names (never values) out of every env file
+#      ConfigModule can load (backend/.env.local, backend/.env, and the repo
+#      root .env.local/.env) and exports an EMPTY value for every key this
+#      script does not already set itself, so the env-file fallback (backend/.env
+#      holds the shared dev database address and real vendor credentials)
+#      cannot fill in anything real behind this script's back. dotenv-style
+#      loaders never override an already-exported variable, so an empty
+#      exported value wins. A line it cannot parse aborts the run.
 #   7. Runs `pnpm run db:migrate:deploy` then the isolated conversation-task
 #      E2E suite (AGENT_E2E=1), copying CI's exact --testPathPatterns.
 #   8. On exit (success, failure, INT or TERM) stops Postgres and removes the
@@ -154,7 +156,14 @@ export AGENT_E2E=1
 # values in that file can never reach the process — without ever reading or
 # printing them.
 
-readonly ENV_FILE="$BACKEND_DIR/.env"
+# Every env file backend/app.module.ts ENV_FILE_PATHS can load when jest runs
+# from backend/ (cwd-relative and __dirname-relative entries resolve to these).
+readonly ENV_FILES=(
+    "$BACKEND_DIR/.env.local"
+    "$BACKEND_DIR/.env"
+    "$BACKEND_DIR/../.env.local"
+    "$BACKEND_DIR/../.env"
+)
 readonly SCRIPT_OWNED_KEYS=(
     DATABASE_URL DIRECT_URL
     CI NODE_ENV TENANT_ISOLATION_MODE VALKEY_URL
@@ -173,18 +182,24 @@ is_script_owned_key() {
     return 1
 }
 
-if [[ -f "$ENV_FILE" ]]; then
-    log "blanking every non-script-owned key declared in backend/.env (names only, no values read)"
-    while IFS= read -r key_name; do
-        [[ -z "$key_name" ]] && continue
-        if is_script_owned_key "$key_name"; then
-            continue
+# Parse key names the way dotenv does (optional leading whitespace and an
+# optional `export ` prefix; blank and comment lines ignored). Any other
+# assignment-looking line whose key is not a valid shell name cannot be
+# blanked, so fail closed rather than let its value reach the process.
+for env_file in "${ENV_FILES[@]}"; do
+    [[ -f "$env_file" ]] || continue
+    log "blanking every non-script-owned key declared in $(basename "$(dirname "$env_file")")/$(basename "$env_file") (names only, no values read)"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*= ]]; then
+            key_name="${BASH_REMATCH[2]}"
+            is_script_owned_key "$key_name" && continue
+            export "$key_name"=""
+        elif [[ "$line" =~ = ]]; then
+            fail "cannot safely blank an entry in $env_file (unrecognised key shape); fix that line before running this script"
         fi
-        export "$key_name"=""
-    done < <(grep -oE '^[A-Za-z_][A-Za-z0-9_]*=' "$ENV_FILE" | sed 's/=$//')
-else
-    log "backend/.env not found — nothing to blank"
-fi
+    done < "$env_file"
+done
 
 # --- 7. Migrate then run the isolated conversation-task E2E suite ----------
 
