@@ -151,14 +151,19 @@ cannot provide come exclusively from an operator-authored JSON file
   v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
   the text together with the request state (`targetConfirmed`,
   `missingFields`), so a follow-up turn that supplies the value for an
-  already-confirmed record is not *advised* to clarify. This changes the advice
-  only: under `enforce`, `decideClarification` still suppresses model writes
-  whenever the runtime's `missingFields` is non-empty, and the runtime
-  currently fills it with every client write field not yet set (BJJ-344
-  follow-up), so partially filled tasks are still sent back regardless of the
-  advice. Clarification fixtures may carry state as
-  `state: { missingFields, targetConfirmed }`, and the live runner sends it;
-  those states are synthetic and do not yet match runtime state.
+  already-confirmed record is not sent back for clarification. The runtime's
+  `missingFields` (`deriveMissingFields` in `agent-runtime.service.ts`) now
+  lists only what the task still needs, from its `task.required` issues: for
+  create, the unmet required fields (name, phone); for update, nothing once a
+  target is confirmed and at least one change is given. Clarification
+  fixtures carry that same state (`state: { missingFields, targetConfirmed }`,
+  field names restricted to the client write fields), and the live runner
+  sends it with the same redacted text the runtime sends.
+  Clarification threshold: on the synthetic corpus (jev-1.13.0, two live runs,
+  2026-09-24) `clarificationRequired` scored 0.85–0.97 where clarification is
+  needed and 0.11–0.36 where it is not. The stored clarification profile's
+  `thresholds.acceptProbability` must sit inside that window (e.g. 0.6), and
+  must be re-derived from human-reviewed evidence before `enforce`.
   Treat `ineligible` under `enforce` as the stale-profile symptom and compare
   the stored profile's `questionVersion` with `DECISION_QUESTION_VERSION`.
   `question-mismatch` is a different failure: a permitted route domain has no
