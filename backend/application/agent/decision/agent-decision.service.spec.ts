@@ -27,11 +27,16 @@ const DEFAULT_LIMITS: AgentDecisionConfig["limits"] = {
     maxCandidates: 10,
 };
 
+/** Default in-scope branch for tests that are not exercising the branch gate itself. */
+const DEFAULT_BRANCH_ID = "branch-default";
+
 interface FakeConfigOptions {
     mode?: DecisionMode;
     samplingFraction?: number;
     limits?: Partial<AgentDecisionConfig["limits"]>;
     profiles?: Partial<Record<DecisionKind, DecisionAcceptanceProfile>>;
+    /** Defaults to [DEFAULT_BRANCH_ID] so every existing scenario stays in scope. */
+    allowedBranchIds?: readonly string[];
 }
 
 function fakeConfigService(options: FakeConfigOptions = {}): AgentDecisionConfigService {
@@ -39,11 +44,14 @@ function fakeConfigService(options: FakeConfigOptions = {}): AgentDecisionConfig
     const samplingFraction = options.samplingFraction ?? 0;
     const limits = { ...DEFAULT_LIMITS, ...options.limits };
     const profiles = options.profiles ?? {};
+    const allowedBranchIds = options.allowedBranchIds ?? [DEFAULT_BRANCH_ID];
     return {
         getConfig: jest.fn().mockResolvedValue({
             globalDisabled: false,
             modelId: MODEL_ID,
             samplingFraction,
+            environments: [],
+            allowedBranchIds,
             limits,
             kinds: {},
             profiles,
@@ -79,8 +87,12 @@ function portAsDecisionPort(port: MockedPort): AgentDecisionPort {
     return port as unknown as AgentDecisionPort;
 }
 
-async function turnContext(service: AgentDecisionService, sampleKey = "turn-key"): Promise<DecisionTurnContext> {
-    return service.createTurnContext({ signal: new AbortController().signal, sampleKey });
+async function turnContext(
+    service: AgentDecisionService,
+    sampleKey = "turn-key",
+    branchId = DEFAULT_BRANCH_ID,
+): Promise<DecisionTurnContext> {
+    return service.createTurnContext({ signal: new AbortController().signal, sampleKey, branchId });
 }
 
 function routeEvidence(overrides: Partial<DomainRoutingEvidence> = {}): DomainRoutingEvidence {
@@ -630,5 +642,97 @@ describe("AgentDecisionService", () => {
         expect(port.rankCandidates).not.toHaveBeenCalled();
         expect(result.status).toBe("not-evaluated");
         expect(result.reason).toBe("budget-exhausted");
+    });
+
+    describe("branch allowlist (BJJ-346)", () => {
+        it.each([DECISION_MODES.shadow, DECISION_MODES.enforce])(
+            "skips with zero port calls when the turn's branch is not in allowedBranchIds (%s)",
+            async (mode) => {
+                const port = fakePort();
+                port.routeDomains.mockResolvedValue(routeEvidence());
+                const service = serviceWith(
+                    fakeConfigService({
+                        mode,
+                        samplingFraction: 1,
+                        allowedBranchIds: ["other-branch"],
+                        profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                    }),
+                    portAsDecisionPort(port),
+                );
+                const ctx = await turnContext(service, "turn-key", "branch-out-of-scope");
+                expect(ctx.inScope).toBe(false);
+
+                const result = await service.routeDomains(ctx, {
+                    text: "text",
+                    knownValues: [],
+                    permittedDomains: ["clients"],
+                    baseline: ["clients"],
+                });
+
+                expect(port.routeDomains).not.toHaveBeenCalled();
+                expect(result).toEqual({
+                    status: "not-evaluated",
+                    selection: null,
+                    baselineSelection: ["clients"],
+                    reason: "disabled",
+                    profileVersion: null,
+                });
+                expect(ctx.collector.drain().events).toEqual([]);
+            },
+        );
+
+        it("empty allowedBranchIds puts every branch out of scope", async () => {
+            const port = fakePort();
+            const service = serviceWith(
+                fakeConfigService({ mode: DECISION_MODES.enforce, allowedBranchIds: [] }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service, "turn-key", "any-branch");
+            expect(ctx.inScope).toBe(false);
+        });
+
+        it("runs normally when the turn's branch is listed", async () => {
+            const port = fakePort();
+            port.routeDomains.mockResolvedValue(routeEvidence());
+            const service = serviceWith(
+                fakeConfigService({
+                    mode: DECISION_MODES.enforce,
+                    allowedBranchIds: ["branch-in-scope"],
+                    profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await turnContext(service, "turn-key", "branch-in-scope");
+            expect(ctx.inScope).toBe(true);
+
+            const result = await service.routeDomains(ctx, {
+                text: "text",
+                knownValues: [],
+                permittedDomains: ["clients"],
+                baseline: [],
+            });
+
+            expect(port.routeDomains).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("accepted");
+        });
+
+        it("normalises branch comparison with String() for a numeric-like principal branchId", async () => {
+            const port = fakePort();
+            port.routeDomains.mockResolvedValue(routeEvidence());
+            const service = serviceWith(
+                fakeConfigService({
+                    mode: DECISION_MODES.enforce,
+                    allowedBranchIds: ["42"],
+                    profiles: { [DECISION_KINDS.routeDomains]: profileFor(DECISION_KINDS.routeDomains) },
+                }),
+                portAsDecisionPort(port),
+            );
+            const ctx = await service.createTurnContext({
+                signal: new AbortController().signal,
+                sampleKey: "turn-key",
+                branchId: 42 as unknown as string,
+            });
+            expect(ctx.inScope).toBe(true);
+        });
     });
 });

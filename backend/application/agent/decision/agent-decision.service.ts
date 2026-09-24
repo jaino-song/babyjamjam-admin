@@ -52,12 +52,23 @@ const MAX_ROUTE_DOMAINS = 2;
  * NOT part of this public surface, so no caller can read or mutate them.
  */
 export interface DecisionTurnContext {
-    /** Absolute epoch-ms deadline for the whole turn, fixed at creation. */
+    /**
+     * Absolute epoch-ms deadline for the whole turn, fixed at creation.
+     * Unused for gating (see {@link AgentDecisionService.evaluate}, which
+     * computes a fresh per-call deadline instead); kept only because nothing
+     * else in the turn needs it removed.
+     */
     readonly deadlineAt: number;
     /** Caller-owned cancellation, forwarded to the port unchanged. */
     readonly signal: AbortSignal;
     /** Stable sampling key: the same key always produces the same sampling decision. */
     readonly sampleKey: string;
+    /**
+     * Whether this turn's branch is in {@link AgentDecisionConfig.allowedBranchIds}.
+     * Fixed at creation from the config snapshot; an out-of-scope turn skips
+     * every kind with zero port calls, in both shadow and enforce.
+     */
+    readonly inScope: boolean;
     /** Request-local, bounded observation collector. */
     readonly collector: DecisionTraceCollector;
 }
@@ -65,6 +76,8 @@ export interface DecisionTurnContext {
 export interface DecisionTurnOptions {
     readonly signal: AbortSignal;
     readonly sampleKey: string;
+    /** Caller's tenant branch. Compared against config as a string (see String()). */
+    readonly branchId: string;
 }
 
 /** Per-turn budget counters. Private to the service; never exposed on the context. */
@@ -128,10 +141,14 @@ export class AgentDecisionService {
      */
     async createTurnContext(options: DecisionTurnOptions): Promise<DecisionTurnContext> {
         const config = await this.config.getConfig();
+        // Empty allowedBranchIds means nothing is in scope; String() keeps
+        // the comparison stable regardless of the principal's branchId type.
+        const inScope = config.allowedBranchIds.includes(String(options.branchId));
         const context: DecisionTurnContext = {
             deadlineAt: Date.now() + config.limits.turnDeadlineMs,
             signal: options.signal,
             sampleKey: options.sampleKey,
+            inScope,
             collector: createDecisionTraceCollector(),
         };
         this.turnCounters.set(context, { p0Used: 0, p1Used: 0 });
@@ -291,6 +308,12 @@ export class AgentDecisionService {
         // (1) Mode resolution. Off → not evaluated, zero port calls.
         const mode = await this.config.getKindMode(kind);
         if (mode === DECISION_MODES.off) {
+            return notEvaluated(baseline, DECISION_FAILURE_REASONS.disabled, null);
+        }
+
+        // (1b) Branch scope. An out-of-scope turn is treated exactly like
+        // disabled: zero port calls, in both shadow and enforce.
+        if (!ctx.inScope) {
             return notEvaluated(baseline, DECISION_FAILURE_REASONS.disabled, null);
         }
 

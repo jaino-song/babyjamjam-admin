@@ -24,6 +24,15 @@ import {
 
 export const AGENT_DECISION_SETTING_KEY = "agent.decisions.jev";
 
+/**
+ * Deployment-environment gate: JEV stays fully off (every kind resolves to
+ * `off`, same as `globalDisabled`) unless this env var is set, non-empty
+ * after trim, and its value is listed in the stored config's `environments`.
+ * Preview and production share one DB row, so this is the mechanism that
+ * lets an operator turn JEV on for one deployment without the other.
+ */
+export const AGENT_DECISION_ENVIRONMENT_ENV_VAR = "AGENT_DECISION_ENVIRONMENT";
+
 /** Mirrors AgentFlagsService: 30s cache between setting reads. */
 const CACHE_TTL_MS = 30_000;
 
@@ -83,6 +92,16 @@ export const AgentDecisionConfigSchema = z.object({
     globalDisabled: z.boolean().default(false),
     modelId: z.string().default(DEFAULT_MODEL_ID),
     samplingFraction: z.number().min(0).max(1).default(0),
+    /**
+     * Deployment environments where JEV may run at all. Empty (the default)
+     * means all-off everywhere: see {@link AGENT_DECISION_ENVIRONMENT_ENV_VAR}.
+     */
+    environments: z.array(z.string().min(1)).default([]),
+    /**
+     * Branch allowlist. Empty (the default) means no branch is in scope, so
+     * every kind resolves as if disabled for every turn.
+     */
+    allowedBranchIds: z.array(z.string().min(1)).default([]),
     limits: AgentDecisionLimitsSchema
         .optional()
         .transform((value) => AgentDecisionLimitsSchema.parse(value ?? {})),
@@ -112,12 +131,29 @@ export class AgentDecisionConfigService {
         return config;
     }
 
-    /** `globalDisabled` is authoritative: it forces every kind to `off`. */
+    /**
+     * `globalDisabled` is authoritative: it forces every kind to `off`.
+     * The environment gate is checked next, with the same effect: it never
+     * partially applies a stored per-kind mode.
+     */
     async getKindMode(kind: DecisionKind): Promise<DecisionMode> {
         const config = await this.getConfig();
         if (config.globalDisabled) return DECISION_MODES.off;
+        if (!this.isEnvironmentInScope(config)) return DECISION_MODES.off;
         const entry = config.kinds[kind];
         return entry?.mode ?? DECISION_MODES.off;
+    }
+
+    /**
+     * True only when {@link AGENT_DECISION_ENVIRONMENT_ENV_VAR} is set,
+     * non-empty after trim, and listed in the stored config's `environments`.
+     * An empty `environments` array can never match anything.
+     */
+    private isEnvironmentInScope(config: AgentDecisionConfig): boolean {
+        const raw = process.env[AGENT_DECISION_ENVIRONMENT_ENV_VAR];
+        const trimmed = typeof raw === "string" ? raw.trim() : "";
+        if (trimmed.length === 0) return false;
+        return config.environments.includes(trimmed);
     }
 
     /**

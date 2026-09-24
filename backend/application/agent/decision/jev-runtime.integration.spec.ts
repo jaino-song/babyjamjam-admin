@@ -148,11 +148,12 @@ function buildHarness(options: RuntimeHarnessOptions): RuntimeHarness {
     const taskMode = capabilities.some((capability) => capability.meta.name === "clients.create" || capability.meta.name === "clients.update");
     const turnContexts: DecisionTurnContext[] = [];
     const decisions = {
-        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => {
+        createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => {
             const context: DecisionTurnContext = {
                 deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
+                inScope: true,
                 collector: createDecisionTraceCollector(),
             };
             turnContexts.push(context);
@@ -570,10 +571,11 @@ describe("Jev runtime integration (P0 decision layer)", () => {
         for (const routeMode of [DECISION_MODES.shadow, DECISION_MODES.off]) {
             const capabilities = [clientSearchCapability()];
             const decisions = {
-                createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
+                createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                     deadlineAt: Date.now() + 800,
                     signal: createOptions.signal,
                     sampleKey: createOptions.sampleKey,
+                    inScope: true,
                     collector: createDecisionTraceCollector(),
                 })),
                 routeDomains: jest.fn(),
@@ -789,10 +791,11 @@ describe("Jev runtime integration (P0 decision layer)", () => {
     it("feature-disabled preservation: disabled routing keeps the exact incumbent refusal", async () => {
         const capabilities = [clientSearchCapability()];
         const decisions = {
-            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
+            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                 deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
+                inScope: true,
                 collector: createDecisionTraceCollector(),
             })),
             routeDomains: jest.fn(),

@@ -420,6 +420,7 @@ export class AgentRuntimeService {
                 // Stable per-turn sampling key: opaque ids only, never text or
                 // other personal data.
                 sampleKey: `${session.id}:${input.messages[0]?.id ?? "no-message"}`,
+                branchId: input.principal.branchId,
             });
             decisionCollector = turn.collector;
         }

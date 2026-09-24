@@ -2525,7 +2525,7 @@ describe("AgentRuntimeService", () => {
         // (AGENT_ENABLED=false / emergency-disabled) leaves no enabled domain.
         const route = jest.fn().mockResolvedValue({ domains: [], capabilities: [], disposition: "disabled" });
         const decisions = {
-            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string }) => ({
+            createTurnContext: jest.fn().mockImplementation(async (createOptions: { signal: AbortSignal; sampleKey: string; branchId: string }) => ({
                 deadlineAt: Date.now() + 800,
                 signal: createOptions.signal,
                 sampleKey: createOptions.sampleKey,
