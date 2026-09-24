@@ -155,6 +155,13 @@ export interface IClientRepository {
      * the given normalized phone. Used to dedupe (reuse existing) on create.
      */
     findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null>;
+
+    /**
+     * Batch id -> name lookup for display purposes only (e.g. cross-referencing a
+     * schedule row). Not filtered on any lifecycle state, so a historical row
+     * still resolves a name.
+     */
+    findNamesByIds?(branchid: string, ids: number[]): Promise<Array<{ id: number; name: string }>>;
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";
