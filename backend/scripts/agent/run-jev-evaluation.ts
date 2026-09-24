@@ -1015,8 +1015,10 @@ async function runLiveCase(
     // fresh session with nothing confirmed yet. `buildRedactedDecisionText`
     // still applies its unconditional generic redaction (free-text patterns,
     // explicit-labeled fields, the 240-char cap) even with no known values,
-    // so this is not a no-op: it is genuine parity with what the runtime
-    // sends, not merely a stand-in for it.
+    // so it matches the runtime only for a fresh session with no known values.
+    // In a real follow-up the runtime also masks the confirmed target's name
+    // and values, which this corpus does not model; none of today's fixture
+    // texts is changed by the generic redaction.
     const redactedText = buildRedactedDecisionText(item.text, []);
 
     switch (item.decisionKind) {

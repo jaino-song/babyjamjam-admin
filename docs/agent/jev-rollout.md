@@ -151,7 +151,13 @@ cannot provide come exclusively from an operator-authored JSON file
   v3 (2026-09-24, BJJ-344) changed only `clarificationRequired`: it now judges
   the text together with the request state (`targetConfirmed`,
   `missingFields`), so a follow-up turn that supplies the value for an
-  already-confirmed record is not sent back for clarification. The runtime's
+  already-confirmed record is not *advised* to clarify. Under `enforce`,
+  `decideClarification` still suppresses model writes whenever `missingFields`
+  is non-empty, whatever the advice — so an update whose change has not been
+  applied yet (all client write fields listed) or a create missing name/phone
+  is still sent back, and a freeform follow-up cannot supply the value because
+  the write tool is hidden. **`evaluate-clarification` must not go to
+  `enforce` until that rule is resolved (BJJ-348).** The runtime's
   `missingFields` (`deriveMissingFields` in `agent-runtime.service.ts`) now
   lists only what the task still needs, from its `task.required` issues: for
   create, the unmet required fields (name, phone); for update, nothing once a

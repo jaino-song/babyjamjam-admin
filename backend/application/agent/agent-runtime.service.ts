@@ -171,6 +171,8 @@ const CLARIFICATION_MEMORY_LIMIT = 256;
  *   excluded: those mean a value WAS given but rejected, or the target
  *   decayed — a different meaning from "not yet given" and out of scope
  *   here (AC-18 only concerns missing input, not invalid input).
+ *   Exception: the domain reports a malformed phone (`phone_must_be_11_digits`)
+ *   as `task.required` on `phone`, so it is listed here as missing.
  *
  * This makes the normal path and the (former) fallback path identical: both
  * read `task.issues`, which is always present on a committed `AgentTask` and
