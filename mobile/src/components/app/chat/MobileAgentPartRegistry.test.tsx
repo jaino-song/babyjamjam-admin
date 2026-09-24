@@ -3,6 +3,13 @@ import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
 import { MobileAgentPartRegistry } from "./MobileAgentPartRegistry";
 
+jest.mock("next/link", () => ({
+    __esModule: true,
+    default: ({ children, href }: { children: React.ReactNode; href: string }) => (
+        <a href={href} data-testid="next-link">{children}</a>
+    ),
+}));
+
 const registryProps = {
     onEntitySelect: jest.fn(),
     onApproveAction: jest.fn(),
@@ -625,6 +632,7 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
         expect(link).toHaveAttribute("href", "https://example.com/doc");
         expect(link).toHaveAttribute("target", "_blank");
         expect(link).toHaveAttribute("rel", "noopener noreferrer");
+        expect(link).not.toHaveAttribute("data-testid", "next-link");
     });
 
     it("keeps a relative in-app link same-tab without target=_blank", () => {
@@ -637,6 +645,46 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
         const link = screen.getByRole("link", { name: "내부" });
         expect(link).toHaveAttribute("href", "/clients/1");
         expect(link).not.toHaveAttribute("target");
+    });
+
+    it("navigates a same-origin link client-side through next/link", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-next"
+            part={{ type: "text", text: "[내부](/clients/1)" }}
+            {...registryProps}
+        />);
+
+        const link = screen.getByRole("link", { name: "내부" });
+        expect(link).toHaveAttribute("href", "/clients/1");
+        expect(link).toHaveAttribute("data-testid", "next-link");
+        expect(link).not.toHaveAttribute("target");
+    });
+
+    it("renders a single newline inside a paragraph as a line break", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-break"
+            part={{ type: "text", text: "줄1\n줄2" }}
+            {...registryProps}
+        />);
+
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-break"]');
+        expect(wrapper?.querySelector("br")).toBeInTheDocument();
+        expect(wrapper?.textContent).toContain("줄1");
+        expect(wrapper?.textContent).toContain("줄2");
+    });
+
+    it("keeps a fenced code block's newlines literal, without inserting a <br>", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-code"
+            part={{ type: "text", text: "```\nline1\nline2\n```" }}
+            {...registryProps}
+        />);
+
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-code"]');
+        expect(wrapper?.querySelector("br")).not.toBeInTheDocument();
+        const codeEl = wrapper?.querySelector("code");
+        expect(codeEl).toBeInTheDocument();
+        expect(codeEl?.textContent).toContain("line1\nline2");
     });
 
     it("renders any other link scheme as plain text instead of a clickable link", () => {
