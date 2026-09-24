@@ -19,6 +19,7 @@
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
+import { CLIENT_WRITE_FIELD_NAMES } from "@babyjamjam/shared";
 import {
     CANDIDATE_OUTCOMES,
     CLIENT_INTENTS,
@@ -406,6 +407,29 @@ function parseCase(
     };
 }
 
+/** The closed vocabulary a fixture's `state.missingFields` entry may name — never an invented token. */
+const CLIENT_WRITE_FIELD_NAME_SET: ReadonlySet<string> = new Set(CLIENT_WRITE_FIELD_NAMES);
+
+/**
+ * `state.missingFields` mirrors what `deriveMissingFields`
+ * (agent-runtime.service.ts, BJJ-344 part 2) actually produces: real client
+ * write field names only, drawn from `CLIENT_WRITE_FIELD_NAMES`, never a
+ * placeholder token such as `"value"`.
+ */
+function requireClientWriteFieldArray(value: unknown, field: string, caseId: string | null): string[] {
+    const fields = requireStringArray(value, field, caseId, true);
+    for (const item of fields) {
+        if (!CLIENT_WRITE_FIELD_NAME_SET.has(item)) {
+            throw corpusError(
+                `Field "${field}" entry "${item}" is not a client write field `
+                + `(valid fields: ${CLIENT_WRITE_FIELD_NAMES.join(", ")})`,
+                caseId,
+            );
+        }
+    }
+    return fields;
+}
+
 /**
  * Validates a case's optional `state` object. `state` is only meaningful for
  * `evaluate-clarification` cases (it mirrors the request shape
@@ -428,7 +452,7 @@ function parseCaseState(
         throw corpusError('Field "state" must be a JSON object', caseId);
     }
     requireExactKeys(value, CLARIFICATION_STATE_KEYS, [], "state", caseId);
-    const missingFields = requireStringArray(value["missingFields"], "state.missingFields", caseId, true);
+    const missingFields = requireClientWriteFieldArray(value["missingFields"], "state.missingFields", caseId);
     const targetConfirmed = requireBoolean(value["targetConfirmed"], "state.targetConfirmed", caseId);
     return { missingFields, targetConfirmed };
 }

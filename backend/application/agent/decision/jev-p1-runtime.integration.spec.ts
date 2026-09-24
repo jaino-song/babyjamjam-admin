@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { AgentEntitySelectPartSchema, type AgentTask, type BjjUIMessage } from "@babyjamjam/shared";
+import { AgentEntitySelectPartSchema, evaluateClientReadiness, type AgentTask, type BjjUIMessage } from "@babyjamjam/shared";
 import { DeterministicAgentLanguageModel } from "infrastructure/agent/deterministic-agent-language-model";
 
 import { AgentRuntimeService } from "../agent-runtime.service";
@@ -32,10 +32,21 @@ import type { ClarificationAdvice } from "./decision-policy";
 const PRINCIPAL = { userId: "user-p1", branchId: "branch-p1", globalRole: "admin", branchRole: "admin" };
 const SESSION_ID = "123e4567-e89b-42d3-a456-426614174002";
 const TASK_ID = "123e4567-e89b-42d3-a456-426614174001";
+/** A confirmed update target: a resolved reference, distinct from `target: null`. */
+const CONFIRMED_TARGET = { targetRef: "123e4567-e89b-42d3-a456-426614174099", version: "a".repeat(64) };
 
 const RECOMMEND_TRUE: DecisionPolicyResult<ClarificationAdvice> = {
     status: "accepted",
     selection: { recommendClarification: true },
+    baselineSelection: null,
+    reason: null,
+    profileVersion: "profile-v1",
+};
+
+/** Advice explicitly judges no clarification is needed this turn. */
+const ADVICE_NO_CLARIFICATION: DecisionPolicyResult<ClarificationAdvice> = {
+    status: "accepted",
+    selection: { recommendClarification: false },
     baselineSelection: null,
     reason: null,
     profileVersion: "profile-v1",
@@ -61,11 +72,18 @@ const CLARIFICATION_ENFORCE: RuntimeHarnessOptions["modes"] = {
     evaluateClarification: DECISION_MODES.enforce,
 };
 
-/** Every write field confirmed (nullable defaults count as present), so no field status is "missing". */
+/**
+ * Every write field confirmed, with `name`/`phone` holding real values —
+ * under the `task.required`-derived `missingFields` (BJJ-344 part 2), a
+ * create task's only required fields are `name` and a valid 11-digit
+ * `phone`; a null `phone` would itself be `phone_required` and defeat the
+ * "no missing fields" scenarios below, unlike the old fieldStatus semantics
+ * where merely being a confirmed key (even null) counted as present.
+ */
 const FULLY_CONFIRMED_VALUES = {
     name: "김민지",
     address: null,
-    phone: null,
+    phone: "01011112222",
     type: null,
     duration: null,
     fullPrice: null,
@@ -153,24 +171,67 @@ function clientMultiSearchCapability() {
     };
 }
 
+/**
+ * A minimal, DB-free mirror of `agent-task.service.ts`'s `issues()` (create)
+ * and `updateIssues()` (update) — just the synchronous parts these tests
+ * exercise (no duplicate-check network call; every scenario here either
+ * omits `phone` from `confirmed` or gives it a valid 11-digit value, so the
+ * async duplicate-check branch never needs to fire). This keeps the fixture
+ * `AgentTask` objects' `.issues` field realistic, since `deriveMissingFields`
+ * (agent-runtime.service.ts, BJJ-344 part 2) reads `task.issues` directly
+ * rather than a separate test-only field.
+ */
+function deriveTaskIssues(params: {
+    capabilityId: "clients.create" | "clients.update";
+    confirmed: Record<string, unknown>;
+    clearedFields: readonly string[];
+    target: AgentTask["target"];
+}): AgentTask["issues"] {
+    if (params.capabilityId === "clients.create") {
+        const readiness = evaluateClientReadiness(params.confirmed as never, null);
+        return readiness.issues.map((issue) => {
+            const field = issue === "name_required" ? "name" as const : issue.startsWith("phone") ? "phone" as const : undefined;
+            const code = issue === "phone_duplicate" ? "task.duplicate" as const
+                : issue === "phone_duplicate_check_failed" ? "task.invalid" as const
+                    : issue === "phone_duplicate_check_required" ? "task.invalid" as const
+                        : "task.required" as const;
+            return { code, ...(field ? { field } : {}), severity: "error" as const, message: "Additional task information is required" };
+        });
+    }
+    const issues: AgentTask["issues"] = [];
+    if (!params.target) {
+        issues.push({ code: "task.required", severity: "error", message: "A customer target is required" });
+    }
+    const hasProposedChange = Object.keys(params.confirmed).length > 0 || params.clearedFields.length > 0;
+    if (!hasProposedChange) {
+        issues.push({ code: "task.required", severity: "error", message: "Additional task information is required" });
+    }
+    return issues;
+}
+
 function taskSnapshot(overrides: Partial<AgentTask> = {}): AgentTask {
+    const capabilityId = (overrides.capabilityId ?? "clients.create") as "clients.create" | "clients.update";
+    const confirmed = (overrides.confirmed ?? {}) as Record<string, unknown>;
+    const clearedFields = overrides.clearedFields ?? [];
+    const target = overrides.target !== undefined ? overrides.target : null;
+    const defaultIssues = deriveTaskIssues({ capabilityId, confirmed, clearedFields, target });
     return {
         schemaVersion: 1,
         taskId: TASK_ID,
         sessionId: SESSION_ID,
-        kind: "clients.create",
-        capabilityId: "clients.create",
+        kind: capabilityId,
+        capabilityId,
         revision: 1,
         state: "collecting",
-        confirmed: {},
+        confirmed,
         tentative: {},
-        clearedFields: [],
+        clearedFields,
         provenance: { confirmed: {}, tentative: {} },
-        issues: [],
+        issues: defaultIssues,
         constraints: { noSend: false },
         choiceSets: [],
         orderedChoiceRefs: [],
-        target: null,
+        target,
         consent: { choice: "unanswered", binding: null },
         action: null,
         times: {
@@ -392,14 +453,18 @@ function userMessage(id: string, text: string): BjjUIMessage {
     return { id, role: "user", parts: [{ type: "text", text }] } as BjjUIMessage;
 }
 
-async function runTurn(harness: RuntimeHarness, messageId: string): Promise<{ chunks: unknown[]; text: string }> {
+async function runTurnWithText(harness: RuntimeHarness, messageId: string, text: string): Promise<{ chunks: unknown[]; text: string }> {
     const stream = await harness.runtime.stream({
         principal: PRINCIPAL,
         sessionId: SESSION_ID,
         locale: "ko",
-        messages: [userMessage(messageId, "새 고객 등록해줘")],
+        messages: [userMessage(messageId, text)],
     });
     return drainStream(stream.stream);
+}
+
+async function runTurn(harness: RuntimeHarness, messageId: string): Promise<{ chunks: unknown[]; text: string }> {
+    return runTurnWithText(harness, messageId, "새 고객 등록해줘");
 }
 
 describe("Jev runtime integration (P1 clarification)", () => {
@@ -517,6 +582,101 @@ describe("Jev runtime integration (P1 clarification)", () => {
         expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
         const mutationArg = (harness.taskOrchestrator.applyModelMutation.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
         expect("allowMutation" in mutationArg).toBe(false);
+    });
+
+    // BJJ-344 part 2: missingFields now derives from the task's own
+    // `task.required` issues (agent-runtime.service.ts's
+    // `deriveMissingFields`) instead of "every field not yet
+    // confirmed/tentative". These three cases pin the corrected behavior
+    // end to end through `decideClarification`'s real (unchanged) rule.
+    it("update with a confirmed target and a given change value: clients_update stays exposed and the mutation applies", async () => {
+        const harness = buildHarness({
+            modes: CLARIFICATION_ENFORCE,
+            clarificationResult: ADVICE_NO_CLARIFICATION,
+            capabilities: [clientWriteCapability("clients.update"), clientSearchCapability()],
+            turn: {
+                task: taskSnapshot({
+                    capabilityId: "clients.update",
+                    kind: "clients.update",
+                    target: CONFIRMED_TARGET,
+                    confirmed: { address: "서울시 강남구" },
+                }),
+            },
+            modelScript: [
+                // "address" is a reference field (requires a server-resolved
+                // valueRef, not a raw model value); "clear" needs neither, so
+                // it exercises the tool call without tripping that schema
+                // branch. The turn's proposed change already lives in the
+                // task's own `confirmed.address` set up below.
+                { type: "tool-call", toolName: "clients_update", input: { operations: [{ op: "clear", field: "birthday" }] } },
+                { type: "text", text: "업데이트했습니다." },
+            ],
+        });
+        // Update-matching text ("수정"): selectedClientWriteCapability
+        // (agent-runtime.service.ts) must route to clients.update, not the
+        // shared runTurn helper's create-matching default text — this
+        // harness only offers clients.update as a write capability.
+        await runTurnWithText(harness, "message-p1-update-ready", "고객 정보를 수정해줘");
+
+        // Target confirmed + a proposed change already given this turn:
+        // deriveMissingFields finds no un-scoped or field-scoped
+        // task.required issue, so missingFields is empty.
+        expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
+        expect(clarificationFacadeInput(harness)).toEqual(expect.objectContaining({
+            targetConfirmed: true,
+            missingFields: [],
+        }));
+        expect(exposedTools(harness)).toContain("clients_update");
+        expect(harness.taskOrchestrator.applyModelMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it("create task missing a required field (name/phone unset): suppressed", async () => {
+        const harness = buildHarness({
+            modes: CLARIFICATION_ENFORCE,
+            clarificationResult: ADVICE_NO_CLARIFICATION,
+            // Default turn task: clients.create with confirmed: {} — neither
+            // name nor phone is given, so evaluateClientReadiness's
+            // name_required/phone_required issues surface as missingFields.
+        });
+        await runTurn(harness, "message-p1-create-missing");
+
+        expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
+        expect(clarificationFacadeInput(harness).missingFields).toEqual(expect.arrayContaining(["name", "phone"]));
+        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+        const tools = exposedTools(harness);
+        expect(tools).not.toContain("clients_create");
+        expect(tools).toContain("clients_search");
+    });
+
+    it("update with a confirmed target but no change value given: suppressed", async () => {
+        const harness = buildHarness({
+            modes: CLARIFICATION_ENFORCE,
+            clarificationResult: ADVICE_NO_CLARIFICATION,
+            capabilities: [clientWriteCapability("clients.update"), clientSearchCapability()],
+            turn: {
+                task: taskSnapshot({
+                    capabilityId: "clients.update",
+                    kind: "clients.update",
+                    target: CONFIRMED_TARGET,
+                    confirmed: {},
+                }),
+            },
+        });
+        await runTurnWithText(harness, "message-p1-update-no-change", "고객 정보를 수정해줘");
+
+        // Target confirmed but zero proposed changes: updateIssues' own
+        // un-scoped task.required issue fires; no single field can be
+        // blamed, so deriveMissingFields reports the full write-field set
+        // rather than an invented placeholder — either way it is non-empty,
+        // which is all decideClarification's rule 1 needs to suppress.
+        expect(harness.decisions.evaluateClarification).toHaveBeenCalledTimes(1);
+        const facts = clarificationFacadeInput(harness);
+        expect(facts.targetConfirmed).toBe(true);
+        expect(facts.missingFields.length).toBeGreaterThan(0);
+        expect(harness.taskOrchestrator.applyModelMutation).not.toHaveBeenCalled();
+        const tools = exposedTools(harness);
+        expect(tools).not.toContain("clients_update");
+        expect(tools).toContain("clients_search");
     });
 
     it("unavailable advice: null advice changes nothing on clean facts", async () => {
