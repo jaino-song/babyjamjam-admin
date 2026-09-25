@@ -1,5 +1,6 @@
 "use client";
 
+import { isValidElement, type ReactNode } from "react";
 import type { UIMessage } from "ai";
 import Link from "next/link";
 import type { Components } from "react-markdown";
@@ -52,10 +53,14 @@ type AgentPartRegistryProps = {
 
 // Model-authored text can contain markdown links/images. Images are a
 // zero-click exfiltration channel (a bare URL fetch fires on render), so we
-// never render an <img> element — only its alt text. Links are restricted to
-// http(s) (opened in a new tab) and same-origin absolute paths (same tab);
-// anything else (javascript:, data:, mailto:, bare text that still parsed as
-// a link, etc.) renders as plain text.
+// never render an <img> element — only its alt text. Same-origin absolute
+// paths render as real (same-tab) links. An external href (http(s) to
+// another host, or any other scheme react-markdown's urlTransform did not
+// already strip) is never rendered as a clickable anchor: a model-chosen
+// label can carry a destination that hides where the click actually goes
+// (e.g. exfiltrating data appended to the URL via a prompt-injected link).
+// Instead it renders as plain text — the label followed by the destination
+// host in parentheses, so the destination is visible but not clickable.
 // Same-origin check on the exact href value react-markdown renders (after its
 // urlTransform), resolved the way a browser would: "//host", "/\\host" and
 // similar forms resolve to another origin and are rejected.
@@ -68,18 +73,39 @@ function isSameOriginPath(href: string): boolean {
         return false;
     }
 }
+// Flattens a react-markdown link's children (which may include formatting
+// elements like <strong>/<em>) back to plain text, so we can tell whether
+// the model wrote the raw URL as its own label.
+function extractLinkText(node: ReactNode): string {
+    if (node == null || typeof node === "boolean") return "";
+    if (typeof node === "string" || typeof node === "number") return String(node);
+    if (Array.isArray(node)) return node.map(extractLinkText).join("");
+    if (isValidElement(node)) {
+        const props = node.props as { children?: ReactNode };
+        return extractLinkText(props?.children);
+    }
+    return "";
+}
+// Renders an external link as non-clickable text: the label plus the
+// destination host, so the destination is visible without being a click
+// away. If the label is already the raw URL, it is shown once, unchanged.
+function renderExternalLinkAsText(href: string, children: ReactNode) {
+    if (extractLinkText(children).trim() === href.trim()) {
+        return <>{children}</>;
+    }
+    let host = href;
+    try {
+        host = new URL(href).host || href;
+    } catch {
+        // Not a parseable absolute URL (e.g. mailto:/tel:); fall back to the raw value.
+    }
+    return <>{children} ({host})</>;
+}
 const AGENT_TEXT_REMARK_PLUGINS = [remarkGfm, remarkAgentLineBreaks];
 const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
     img: ({ alt }) => <>{alt ?? ""}</>,
     // `node` is react-markdown's AST node; spreading it would add a junk DOM attribute.
     a: ({ href, children, node: _node, ...props }) => {
-        if (typeof href === "string" && /^https?:\/\//i.test(href)) {
-            return (
-                <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                    {children}
-                </a>
-            );
-        }
         if (typeof href === "string" && isSameOriginPath(href)) {
             // prefetch=false: a same-origin link is model-authored and could be
             // prompt-injected. next/link prefetches on render/viewport by default
@@ -89,6 +115,9 @@ const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
                     {children}
                 </Link>
             );
+        }
+        if (typeof href === "string" && href.length > 0) {
+            return renderExternalLinkAsText(href, children);
         }
         return <>{children}</>;
     },
