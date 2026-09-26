@@ -63,18 +63,25 @@ function isLabelAlreadyExposingDestination(label: string, href: string): boolean
     return false;
 }
 
-// Resolves against a placeholder base so protocol-relative ("//evil.test/…")
-// and backslash ("/\\evil.test/…") values yield their host instead of the
-// full href with its path and query. Returns null when there is no host
-// (mailto:, tel:, or a value that stays on the placeholder origin).
-const HOST_RESOLUTION_BASE = "https://link-host.invalid";
+// Resolves against two different placeholder bases so protocol-relative
+// ("//evil.test/…") values yield their host instead of the full href. A value
+// with its own host resolves to the same host under both bases; one without
+// (a relative path) takes each base's host, so the two differ. This avoids
+// mistaking a real destination for the placeholder.
 function destinationHost(href: string): string | null {
     try {
-        const { host } = new URL(href, HOST_RESOLUTION_BASE);
-        return host && host !== new URL(HOST_RESOLUTION_BASE).host ? host : null;
+        const first = new URL(href, "https://first.invalid").host;
+        const second = new URL(href, "https://second.invalid").host;
+        return first && first === second ? first : null;
     } catch {
         return null;
     }
+}
+
+// Fallback for hrefs with no host (mailto:, tel:): never show the query or
+// fragment, which is where exfiltrated data would sit.
+function withoutQueryOrFragment(href: string): string {
+    return href.split(/[?#]/, 1)[0];
 }
 
 // Renders an external link as non-clickable text: the label plus the
@@ -86,7 +93,7 @@ export function renderExternalLinkAsText(href: string, children: ReactNode) {
     if (isLabelAlreadyExposingDestination(extractLinkText(children), href)) {
         return <>{children}</>;
     }
-    const host = destinationHost(href) ?? href;
+    const host = destinationHost(href) ?? withoutQueryOrFragment(href);
     return <>{children} ({host})</>;
 }
 

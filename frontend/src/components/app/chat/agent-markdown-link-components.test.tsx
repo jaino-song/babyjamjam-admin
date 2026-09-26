@@ -26,6 +26,23 @@ describe("AGENT_SAFE_MARKDOWN_LINK_COMPONENTS", () => {
         expect(document.body.textContent).not.toContain("customer-data");
     });
 
+    it.each(["https://first.invalid/?d=customer-data", "//second.invalid/?d=customer-data"])(
+        "shows only the host even when it matches a resolution placeholder: %s",
+        (href) => {
+            renderMarkdown(`[계약서](${href})`);
+            expect(document.querySelector("a")).not.toBeInTheDocument();
+            expect(document.body.textContent).toMatch(/계약서 \((first|second)\.invalid\)/);
+            expect(document.body.textContent).not.toContain("customer-data");
+        },
+    );
+
+    it("drops the query from a hostless destination such as mailto:", () => {
+        renderMarkdown("[메일](mailto:kim@example.com?body=customer-data)");
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        expect(document.body.textContent).toContain("메일 (mailto:kim@example.com)");
+        expect(document.body.textContent).not.toContain("customer-data");
+    });
+
     it("keeps a same-origin path as a real anchor", () => {
         renderMarkdown("[내부](/clients/1)");
         expect(screen.getByRole("link", { name: "내부" })).toHaveAttribute("href", "/clients/1");
