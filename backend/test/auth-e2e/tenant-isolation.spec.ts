@@ -224,7 +224,10 @@ describe("live-database cross-branch tenant isolation", () => {
                     // which cancels pending jobs with no client and no schedule) leaves
                     // this fixture alone while the app's scheduler ticks during the spec.
                     clientId: branch1ClientId,
-                    scheduledFor: new Date(Date.now() + 60_000),
+                    // Far outside any suite runtime: with a client attached the job is a
+                    // real dispatch candidate once due, and dispatching it on the seeded
+                    // (not sender-approved) branch would cancel it mid-test.
+                    scheduledFor: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                     recipientType: MessageTriggerRecipientType.CLIENT,
                     templateKey: MessageTriggerTemplateKey.INFO,
                     dedupeKey: `tenant-isolation-spec:${randomUUID()}`,
