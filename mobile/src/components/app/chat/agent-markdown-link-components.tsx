@@ -63,21 +63,30 @@ function isLabelAlreadyExposingDestination(label: string, href: string): boolean
     return false;
 }
 
+// Resolves against a placeholder base so protocol-relative ("//evil.test/…")
+// and backslash ("/\\evil.test/…") values yield their host instead of the
+// full href with its path and query. Returns null when there is no host
+// (mailto:, tel:, or a value that stays on the placeholder origin).
+const HOST_RESOLUTION_BASE = "https://link-host.invalid";
+function destinationHost(href: string): string | null {
+    try {
+        const { host } = new URL(href, HOST_RESOLUTION_BASE);
+        return host && host !== new URL(HOST_RESOLUTION_BASE).host ? host : null;
+    } catch {
+        return null;
+    }
+}
+
 // Renders an external link as non-clickable text: the label plus the
 // destination host, so the destination is visible without being a click
 // away. If the label already exposes the destination (the raw URL, a gfm
-// autolink literal, or text that already contains the host), it is shown
+// autolink literal, or the URL without its scheme), it is shown
 // once, unchanged, with no redundant "(host)" suffix appended.
 export function renderExternalLinkAsText(href: string, children: ReactNode) {
     if (isLabelAlreadyExposingDestination(extractLinkText(children), href)) {
         return <>{children}</>;
     }
-    let host = href;
-    try {
-        host = new URL(href).host || href;
-    } catch {
-        // Not a parseable absolute URL (e.g. mailto:/tel:); fall back to the raw value.
-    }
+    const host = destinationHost(href) ?? href;
     return <>{children} ({host})</>;
 }
 

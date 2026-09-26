@@ -19,6 +19,13 @@ describe("AGENT_SAFE_MARKDOWN_LINK_COMPONENTS", () => {
         expect(screen.getByText("내부 문서")).toBeInTheDocument();
     });
 
+    it("shows only the host for a rejected protocol-relative link", () => {
+        renderMarkdown("[계약서](//evil.test/?d=customer-data)");
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        expect(document.body.textContent).toContain("계약서 (evil.test)");
+        expect(document.body.textContent).not.toContain("customer-data");
+    });
+
     it("keeps a same-origin path as a real anchor", () => {
         renderMarkdown("[내부](/clients/1)");
         expect(screen.getByRole("link", { name: "내부" })).toHaveAttribute("href", "/clients/1");
