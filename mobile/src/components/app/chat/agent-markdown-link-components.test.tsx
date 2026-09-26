@@ -43,6 +43,15 @@ describe("AGENT_SAFE_MARKDOWN_LINK_COMPONENTS (mobile)", () => {
         expect(document.body.textContent).not.toContain("customer-data");
     });
 
+    it.each(["[details](#details)", "[filter](?tab=open)"])(
+        "shows only the label when a fragment- or query-only link leaves no destination: %s",
+        (markdown) => {
+            renderMarkdown(markdown);
+            expect(document.querySelector("a")).not.toBeInTheDocument();
+            expect(document.body.textContent).not.toContain("()");
+        },
+    );
+
     it("keeps a same-origin path as a real anchor", () => {
         renderMarkdown("[내부](/clients/1)");
         expect(screen.getByRole("link", { name: "내부" })).toHaveAttribute("href", "/clients/1");

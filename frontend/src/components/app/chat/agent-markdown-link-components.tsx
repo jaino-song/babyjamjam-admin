@@ -95,6 +95,8 @@ export function renderExternalLinkAsText(href: string, children: ReactNode) {
         return <>{children}</>;
     }
     const host = destinationHost(href) ?? withoutQueryOrFragment(href);
+    // Fragment- or query-only hrefs ("#details", "?tab=open") leave nothing to show.
+    if (!host) return <>{children}</>;
     return <>{children} ({host})</>;
 }
 
