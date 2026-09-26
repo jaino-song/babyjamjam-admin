@@ -32,6 +32,12 @@ describe("AGENT_SAFE_MARKDOWN_LINK_COMPONENTS", () => {
         expect(document.body.textContent).not.toContain("customer-data");
     });
 
+    it("still shows the host when the label merely contains it as a substring", () => {
+        renderMarkdown("[babyjamjam.com](https://m.com/x)");
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        expect(document.body.textContent).toBe("babyjamjam.com (m.com)");
+    });
+
     it("shows the raw URL once, not duplicated, when the label is the URL itself", () => {
         renderMarkdown("[https://evil.test/x](https://evil.test/x)");
         expect(document.querySelector("a")).not.toBeInTheDocument();

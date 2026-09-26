@@ -21,7 +21,11 @@ export function isSameOriginPath(value: unknown): boolean {
     if (typeof value !== "string" || value.length === 0) return false;
     if (!value.startsWith("/") || value.startsWith("//")) return false;
     try {
-        return new URL(value, SAME_ORIGIN_SENTINEL).origin === SAME_ORIGIN_SENTINEL;
+        const resolved = new URL(value, SAME_ORIGIN_SENTINEL);
+        // A same-origin value whose *normalised* path starts with "//"
+        // ("/..//evil.test", "/.%2e//evil.test") is re-serialised by routers
+        // as "//evil.test…", which a browser reads as protocol-relative.
+        return resolved.origin === SAME_ORIGIN_SENTINEL && !resolved.pathname.startsWith("//");
     } catch {
         return false;
     }

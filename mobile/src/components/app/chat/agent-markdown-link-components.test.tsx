@@ -36,6 +36,12 @@ describe("AGENT_SAFE_MARKDOWN_LINK_COMPONENTS (mobile)", () => {
     // its "mailto:"/"http://" prefix. Before this fix, that pattern always
     // fell through to the "distinct label" branch and appended a redundant
     // "(host)" suffix, e.g. "kim@example.com (mailto:kim@example.com)".
+    it("still shows the host when the label merely contains it as a substring", () => {
+        renderMarkdown("[babyjamjam.com](https://m.com/x)");
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        expect(document.body.textContent).toBe("babyjamjam.com (m.com)");
+    });
+
     it("renders a gfm email autolink's label alone, with no appended mailto: suffix", () => {
         renderMarkdown("kim@example.com");
         expect(document.querySelector("a")).not.toBeInTheDocument();

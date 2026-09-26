@@ -2,6 +2,15 @@ import { isSameOriginPath } from "./is-same-origin-path";
 
 describe("isSameOriginPath", () => {
     it.each([
+        "/..//evil.test/x",
+        "/./\\evil.test",
+        "/.%2e//evil.test",
+        "/./%2e%2e//evil.test",
+    ])("rejects a same-origin value whose normalised path starts with // (%s)", (value) => {
+        expect(isSameOriginPath(value)).toBe(false);
+    });
+
+    it.each([
         "/employees?x=1",
         "/",
         "/clients/1",

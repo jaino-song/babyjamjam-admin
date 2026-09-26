@@ -53,20 +53,14 @@ export function extractLinkText(node: ReactNode): string {
 // literals render exactly this way, e.g. the email "kim@example.com" as
 // href "mailto:kim@example.com" with that same string as its label, and
 // "www.x.com/y" as href "http://www.x.com/y" with "www.x.com/y" as its
-// label); or the label's own text already contains the destination host.
+// label). Only exact matches count: a substring rule ("label contains the
+// host") would let a label like "babyjamjam.com" hide the host "m.com".
 function isLabelAlreadyExposingDestination(label: string, href: string): boolean {
     const trimmedLabel = label.trim();
     const trimmedHref = href.trim();
     if (trimmedLabel === trimmedHref) return true;
     const strippedHref = trimmedHref.replace(/^(mailto:|https?:\/\/)/i, "");
     if (trimmedLabel === strippedHref) return true;
-    try {
-        const host = new URL(trimmedHref).host;
-        if (host && trimmedLabel.includes(host)) return true;
-    } catch {
-        // Not a parseable absolute URL (e.g. a bare "mailto:" with no
-        // matching stripped-prefix label); fall through to "not exposed".
-    }
     return false;
 }
 
