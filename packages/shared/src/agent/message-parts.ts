@@ -9,6 +9,7 @@ import {
     AgentTaskStateSchema,
 } from "./task-types";
 import { CLIENT_WRITE_FIELD_NAMES } from "./client-input-policy";
+import { isSameOriginPath } from "../utils/is-same-origin-path";
 
 export const AgentRendererNameSchema = z.enum([
     "text",
@@ -77,11 +78,15 @@ export const AgentActionResultPartSchema = z.object({
     summary: z.string().min(1),
     result: z.record(z.string(), z.unknown()).optional(),
     completedAt: z.iso.datetime().optional(),
-    href: z.string().startsWith("/").refine((value) => !value.startsWith("//"), "Only internal paths are allowed").optional(),
+    // Resolved the way a browser (and router.push) actually resolves it, not
+    // a bare prefix check: a bare `startsWith("/") && !startsWith("//")`
+    // check cannot see that "/\evil.test" resolves to the host
+    // "evil.test", exactly like "//evil.test" does. See isSameOriginPath.
+    href: z.string().refine(isSameOriginPath, "Only same-origin internal paths are allowed").optional(),
 });
 
 export const AgentNavigationPartSchema = z.object({
-    href: z.string().startsWith("/").refine((value) => !value.startsWith("//"), "Only internal paths are allowed"),
+    href: z.string().refine(isSameOriginPath, "Only same-origin internal paths are allowed"),
     label: z.string().min(1),
 });
 

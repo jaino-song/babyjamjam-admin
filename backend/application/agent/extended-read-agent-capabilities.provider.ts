@@ -6,6 +6,7 @@ import { AgentCapabilityProvider } from "./capability.decorator";
 import type { AgentCapabilityProviderContract, CapabilityDefinition } from "./capability.types";
 import type { AgentContext } from "./agent-context";
 import type { AgentFormField } from "@babyjamjam/shared";
+import { isSameOriginPath } from "@babyjamjam/shared";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { CallInboxService } from "application/services/call-inbox.service";
 import { SystemSettingService } from "application/services/system-setting.service";
@@ -40,7 +41,7 @@ const RibbonSettingsSchema = z.object({
     backgroundColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
     textColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
     linkText: z.string().max(120).default(""),
-    linkHref: z.string().max(500).refine((value) => value === "" || (value.startsWith("/") && !value.startsWith("//")), "Only internal paths are allowed").default(""),
+    linkHref: z.string().max(500).refine((value) => value === "" || isSameOriginPath(value), "Only internal paths are allowed").default(""),
     linkColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
 });
 const SettingsReadOutputSchema = z.object({

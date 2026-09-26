@@ -2,6 +2,7 @@
 
 import ReactMarkdown, { type Components, type Options as ReactMarkdownOptions } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "./agent-markdown-link-components";
 
 type RemarkPlugins = ReactMarkdownOptions["remarkPlugins"];
 
@@ -17,7 +18,11 @@ type RemarkPlugins = ReactMarkdownOptions["remarkPlugins"];
 
 const CHAT_MARKDOWN_REMARK_PLUGINS: RemarkPlugins = [remarkGfm];
 
+// Model-authored markdown: the safe link/img overrides are part of the base,
+// so a caller that forgets them still never renders a live external link or
+// an <img>.
 const CHAT_MARKDOWN_BASE_COMPONENTS: Components = {
+    ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
     table: ({ children }) => (
         <div className="table-wrapper">
             <table>{children}</table>
