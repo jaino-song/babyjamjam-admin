@@ -223,6 +223,31 @@ describe("AgentPartRegistry", () => {
         expect(screen.queryByRole("link", { name: "결과 열기" })).not.toBeInTheDocument();
     });
 
+    it("does not turn a backslash-as-separator action-result href into a link either", () => {
+        // The schema already rejects this at the message-parts boundary, so
+        // this part would never render for a value read from a real
+        // message. This exercises ActionResultPart's own isSameOriginPath
+        // re-check directly, by bypassing the schema with an `as unknown`
+        // cast the way a schema regression would surface it.
+        const message = {
+            id: "assistant-5b",
+            role: "assistant",
+            parts: [{ type: "data-action-result", data: { actionId: "a-1", status: "succeeded", summary: "완료", href: "/\\evil.test" } }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.queryByRole("link", { name: "결과 열기" })).not.toBeInTheDocument();
+    });
+
+    it("keeps a genuinely same-origin action-result href as a link", () => {
+        const message = {
+            id: "assistant-5c",
+            role: "assistant",
+            parts: [{ type: "data-action-result", data: { actionId: "a-1", status: "succeeded", summary: "완료", href: "/clients/1" } }],
+        } as unknown as UIMessage;
+        render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+        expect(screen.getByRole("link", { name: "결과 열기" })).toHaveAttribute("href", "/clients/1");
+    });
+
     it("requires the server-issued acknowledgement for side-effect proposals", () => {
         const onApproveAction = jest.fn();
         const message = {

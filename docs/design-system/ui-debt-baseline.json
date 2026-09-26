@@ -924,15 +924,15 @@
     },
     "mobile/src/app/(shell)/employees/new/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "353:9-359:10|rawUiElement",
-        "365:9-371:10|rawUiElement",
-        "415:15-426:17|rawUiElement",
-        "433:15-448:17|rawUiElement",
-        "470:19-479:20|rawUiElement",
-        "508:19-522:20|rawUiElement",
-        "545:19-558:20|rawUiElement",
-        "584:11-589:12|rawUiElement",
-        "592:11-597:12|rawUiElement"
+        "360:9-366:10|rawUiElement",
+        "372:9-378:10|rawUiElement",
+        "422:15-433:17|rawUiElement",
+        "440:15-455:17|rawUiElement",
+        "477:19-486:20|rawUiElement",
+        "515:19-529:20|rawUiElement",
+        "552:19-565:20|rawUiElement",
+        "591:11-596:12|rawUiElement",
+        "599:11-604:12|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/employees/page.tsx": {
