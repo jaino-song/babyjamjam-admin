@@ -14,9 +14,12 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isSameOriginPath = void 0;
 __exportStar(require("./action-types"), exports);
 __exportStar(require("./capability-meta"), exports);
 __exportStar(require("./client-input-policy"), exports);
 __exportStar(require("./message-parts"), exports);
 __exportStar(require("./task-projection"), exports);
 __exportStar(require("./task-types"), exports);
+var is_same_origin_path_1 = require("../utils/is-same-origin-path");
+Object.defineProperty(exports, "isSameOriginPath", { enumerable: true, get: function () { return is_same_origin_path_1.isSameOriginPath; } });

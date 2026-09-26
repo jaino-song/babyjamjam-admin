@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CodeBlock } from "./CodeBlock";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "./agent-markdown-link-components";
 import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
@@ -114,6 +115,7 @@ export function AssistantMessage({
                         <>
                             <ChatMarkdown
                                 components={{
+                                    ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
                                     code: ({ className, children, ...props }) => {
                                         const match = /language-(\w+)/.exec(className || "");
                                         const language = match ? match[1] : "";

@@ -1,13 +1,12 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import Link from "next/link";
-import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { remarkAgentLineBreaks } from "../remarkAgentLineBreaks";
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "../agent-markdown-link-components";
 import { ActionResultPart } from "./ActionResultPart";
 import { FormRequestPart } from "./FormRequestPart";
 import { ErrorPart } from "./ErrorPart";
@@ -50,49 +49,12 @@ type AgentPartRegistryProps = {
     taskBusy?: boolean;
 };
 
-// Model-authored text can contain markdown links/images. Images are a
-// zero-click exfiltration channel (a bare URL fetch fires on render), so we
-// never render an <img> element — only its alt text. Links are restricted to
-// http(s) (opened in a new tab) and same-origin absolute paths (same tab);
-// anything else (javascript:, data:, mailto:, bare text that still parsed as
-// a link, etc.) renders as plain text.
-// Same-origin check on the exact href value react-markdown renders (after its
-// urlTransform), resolved the way a browser would: "//host", "/\\host" and
-// similar forms resolve to another origin and are rejected.
-const SAME_ORIGIN_SENTINEL = "https://same-origin.invalid";
-function isSameOriginPath(href: string): boolean {
-    if (!href.startsWith("/")) return false;
-    try {
-        return new URL(href, SAME_ORIGIN_SENTINEL).origin === SAME_ORIGIN_SENTINEL;
-    } catch {
-        return false;
-    }
-}
+// Model-authored text can contain markdown links/images. Both the <img>
+// suppression and the same-origin-only clickable-anchor rule live in
+// agent-markdown-link-components (shared with every other chat surface that
+// renders model/assistant markdown, including legacy chat).
 const AGENT_TEXT_REMARK_PLUGINS = [remarkGfm, remarkAgentLineBreaks];
-const AGENT_TEXT_MARKDOWN_COMPONENTS: Components = {
-    img: ({ alt }) => <>{alt ?? ""}</>,
-    // `node` is react-markdown's AST node; spreading it would add a junk DOM attribute.
-    a: ({ href, children, node: _node, ...props }) => {
-        if (typeof href === "string" && /^https?:\/\//i.test(href)) {
-            return (
-                <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                    {children}
-                </a>
-            );
-        }
-        if (typeof href === "string" && isSameOriginPath(href)) {
-            // prefetch=false: a same-origin link is model-authored and could be
-            // prompt-injected. next/link prefetches on render/viewport by default
-            // in production, which would fire an authenticated GET with no click.
-            return (
-                <Link href={href} prefetch={false} {...props}>
-                    {children}
-                </Link>
-            );
-        }
-        return <>{children}</>;
-    },
-};
+const AGENT_TEXT_MARKDOWN_COMPONENTS = AGENT_SAFE_MARKDOWN_LINK_COMPONENTS;
 
 export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;

@@ -17,7 +17,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "analytics.summary",
@@ -35,7 +35,7 @@
       "flagKey": "agent.capability.analytics.summary",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "automation.create",
@@ -163,7 +163,7 @@
       "flagKey": "agent.capability.calls.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "calls.transcriptSummary",
@@ -181,7 +181,7 @@
       "flagKey": "agent.capability.calls.transcriptSummary",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "clients.create",
@@ -273,7 +273,7 @@
       "flagKey": "agent.capability.consultations.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "consultations.markRead",
@@ -292,7 +292,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "consultations.search",
@@ -310,7 +310,7 @@
       "flagKey": "agent.capability.consultations.search",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "consultations.unread",
@@ -328,7 +328,7 @@
       "flagKey": "agent.capability.consultations.unread",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "contracts.dispatch",
@@ -420,7 +420,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "drafts.list",
@@ -438,7 +438,7 @@
       "flagKey": "agent.capability.drafts.list",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "drafts.update",
@@ -457,7 +457,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "employees.changeAvailability",
@@ -584,7 +584,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "files.metadata",
@@ -602,7 +602,7 @@
       "flagKey": "agent.capability.files.metadata",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "files.search",
@@ -620,7 +620,7 @@
       "flagKey": "agent.capability.files.search",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "messages.createTemplate",
@@ -783,7 +783,7 @@
       "flagKey": "agent.capability.policy.retrieve",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "schedules.list",
@@ -819,7 +819,7 @@
       "flagKey": "agent.capability.service-records.oversight",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "settings.read",
@@ -837,7 +837,7 @@
       "flagKey": "agent.capability.settings.read",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "vouchers.prices",
@@ -872,7 +872,7 @@
       "flagKey": "agent.capability.website.settings",
       "sideEffect": false,
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     },
     {
       "name": "website.updateSettings",
@@ -889,7 +889,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/agent/extended-read-agent-capabilities.provider.ts",
-      "sourceDigest": "71dbc82dfc4df7b7f37cc8729823e7036df73b3364e7830ba052bc8ba82ae2ac"
+      "sourceDigest": "8016fefa673338483085621e2074a044944976ed8748290b40bf635e9fc2893a"
     }
   ]
 }

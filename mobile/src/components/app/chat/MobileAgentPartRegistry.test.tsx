@@ -621,18 +621,46 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
         expect(screen.getByText("대체텍스트")).toBeInTheDocument();
     });
 
-    it("opens external http(s) links in a new tab with a safe rel", () => {
+    it("renders an external http(s) link as non-clickable text with its destination host, not a clickable anchor", () => {
         render(<MobileAgentPartRegistry
             data-component="mobile_chat_tests_agent-part-registry_text-link-external"
-            part={{ type: "text", text: "[문서](https://example.com/doc)" }}
+            part={{ type: "text", text: "[계약서 확인](https://evil.test/?d=customer-data)" }}
             {...registryProps}
         />);
 
-        const link = screen.getByRole("link", { name: "문서" });
-        expect(link).toHaveAttribute("href", "https://example.com/doc");
-        expect(link).toHaveAttribute("target", "_blank");
-        expect(link).toHaveAttribute("rel", "noopener noreferrer");
-        expect(link).not.toHaveAttribute("data-testid", "next-link");
+        expect(screen.queryByRole("link", { name: /계약서 확인/ })).not.toBeInTheDocument();
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-link-external"]');
+        expect(wrapper?.textContent).toContain("계약서 확인");
+        expect(wrapper?.textContent).toContain("evil.test");
+        expect(wrapper?.textContent).not.toContain("customer-data");
+    });
+
+    it("shows the raw URL once, not duplicated, when the model's label is the URL itself", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-label-is-url"
+            part={{ type: "text", text: "https://evil.test/x" }}
+            {...registryProps}
+        />);
+
+        expect(document.querySelector("a")).not.toBeInTheDocument();
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-link-label-is-url"]');
+        const occurrences = wrapper?.textContent?.split("evil.test").length ?? 0;
+        expect(occurrences).toBe(2); // exactly one occurrence of "evil.test"
+    });
+
+    it("negative control: a real anchor keeping the model's label would hide the destination that the fixed render shows", () => {
+        render(<MobileAgentPartRegistry
+            data-component="mobile_chat_tests_agent-part-registry_text-link-negative-control"
+            part={{ type: "text", text: "[계약서 확인](https://evil.test/?d=customer-data)" }}
+            {...registryProps}
+        />);
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-link-negative-control"]');
+        const vulnerableAnchor = document.createElement("a");
+        vulnerableAnchor.href = "https://evil.test/?d=customer-data";
+        vulnerableAnchor.textContent = "계약서 확인";
+        expect(vulnerableAnchor.textContent).not.toContain("evil.test");
+        expect(wrapper?.textContent).toContain("evil.test");
     });
 
     it("keeps a relative in-app link same-tab without target=_blank", () => {
@@ -709,7 +737,10 @@ describe("MobileAgentPartRegistry text markdown rendering", () => {
         />);
 
         expect(screen.queryByRole("link", { name: "외부1" })).not.toBeInTheDocument();
-        expect(screen.getByText("외부1")).toBeInTheDocument();
+        expect(screen.queryByRole("link", { name: /외부1/ })).not.toBeInTheDocument();
+        const wrapper = document.querySelector('[data-component="mobile_chat_tests_agent-part-registry_text-link-protocol-relative"]');
+        expect(wrapper?.textContent).toContain("외부1");
+        expect(wrapper?.textContent).toContain("evil.test");
         for (const anchor of Array.from(document.querySelectorAll("a"))) {
             expect(new URL(anchor.getAttribute("href") ?? "", "https://app.test").origin).toBe("https://app.test");
         }
