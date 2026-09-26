@@ -219,6 +219,11 @@ describe("live-database cross-branch tenant isolation", () => {
                 MessageTriggerJobEntity.create({
                     branchId: BRANCH_1,
                     ruleId,
+                    // Attached to a live client so the scheduler's orphan sweep
+                    // (MessageTriggerService#dispatchDueJobs -> cancelOrphanedPending,
+                    // which cancels pending jobs with no client and no schedule) leaves
+                    // this fixture alone while the app's scheduler ticks during the spec.
+                    clientId: branch1ClientId,
                     scheduledFor: new Date(Date.now() + 60_000),
                     recipientType: MessageTriggerRecipientType.CLIENT,
                     templateKey: MessageTriggerTemplateKey.INFO,
@@ -274,6 +279,11 @@ describe("live-database cross-branch tenant isolation", () => {
             // findByIdInBranch calls above run with no ALS store active at all (case 1 of
             // decidePreExecution -> bypass), so what's under test here is the repository's own
             // branch fence, not the extension.
+            // Run the orphan sweep the scheduler runs on every tick, so a background
+            // tick landing mid-test cannot change the outcome (it used to cancel this
+            // fixture and set cancelReason before the assertion below).
+            await jobRepo.cancelOrphanedPending("tenant-isolation-spec orphan sweep", BRANCH_1);
+
             const wronglyPinned = await jobRepo.findByIdInBranch(BRANCH_1, branch1JobId);
             expect(wronglyPinned).not.toBeNull();
             wronglyPinned!.branchId = BRANCH_2; // simulate a caller pinning the where-clause to the wrong (non-owning) branch
