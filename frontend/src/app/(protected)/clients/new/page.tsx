@@ -81,7 +81,7 @@ export default function NewClientPage() {
   const clearPrefillName = useClientDialogStore((s) => s.clearPrefillName);
 
   const store = useClientWizardStore();
-  const { currentStep, pricesManuallyEdited, voucherYear, setField, setCurrentStep, setPricesManuallyEdited, setVoucherYear, reset } = store;
+  const { currentStep, pricesManuallyEdited, voucherYear, setField, toggleMessageAutomation, setCurrentStep, setPricesManuallyEdited, setVoucherYear, reset } = store;
 
   const [error, setError] = useState<string | null>(null);
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
@@ -632,7 +632,7 @@ export default function NewClientPage() {
                   key={key}
                   data-component={`desktop_clients-new_service_flags-${key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}-chip`}
                   type="button"
-                  onClick={() => key === "applyMessageAutomation" ? (setField("messageAutomationDisabled", !store.messageAutomationDisabled), setField("applyMessageAutomation", store.messageAutomationDisabled)) : setField(key, !store[key])}
+                  onClick={() => key === "applyMessageAutomation" ? toggleMessageAutomation() : setField(key, !store[key])}
                   className={cn(
                     "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
                     store[key]

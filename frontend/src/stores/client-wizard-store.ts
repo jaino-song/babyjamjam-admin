@@ -31,6 +31,7 @@ interface ClientWizardStore extends ClientWizardFormData {
   voucherYear: number | null;
 
   setField: <K extends keyof ClientWizardFormData>(key: K, value: ClientWizardFormData[K]) => void;
+  toggleMessageAutomation: () => void;
   setCurrentStep: (step: number) => void;
   setPricesManuallyEdited: (edited: boolean) => void;
   setVoucherYear: (year: number | null) => void;
@@ -68,6 +69,13 @@ export const useClientWizardStore = create<ClientWizardStore>((set) => ({
   voucherYear: null,
 
   setField: (key, value) => set({ [key]: value }),
+  toggleMessageAutomation: () => set((state) => {
+    const messageAutomationDisabled = !state.messageAutomationDisabled;
+    return {
+      messageAutomationDisabled,
+      applyMessageAutomation: !messageAutomationDisabled,
+    };
+  }),
   setCurrentStep: (step) => set({ currentStep: step }),
   setPricesManuallyEdited: (edited) => set({ pricesManuallyEdited: edited }),
   setVoucherYear: (year) => set({ voucherYear: year }),

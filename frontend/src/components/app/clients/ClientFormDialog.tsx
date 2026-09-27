@@ -259,13 +259,12 @@ const parseCompactDateInput = (value: string): string => {
 };
 
 const normalizeMessageAutomationState = (data: ClientFormData): ClientFormData => {
-    const messageAutomationDisabled = data.messageAutomationDisabled === true
-        || data.applyMessageAutomation === false;
+    const messageAutomationDisabled = data.messageAutomationDisabled === true;
 
     return {
         ...data,
         messageAutomationDisabled,
-        applyMessageAutomation: !messageAutomationDisabled,
+        ...(messageAutomationDisabled ? { applyMessageAutomation: false } : {}),
     };
 };
 
@@ -1129,7 +1128,7 @@ function ClientFormContent({
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
                     serviceStatus: formData.serviceStatus,
-                    applyMessageAutomation: formData.messageAutomationDisabled !== true,
+                    applyMessageAutomation: formData.applyMessageAutomation !== false,
                     messageAutomationDisabled: formData.messageAutomationDisabled === true,
                     areaId: formData.areaId || null,
                 };
