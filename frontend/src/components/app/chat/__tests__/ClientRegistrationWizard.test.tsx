@@ -127,6 +127,7 @@ describe("ClientRegistrationWizard", () => {
             careCenter: true,
             voucherClient: false,
             breastPump: false,
+            messageAutomationDisabled: false,
             primaryEmployeeId: null,
         });
 

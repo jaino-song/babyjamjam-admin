@@ -258,6 +258,16 @@ const parseCompactDateInput = (value: string): string => {
     return value.replace(/\D/g, "").slice(0, 6);
 };
 
+const normalizeMessageAutomationState = (data: ClientFormData): ClientFormData => {
+    const messageAutomationDisabled = data.messageAutomationDisabled === true;
+
+    return {
+        ...data,
+        messageAutomationDisabled,
+        ...(messageAutomationDisabled ? { applyMessageAutomation: false } : {}),
+    };
+};
+
 const normalizeCompactDateForSubmit = (value: string): string => {
     const compactDate = parseCompactDateInput(value);
     if (compactDate.length !== 6) return value;
@@ -416,6 +426,7 @@ function ClientFormContent({
         breastPump: false,
         serviceStatus: "pre_booking",
         applyMessageAutomation: true,
+        messageAutomationDisabled: false,
         areaId: null,
     });
 
@@ -757,7 +768,8 @@ function ClientFormContent({
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
                     serviceStatus: client.serviceStatus || "pre_booking",
-                    applyMessageAutomation: true,
+                    applyMessageAutomation: client.messageAutomationDisabled !== true,
+                    messageAutomationDisabled: client.messageAutomationDisabled === true,
                     areaId: client.areaId ?? null,
                 };
                 nextPricesManuallyEdited = Boolean(client.fullPrice || client.grant || client.actualPrice);
@@ -785,6 +797,7 @@ function ClientFormContent({
                     breastPump: false,
                     serviceStatus: "pre_booking",
                     applyMessageAutomation: true,
+                    messageAutomationDisabled: false,
                     areaId: null,
                     ...Object.fromEntries(
                         Object.entries(prefillRef.current ?? {}).filter(([, value]) => value !== undefined),
@@ -802,6 +815,7 @@ function ClientFormContent({
                 startDate: normalizeDateForCompactState(nextFormData.startDate),
                 endDate: normalizeDateForCompactState(nextFormData.endDate),
             };
+            nextFormData = normalizeMessageAutomationState(nextFormData);
             if (!client && !nextFormData.endDate && nextFormData.startDate && nextFormData.duration) {
                 skipNextEndDateRecalculationRef.current = false;
             }
@@ -838,7 +852,7 @@ function ClientFormContent({
         ) as Partial<ClientFormData>;
         skipNextEndDateRecalculationRef.current = true;
         queueMicrotask(() => {
-            setFormData((current) => ({
+            setFormData((current) => normalizeMessageAutomationState({
                 ...current,
                 ...latePrefill,
                 startDate: normalizeDateForCompactState(latePrefill.startDate ?? current.startDate),
@@ -861,6 +875,18 @@ function ClientFormContent({
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
         setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleMessageAutomationToggle = () => {
+        setHasUserEditedSinceOpen(true);
+        setFormData((current) => {
+            const messageAutomationDisabled = current.messageAutomationDisabled !== true;
+            return {
+                ...current,
+                messageAutomationDisabled,
+                applyMessageAutomation: !messageAutomationDisabled,
+            };
+        });
     };
 
     const openEmployeeDialog = (target: "primary" | "secondary") => {
@@ -1075,6 +1101,7 @@ function ClientFormContent({
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
                     serviceStatus: formData.serviceStatus,
+                    messageAutomationDisabled: formData.messageAutomationDisabled === true,
                     areaId: formData.areaId || null,
                 };
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
@@ -1101,7 +1128,8 @@ function ClientFormContent({
                     voucherClient: formData.voucherClient,
                     breastPump: formData.breastPump,
                     serviceStatus: formData.serviceStatus,
-                    applyMessageAutomation: formData.applyMessageAutomation,
+                    applyMessageAutomation: formData.applyMessageAutomation !== false,
+                    messageAutomationDisabled: formData.messageAutomationDisabled === true,
                     areaId: formData.areaId || null,
                 };
                 const newClient = await createClient.mutateAsync(createDto);
@@ -1683,7 +1711,7 @@ function ClientFormContent({
             >
                 <div className={cn(
                     "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
-                    isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3",
+                    "lg:grid-cols-3",
                 )}>
                     <FormSwitchRow
                         data-component={`${base}_field-care-center`}
@@ -1699,15 +1727,14 @@ function ClientFormContent({
                         onToggle={() => handleChange("breastPump", !formData.breastPump)}
                         buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                     />
-                    {!isEditMode ? (
-                        <FormSwitchRow
-                            data-component={`${base}_field-message-automation`}
-                            title={t(locale, "clients.form.message-automation")}
-                            checked={formData.applyMessageAutomation !== false}
-                            onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
-                            buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                        />
-                    ) : null}
+                    <FormSwitchRow
+                        data-component={`${base}_field-message-automation`}
+                        title={t(locale, "clients.form.message-automation")}
+                        description={t(locale, "clients.form.message-automation-description")}
+                        checked={formData.messageAutomationDisabled !== true}
+                        onToggle={handleMessageAutomationToggle}
+                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                    />
                 </div>
             </ClientDialogSection>
         </>
@@ -2070,7 +2097,7 @@ function ClientFormContent({
             <div className={cn(
                 PANEL_FULL_FIELD_CLASS_NAME,
                 "grid gap-[calc(12px*var(--glint-ui-scale,1))]",
-                isEditMode ? "lg:grid-cols-2" : "lg:grid-cols-3",
+                "lg:grid-cols-3",
             )}>
                 <FormSwitchRow
                     data-component={`${base}_care-center-field`}
@@ -2088,16 +2115,15 @@ function ClientFormContent({
                     onToggle={() => handleChange("breastPump", !formData.breastPump)}
                     buttonAriaLabel={t(locale, "clients.form.breast-pump")}
                 />
-                {!isEditMode ? (
-                    <FormSwitchRow
-                        data-component={`${base}_message-automation-field`}
-                        size="control"
-                        title={t(locale, "clients.form.message-automation")}
-                        checked={formData.applyMessageAutomation !== false}
-                        onToggle={() => handleChange("applyMessageAutomation", formData.applyMessageAutomation === false)}
-                        buttonAriaLabel={t(locale, "clients.form.message-automation")}
-                    />
-                ) : null}
+                <FormSwitchRow
+                    data-component={`${base}_message-automation-field`}
+                    size="control"
+                    title={t(locale, "clients.form.message-automation")}
+                    description={t(locale, "clients.form.message-automation-description")}
+                    checked={formData.messageAutomationDisabled !== true}
+                    onToggle={handleMessageAutomationToggle}
+                    buttonAriaLabel={t(locale, "clients.form.message-automation")}
+                />
             </div>
         </>
     );

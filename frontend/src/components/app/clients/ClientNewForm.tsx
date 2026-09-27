@@ -321,6 +321,7 @@ export function ClientNewForm() {
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
         serviceStatus: store.serviceStatus || null,
+        messageAutomationDisabled: false,
       };
       const newClient = await createClient.mutateAsync(dto);
       reset();

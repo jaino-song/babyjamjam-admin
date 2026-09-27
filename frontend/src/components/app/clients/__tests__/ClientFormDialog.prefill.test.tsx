@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { api } from "@/lib/api/client";
 import type { Client } from "@/lib/client/types";
 
 import { ClientFormDialog } from "../ClientFormDialog";
@@ -28,9 +29,10 @@ jest.mock("next/navigation", () => ({
 }));
 
 const mockUpdateClient = jest.fn();
+const mockCreateClient = jest.fn();
 
 jest.mock("@/hooks/useClients", () => ({
-    useCreateClient: () => ({ isPending: false, mutateAsync: jest.fn() }),
+    useCreateClient: () => ({ isPending: false, mutateAsync: mockCreateClient }),
     useUpdateClient: () => ({ isPending: false, mutateAsync: mockUpdateClient }),
 }));
 
@@ -64,6 +66,14 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("../EmployeeAutocomplete", () => ({
     EmployeeAutocomplete: () => <div data-testid="employee-autocomplete" />,
 }));
+
+jest.mock("@/lib/api/client", () => ({
+    api: {
+        get: jest.fn(),
+    },
+}));
+
+const mockApiGet = api.get as jest.MockedFunction<typeof api.get>;
 
 jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
     EmployeeFormDialog: () => null,
@@ -127,7 +137,9 @@ const createClient = (overrides: Partial<Client> = {}): Client => ({
 
 describe("ClientFormDialog prefill", () => {
     beforeEach(() => {
+        mockCreateClient.mockReset().mockResolvedValue({ id: 3 });
         mockUpdateClient.mockReset();
+        mockApiGet.mockReset().mockResolvedValue({ data: { exists: false } });
         mockVoucherPriceInfos = [
             {
                 id: 1,
@@ -150,6 +162,57 @@ describe("ClientFormDialog prefill", () => {
             id: client.id,
             dto: expect.objectContaining({ name: "수정된 고객", fullPrice: null, actualPrice: null, grant: "0" }),
         }));
+    });
+
+    it("prefills durable message suppression and persists the enabled toggle on edit", async () => {
+        const client = createClient({
+            messageAutomationDisabled: true,
+            duration: null,
+            fullPrice: null,
+            actualPrice: null,
+            startDate: null,
+            endDate: null,
+        });
+        mockUpdateClient.mockResolvedValue({ id: client.id });
+        render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
+
+        const automationSwitch = await screen.findByRole("switch", { name: "메시지 자동 전송" });
+        await waitFor(() => expect(automationSwitch).not.toBeChecked());
+        fireEvent.click(automationSwitch);
+        expect(automationSwitch).toBeChecked();
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+        await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledWith({
+            id: client.id,
+            dto: expect.objectContaining({ messageAutomationDisabled: false }),
+        }));
+    });
+
+    it("keeps a transient apply opt-out separate from durable suppression", async () => {
+        render(
+            <ClientFormDialog
+                open
+                onClose={jest.fn()}
+                prefill={{
+                    name: "일회성 자동 전송 제외",
+                    birthday: "1990-01-01",
+                    address: "인천시",
+                    phone: "010-1234-5678",
+                    applyMessageAutomation: false,
+                }}
+            />,
+        );
+
+        const automationSwitch = await screen.findByRole("switch", { name: "메시지 자동 전송" });
+        await waitFor(() => expect(automationSwitch).toBeChecked());
+        await screen.findByText("등록 가능한 번호입니다.");
+        await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+        fireEvent.click(screen.getByRole("button", { name: "생성" }));
+
+        await waitFor(() => expect(mockCreateClient).toHaveBeenCalledWith(expect.objectContaining({
+            applyMessageAutomation: false,
+            messageAutomationDisabled: false,
+        })));
     });
 
     it.each([["860709", "1986-07-09"], ["580303", "1958-03-03"], ["1905-01-01", "1905-01-01"]])("keeps normalized birthday %s as %s", async (birthday, expected) => {

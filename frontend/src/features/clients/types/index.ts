@@ -69,6 +69,8 @@ export interface Client {
     careCenter: boolean | null;
     voucherClient: boolean;
     breastPump: boolean;
+    /** When true, all client-related automatic message routines are suppressed. */
+    messageAutomationDisabled?: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
     eDocId: string | null;
     areaId?: string | null;
@@ -103,12 +105,17 @@ export interface CreateClientDto {
     breastPump: boolean;
     serviceStatus?: ServiceStatus | null;
     applyMessageAutomation?: boolean;
+    /** Durable per-client opt-out for current and future automatic message routines. */
+    messageAutomationDisabled?: boolean;
     areaId?: string | null;
     source?: "contract_auto_registration";
     reuseExistingClient?: boolean;
 }
 
-export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId" | "allowBusinessDayMismatch"> & { primaryEmployeeId: number | null };
+export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId" | "allowBusinessDayMismatch" | "messageAutomationDisabled"> & {
+    primaryEmployeeId: number | null;
+    messageAutomationDisabled: boolean;
+};
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
 export interface UpdateClientDto {
@@ -134,6 +141,8 @@ export interface UpdateClientDto {
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
+    /** Durable per-client opt-out for current and future automatic message routines. */
+    messageAutomationDisabled?: boolean;
 }
 
 // DTO for terminating service
