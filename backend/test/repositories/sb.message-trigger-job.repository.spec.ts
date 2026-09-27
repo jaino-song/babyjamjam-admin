@@ -3,6 +3,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
+    CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
@@ -833,12 +834,13 @@ describe("SbMessageTriggerJobRepository", () => {
         };
         const sqlText = getSqlText(conflictQuery).replace(/\s+/g, " ");
         expect(sqlText).toContain('ON CONFLICT ("dedupe_key") DO UPDATE SET');
-        expect(sqlText).toContain(
-            'AND "message_trigger_job"."status" = \'canceled\' '
-            + 'AND "message_trigger_job"."canceled_by_user" = false '
-            + 'AND "message_trigger_job"."cancel_reason" =',
-        );
-        expect(conflictQuery.values).toContain(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+        expect(sqlText).toContain('AND "message_trigger_job"."status" = \'canceled\'');
+        expect(sqlText).toContain('AND "message_trigger_job"."canceled_by_user" = false');
+        expect(sqlText).toContain('AND "message_trigger_job"."cancel_reason" IN (');
+        expect(conflictQuery.values).toEqual(expect.arrayContaining([
+            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+            CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
+        ]));
     });
 
     it.each([
