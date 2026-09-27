@@ -24,7 +24,10 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import {
+    CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
+    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+} from "domain/constants/message-automation-policy";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -108,14 +111,24 @@ export class ServiceRecordLinkService {
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
     async scheduleForServiceStart(
         scheduleId: number,
-        options: { taskAutomationReference?: AgentAutomationTaskCommitReference } = {},
+        options: { taskAutomationReference?: AgentAutomationTaskCommitReference; futureOnlyAt?: Date } = {},
     ): Promise<boolean> {
         try {
+            if (options.futureOnlyAt) {
+                const schedule = await this.prisma.employee_schedule.findUnique({
+                    where: { id: scheduleId },
+                    select: { startDate: true },
+                });
+                if (!schedule || getServiceRecordLinkScheduledFor(schedule.startDate).getTime() <= options.futureOnlyAt.getTime()) {
+                    return false;
+                }
+            }
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
                 taskAutomationReference: options.taskAutomationReference,
+                futureOnlyAt: options.futureOnlyAt,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -317,6 +330,7 @@ export class ServiceRecordLinkService {
             isManualSend: boolean;
             recipientPhone?: string;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
+            futureOnlyAt?: Date;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -330,6 +344,14 @@ export class ServiceRecordLinkService {
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        if (!options.isManualSend && schedule.client.messageAutomationDisabled === true) {
+            return {
+                scheduledFor: options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate),
+                employeeId: schedule.primaryEmployee.id,
+                jobEnqueued: false,
+                jobId: null,
+            };
         }
 
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
@@ -588,6 +610,21 @@ export class ServiceRecordLinkService {
                 return [] as Array<{ id: string; claim_version: string }>;
             }
             return transaction.$queryRaw<Array<{ id: string; claim_version: string }>>(Prisma.sql`
+            WITH locked_client AS MATERIALIZED (
+                SELECT "id"
+                FROM "client"
+                WHERE "id" = ${params.clientId}
+                  AND "branch_id" = ${params.branchId}::uuid
+                  AND "message_automation_disabled" = false
+                FOR UPDATE
+            ), locked_schedule AS MATERIALIZED (
+                SELECT "id"
+                FROM "employee_schedule"
+                WHERE "id" = ${params.scheduleId}
+                  AND "branch_id" = ${params.branchId}::uuid
+                  AND "client_id" = ${params.clientId}
+                FOR UPDATE
+            )
             INSERT INTO "message_trigger_job" (
                 branch_id,
                 rule_id,
@@ -625,6 +662,8 @@ export class ServiceRecordLinkService {
                 0,
                 clock_timestamp() + (${AUTOMATIC_SCHEDULING_LEASE_MINUTES} * interval '1 minute'),
                 clock_timestamp()
+            FROM locked_client
+            INNER JOIN locked_schedule ON true
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM "message_trigger_job" AS blocker
@@ -644,7 +683,8 @@ export class ServiceRecordLinkService {
                               OR blocker."cancel_reason" NOT IN (
                                   ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
                                   ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
+                                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON},
+                                  ${CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON}
                               )
                           )
                       )
@@ -674,7 +714,8 @@ export class ServiceRecordLinkService {
                 AND "message_trigger_job"."cancel_reason" IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                    ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
+                    ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON},
+                    ${CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON}
                 )
             )
             RETURNING id, updated_at::text AS claim_version;

@@ -98,10 +98,17 @@ import {
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
+import {
+    CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
+    isClientMessageAutomationDisabled,
+    lockClientMessageAutomationForJob,
+} from "./client-message-automation-policy";
 
 export interface MessageTriggerIntentSyncOptions {
     stableBatchAt: Date;
     preserveExisting: boolean;
+    /** Re-enable materialization may only create jobs strictly after this instant. */
+    futureOnlyAt?: Date;
     /** Internal provenance marker; a reference without this marker is ignored. */
     taskOrigin?: boolean;
     /** Digest-only reference to the task records reviewed for this materialization. */
@@ -1419,6 +1426,7 @@ export class MessageTriggerService {
 
         const client = await this.readClientAutomationSource(branchId, clientId);
         if (!client) return;
+        if (client.messageAutomationDisabled === true) return;
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             MessageTriggerEventType.CLIENT_CREATED,
@@ -1468,6 +1476,9 @@ export class MessageTriggerService {
             }
             const job = this.buildClientJob(rule, client);
             if (!job) continue;
+            if (intentOptions?.futureOnlyAt && job.scheduledFor.getTime() <= intentOptions.futureOnlyAt.getTime()) {
+                continue;
+            }
             candidateJobs.push({ rule, job });
         }
 
@@ -1560,7 +1571,7 @@ export class MessageTriggerService {
         branchId: string,
         employeeScheduleId: number,
         includePast: boolean,
-        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "taskOrigin" | "taskAutomationReference">,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt" | "taskOrigin" | "taskAutomationReference">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1578,6 +1589,9 @@ export class MessageTriggerService {
             },
         });
         if (!schedule) return true;
+        if (await this.isClientMessageAutomationDisabledForSource(branchId, schedule.clientId)) {
+            return true;
+        }
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             MessageTriggerEventType.EMPLOYEE_ASSIGNED,
@@ -1603,6 +1617,9 @@ export class MessageTriggerService {
         for (const rule of rules) {
             const job = this.buildEmployeeAssignmentJob(rule, schedule);
             if (!job) continue;
+            if (intentOptions?.futureOnlyAt && job.scheduledFor.getTime() <= intentOptions.futureOnlyAt.getTime()) {
+                continue;
+            }
             if (await this.hasSentEmployeeAssignmentJobForSameEmployee(job)) {
                 continue;
             }
@@ -1628,6 +1645,7 @@ export class MessageTriggerService {
     async syncEmployeeAssignmentRulesForClient(
         branchId: string,
         clientId: number,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1648,11 +1666,9 @@ export class MessageTriggerService {
 
         let retryable = false;
         for (const schedule of schedules) {
-            const refreshed = await this.syncEmployeeAssignmentRulesForSchedule(
-                branchId,
-                schedule.id,
-                true,
-            );
+            const refreshed = intentOptions
+                ? await this.syncEmployeeAssignmentRulesForSchedule(branchId, schedule.id, true, intentOptions)
+                : await this.syncEmployeeAssignmentRulesForSchedule(branchId, schedule.id, true);
             if (refreshed === false) retryable = true;
         }
         return !retryable;
@@ -1829,12 +1845,14 @@ export class MessageTriggerService {
                 fullPrice: true,
                 grant: true,
                 actualPrice: true,
+                messageAutomationDisabled: true,
                 ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },
         }) as ClientTriggerSource[];
 
         for (const client of clients) {
+            if (client.messageAutomationDisabled === true) continue;
             const job = this.buildClientJob(rule, client);
             await this.persistPendingJob(job, rule, includePast, rule.jobsStale, false, transaction);
         }
@@ -1871,6 +1889,10 @@ export class MessageTriggerService {
         }
         if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
+            if (automaticJob && materializedJob.clientId !== null && transaction
+                && await isClientMessageAutomationDisabled(transaction, materializedJob.clientId)) {
+                return null;
+            }
             if (automaticJob && materializedJob.branchId) {
                 const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(materializedJob.branchId, transaction);
                 if (!enabled) return null;
@@ -1981,6 +2003,18 @@ export class MessageTriggerService {
 
     private isAutomaticMessageJob(job: Pick<MessageTriggerJobEntity, "templateKey" | "ruleId" | "dedupeKey">): boolean {
         return !isManualMessageTriggerJob(job);
+    }
+
+    private async isClientMessageAutomationDisabledForSource(
+        branchId: string,
+        clientId: number,
+    ): Promise<boolean> {
+        if (!this.prisma.client?.findFirst) return false;
+        const client = await this.prisma.client.findFirst({
+            where: { id: clientId, branchId },
+            select: { messageAutomationDisabled: true },
+        });
+        return client?.messageAutomationDisabled === true;
     }
 
     private orderRetroactiveCandidates(
@@ -2718,6 +2752,8 @@ export class MessageTriggerService {
                 && this.isAutomaticMessageJob(job)
                 && job.branchId
             ) {
+                const clientFence = await this.fenceClientMessageAutomation(job, transaction);
+                if (clientFence.kind !== "allow") return clientFence;
                 await this.messageAutomationActivationService.assertTriggerDispatchEnabled(job.branchId, transaction);
             }
             const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
@@ -2817,6 +2853,8 @@ export class MessageTriggerService {
         if (!job.branchId || !automaticJob) {
             return { kind: "allow" };
         }
+        const clientFence = await this.fenceClientMessageAutomation(job, transaction);
+        if (clientFence.kind !== "allow") return clientFence;
         if (await this.messageAutomationActivationService!.getTriggerDispatchEnabled(job.branchId, transaction)) {
             return { kind: "allow" };
         }
@@ -2836,6 +2874,38 @@ export class MessageTriggerService {
         `);
         return canceled.length === 1
             ? { kind: "stale", reason: MESSAGE_AUTOMATION_PARENT_DISABLED_REASON }
+            : { kind: "lost" };
+    }
+
+    private async fenceClientMessageAutomation(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        if (!this.isAutomaticMessageJob(job) || (job.clientId === null && job.employeeScheduleId === null)) {
+            return { kind: "allow" };
+        }
+        const disabled = await lockClientMessageAutomationForJob(transaction, {
+            branchId: job.branchId,
+            clientId: job.clientId,
+            employeeScheduleId: job.employeeScheduleId,
+        });
+        if (!disabled) return { kind: "allow" };
+        const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET status = 'canceled',
+                canceled_at = date_trunc('milliseconds', clock_timestamp()),
+                cancel_reason = ${CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON},
+                canceled_by_user = false,
+                claim_token = NULL,
+                next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${job.id}
+              AND status = 'processing'
+              AND claim_token = ${job.claimToken}
+            RETURNING id
+        `);
+        return canceled.length === 1
+            ? { kind: "stale", reason: CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON }
             : { kind: "lost" };
     }
 

@@ -27,6 +27,7 @@ import { currentAdminAuditActor } from "./admin-audit-context";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
+import { lockClientMessageAutomationForJob } from "./client-message-automation-policy";
 
 export const MESSAGE_AUTOMATION_TRIGGER_DISPATCH_POLICY_ID = "trigger-dispatch" as const;
 export const MESSAGE_AUTOMATION_PARENT_DISABLED_CODE = "MESSAGE_AUTOMATION_PARENT_DISABLED";
@@ -301,6 +302,21 @@ export class MessageAutomationActivationService {
             if (candidate.status === "canceled") return { allowed: false, applies: true };
             if (!this.isAutomaticJob(candidate.templateKey, candidate.ruleId, candidate.dedupeKey)) {
                 return { allowed: true, applies: false };
+            }
+            if (await lockClientMessageAutomationForJob(transaction, {
+                branchId: candidate.branchId,
+                clientId: candidate.clientId,
+                employeeScheduleId: candidate.employeeScheduleId,
+            })) {
+                return { allowed: false, applies: true };
+            }
+            if (candidate.employeeScheduleId !== null) {
+                await transaction.$queryRaw(Prisma.sql`
+                    SELECT "id"
+                    FROM "employee_schedule"
+                    WHERE "id" = ${candidate.employeeScheduleId}
+                    FOR UPDATE
+                `);
             }
 
             // A global rule can be edited from another branch. Lock that rule
