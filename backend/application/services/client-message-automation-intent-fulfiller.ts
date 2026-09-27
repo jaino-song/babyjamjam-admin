@@ -85,7 +85,7 @@ export async function fulfillClientMessageAutomationIntent(params: {
                 updated_at = candidate.claimed_at
             FROM candidate
             WHERE job.id = candidate.id
-            RETURNING job.id, job.scheduled_for, candidate.is_approved
+            RETURNING job.id, job.scheduled_for, job.claim_token, candidate.is_approved
         )
         SELECT id, scheduled_for, claim_token
         FROM updated

@@ -376,7 +376,7 @@ export class ServiceRecordLinkService {
             };
         }
 
-        await this.ensureSystemRule(schedule.branchId, options.isManualSend);
+        await this.ensureSystemRule(schedule.branchId, options.isManualSend, options.branchTransaction);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
             employee.phone,
@@ -402,6 +402,7 @@ export class ServiceRecordLinkService {
                 recoveryIntentId: options.recoveryIntentId,
                 recoveryClaimToken: options.recoveryClaimToken,
                 recoveryGenerationId: options.recoveryGenerationId,
+                branchTransaction: options.branchTransaction,
             });
             if (!automaticSchedulingClaim) {
                 return {
@@ -648,7 +649,7 @@ export class ServiceRecordLinkService {
         branchTransaction?: Prisma.TransactionClient;
     }): Promise<void> {
         if (!options.recoveryIntentId || !options.recoveryClaimToken || !options.recoveryGenerationId) return;
-        return this.assertRecoveryIntentFence(options);
+        return this.assertRecoveryIntentFence(options, options.branchTransaction);
     }
 
     private async claimAutomaticScheduling(params: {
@@ -868,7 +869,11 @@ export class ServiceRecordLinkService {
         `);
     }
 
-    private async ensureSystemRule(branchId?: string, allowParentDisabled = true): Promise<void> {
+    private async ensureSystemRule(
+        branchId?: string,
+        allowParentDisabled = true,
+        branchTransaction?: Prisma.TransactionClient,
+    ): Promise<void> {
         const ensure = (transaction?: Prisma.TransactionClient) => this.automationLock.runExclusive(
             SystemTemplateKey.SERVICE_RECORD_LINK,
             async (writeTransaction) => {
@@ -920,6 +925,10 @@ export class ServiceRecordLinkService {
         if (branchId && !allowParentDisabled) {
             if (!this.branchLock || !this.automationActivationService) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
+            }
+            if (branchTransaction) {
+                await ensure(branchTransaction);
+                return;
             }
             await this.branchLock.runExclusive(branchId, (transaction) => ensure(transaction));
             return;
