@@ -112,7 +112,14 @@ export class ServiceRecordLinkService {
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
     async scheduleForServiceStart(
         scheduleId: number,
-        options: { taskAutomationReference?: AgentAutomationTaskCommitReference; futureOnlyAt?: Date } = {},
+        options: {
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
+            futureOnlyAt?: Date;
+            recoveryIntentId?: string;
+            recoveryClaimToken?: string;
+            recoveryGenerationId?: string;
+            branchTransaction?: Prisma.TransactionClient;
+        } = {},
     ): Promise<boolean> {
         try {
             if (options.futureOnlyAt) {
@@ -124,13 +131,23 @@ export class ServiceRecordLinkService {
                     return false;
                 }
             }
-            const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
+            const issue = (branchTransaction?: Prisma.TransactionClient) => this.issueServiceRecordLinkJob(scheduleId, {
                 scheduledFor: null,
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
                 taskAutomationReference: options.taskAutomationReference,
                 futureOnlyAt: options.futureOnlyAt,
+                recoveryIntentId: options.recoveryIntentId,
+                recoveryClaimToken: options.recoveryClaimToken,
+                recoveryGenerationId: options.recoveryGenerationId,
+                branchTransaction: branchTransaction ?? options.branchTransaction,
             });
+            const branchId = options.recoveryIntentId && this.branchLock
+                ? (await this.prisma.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } }))?.branchId
+                : null;
+            const { scheduledFor, employeeId, jobEnqueued } = branchId && this.branchLock
+                ? await this.branchLock.runExclusive(branchId, (transaction) => issue(transaction))
+                : await issue();
             if (jobEnqueued) {
                 this.logger.log(
                     `Service record link SMS scheduled for provider ${employeeId} schedule ${scheduleId} at ${scheduledFor.toISOString()}`
@@ -332,6 +349,10 @@ export class ServiceRecordLinkService {
             recipientPhone?: string;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
             futureOnlyAt?: Date;
+            recoveryIntentId?: string;
+            recoveryClaimToken?: string;
+            recoveryGenerationId?: string;
+            branchTransaction?: Prisma.TransactionClient;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -378,6 +399,9 @@ export class ServiceRecordLinkService {
                 dedupeKey: automaticDedupeKey,
                 serviceStartDate: this.formatDate(schedule.startDate),
                 serviceEndDate: this.formatDate(schedule.endDate),
+                recoveryIntentId: options.recoveryIntentId,
+                recoveryClaimToken: options.recoveryClaimToken,
+                recoveryGenerationId: options.recoveryGenerationId,
             });
             if (!automaticSchedulingClaim) {
                 return {
@@ -390,8 +414,10 @@ export class ServiceRecordLinkService {
         }
 
         try {
+            await this.assertRecoveryIntentFenceIfPresent(options);
             const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
             if (options.preparedLinkToken) {
+                await this.assertRecoveryIntentFenceIfPresent(options);
                 if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                     throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
                 pointer: "/recipientPhone",
@@ -426,6 +452,7 @@ export class ServiceRecordLinkService {
                 scheduleId,
                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
             );
+            await this.assertRecoveryIntentFenceIfPresent(options);
             await this.supersedeRetryableServiceRecordSmsLogs(
                 scheduleId,
                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -441,6 +468,7 @@ export class ServiceRecordLinkService {
             }));
                 }
 
+                await this.assertRecoveryIntentFenceIfPresent(options);
                 this.logger.warn(
                     `Schedule ${scheduleId}: provider ${employee.id} has no phone on file; service-record link NOT sent. Set the employee's phone first.`,
                 );
@@ -466,6 +494,7 @@ export class ServiceRecordLinkService {
             if (options.preparedLinkToken) {
                 linkToken = options.preparedLinkToken;
             } else {
+                await this.assertRecoveryIntentFenceIfPresent(options);
                 const expiresAt = this.resolveExpiry(
                     serviceRecordCase?.endDate ?? schedule.endDate,
                     options.allowLateReissue === true,
@@ -518,6 +547,9 @@ export class ServiceRecordLinkService {
                         serviceRecordUrl: url,
                         serviceStartDate: this.formatDate(schedule.startDate),
                         serviceEndDate: this.formatDate(schedule.endDate),
+                        ...(options.recoveryGenerationId
+                            ? { recoveryGenerationId: options.recoveryGenerationId }
+                            : {}),
                     },
                     ...(options.taskAutomationReference
                         ? { taskAutomationReference: options.taskAutomationReference }
@@ -536,6 +568,13 @@ export class ServiceRecordLinkService {
                     // longer become a pending reservation.
                     return null;
                 }
+                if (transaction && options.recoveryIntentId && options.recoveryClaimToken && options.recoveryGenerationId) {
+                    await this.assertRecoveryIntentFence({
+                        recoveryIntentId: options.recoveryIntentId,
+                        recoveryClaimToken: options.recoveryClaimToken,
+                        recoveryGenerationId: options.recoveryGenerationId,
+                    }, transaction);
+                }
                 return transaction
                     ? this.jobRepository.promoteAutomaticSchedulingClaim(
                         automaticSchedulingClaim!.id,
@@ -550,7 +589,9 @@ export class ServiceRecordLinkService {
                     );
             };
             const persistedJob = automaticSchedulingClaim
-                ? await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
+                ? options.branchTransaction
+                    ? await promote(options.branchTransaction)
+                    : await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
                 : await this.jobRepository.upsertPending(pendingJob);
 
             if (!persistedJob) {
@@ -575,6 +616,41 @@ export class ServiceRecordLinkService {
         }
     }
 
+    private async assertRecoveryIntentFence(
+        options: {
+            recoveryIntentId?: string;
+            recoveryClaimToken?: string;
+            recoveryGenerationId?: string;
+        },
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        if (!options.recoveryIntentId || !options.recoveryClaimToken || !options.recoveryGenerationId) return;
+        const query = transaction ?? this.prisma;
+        const rows = await query.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT "id"
+            FROM "message_trigger_job"
+            WHERE "id" = ${options.recoveryIntentId}
+              AND "rule_id" = 'system:message_automation_intent'
+              AND "status" = 'failed'
+              AND "cancel_reason" = '메시지 자동화 생성 재시도 대기'
+              AND "canceled_by_user" = false
+              AND "claim_token" = ${options.recoveryClaimToken}
+              AND "payload" #>> ARRAY['templateVariables', 'recoveryGenerationId'] = ${options.recoveryGenerationId}
+            FOR UPDATE
+        `);
+        if (rows.length !== 1) throw new Error("Recovery intent claim is stale");
+    }
+
+    private async assertRecoveryIntentFenceIfPresent(options: {
+        recoveryIntentId?: string;
+        recoveryClaimToken?: string;
+        recoveryGenerationId?: string;
+        branchTransaction?: Prisma.TransactionClient;
+    }): Promise<void> {
+        if (!options.recoveryIntentId || !options.recoveryClaimToken || !options.recoveryGenerationId) return;
+        return this.assertRecoveryIntentFence(options);
+    }
+
     private async claimAutomaticScheduling(params: {
         branchId: string;
         scheduleId: number;
@@ -587,6 +663,10 @@ export class ServiceRecordLinkService {
         dedupeKey: string;
         serviceStartDate: string;
         serviceEndDate: string;
+        recoveryIntentId?: string;
+        recoveryClaimToken?: string;
+        recoveryGenerationId?: string;
+        branchTransaction?: Prisma.TransactionClient;
     }): Promise<AutomaticSchedulingClaim | null> {
         const payload = {
             clientId: params.clientId,
@@ -604,8 +684,31 @@ export class ServiceRecordLinkService {
                 serviceRecordUrl: "",
                 serviceStartDate: params.serviceStartDate,
                 serviceEndDate: params.serviceEndDate,
+                ...(params.recoveryGenerationId ? { recoveryGenerationId: params.recoveryGenerationId } : {}),
             },
         };
+        const recoveryFence = params.recoveryIntentId && params.recoveryClaimToken && params.recoveryGenerationId
+            ? Prisma.sql`
+            INNER JOIN locked_recovery_intent ON true
+            `
+            : Prisma.empty;
+        const recoveryCte = params.recoveryIntentId && params.recoveryClaimToken && params.recoveryGenerationId
+            ? Prisma.sql`, locked_recovery_intent AS MATERIALIZED (
+                SELECT intent."id"
+                FROM "message_trigger_job" AS intent
+                WHERE intent."id" = ${params.recoveryIntentId}
+                  AND intent."branch_id" = ${params.branchId}::uuid
+                  AND intent."client_id" = ${params.clientId}
+                  AND intent."employee_schedule_id" = ${params.scheduleId}
+                  AND intent."rule_id" = 'system:message_automation_intent'
+                  AND intent."status" = 'failed'
+                  AND intent."cancel_reason" = '메시지 자동화 생성 재시도 대기'
+                  AND intent."canceled_by_user" = false
+                  AND intent."claim_token" = ${params.recoveryClaimToken}
+                  AND intent."payload" #>> ARRAY['templateVariables', 'recoveryGenerationId'] = ${params.recoveryGenerationId}
+                FOR UPDATE
+            )`
+            : Prisma.empty;
         const claimInTransaction = async (transaction: Prisma.TransactionClient) => {
             if (!this.automationActivationService || !this.branchLock) {
                 throw new ServiceUnavailableException("Message automation activation is not configured");
@@ -630,7 +733,7 @@ export class ServiceRecordLinkService {
                 WHERE "id" = ${params.clientId}
                   AND "branch_id" = ${params.branchId}::uuid
                   AND "message_automation_disabled" = false
-                FOR UPDATE
+                ${params.branchTransaction ? Prisma.empty : Prisma.sql`FOR UPDATE`}
             ), locked_schedule AS MATERIALIZED (
                 SELECT "id"
                 FROM "employee_schedule"
@@ -638,7 +741,7 @@ export class ServiceRecordLinkService {
                   AND "branch_id" = ${params.branchId}::uuid
                   AND "client_id" = ${params.clientId}
                 FOR UPDATE
-            )
+            )${recoveryCte}
             INSERT INTO "message_trigger_job" (
                 branch_id,
                 rule_id,
@@ -678,6 +781,7 @@ export class ServiceRecordLinkService {
                 clock_timestamp()
             FROM locked_client
             INNER JOIN locked_schedule ON true
+            ${recoveryFence}
             WHERE NOT EXISTS (
                 SELECT 1
                 FROM "message_trigger_job" AS blocker
@@ -736,7 +840,9 @@ export class ServiceRecordLinkService {
             `);
         };
 
-        const claimed = await this.branchLock!.runExclusive(params.branchId, claimInTransaction);
+        const claimed = params.branchTransaction
+            ? await claimInTransaction(params.branchTransaction)
+            : await this.branchLock!.runExclusive(params.branchId, claimInTransaction);
 
         const [claim] = claimed;
         return claim

@@ -261,4 +261,34 @@ describe("UpdateClientUsecase", () => {
             expect(client.messageAutomationDisabled).toBe(false);
         });
     });
+
+    it("stages durable recovery for an ordinary true-to-false client update", async () => {
+        const client = ClientFactory.create({ id: 1 });
+        client.messageAutomationDisabled = true;
+        mockRepository.setData([client]);
+        const persistReenableIntents = jest.fn().mockResolvedValue([12]);
+        const transaction = { $queryRaw: jest.fn().mockResolvedValue([{ now: new Date("2026-09-28T01:02:03.000Z") }]) };
+        const branchLock = {
+            runExclusive: jest.fn(async (_branchId: string, work: (tx: typeof transaction) => Promise<unknown>, tx: typeof transaction) => work(tx)),
+        };
+        const ordinaryUsecase = new UpdateClientUsecase(
+            mockRepository,
+            undefined,
+            branchLock as never,
+            { persistReenableIntents } as never,
+        );
+
+        await expect(ordinaryUsecase.execute(
+            branchId,
+            client.id,
+            { messageAutomationDisabled: false },
+            transaction as never,
+        )).resolves.toBe(client);
+
+        expect(persistReenableIntents).toHaveBeenCalledWith(
+            transaction,
+            expect.objectContaining({ branchId, clientId: client.id, generationId: expect.any(String) }),
+        );
+        expect(branchLock.runExclusive).toHaveBeenCalledWith(branchId, expect.any(Function), transaction);
+    });
 });

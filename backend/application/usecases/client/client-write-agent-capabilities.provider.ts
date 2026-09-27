@@ -1,6 +1,7 @@
 import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { AgentCapabilityProvider } from "application/agent/capability.decorator";
@@ -541,6 +542,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         try {
             let committedClientId: number | null = artifact.targetClientId;
             let messageAutomationReenabledAt: Date | null = null;
+            let messageAutomationReenabledGenerationId: string | null = null;
             const receipt = await records.runTaskMutation(
                 context,
                 artifact,
@@ -580,6 +582,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     );
                                 }
                                 messageAutomationReenabledAt = await transactionNow(transaction);
+                                messageAutomationReenabledGenerationId = randomUUID();
                             }
                         }
                         client = await this.updateClient.executeApprovedTarget(
@@ -588,7 +591,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
                             expectedTargetVersion,
                             transaction,
-                            { deferMessageAutomationRecovery: true },
+                            { deferMessageAutomationRecovery: true, branchLockHeld: true },
                         );
                     }
                     await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
@@ -615,6 +618,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         batch,
                         committedClientId,
                         messageAutomationReenabledAt,
+                        messageAutomationReenabledGenerationId,
                     );
                 },
             );
@@ -707,6 +711,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         batch: AgentAutomationCommittedBatch,
         clientId: number | null,
         messageAutomationReenabledAt: Date | null = null,
+        messageAutomationReenabledGenerationId: string | null = null,
     ): Promise<void> {
         if (artifact.consent.choice !== "yes" || artifact.noSend) return;
         if (!this.messageAutomationIntentService || clientId === null) {
@@ -724,6 +729,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 branchId: artifact.branchId,
                 clientId,
                 futureOnlyAt: messageAutomationReenabledAt,
+                generationId: messageAutomationReenabledGenerationId!,
                 taskOrigin: true,
                 taskAutomationReference,
             });

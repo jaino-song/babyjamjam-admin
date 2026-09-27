@@ -4801,6 +4801,30 @@ describe("MessageTriggerService", () => {
         });
     });
 
+    it("materializes an immediate assignment for a schedule created in the same re-enable transaction", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-new-after-reenable-cutoff",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, false, {
+            preserveExisting: true,
+            futureOnlyAt: new Date("2026-07-08T00:00:00.000Z"),
+            allowImmediateAssignmentForNewSchedule: true,
+        });
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.upsertPending.mock.calls[0]?.[0]).toMatchObject({
+            employeeScheduleId: 77,
+            ruleId: employeeRule.id,
+        });
+    });
+
     it("re-assignment to a new employee creates a new assignment job", async () => {
         const employeeRule = createRule({
             id: "rule-employee-assigned",

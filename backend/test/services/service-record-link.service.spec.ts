@@ -169,6 +169,39 @@ describe("ServiceRecordLinkService", () => {
         }));
     });
 
+    it("fails a recovery service-record claimant before cancellation or token issuance when the marker is replaced", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        prisma.employee_schedule.findUnique
+            .mockResolvedValueOnce({ startDate: new Date("2026-07-03T00:00:00.000Z") })
+            .mockResolvedValue(createSchedule());
+        prisma.$queryRaw
+            .mockResolvedValueOnce([{ id: "claim-1", claim_version: "2026-07-09 00:00:00.123456+00" }])
+            .mockResolvedValueOnce([]);
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+
+        await expect(service.scheduleForServiceStart(10, {
+            futureOnlyAt: new Date("2026-07-02T00:00:00.000Z"),
+            recoveryIntentId: "intent-1",
+            recoveryClaimToken: "claim-token-1",
+            recoveryGenerationId: "70000000-0000-4000-8000-000000000099",
+        })).rejects.toThrow("Recovery intent claim is stale");
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+    });
+
     it("preserves the task commit reference on an automatic service-record link job", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
