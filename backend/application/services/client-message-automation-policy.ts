@@ -2,6 +2,10 @@ import { Prisma } from "@prisma/client";
 
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
 import { CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import {
+    MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+    MESSAGE_AUTOMATION_INTENT_RULE_ID,
+} from "domain/constants/message-automation-intent";
 
 export { CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON };
 
@@ -88,10 +92,41 @@ export async function lockClientMessageAutomationForJob(
     return rows[0]?.message_automation_disabled === true;
 }
 
+/** Lock the active schedules after the owning client has been locked. */
+export async function lockClientMessageAutomationSchedules(
+    transaction: Prisma.TransactionClient,
+    branchId: string,
+    clientId: number,
+): Promise<number[]> {
+    if (typeof transaction.$queryRaw !== "function") {
+        if (typeof transaction.employee_schedule?.findMany !== "function") return [];
+        const schedules = await transaction.employee_schedule.findMany({
+            where: { branchId, clientId, replaced: false, terminatedAt: null },
+            select: { id: true },
+            orderBy: { id: "asc" },
+        });
+        return [...new Set(schedules.map((schedule) => schedule.id))]
+            .sort((left, right) => left - right);
+    }
+
+    const rows = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+        SELECT "id"
+        FROM "employee_schedule"
+        WHERE "branch_id" = ${branchId}::uuid
+          AND "client_id" = ${clientId}
+          AND "replaced" = false
+          AND "terminated_at" IS NULL
+        ORDER BY "id" ASC
+        FOR UPDATE
+    `);
+    return rows.map((row) => row.id);
+}
+
 /**
- * Cancel only pending/processing automatic jobs owned by a client or one of
- * its schedules. Manual agent, service-record-link, and service-end jobs are
- * excluded by the shared ownership classifier.
+ * Cancel automatic jobs owned by a client or one of its schedules. Failed
+ * rows are included only when they are the internal client/schedule recovery
+ * markers. Manual agent, manual service-record, and manual service-end jobs
+ * remain excluded by the shared ownership classifier.
  */
 export async function cancelAutomaticMessageJobsForClient(
     transaction: Prisma.TransactionClient,
@@ -110,7 +145,24 @@ export async function cancelAutomaticMessageJobsForClient(
                 claimToken: null,
             },
         });
-        return result.count;
+        const intentResult = await transaction.message_trigger_job.updateMany({
+            where: {
+                branchId,
+                clientId,
+                ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+                status: "failed",
+                cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+                canceledByUser: false,
+            },
+            data: {
+                status: "canceled",
+                canceledAt: new Date(),
+                cancelReason: reason,
+                claimToken: null,
+                nextAttemptAt: null,
+            },
+        });
+        return result.count + intentResult.count;
     }
 
     const manualJob = manualMessageTriggerJobPredicate({
@@ -125,8 +177,16 @@ export async function cancelAutomaticMessageJobsForClient(
           ON schedule."id" = job."employee_schedule_id"
          AND schedule."branch_id" = ${branchId}::uuid
         WHERE job."branch_id" = ${branchId}::uuid
-          AND job."status" IN ('pending', 'processing')
+          AND (
+            job."status" IN ('pending', 'processing')
+            OR (
+              job."status" = 'failed'
+              AND job."rule_id" = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+              AND job."cancel_reason" = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
+            )
+          )
           AND (job."client_id" = ${clientId} OR schedule."client_id" = ${clientId})
+          AND job."canceled_by_user" = false
           AND NOT (${manualJob})
         ORDER BY job."id" ASC
         FOR UPDATE OF job
@@ -143,7 +203,15 @@ export async function cancelAutomaticMessageJobsForClient(
             "next_attempt_at" = NULL,
             "updated_at" = date_trunc('milliseconds', clock_timestamp())
         WHERE "id" IN (${Prisma.join(rows.map((row) => row.id))})
-          AND "status" IN ('pending', 'processing')
+          AND (
+            "status" IN ('pending', 'processing')
+            OR (
+              "status" = 'failed'
+              AND "rule_id" = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+              AND "cancel_reason" = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
+            )
+          )
+          AND "canceled_by_user" = false
         RETURNING "id"
     `);
     return canceled.length;

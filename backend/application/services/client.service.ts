@@ -1682,6 +1682,53 @@ export class ClientService {
         }
     }
 
+    private async persistReenableMessageAutomationIntents(
+        transaction: Prisma.TransactionClient,
+        branchId: string,
+        clientId: number,
+        futureOnlyAt: Date,
+    ): Promise<number[]> {
+        return this.messageAutomationIntentService.persistReenableIntents(transaction, {
+            branchId,
+            clientId,
+            futureOnlyAt,
+        });
+    }
+
+    private async fulfillReenableMessageAutomationIntentsAfterCommit(
+        branchId: string,
+        clientId: number,
+        futureOnlyAt: Date,
+        scheduleIds: readonly number[],
+    ): Promise<void> {
+        try {
+            await this.messageAutomationIntentService.fulfillClientIntent({
+                branchId,
+                clientId,
+                includePast: false,
+                suppressGreeting: false,
+                futureOnlyAt,
+                intentAt: futureOnlyAt,
+            });
+        } catch (error) {
+            this.logger.error(`Failed to fulfill client message automation re-enable intent for client ${clientId}: ${error}`);
+        }
+
+        for (const scheduleId of scheduleIds) {
+            try {
+                await this.messageAutomationIntentService.fulfillScheduleIntent({
+                    branchId,
+                    scheduleId,
+                    includePast: false,
+                    futureOnlyAt,
+                    intentAt: futureOnlyAt,
+                });
+            } catch (error) {
+                this.logger.error(`Failed to fulfill schedule message automation re-enable intent for schedule ${scheduleId}: ${error}`);
+            }
+        }
+    }
+
     private mapStatusTypeToDocumentStatus(statusType?: string): DocumentStatusType {
         const normalized = normalizeEformsignStatusCode(statusType);
         if (normalized === "000") return null;
@@ -1834,6 +1881,7 @@ export class ClientService {
         let createdScheduleId: number | null = null;
         let replacedScheduleId: number | null = null;
         let messageAutomationReenabledAt: Date | null = null;
+        let messageAutomationReenabledScheduleIds: number[] = [];
         const ordinaryMutationId = randomUUID();
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
@@ -2132,6 +2180,14 @@ export class ClientService {
             } else if (!currentClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
+            if (messageAutomationReenabledAt) {
+                messageAutomationReenabledScheduleIds = await this.persistReenableMessageAutomationIntents(
+                    transaction,
+                    branchid,
+                    id,
+                    messageAutomationReenabledAt,
+                );
+            }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
             if (
                 automationImpact
@@ -2171,7 +2227,14 @@ export class ClientService {
         if (updatedPhone) {
             await this.linkContractDocumentsByPhone(branchid, updatedClient, updatedPhone);
         }
-        if (this.triggerService) {
+        if (messageAutomationReenabledAt) {
+            await this.fulfillReenableMessageAutomationIntentsAfterCommit(
+                branchid,
+                id,
+                messageAutomationReenabledAt,
+                messageAutomationReenabledScheduleIds,
+            );
+        } else if (this.triggerService) {
             const syncOptions = messageAutomationReenabledAt
                 ? {
                     stableBatchAt: messageAutomationReenabledAt,
@@ -2195,52 +2258,22 @@ export class ClientService {
                     await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
                 }
             }
-            if (messageAutomationReenabledAt && !clientNameSupplied) {
-                try {
-                    const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForClient(branchid, id, syncOptions);
-                    if (refreshed === false) {
-                        await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
-                    }
-                } catch (error) {
-                    this.logger.error(`Failed to sync employee assignment triggers for client ${id}: ${error}`);
-                    try {
-                        await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
-                    } catch (retryError) {
-                        this.logger.error(`Failed to persist employee assignment refresh intent for client ${id}: ${retryError}`);
-                    }
-                }
-            }
-            if (messageAutomationReenabledAt && this.serviceRecordLinkService) {
-                try {
-                    const schedules = await this.triggerService.readClientAutomationSchedules(branchid, id);
-                    for (const schedule of schedules) {
-                        await this.serviceRecordLinkService.scheduleForServiceStart(schedule.id, {
-                            futureOnlyAt: messageAutomationReenabledAt,
-                        }).catch((error) => {
-                            this.logger.error(`Failed to re-materialize service-record link automation for client ${id}: ${error}`);
-                        });
-                    }
-                } catch (error) {
-                    // The durable flag change has already committed. A source
-                    // read failure must stay a logged post-commit retry signal,
-                    // never turn the successful client update into a 500.
-                    this.logger.error(`Failed to read service-record link schedules for client ${id}: ${error}`);
-                }
-            }
         }
         if (createdScheduleId !== null) {
-            if (!clientNameSupplied || messageAutomationReenabledAt) {
+            if (!messageAutomationReenabledAt && !clientNameSupplied) {
                 await this.triggerService
                     ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                     ?.catch((error) => {
                         this.logger.error(`Failed to sync employee assignment triggers: ${error}`);
                     });
             }
-            await this.serviceRecordLinkService
-                ?.scheduleForServiceStart(createdScheduleId)
-                ?.catch((error) => {
-                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
-                });
+            if (!messageAutomationReenabledAt) {
+                await this.serviceRecordLinkService
+                    ?.scheduleForServiceStart(createdScheduleId)
+                    ?.catch((error) => {
+                        this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+                    });
+            }
         }
         return updatedClient;
     }

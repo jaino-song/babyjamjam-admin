@@ -83,5 +83,28 @@ describe("client message automation policy", () => {
 
         await expect(cancelAutomaticMessageJobsForClient(transaction, "branch-1", 41)).resolves.toBe(1);
         expect(queryRaw).toHaveBeenCalledTimes(2);
+        const selection = queryRaw.mock.calls[0]?.[0] as { strings?: readonly string[] };
+        const selectionSql = selection.strings?.join("?") ?? "";
+        expect(selectionSql).toContain("job.\"status\" = 'failed'");
+        expect(selectionSql).toContain("job.\"rule_id\"");
+        expect(selectionSql).toContain("job.\"cancel_reason\"");
+    });
+
+    it("retires failed internal recovery markers through the fallback transaction delegate", async () => {
+        const pendingUpdate = jest.fn().mockResolvedValue({ count: 1 });
+        const transaction = transactionDouble();
+        transaction.message_trigger_job.updateMany = pendingUpdate;
+        pendingUpdate.mockImplementationOnce(async () => ({ count: 1 }));
+        pendingUpdate.mockImplementationOnce(async () => ({ count: 2 }));
+
+        await expect(cancelAutomaticMessageJobsForClient(transaction, "branch-1", 41)).resolves.toBe(3);
+        expect(pendingUpdate).toHaveBeenCalledTimes(2);
+        expect(pendingUpdate.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+            where: expect.objectContaining({
+                ruleId: "system:message_automation_intent",
+                status: "failed",
+                cancelReason: "메시지 자동화 생성 재시도 대기",
+            }),
+        }));
     });
 });

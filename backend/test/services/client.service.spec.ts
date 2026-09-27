@@ -132,6 +132,7 @@ describe("ClientService", () => {
     ) => ({
         persistClientIntent: jest.fn().mockResolvedValue(undefined),
         persistScheduleIntent: jest.fn().mockResolvedValue(undefined),
+        persistReenableIntents: jest.fn().mockResolvedValue([12]),
         fulfillClientIntent: jest.fn().mockImplementation(async (params: {
             branchId: string;
             clientId: number;
@@ -1946,34 +1947,40 @@ describe("ClientService", () => {
                 expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
             });
 
-            it("keeps a no-name durable opt-out re-enable successful when assignment refresh throws", async () => {
+            it("keeps a no-name durable opt-out re-enable successful when durable recovery is fulfilled", async () => {
                 const existingClient = createClientEntity();
                 existingClient.messageAutomationDisabled = true;
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
-                triggerService.syncEmployeeAssignmentRulesForClient.mockRejectedValue(
-                    new Error("assignment refresh unavailable"),
-                );
                 prismaService.employee_schedule.findMany.mockResolvedValue([{ id: 12 }]);
 
                 await expect(service.update(branchId, existingClient.id, {
                     messageAutomationDisabled: false,
                 })).resolves.toBe(existingClient);
 
-                expect(triggerService.syncEmployeeAssignmentRulesForClient).toHaveBeenCalledWith(
-                    branchId,
-                    existingClient.id,
+                expect(messageAutomationIntentService.fulfillClientIntent).toHaveBeenCalledWith(
                     expect.objectContaining({
-                        preserveExisting: true,
+                        branchId,
+                        clientId: existingClient.id,
+                        includePast: false,
                         futureOnlyAt: expect.any(Date),
+                        intentAt: expect.any(Date),
                     }),
                 );
-                expect(messageAutomationIntentService.persistScheduleIntent).toHaveBeenCalledWith(
+                expect(messageAutomationIntentService.fulfillScheduleIntent).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        branchId,
+                        scheduleId: 12,
+                        includePast: false,
+                        futureOnlyAt: expect.any(Date),
+                        intentAt: expect.any(Date),
+                    }),
+                );
+                expect(messageAutomationIntentService.persistReenableIntents).toHaveBeenCalledWith(
                     prismaService,
                     expect.objectContaining({
                         branchId,
                         clientId: existingClient.id,
-                        scheduleId: 12,
-                        replaceExisting: true,
+                        futureOnlyAt: expect.any(Date),
                     }),
                 );
             });

@@ -26,6 +26,7 @@ interface PersistIntentParams {
     dedupeKey: string;
     kind: MessageAutomationIntentKind;
     includePast: boolean;
+    futureOnlyAt?: Date;
     suppressGreeting: boolean;
     intentAt: Date;
     replaceExisting: boolean;
@@ -39,6 +40,7 @@ export async function persistClientMessageAutomationIntent(
         branchId: string;
         clientId: number;
         includePast: boolean;
+        futureOnlyAt?: Date;
         suppressGreeting: boolean;
         intentAt: Date;
         taskOrigin?: boolean;
@@ -65,6 +67,7 @@ export async function persistScheduleMessageAutomationIntent(
         clientId: number;
         scheduleId: number;
         includePast: boolean;
+        futureOnlyAt?: Date;
         intentAt: Date;
         replaceExisting?: boolean;
         taskOrigin?: boolean;
@@ -80,6 +83,7 @@ export async function persistScheduleMessageAutomationIntent(
         dedupeKey: getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId),
         kind: "schedule",
         includePast: params.includePast,
+        futureOnlyAt: params.futureOnlyAt,
         suppressGreeting: false,
         intentAt: params.intentAt,
         replaceExisting: params.replaceExisting ?? false,
@@ -165,6 +169,7 @@ async function persistMessageAutomationIntent(
             includePast: String(params.includePast),
             suppressGreeting: String(params.suppressGreeting),
             replaceExisting: String(params.replaceExisting),
+            ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt.toISOString() } : {}),
             ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
         ...(taskAutomationReference ? { taskAutomationReference } : {}),

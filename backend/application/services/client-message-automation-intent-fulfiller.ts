@@ -18,12 +18,17 @@ export async function fulfillClientMessageAutomationIntent(params: {
     clientId: number;
     includePast: boolean;
     suppressGreeting: boolean;
+    futureOnlyAt?: Date;
+    intentAt?: Date;
     taskOrigin?: boolean;
     taskAutomationReference?: AgentAutomationTaskCommitReference;
 }): Promise<boolean> {
     const dedupeKey = getClientAutomationIntentDedupeKey(params.branchId, params.clientId);
     // Internal intent rows start at attempts=0. The first approved claim promotes the row to 1
     // while persisting its batch anchor; later claims retain that anchor for deterministic retries.
+    const expectedIntentFilter = params.intentAt
+        ? Prisma.sql`AND job.scheduled_for = ${params.intentAt}`
+        : Prisma.empty;
     const claimed = await params.prisma.$queryRaw<Array<{
         id: string;
         scheduled_for: Date | string;
@@ -45,6 +50,7 @@ export async function fulfillClientMessageAutomationIntent(params: {
               AND job.status = 'failed'
               AND job.cancel_reason = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
               AND job.canceled_by_user = false
+              ${expectedIntentFilter}
               AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= claim_clock.claimed_at)
             FOR UPDATE OF job SKIP LOCKED
         ), updated AS (
@@ -94,6 +100,7 @@ export async function fulfillClientMessageAutomationIntent(params: {
                 ? claim.scheduled_for
                 : new Date(claim.scheduled_for),
             preserveExisting: true,
+            ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
             ...(params.taskOrigin ? { taskOrigin: true } : {}),
             ...(params.taskAutomationReference
                 ? { taskAutomationReference: params.taskAutomationReference }
