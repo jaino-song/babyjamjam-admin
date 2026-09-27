@@ -2229,7 +2229,7 @@ export class ClientService {
             }
         }
         if (createdScheduleId !== null) {
-            if (!clientNameSupplied) {
+            if (!clientNameSupplied || messageAutomationReenabledAt) {
                 await this.triggerService
                     ?.syncEmployeeAssignmentRulesForSchedule(branchid, createdScheduleId, true)
                     ?.catch((error) => {
