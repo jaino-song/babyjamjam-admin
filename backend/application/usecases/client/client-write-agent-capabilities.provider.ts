@@ -114,6 +114,17 @@ const CLIENT_UPDATE_FORM_FIELDS: AgentFormField[] = [
 ];
 const CLIENT_BRANCH_PHONE_UNIQUE_CONSTRAINT = "client_branch_phone_normalized_key";
 
+async function transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
+    if (typeof transaction.$queryRaw === "function") {
+        const rows = await transaction.$queryRaw<Array<{ now?: Date }>>(Prisma.sql`
+            SELECT CURRENT_TIMESTAMP AS "now"
+        `);
+        const now = rows[0]?.now;
+        if (now instanceof Date && !Number.isNaN(now.getTime())) return now;
+    }
+    return new Date();
+}
+
 function isClientBranchPhoneUniqueViolation(error: unknown): boolean {
     if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
 
@@ -465,7 +476,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         // artifact. The legacy refresh path is intentionally
                         // skipped so a declined task cannot rebuild assignment
                         // jobs outside the authority transaction.
-                        if (!context.taskAutomation) {
+                        const reenabled = existing.messageAutomationDisabled === true
+                            && parsedUpdates.messageAutomationDisabled === false;
+                        if (!context.taskAutomation && !reenabled) {
                             await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                                 context.principal.branchId,
                                 existing.id,
@@ -527,6 +540,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
 
         try {
             let committedClientId: number | null = artifact.targetClientId;
+            let messageAutomationReenabledAt: Date | null = null;
             const receipt = await records.runTaskMutation(
                 context,
                 artifact,
@@ -554,12 +568,27 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             endDate: updates.endDate,
                             duration: updates.duration,
                         }, transaction);
+                        if (updates.messageAutomationDisabled === false && typeof transaction.client?.findFirst === "function") {
+                            const current = await transaction.client.findFirst({
+                                where: { id: artifact.targetClientId, branchId: context.principal.branchId },
+                                select: { messageAutomationDisabled: true },
+                            });
+                            if (current?.messageAutomationDisabled === true) {
+                                if (artifact.consent.choice !== "yes" || artifact.noSend) {
+                                    throw new AgentActionCertainFailureError(
+                                        "Re-enabling customer message automation requires explicit automation consent",
+                                    );
+                                }
+                                messageAutomationReenabledAt = await transactionNow(transaction);
+                            }
+                        }
                         client = await this.updateClient.executeApprovedTarget(
                             context.principal.branchId,
                             artifact.targetClientId,
                             updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
                             expectedTargetVersion,
                             transaction,
+                            { deferMessageAutomationRecovery: true },
                         );
                     }
                     await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
@@ -580,7 +609,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     };
                 },
                 async (transaction, batch) => {
-                    await this.stageTaskAutomation(transaction, artifact, batch, committedClientId);
+                    await this.stageTaskAutomation(
+                        transaction,
+                        artifact,
+                        batch,
+                        committedClientId,
+                        messageAutomationReenabledAt,
+                    );
                 },
             );
             return receipt.result;
@@ -671,6 +706,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         artifact: AgentTaskAutomationArtifact,
         batch: AgentAutomationCommittedBatch,
         clientId: number | null,
+        messageAutomationReenabledAt: Date | null = null,
     ): Promise<void> {
         if (artifact.consent.choice !== "yes" || artifact.noSend) return;
         if (!this.messageAutomationIntentService || clientId === null) {
@@ -683,6 +719,16 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
             taskRevision: artifact.taskRevision,
             batch,
         });
+        if (messageAutomationReenabledAt) {
+            await this.messageAutomationIntentService.persistReenableIntents(transaction, {
+                branchId: artifact.branchId,
+                clientId,
+                futureOnlyAt: messageAutomationReenabledAt,
+                taskOrigin: true,
+                taskAutomationReference,
+            });
+            return;
+        }
         const clientEffects = artifact.impact.effects.some((effect) => effect.kind === "client-rule" && effect.change !== "cancel");
         if (clientEffects) {
             await this.messageAutomationIntentService.persistClientIntent(transaction, {

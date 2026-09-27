@@ -20,7 +20,10 @@ import { ServiceRecordLinkService } from "./service-record-link.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
-import { isClientMessageAutomationDisabled } from "./client-message-automation-policy";
+import {
+    isClientMessageAutomationDisabled,
+    lockClientMessageAutomationSchedules,
+} from "./client-message-automation-policy";
 
 const CLAIM_LEASE_MINUTES = 10;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -63,6 +66,7 @@ export class MessageAutomationIntentService {
             branchId: string;
             clientId: number;
             includePast: boolean;
+            futureOnlyAt?: Date;
             suppressGreeting: boolean;
             intentAt: Date;
             taskOrigin?: boolean;
@@ -80,6 +84,7 @@ export class MessageAutomationIntentService {
             clientId: number;
             scheduleId: number;
             includePast: boolean;
+            futureOnlyAt?: Date;
             intentAt: Date;
             replaceExisting?: boolean;
             taskOrigin?: boolean;
@@ -88,6 +93,54 @@ export class MessageAutomationIntentService {
     ): Promise<void> {
         if (await isClientMessageAutomationDisabled(transaction, params.clientId)) return;
         await persistScheduleMessageAutomationIntent(transaction, params);
+    }
+
+    /**
+     * Record the durable obligation created by a client opt-out re-enable.
+     * The client row must already contain `messageAutomationDisabled=false` in
+     * the supplied transaction. Every active schedule is read through that
+     * same transaction so the flag, client marker, and schedule markers commit
+     * or roll back together.
+     */
+    async persistReenableIntents(
+        transaction: Prisma.TransactionClient,
+        params: {
+            branchId: string;
+            clientId: number;
+            futureOnlyAt: Date;
+            taskOrigin?: boolean;
+            taskAutomationReference?: AgentAutomationTaskCommitReference;
+        },
+    ): Promise<number[]> {
+        const scheduleIds = await lockClientMessageAutomationSchedules(
+            transaction,
+            params.branchId,
+            params.clientId,
+        );
+        await this.persistClientIntent(transaction, {
+            branchId: params.branchId,
+            clientId: params.clientId,
+            includePast: false,
+            futureOnlyAt: params.futureOnlyAt,
+            suppressGreeting: false,
+            intentAt: params.futureOnlyAt,
+            taskOrigin: params.taskOrigin,
+            taskAutomationReference: params.taskAutomationReference,
+        });
+        for (const scheduleId of scheduleIds) {
+            await this.persistScheduleIntent(transaction, {
+                branchId: params.branchId,
+                clientId: params.clientId,
+                scheduleId,
+                includePast: false,
+                futureOnlyAt: params.futureOnlyAt,
+                intentAt: params.futureOnlyAt,
+                replaceExisting: false,
+                taskOrigin: params.taskOrigin,
+                taskAutomationReference: params.taskAutomationReference,
+            });
+        }
+        return scheduleIds;
     }
 
     async persistEmployeeProfileRefreshIntent(
@@ -117,6 +170,8 @@ export class MessageAutomationIntentService {
         clientId: number;
         includePast: boolean;
         suppressGreeting: boolean;
+        futureOnlyAt?: Date;
+        intentAt?: Date;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
     }): Promise<boolean> {
@@ -131,6 +186,7 @@ export class MessageAutomationIntentService {
         branchId: string;
         scheduleId: number;
         includePast: boolean;
+        futureOnlyAt?: Date;
         replaceExisting?: boolean;
         intentAt?: Date;
         taskOrigin?: boolean;
@@ -151,6 +207,7 @@ export class MessageAutomationIntentService {
                 params.includePast,
                 {
                     preserveExisting: params.replaceExisting !== true,
+                    ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
                     ...(params.taskOrigin ? { taskOrigin: true } : {}),
                     ...(params.taskAutomationReference
                         ? { taskAutomationReference: params.taskAutomationReference }
@@ -168,10 +225,20 @@ export class MessageAutomationIntentService {
             if (params.taskAutomationReference) {
                 await this.serviceRecordLinkService.scheduleForServiceStart(
                     params.scheduleId,
-                    { taskAutomationReference: params.taskAutomationReference },
+                    {
+                        ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
+                        taskAutomationReference: params.taskAutomationReference,
+                    },
                 );
             } else {
-                await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
+                if (params.futureOnlyAt) {
+                    await this.serviceRecordLinkService.scheduleForServiceStart(
+                        params.scheduleId,
+                        { futureOnlyAt: params.futureOnlyAt },
+                    );
+                } else {
+                    await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
+                }
             }
             return this.deleteClaimedIntent(claim);
         } catch (error) {
@@ -372,6 +439,11 @@ export class MessageAutomationIntentService {
         const kind = variables["intentKind"];
         const includePast = variables["includePast"] === "true";
         const replaceExisting = variables["replaceExisting"] === "true";
+        const futureOnlyAt = this.readFutureOnlyAt(variables);
+        if (variables["futureOnlyAt"] !== undefined && !futureOnlyAt) {
+            await this.quarantineInvalidIntent(candidate.id, expectedVersion);
+            return false;
+        }
         const taskOrigin = variables["taskOrigin"] === "true";
         const taskReference = this.readTaskAutomationReference(candidate.payload);
         // Task-origin retries must carry a strict digest-only pointer to the
@@ -394,6 +466,8 @@ export class MessageAutomationIntentService {
                 clientId: candidate.clientId,
                 includePast,
                 suppressGreeting: variables["suppressGreeting"] === "true",
+                futureOnlyAt,
+                intentAt: candidate.scheduledFor,
                 taskOrigin,
                 ...(taskReference ? { taskAutomationReference: taskReference } : {}),
             });
@@ -403,6 +477,7 @@ export class MessageAutomationIntentService {
                 branchId: candidate.branchId,
                 scheduleId: candidate.employeeScheduleId,
                 includePast,
+                futureOnlyAt,
                 replaceExisting,
                 intentAt: candidate.scheduledFor,
                 taskOrigin,
@@ -487,6 +562,13 @@ export class MessageAutomationIntentService {
         return typeof employeeId === "number" && Number.isSafeInteger(employeeId) && employeeId > 0
             ? employeeId
             : null;
+    }
+
+    private readFutureOnlyAt(variables: Record<string, string>): Date | undefined {
+        const value = variables["futureOnlyAt"];
+        if (value === undefined) return undefined;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
     }
 
     /**

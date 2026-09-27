@@ -2,13 +2,14 @@ import { BadRequestException, Inject, Injectable, NotFoundException, Optional } 
 import { clientCodeOnlyProblemBody, clientProblemBody } from "application/usecases/client/client-write-validation";
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MESSAGE_AUTOMATION_DATABASE, type MessageAutomationDatabase } from "domain/repositories/message-automation-database.repository.interface";
 import {
     cancelAutomaticMessageJobsForClient,
     CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
 } from "application/services/client-message-automation-policy";
+import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 
 export type UpdateClientParams = {
     name?: string;
@@ -40,6 +41,17 @@ export class ClientTargetVersionMismatchError extends Error {
     }
 }
 
+async function transactionNow(transaction: Prisma.TransactionClient): Promise<Date> {
+    if (typeof transaction.$queryRaw === "function") {
+        const rows = await transaction.$queryRaw<Array<{ now?: Date }>>(Prisma.sql`
+            SELECT CURRENT_TIMESTAMP AS "now"
+        `);
+        const now = rows[0]?.now;
+        if (now instanceof Date && !Number.isNaN(now.getTime())) return now;
+    }
+    return new Date();
+}
+
 @Injectable()
 export class UpdateClientUsecase {
     constructor(
@@ -47,6 +59,7 @@ export class UpdateClientUsecase {
         private readonly clientRepository: IClientRepository,
         @Optional() @Inject(MESSAGE_AUTOMATION_DATABASE) private readonly database?: MessageAutomationDatabase,
         @Optional() private readonly branchLock?: MessageAutomationBranchLockService,
+        @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
     ) {}
 
     async execute(
@@ -93,14 +106,26 @@ export class UpdateClientUsecase {
         updates: UpdateClientParams,
         expectedTargetVersion: string,
         transaction?: Prisma.TransactionClient,
+        options: { deferMessageAutomationRecovery?: boolean } = {},
     ): Promise<ClientEntity> {
         if (!transaction && updates.messageAutomationDisabled !== undefined && this.database) {
-            const write = (tx: Prisma.TransactionClient) => this.executeApprovedTarget(branchid, id, updates, expectedTargetVersion, tx);
+            const write = (tx: Prisma.TransactionClient) => this.executeApprovedTarget(
+                branchid,
+                id,
+                updates,
+                expectedTargetVersion,
+                tx,
+                options,
+            );
             return this.branchLock
                 ? this.branchLock.runExclusive(branchid, write)
                 : this.database.$transaction(write);
         }
         assertNonNullableClientPatch(updates);
+        const current = updates.messageAutomationDisabled !== undefined && transaction
+            ? await this.clientRepository.findByIdForUpdate(branchid, id, transaction)
+            : null;
+        const wasMessageAutomationDisabled = current?.messageAutomationDisabled === true;
         const updated = await this.clientRepository.updateIfTargetVersion(
             branchid,
             id,
@@ -116,6 +141,22 @@ export class UpdateClientUsecase {
                     id,
                     CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
                 );
+            }
+            if (
+                updates.messageAutomationDisabled === false
+                && wasMessageAutomationDisabled
+                && transaction
+                && !options.deferMessageAutomationRecovery
+            ) {
+                if (!this.messageAutomationIntentService) {
+                    throw new Error("Message automation recovery is not configured");
+                }
+                const reenabledAt = await transactionNow(transaction);
+                await this.messageAutomationIntentService.persistReenableIntents(transaction, {
+                    branchId: branchid,
+                    clientId: id,
+                    futureOnlyAt: reenabledAt,
+                });
             }
             return updated;
         }

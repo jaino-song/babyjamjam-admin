@@ -42,6 +42,12 @@ describe("MessageAutomationIntentService", () => {
             scheduleForServiceStart: jest.fn().mockResolvedValue(true),
         };
         const transaction = {
+            client: {
+                findUnique: jest.fn().mockResolvedValue({ messageAutomationDisabled: false }),
+            },
+            employee_schedule: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
             message_trigger_rule: {
                 upsert: jest.fn().mockResolvedValue(undefined),
             },
@@ -95,6 +101,33 @@ describe("MessageAutomationIntentService", () => {
                 }),
             }),
         );
+    });
+
+    it("stores cutoff-aware client and schedule recovery intents in one transaction", async () => {
+        const { service, transaction } = setup();
+        const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
+        transaction.employee_schedule.findMany.mockResolvedValue([{ id: 72 }, { id: 72 }, { id: 91 }]);
+
+        await expect(service.persistReenableIntents(transaction as never, {
+            branchId: "branch-1",
+            clientId: 31,
+            futureOnlyAt,
+        })).resolves.toEqual([72, 91]);
+
+        expect(transaction.message_trigger_job.upsert).toHaveBeenCalledTimes(3);
+        for (const call of transaction.message_trigger_job.upsert.mock.calls) {
+            expect(call[0].create.payload).toEqual(expect.objectContaining({
+                templateVariables: expect.objectContaining({
+                    includePast: "false",
+                    futureOnlyAt: futureOnlyAt.toISOString(),
+                }),
+            }));
+        }
+        expect(transaction.employee_schedule.findMany).toHaveBeenCalledWith({
+            where: { branchId: "branch-1", clientId: 31, replaced: false, terminatedAt: null },
+            select: { id: true },
+            orderBy: { id: "asc" },
+        });
     });
 
     it("carries only a digest-only task commit reference into the durable intent", async () => {
@@ -462,6 +495,7 @@ describe("MessageAutomationIntentService", () => {
 
     it("releases a client intent when zero-job rule generation fails", async () => {
         const { service, prisma, triggerService } = setup();
+        const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
         triggerService.syncClientRulesForClient.mockRejectedValue(new Error("sync unavailable"));
 
         await expect(service.fulfillClientIntent({
@@ -469,10 +503,18 @@ describe("MessageAutomationIntentService", () => {
             clientId: 31,
             includePast: true,
             suppressGreeting: false,
+            futureOnlyAt,
         })).rejects.toThrow("sync unavailable");
 
         expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ id: "intent-1" }) }),
+        );
+        expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+            "branch-1",
+            31,
+            true,
+            false,
+            expect.objectContaining({ futureOnlyAt, preserveExisting: true }),
         );
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
     });
@@ -610,6 +652,65 @@ describe("MessageAutomationIntentService", () => {
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("propagates a durable cutoff to client and schedule materialization and service-record scheduling", async () => {
+        const { service, prisma, triggerService, serviceRecordLinkService } = setup();
+        const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
+        const scheduledFor = new Date("2026-09-28T01:02:03.000Z");
+        const updatedAt = new Date("2026-09-28T01:02:04.000Z");
+        prisma.message_trigger_job.findMany.mockResolvedValue([
+            {
+                id: "client-cutoff-intent",
+                branchId: "branch-1",
+                clientId: 31,
+                employeeScheduleId: null,
+                scheduledFor,
+                updatedAt,
+                payload: { templateVariables: {
+                    intentKind: "client",
+                    includePast: "false",
+                    suppressGreeting: "false",
+                    futureOnlyAt: futureOnlyAt.toISOString(),
+                } },
+            },
+            {
+                id: "schedule-cutoff-intent",
+                branchId: "branch-1",
+                clientId: 31,
+                employeeScheduleId: 72,
+                scheduledFor,
+                updatedAt,
+                payload: { templateVariables: {
+                    intentKind: "schedule",
+                    includePast: "false",
+                    replaceExisting: "false",
+                    futureOnlyAt: futureOnlyAt.toISOString(),
+                } },
+            },
+        ]);
+        prisma.$queryRaw
+            .mockResolvedValueOnce([{ id: "client-cutoff-intent", scheduled_for: scheduledFor, updated_at: updatedAt }])
+            .mockResolvedValueOnce([{ id: "schedule-cutoff-intent", scheduled_for: scheduledFor, updated_at: updatedAt }]);
+
+        await expect(service.reconcilePendingIntents(new Date("2026-09-28T01:05:00.000Z"))).resolves.toBe(2);
+        expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
+            "branch-1",
+            31,
+            false,
+            false,
+            expect.objectContaining({ futureOnlyAt, preserveExisting: true }),
+        );
+        expect(triggerService.syncEmployeeAssignmentRulesForSchedule).toHaveBeenCalledWith(
+            "branch-1",
+            72,
+            false,
+            expect.objectContaining({ futureOnlyAt, preserveExisting: true }),
+        );
+        expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(
+            72,
+            { futureOnlyAt },
+        );
+    });
+
     it("rebuilds schedule jobs after an update instead of preserving the previous generation", async () => {
         const { service, triggerService, prisma, serviceRecordLinkService } = setup();
 
@@ -708,6 +809,7 @@ describe("MessageAutomationIntentService", () => {
 
     it("retains the schedule intent when job generation fails so reconciliation can retry it", async () => {
         const { service, prisma, triggerService } = setup();
+        const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
         triggerService.syncEmployeeAssignmentRulesForSchedule.mockRejectedValue(
             new Error("schedule sync unavailable"),
         );
@@ -716,13 +818,63 @@ describe("MessageAutomationIntentService", () => {
             branchId: "branch-1",
             scheduleId: 72,
             includePast: true,
+            futureOnlyAt,
             replaceExisting: true,
         })).rejects.toThrow("schedule sync unavailable");
 
         expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: expect.objectContaining({ id: "intent-1" }) }),
         );
+        expect(triggerService.syncEmployeeAssignmentRulesForSchedule).toHaveBeenCalledWith(
+            "branch-1",
+            72,
+            true,
+            expect.objectContaining({ futureOnlyAt, preserveExisting: false }),
+        );
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("retries the cutoff-aware schedule and service-record paths after a transient failure", async () => {
+        const { service, prisma, triggerService, serviceRecordLinkService } = setup();
+        const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
+        const scheduledFor = new Date("2026-09-28T01:02:03.000Z");
+        const firstUpdatedAt = new Date("2026-09-28T01:02:04.000Z");
+        const secondUpdatedAt = new Date("2026-09-28T01:07:04.000Z");
+        prisma.$queryRaw
+            .mockResolvedValueOnce([{ id: "intent-1", scheduled_for: scheduledFor, updated_at: firstUpdatedAt }])
+            .mockResolvedValueOnce([{ id: "intent-1", scheduled_for: scheduledFor, updated_at: secondUpdatedAt }]);
+        triggerService.syncEmployeeAssignmentRulesForSchedule.mockResolvedValue(true);
+        serviceRecordLinkService.scheduleForServiceStart
+            .mockRejectedValueOnce(new Error("service-record unavailable"))
+            .mockResolvedValueOnce(true);
+
+        await expect(service.fulfillScheduleIntent({
+            branchId: "branch-1",
+            scheduleId: 72,
+            includePast: false,
+            futureOnlyAt,
+            intentAt: scheduledFor,
+        })).rejects.toThrow("service-record unavailable");
+        await expect(service.fulfillScheduleIntent({
+            branchId: "branch-1",
+            scheduleId: 72,
+            includePast: false,
+            futureOnlyAt,
+            intentAt: scheduledFor,
+        })).resolves.toBe(true);
+
+        expect(triggerService.syncEmployeeAssignmentRulesForSchedule).toHaveBeenNthCalledWith(
+            2,
+            "branch-1",
+            72,
+            false,
+            expect.objectContaining({ futureOnlyAt, preserveExisting: true }),
+        );
+        expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(
+            72,
+            { futureOnlyAt },
+        );
+        expect(prisma.message_trigger_job.deleteMany).toHaveBeenCalled();
     });
 
     it("does not let an older post-commit caller claim a newer replacement marker", async () => {
