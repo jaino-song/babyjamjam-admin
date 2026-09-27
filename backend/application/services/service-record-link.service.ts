@@ -768,7 +768,7 @@ export class ServiceRecordLinkService {
                 WHERE "id" = ${params.clientId}
                   AND "branch_id" = ${params.branchId}::uuid
                   AND "message_automation_disabled" = false
-                ${params.branchTransaction ? Prisma.empty : Prisma.sql`FOR UPDATE`}
+                FOR UPDATE
             ), locked_schedule AS MATERIALIZED (
                 SELECT "id"
                 FROM "employee_schedule"
