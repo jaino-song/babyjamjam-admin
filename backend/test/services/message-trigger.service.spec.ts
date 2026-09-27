@@ -4762,7 +4762,7 @@ describe("MessageTriggerService", () => {
         expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
-    it("does not resurrect a historical immediate assignment job when opt-out is re-enabled", async () => {
+    it("does not resurrect an existing immediate assignment when opt-out is re-enabled, even without job history", async () => {
         const employeeRule = createRule({
             id: "rule-employee-reenable",
             eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
@@ -4770,37 +4770,35 @@ describe("MessageTriggerService", () => {
             recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
             templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
         });
-        const historicalJob = createJob({
-            id: "job-employee-historical",
-            ruleId: employeeRule.id,
-            status: "canceled",
-            employeeScheduleId: 77,
-            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
-            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
-            payload: {
-                clientId: 1,
-                employeeId: 30,
-                memberId: "employee:30",
-                recipientName: "홍제공",
-                recipientPhone: "010-1111-2222",
-                templateVariables: {},
-            },
-        });
         const sync = createEmployeeSyncService();
         sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
-        sync.jobRepository.findForClientAutomationReview.mockResolvedValue([historicalJob]);
 
         await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true, {
             preserveExisting: true,
             futureOnlyAt: new Date("2026-07-08T00:00:00.000Z"),
         });
 
-        expect(sync.jobRepository.findForClientAutomationReview).toHaveBeenCalledWith(
-            branchId,
-            1,
-            [employeeRule.id],
-        );
         expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("materializes a genuinely new assignment when the caller uses normal sync after re-enable", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-new-after-reenable",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true);
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.upsertPending.mock.calls[0]?.[0]).toMatchObject({
+            employeeScheduleId: 77,
+            ruleId: employeeRule.id,
+        });
     });
 
     it("re-assignment to a new employee creates a new assignment job", async () => {

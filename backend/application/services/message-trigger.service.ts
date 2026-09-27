@@ -1637,8 +1637,13 @@ export class MessageTriggerService {
             if (
                 intentOptions?.futureOnlyAt
                 && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
-                && await this.hasHistoricalEmployeeAssignmentJob(branchId, schedule, rule, job)
             ) {
+                // A schedule enumerated by the client re-enable pass existed
+                // before the durable flag was lifted. Immediate assignment
+                // recipes use materialization time, so their scheduledFor
+                // cannot distinguish that historical event from a new one.
+                // New schedules created by the same client update are synced
+                // separately without futureOnlyAt.
                 continue;
             }
             if (await this.hasSentEmployeeAssignmentJobForSameEmployee(job)) {
@@ -2126,28 +2131,6 @@ export class MessageTriggerService {
             job.employeeScheduleId,
         );
         return sentJobs.some((sentJob) => this.isSameEmployeeAssignmentRecipient(sentJob, job));
-    }
-
-    /**
-     * Immediate assignment recipes are materialized with `now`, so a
-     * futureOnlyAt comparison alone cannot distinguish an old assignment from
-     * one created after re-enable. Existing terminal or canceled history is
-     * the durable evidence that the assignment event already had a generation.
-     */
-    private async hasHistoricalEmployeeAssignmentJob(
-        branchId: string,
-        schedule: EmployeeAssignmentScheduleSource,
-        rule: MessageTriggerRuleEntity,
-        currentJob: MessageTriggerJobEntity,
-    ): Promise<boolean> {
-        const findForReview = this.jobRepository.findForClientAutomationReview;
-        if (typeof findForReview !== "function") return false;
-        const jobs = await findForReview(branchId, schedule.clientId, [rule.id]);
-        return jobs.some((job) => job.ruleId === rule.id
-            && job.employeeScheduleId === schedule.id
-            && job.recipientType === rule.recipientType
-            && (job.dedupeKey === currentJob.dedupeKey
-                || this.isSameEmployeeAssignmentRecipient(job, currentJob)));
     }
 
     private isSameEmployeeAssignmentRecipient(
