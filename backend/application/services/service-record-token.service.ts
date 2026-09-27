@@ -105,12 +105,19 @@ export class ServiceRecordTokenService {
     }
 
     /** Reuse the contract URL, changing authentication only when its provider changes. */
-    async issueLink(params: ServiceRecordLinkTokenParams): Promise<{ linkToken: string }> {
-        return this.persistLink(params, true);
+    async issueLink(
+        params: ServiceRecordLinkTokenParams,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<{ linkToken: string }> {
+        return this.persistLink(params, true, transaction);
     }
 
-    private async persistLink(params: ServiceRecordLinkTokenParams, activate: boolean): Promise<{ linkToken: string }> {
-        return this.prismaService.$transaction(async (tx) => {
+    private async persistLink(
+        params: ServiceRecordLinkTokenParams,
+        activate: boolean,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<{ linkToken: string }> {
+        const persist = async (tx: Prisma.TransactionClient): Promise<{ linkToken: string }> => {
             await tx.$executeRaw(Prisma.sql`
                 SELECT pg_advisory_xact_lock(hashtextextended(${`service-record-link:${params.branchId}:${params.serviceRecordCaseId ?? params.scheduleId}`}, 0))
             `);
@@ -159,7 +166,8 @@ export class ServiceRecordTokenService {
                 },
             });
             return { linkToken };
-        });
+        };
+        return transaction ? persist(transaction) : this.prismaService.$transaction(persist);
     }
 
     /**
@@ -170,11 +178,13 @@ export class ServiceRecordTokenService {
     async reuseActiveLink(
         params: ServiceRecordLinkTokenParams,
         options: { includeLocked?: boolean } = {},
+        transaction?: Prisma.TransactionClient,
     ): Promise<{ linkToken: string } | null> {
-        const current = await this.currentProvider(params, this.prismaService);
+        const db = transaction ?? this.prismaService;
+        const current = await this.currentProvider(params, db);
         if (!current || current.id !== params.scheduleId || current.primaryEmployeeId !== params.employeeId) return null;
         const includeLocked = options.includeLocked ?? true;
-        const record = await this.prismaService.service_record_token.findFirst({
+        const record = await db.service_record_token.findFirst({
             where: {
                 branchId: params.branchId,
                 scheduleId: params.scheduleId,
@@ -188,7 +198,7 @@ export class ServiceRecordTokenService {
         });
         if (!record) return null;
 
-        const updated = await this.prismaService.service_record_token.updateMany({
+        const updated = await db.service_record_token.updateMany({
             where: {
                 id: record.id,
                 branchId: params.branchId,
@@ -214,10 +224,13 @@ export class ServiceRecordTokenService {
     }
 
     /** Activate a prepared link only when it still matches the tenant assignment and phone. */
-    async activatePreparedLink(params: ServiceRecordLinkTokenParams & { linkToken: string }): Promise<boolean> {
+    async activatePreparedLink(
+        params: ServiceRecordLinkTokenParams & { linkToken: string },
+        transaction?: Prisma.TransactionClient,
+    ): Promise<boolean> {
         const expectedPhoneHash = this.hash(this.normalizePhone(params.expectedPhone));
 
-        return this.prismaService.$transaction(async (tx) => {
+        const activate = async (tx: Prisma.TransactionClient): Promise<boolean> => {
             const record = await this.findByLinkToken(params.linkToken, tx);
             if (
                 !record
@@ -254,7 +267,8 @@ export class ServiceRecordTokenService {
                 },
             });
             return true;
-        });
+        };
+        return transaction ? activate(transaction) : this.prismaService.$transaction(activate);
     }
 
     /** Resolve a usable (active, not revoked, not expired, not locked) link-token row, else null. */

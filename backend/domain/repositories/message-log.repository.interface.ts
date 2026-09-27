@@ -27,7 +27,7 @@ export type MessageRetryStartResult =
     | { kind: "lost" };
 
 export interface IMessageLogRepository {
-    save(log: MessageLogEntity): Promise<MessageLogEntity>;
+    save(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
     update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity>;
     /**
      * Persist (or converge on) one deterministic provider attempt before any
@@ -54,7 +54,10 @@ export interface IMessageLogRepository {
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findPendingRetriesSystemScope(): Promise<MessageLogEntity[]>;
-    findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
+    findRetryableServiceRecordSmsByScheduleId(
+        scheduleId: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity[]>;
     findRecentByBranch(
         branchId: string,
         limit?: number,
