@@ -761,6 +761,22 @@ export class ServiceRecordLinkService {
             if (!rule || rule.branchId !== null || !rule.isActive || override?.isActive === false) {
                 return [] as Array<{ id: string; claim_version: string }>;
             }
+            // Lock the owning client as a separate statement before the
+            // schedule/marker CTE. PostgreSQL may reorder independent
+            // MATERIALIZED CTEs joined later; this explicit statement keeps
+            // recovery's client -> schedule -> marker order identical to
+            // ScheduleChangeService.
+            const lockedClient = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+                SELECT "id"
+                FROM "client"
+                WHERE "id" = ${params.clientId}
+                  AND "branch_id" = ${params.branchId}::uuid
+                  AND "message_automation_disabled" = false
+                FOR UPDATE
+            `);
+            if (lockedClient.length !== 1) {
+                return [] as Array<{ id: string; claim_version: string }>;
+            }
             return transaction.$queryRaw<Array<{ id: string; claim_version: string }>>(Prisma.sql`
             WITH locked_client AS MATERIALIZED (
                 SELECT "id"

@@ -179,6 +179,7 @@ describe("ServiceRecordLinkService", () => {
             .mockResolvedValueOnce({ startDate: new Date("2026-07-03T00:00:00.000Z") })
             .mockResolvedValue(createSchedule());
         prisma.$queryRaw
+            .mockResolvedValueOnce([{ id: 20 }])
             .mockResolvedValueOnce([{ id: "claim-1", claim_version: "2026-07-09 00:00:00.123456+00" }])
             .mockResolvedValueOnce([]);
         const service = new ServiceRecordLinkService(
@@ -559,11 +560,11 @@ describe("ServiceRecordLinkService", () => {
 
         await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
 
-        expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
-        expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
+        expect(prisma.$queryRaw.mock.invocationCallOrder[1]).toBeLessThan(
             tokenService.issueLink.mock.invocationCallOrder[0]!,
         );
-        const sql = prisma.$queryRaw.mock.calls[0]?.[0] as { strings: readonly string[] };
+        const sql = prisma.$queryRaw.mock.calls[1]?.[0] as { strings: readonly string[] };
         expect(sql.strings.join("?")).toContain('ON CONFLICT ("dedupe_key") DO UPDATE');
         expect(sql.strings.join("?")).toContain("WHERE NOT EXISTS");
         expect(sql.strings.join("?")).toContain("RETURNING id, updated_at::text AS claim_version");
@@ -607,6 +608,9 @@ describe("ServiceRecordLinkService", () => {
     it("does not promote a failed automatic lease after the client opt-out wins", async () => {
         const prisma = createPrisma();
         prisma.$queryRaw
+            .mockResolvedValueOnce([{
+                id: 20,
+            }])
             .mockResolvedValueOnce([{
                 id: "claim-1",
                 claim_version: "2026-07-09 00:00:00.123456+00",
@@ -1057,14 +1061,14 @@ describe("ServiceRecordLinkService", () => {
             // 3. A legitimate later trigger must be able to enqueue again.
             await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
             expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
-            expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+            expect(prisma.$queryRaw).toHaveBeenCalledTimes(3);
 
             // claimAutomaticScheduling's raw SQL hardcodes the branch-disabled reason in two
             // allow-lists: the `WHERE NOT EXISTS ... blocker` clause and the
             // `ON CONFLICT ... DO UPDATE ... WHERE` reclaim clause. If a future edit drops the
             // reason from either, a branch-disabled cancellation becomes a permanent blocker —
             // that schedule/rule pair could never be scheduled again, silently. Guard both.
-            const sql = prisma.$queryRaw.mock.calls[0]?.[0] as { values: readonly unknown[] };
+            const sql = prisma.$queryRaw.mock.calls[1]?.[0] as { values: readonly unknown[] };
             const occurrences = sql.values.filter(
                 (value) => value === SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
             );
