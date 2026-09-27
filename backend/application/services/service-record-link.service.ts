@@ -319,22 +319,40 @@ export class ServiceRecordLinkService {
         }
     }
 
-    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<void> {
-        const jobs = await this.jobRepository.findPendingByRuleIdsAndEmployeeScheduleId(
-            [SERVICE_RECORD_LINK_RULE_ID],
-            scheduleId,
-        );
+    private async cancelPendingServiceRecordJobs(
+        scheduleId: number,
+        reason: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const jobs = transaction
+            ? await this.jobRepository.findPendingByRuleIdsAndEmployeeScheduleId(
+                [SERVICE_RECORD_LINK_RULE_ID],
+                scheduleId,
+                transaction,
+            )
+            : await this.jobRepository.findPendingByRuleIdsAndEmployeeScheduleId(
+                [SERVICE_RECORD_LINK_RULE_ID],
+                scheduleId,
+            );
         for (const job of jobs) {
             job.cancel(reason);
-            await this.jobRepository.update(job);
+            if (transaction) await this.jobRepository.update(job, transaction);
+            else await this.jobRepository.update(job);
         }
     }
 
-    private async supersedeRetryableServiceRecordSmsLogs(scheduleId: number, reason: string): Promise<void> {
-        const logs = await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId);
+    private async supersedeRetryableServiceRecordSmsLogs(
+        scheduleId: number,
+        reason: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const logs = transaction
+            ? await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId, transaction)
+            : await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId);
         for (const log of logs) {
             log.markRetrySuperseded(reason);
-            await this.logRepository.update(log);
+            if (transaction) await this.logRepository.update(log, transaction);
+            else await this.logRepository.update(log);
         }
     }
 
@@ -416,7 +434,10 @@ export class ServiceRecordLinkService {
 
         try {
             await this.assertRecoveryIntentFenceIfPresent(options);
-            const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
+            const serviceRecordCase = await this.lifecycleService?.ensureForClient(
+                schedule.clientId,
+                options.branchTransaction,
+            );
             if (options.preparedLinkToken) {
                 await this.assertRecoveryIntentFenceIfPresent(options);
                 if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -428,7 +449,7 @@ export class ServiceRecordLinkService {
             }));
                 }
 
-                const activated = await this.tokenService.activatePreparedLink({
+                const preparedLinkParams = {
                     linkToken: options.preparedLinkToken,
                     branchId: schedule.branchId,
                     scheduleId,
@@ -438,7 +459,10 @@ export class ServiceRecordLinkService {
                         serviceRecordCase?.endDate ?? schedule.endDate,
                         options.allowLateReissue === true,
                     ),
-                });
+                };
+                const activated = options.branchTransaction
+                    ? await this.tokenService.activatePreparedLink(preparedLinkParams, options.branchTransaction)
+                    : await this.tokenService.activatePreparedLink(preparedLinkParams);
                 if (!activated) {
                     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                         pointer: "/scheduleId",
@@ -452,11 +476,13 @@ export class ServiceRecordLinkService {
             await this.cancelPendingServiceRecordJobs(
                 scheduleId,
                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                options.branchTransaction,
             );
             await this.assertRecoveryIntentFenceIfPresent(options);
             await this.supersedeRetryableServiceRecordSmsLogs(
                 scheduleId,
                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                options.branchTransaction,
             );
 
             if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -482,7 +508,7 @@ export class ServiceRecordLinkService {
                     employeeName: employee.name,
                     receiver: options.recipientPhone ?? employee.phone,
                     reason: "제공인력 전화번호 누락",
-                });
+                }, options.branchTransaction);
                 return {
                     scheduledFor,
                     employeeId: employee.id,
@@ -508,8 +534,16 @@ export class ServiceRecordLinkService {
                     expectedPhone: employee.phone,
                     expiresAt,
                 };
-                ({ linkToken } = await this.tokenService.reuseActiveLink(tokenParams)
-                    ?? await this.tokenService.issueLink(tokenParams));
+                const reused = options.branchTransaction
+                    ? await this.tokenService.reuseActiveLink(tokenParams, { includeLocked: false }, options.branchTransaction)
+                    : await this.tokenService.reuseActiveLink(tokenParams);
+                if (reused) {
+                    ({ linkToken } = reused);
+                } else {
+                    ({ linkToken } = options.branchTransaction
+                        ? await this.tokenService.issueLink(tokenParams, options.branchTransaction)
+                        : await this.tokenService.issueLink(tokenParams));
+                }
             }
 
             const url = this.buildServiceRecordUrl(linkToken);
@@ -612,7 +646,7 @@ export class ServiceRecordLinkService {
             };
         } finally {
             if (automaticSchedulingClaim) {
-                await this.releaseAutomaticSchedulingClaim(automaticSchedulingClaim);
+                await this.releaseAutomaticSchedulingClaim(automaticSchedulingClaim, options.branchTransaction);
             }
         }
     }
@@ -855,8 +889,12 @@ export class ServiceRecordLinkService {
             : null;
     }
 
-    private async releaseAutomaticSchedulingClaim(claim: AutomaticSchedulingClaim): Promise<void> {
-        await this.prisma.$executeRaw(Prisma.sql`
+    private async releaseAutomaticSchedulingClaim(
+        claim: AutomaticSchedulingClaim,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const db = transaction ?? this.prisma;
+        await db.$executeRaw(Prisma.sql`
             UPDATE "message_trigger_job"
             SET next_attempt_at = clock_timestamp() + (${AUTOMATIC_SCHEDULING_RETRY_DELAY_MS} * interval '1 millisecond'),
                 updated_at = clock_timestamp()
@@ -945,7 +983,7 @@ export class ServiceRecordLinkService {
         employeeName: string;
         receiver: string;
         reason: string;
-    }): Promise<void> {
+    }, transaction?: Prisma.TransactionClient): Promise<void> {
         const now = new Date();
         await this.logRepository.save(
             MessageLogEntity.reconstitute(
@@ -979,6 +1017,7 @@ export class ServiceRecordLinkService {
                 params.employeeName,
                 params.receiver,
             ),
+            transaction,
         );
     }
 

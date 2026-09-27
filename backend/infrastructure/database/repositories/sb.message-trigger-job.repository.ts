@@ -161,16 +161,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return this.toDomain(row);
     }
 
-    async update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
+    async update(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
         const branchWhere = this.branchWhereFragment(job);
+        const client = transaction ?? this.prisma;
         if (job.claimToken) {
-            const result = await this.prisma.message_trigger_job.updateMany({
+            const result = await client.message_trigger_job.updateMany({
                 where: { id: job.id, claimToken: job.claimToken, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 data: this.toUpdate(job),
             });
             if (result.count !== 1) {
-                const current = await this.prisma.message_trigger_job.findUnique({
+                const current = await client.message_trigger_job.findUnique({
                     where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 });
                 if (!current) {
@@ -178,7 +179,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 }
                 return this.toDomain(current);
             }
-            const current = await this.prisma.message_trigger_job.findUnique({
+            const current = await client.message_trigger_job.findUnique({
                 where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             });
             if (!current) {
@@ -186,7 +187,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
             return this.toDomain(current);
         }
-        const row = await this.prisma.message_trigger_job.update({
+        const row = await client.message_trigger_job.update({
             where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             data: this.toUpdate(job),
         });
@@ -488,9 +489,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity[]> {
         if (ruleIds.length === 0) return [];
-        const rows = await this.prisma.message_trigger_job.findMany({
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
             where: { ...ordinaryAutomationJobWhere(),
                 ruleId: { in: ruleIds },
                 employeeScheduleId,
