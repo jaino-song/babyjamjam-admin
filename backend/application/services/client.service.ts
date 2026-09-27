@@ -1121,6 +1121,18 @@ export class ClientService {
                     location: "body",
                 }));
             }
+            if (params.messageAutomationDisabled !== undefined) {
+                // Reuse is a one-time identity shortcut, not a client settings
+                // update. Reject the durable policy explicitly so the caller
+                // cannot believe an opt-out was persisted while side effects
+                // continue against the existing client.
+                throw new BadRequestException(clientProblemBody("VALIDATION_FAILED", {
+                    pointer: "/messageAutomationDisabled",
+                    code: "INVALID_VALUE",
+                    detail: "기존 고객 재사용 시 메시지 자동 전송 설정은 변경할 수 없습니다.",
+                    location: "body",
+                }));
+            }
             this.logger.log(`[Client] Reusing existing client ${existing.id} for duplicate phone in branch ${branchid}`);
             if (params.primaryEmployeeId !== undefined || params.secondaryEmployeeId !== undefined) {
                 const assignment = await this.syncEmployeeAssignment(branchid, {
@@ -2184,19 +2196,35 @@ export class ClientService {
                 }
             }
             if (messageAutomationReenabledAt && !clientNameSupplied) {
-                const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForClient(branchid, id, syncOptions);
-                if (refreshed === false) {
-                    await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
+                try {
+                    const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForClient(branchid, id, syncOptions);
+                    if (refreshed === false) {
+                        await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
+                    }
+                } catch (error) {
+                    this.logger.error(`Failed to sync employee assignment triggers for client ${id}: ${error}`);
+                    try {
+                        await this.persistEmployeeAssignmentRefreshIntents(branchid, id);
+                    } catch (retryError) {
+                        this.logger.error(`Failed to persist employee assignment refresh intent for client ${id}: ${retryError}`);
+                    }
                 }
             }
             if (messageAutomationReenabledAt && this.serviceRecordLinkService) {
-                const schedules = await this.triggerService.readClientAutomationSchedules(branchid, id);
-                for (const schedule of schedules) {
-                    await this.serviceRecordLinkService.scheduleForServiceStart(schedule.id, {
-                        futureOnlyAt: messageAutomationReenabledAt,
-                    }).catch((error) => {
-                        this.logger.error(`Failed to re-materialize service-record link automation for client ${id}: ${error}`);
-                    });
+                try {
+                    const schedules = await this.triggerService.readClientAutomationSchedules(branchid, id);
+                    for (const schedule of schedules) {
+                        await this.serviceRecordLinkService.scheduleForServiceStart(schedule.id, {
+                            futureOnlyAt: messageAutomationReenabledAt,
+                        }).catch((error) => {
+                            this.logger.error(`Failed to re-materialize service-record link automation for client ${id}: ${error}`);
+                        });
+                    }
+                } catch (error) {
+                    // The durable flag change has already committed. A source
+                    // read failure must stay a logged post-commit retry signal,
+                    // never turn the successful client update into a 500.
+                    this.logger.error(`Failed to read service-record link schedules for client ${id}: ${error}`);
                 }
             }
         }
