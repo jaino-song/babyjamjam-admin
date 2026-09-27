@@ -131,6 +131,7 @@ describe("ServiceRecordLinkService", () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
+        const branchLock = createBranchLock(prisma);
         const service = new ServiceRecordLinkService(
             prisma as unknown as PrismaService,
             tokenService as never,
@@ -140,7 +141,7 @@ describe("ServiceRecordLinkService", () => {
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
             undefined,
             undefined,
-            createBranchLock(prisma) as never,
+            branchLock as never,
             createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
@@ -173,6 +174,7 @@ describe("ServiceRecordLinkService", () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
+        const branchLock = createBranchLock(prisma);
         prisma.employee_schedule.findUnique
             .mockResolvedValueOnce({ startDate: new Date("2026-07-03T00:00:00.000Z") })
             .mockResolvedValue(createSchedule());
@@ -188,7 +190,7 @@ describe("ServiceRecordLinkService", () => {
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
             undefined,
             undefined,
-            createBranchLock(prisma) as never,
+            branchLock as never,
             createAutomationActivationService() as never,
         );
 
@@ -200,6 +202,7 @@ describe("ServiceRecordLinkService", () => {
         })).rejects.toThrow("Recovery intent claim is stale");
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+        expect(branchLock.runExclusive).toHaveBeenCalledTimes(1);
     });
 
     it("preserves the task commit reference on an automatic service-record link job", async () => {
