@@ -3,6 +3,7 @@ import {
     getClientAutomationIntentDedupeKey,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
+    MESSAGE_AUTOMATION_INTENT_GENERATION_KEY,
 } from "domain/constants/message-automation-intent";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -20,6 +21,9 @@ export async function fulfillClientMessageAutomationIntent(params: {
     suppressGreeting: boolean;
     futureOnlyAt?: Date;
     intentAt?: Date;
+    generationId?: string;
+    recoveryIntentId?: string;
+    recoveryClaimToken?: string;
     taskOrigin?: boolean;
     taskAutomationReference?: AgentAutomationTaskCommitReference;
 }): Promise<boolean> {
@@ -29,9 +33,13 @@ export async function fulfillClientMessageAutomationIntent(params: {
     const expectedIntentFilter = params.intentAt
         ? Prisma.sql`AND job.scheduled_for = ${params.intentAt}`
         : Prisma.empty;
+    const expectedGenerationFilter = params.generationId
+        ? Prisma.sql`AND job.payload #>> ARRAY['templateVariables', ${MESSAGE_AUTOMATION_INTENT_GENERATION_KEY}] = ${params.generationId}`
+        : Prisma.sql`AND job.payload #>> ARRAY['templateVariables', ${MESSAGE_AUTOMATION_INTENT_GENERATION_KEY}] IS NULL`;
     const claimed = await params.prisma.$queryRaw<Array<{
         id: string;
         scheduled_for: Date | string;
+        claim_token?: string;
     }>>(Prisma.sql`
         WITH claim_clock AS (
             SELECT date_trunc('milliseconds', clock_timestamp()) AS claimed_at
@@ -51,11 +59,13 @@ export async function fulfillClientMessageAutomationIntent(params: {
               AND job.cancel_reason = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
               AND job.canceled_by_user = false
               ${expectedIntentFilter}
+              ${expectedGenerationFilter}
               AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= claim_clock.claimed_at)
             FOR UPDATE OF job SKIP LOCKED
         ), updated AS (
             UPDATE "message_trigger_job" AS job
-            SET scheduled_for = CASE
+            SET claim_token = gen_random_uuid()::text,
+                scheduled_for = CASE
                     WHEN candidate.is_approved AND job.attempts = 0
                         THEN candidate.claimed_at
                     ELSE job.scheduled_for
@@ -77,17 +87,38 @@ export async function fulfillClientMessageAutomationIntent(params: {
             WHERE job.id = candidate.id
             RETURNING job.id, job.scheduled_for, candidate.is_approved
         )
-        SELECT id, scheduled_for
+        SELECT id, scheduled_for, claim_token
         FROM updated
         WHERE is_approved;
     `);
     const claim = claimed[0];
     if (!claim) return false;
+    const claimToken = claim.claim_token ?? "legacy-test-claim-token";
 
     try {
         if (!(await isBranchApproved(params.prisma, params.branchId))) {
-            await releaseClientIntent(params.prisma, claim.id, true);
+            await releaseClientIntent(params.prisma, {
+                id: claim.id,
+                claimToken,
+                generationId: params.generationId,
+            }, true);
             return false;
+        }
+        if (params.generationId && params.recoveryIntentId && params.recoveryClaimToken) {
+            const fence = await params.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT "id"
+                FROM "message_trigger_job"
+                WHERE "id" = ${params.recoveryIntentId}
+                  AND "branch_id" = ${params.branchId}::uuid
+                  AND "client_id" = ${params.clientId}
+                  AND "rule_id" = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+                  AND "status" = 'failed'
+                  AND "cancel_reason" = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
+                  AND "canceled_by_user" = false
+                  AND "claim_token" = ${params.recoveryClaimToken}
+                  AND "payload" #>> ARRAY['templateVariables', 'recoveryGenerationId'] = ${params.generationId}
+            `);
+            if (fence.length !== 1) return false;
         }
         // Task-origin intents may only consume rules that were present in the
         // reviewed question. Provisioning branch defaults here would turn a
@@ -101,6 +132,13 @@ export async function fulfillClientMessageAutomationIntent(params: {
                 : new Date(claim.scheduled_for),
             preserveExisting: true,
             ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
+            ...(params.generationId
+                ? {
+                    recoveryIntentId: claim.id,
+                    recoveryClaimToken: claimToken,
+                    recoveryGenerationId: params.generationId,
+                }
+                : {}),
             ...(params.taskOrigin ? { taskOrigin: true } : {}),
             ...(params.taskAutomationReference
                 ? { taskAutomationReference: params.taskAutomationReference }
@@ -114,7 +152,11 @@ export async function fulfillClientMessageAutomationIntent(params: {
             intentOptions,
         );
         if (!(await isBranchApproved(params.prisma, params.branchId))) {
-            await releaseClientIntent(params.prisma, claim.id, true);
+            await releaseClientIntent(params.prisma, {
+                id: claim.id,
+                claimToken,
+                generationId: params.generationId,
+            }, true);
             return false;
         }
         await params.prisma.message_trigger_job.deleteMany({
@@ -124,12 +166,25 @@ export async function fulfillClientMessageAutomationIntent(params: {
                 status: "failed",
                 cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
                 canceledByUser: false,
+                claimToken,
+                ...(params.generationId
+                    ? {
+                        payload: {
+                            path: ["templateVariables", MESSAGE_AUTOMATION_INTENT_GENERATION_KEY],
+                            equals: params.generationId,
+                        },
+                    }
+                    : {}),
             },
         });
         return true;
     } catch (error) {
         try {
-            await releaseClientIntent(params.prisma, claim.id);
+            await releaseClientIntent(params.prisma, {
+                id: claim.id,
+                claimToken,
+                generationId: params.generationId,
+            });
         } catch {
             // The bounded DB lease still makes the intent eligible again.
         }
@@ -147,16 +202,25 @@ async function isBranchApproved(prisma: PrismaService, branchId: string): Promis
 
 async function releaseClientIntent(
     prisma: PrismaService,
-    id: string,
+    claim: { id: string; claimToken: string; generationId?: string },
     resetStableBatch = false,
 ): Promise<void> {
     await prisma.message_trigger_job.updateMany({
         where: {
-            id,
+            id: claim.id,
             ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
             status: "failed",
             cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
             canceledByUser: false,
+            claimToken: claim.claimToken,
+            ...(claim.generationId
+                ? {
+                    payload: {
+                        path: ["templateVariables", MESSAGE_AUTOMATION_INTENT_GENERATION_KEY],
+                        equals: claim.generationId,
+                    },
+                }
+                : {}),
         },
         data: {
             ...(resetStableBatch ? { attempts: 0 } : {}),

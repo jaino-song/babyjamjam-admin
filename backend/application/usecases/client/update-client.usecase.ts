@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { clientCodeOnlyProblemBody, clientProblemBody } from "application/usecases/client/client-write-validation";
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -67,12 +68,22 @@ export class UpdateClientUsecase {
         id: number,
         updates: UpdateClientParams,
         transaction?: Prisma.TransactionClient,
+        branchLockHeld = false,
     ): Promise<ClientEntity> {
         if (!transaction && updates.messageAutomationDisabled !== undefined && this.database) {
-            const write = (tx: Prisma.TransactionClient) => this.execute(branchid, id, updates, tx);
+            const write = (tx: Prisma.TransactionClient) => this.execute(branchid, id, updates, tx, true);
             return this.branchLock
                 ? this.branchLock.runExclusive(branchid, write)
                 : this.database.$transaction(write);
+        }
+        if (transaction && updates.messageAutomationDisabled !== undefined && this.branchLock && !branchLockHeld) {
+            return this.branchLock.runExclusive(branchid, (lockedTransaction) => this.execute(
+                branchid,
+                id,
+                updates,
+                lockedTransaction,
+                true,
+            ), transaction);
         }
         assertNonNullableClientPatch(updates);
         const client = transaction
@@ -91,8 +102,22 @@ export class UpdateClientUsecase {
             );
         }
 
+        const wasMessageAutomationDisabled = client.messageAutomationDisabled === true
+            && updates.messageAutomationDisabled === false;
         client.update(updates);
-        return this.clientRepository.update(branchid, client, transaction);
+        const updated = await this.clientRepository.update(branchid, client, transaction);
+        if (wasMessageAutomationDisabled && transaction) {
+            if (!this.messageAutomationIntentService) {
+                throw new Error("Message automation recovery is not configured");
+            }
+            await this.messageAutomationIntentService.persistReenableIntents(transaction, {
+                branchId: branchid,
+                clientId: id,
+                futureOnlyAt: await transactionNow(transaction),
+                generationId: randomUUID(),
+            });
+        }
+        return updated;
     }
 
     /**
@@ -106,7 +131,7 @@ export class UpdateClientUsecase {
         updates: UpdateClientParams,
         expectedTargetVersion: string,
         transaction?: Prisma.TransactionClient,
-        options: { deferMessageAutomationRecovery?: boolean } = {},
+        options: { deferMessageAutomationRecovery?: boolean; branchLockHeld?: boolean } = {},
     ): Promise<ClientEntity> {
         if (!transaction && updates.messageAutomationDisabled !== undefined && this.database) {
             const write = (tx: Prisma.TransactionClient) => this.executeApprovedTarget(
@@ -115,11 +140,21 @@ export class UpdateClientUsecase {
                 updates,
                 expectedTargetVersion,
                 tx,
-                options,
+                { ...options, branchLockHeld: true },
             );
             return this.branchLock
                 ? this.branchLock.runExclusive(branchid, write)
                 : this.database.$transaction(write);
+        }
+        if (transaction && updates.messageAutomationDisabled !== undefined && this.branchLock && !options.branchLockHeld) {
+            return this.branchLock.runExclusive(branchid, (lockedTransaction) => this.executeApprovedTarget(
+                branchid,
+                id,
+                updates,
+                expectedTargetVersion,
+                lockedTransaction,
+                { ...options, branchLockHeld: true },
+            ), transaction);
         }
         assertNonNullableClientPatch(updates);
         const current = updates.messageAutomationDisabled !== undefined && transaction
@@ -156,6 +191,7 @@ export class UpdateClientUsecase {
                     branchId: branchid,
                     clientId: id,
                     futureOnlyAt: reenabledAt,
+                    generationId: randomUUID(),
                 });
             }
             return updated;

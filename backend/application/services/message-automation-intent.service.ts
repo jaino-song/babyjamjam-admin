@@ -1,8 +1,11 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import {
     getEmployeeAutomationIntentDedupeKey,
+    MESSAGE_AUTOMATION_INTENT_GENERATION_KEY,
+    isMessageAutomationIntentGenerationId,
     getScheduleAutomationIntentDedupeKey,
     MESSAGE_AUTOMATION_INTENT_INVALID_REASON,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
@@ -47,6 +50,8 @@ interface ScheduleIntentClaim {
     id: string;
     scheduledFor: Date;
     updatedAt: Date;
+    claimToken: string;
+    generationId?: string;
 }
 
 @Injectable()
@@ -71,6 +76,7 @@ export class MessageAutomationIntentService {
             intentAt: Date;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
+            generationId?: string;
         },
     ): Promise<void> {
         if (await isClientMessageAutomationDisabled(transaction, params.clientId)) return;
@@ -89,6 +95,8 @@ export class MessageAutomationIntentService {
             replaceExisting?: boolean;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
+            generationId?: string;
+            allowImmediateAssignmentForNewSchedule?: boolean;
         },
     ): Promise<void> {
         if (await isClientMessageAutomationDisabled(transaction, params.clientId)) return;
@@ -108,10 +116,13 @@ export class MessageAutomationIntentService {
             branchId: string;
             clientId: number;
             futureOnlyAt: Date;
+            generationId?: string;
+            newScheduleId?: number | null;
             taskOrigin?: boolean;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<number[]> {
+        const generationId = params.generationId ?? randomUUID();
         const scheduleIds = await lockClientMessageAutomationSchedules(
             transaction,
             params.branchId,
@@ -126,6 +137,7 @@ export class MessageAutomationIntentService {
             intentAt: params.futureOnlyAt,
             taskOrigin: params.taskOrigin,
             taskAutomationReference: params.taskAutomationReference,
+            generationId,
         });
         for (const scheduleId of scheduleIds) {
             await this.persistScheduleIntent(transaction, {
@@ -138,6 +150,8 @@ export class MessageAutomationIntentService {
                 replaceExisting: false,
                 taskOrigin: params.taskOrigin,
                 taskAutomationReference: params.taskAutomationReference,
+                generationId,
+                allowImmediateAssignmentForNewSchedule: scheduleId === params.newScheduleId,
             });
         }
         return scheduleIds;
@@ -171,6 +185,9 @@ export class MessageAutomationIntentService {
         includePast: boolean;
         suppressGreeting: boolean;
         futureOnlyAt?: Date;
+        generationId?: string;
+        recoveryIntentId?: string;
+        recoveryClaimToken?: string;
         intentAt?: Date;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
@@ -187,13 +204,17 @@ export class MessageAutomationIntentService {
         scheduleId: number;
         includePast: boolean;
         futureOnlyAt?: Date;
+        generationId?: string;
+        recoveryIntentId?: string;
+        recoveryClaimToken?: string;
+        allowImmediateAssignmentForNewSchedule?: boolean;
         replaceExisting?: boolean;
         intentAt?: Date;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
     }): Promise<boolean> {
         const dedupeKey = getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId);
-        const claim = await this.claimIntent(dedupeKey, params.intentAt);
+        const claim = await this.claimIntent(dedupeKey, params.intentAt, params.generationId);
         if (!claim) return false;
 
         try {
@@ -208,6 +229,16 @@ export class MessageAutomationIntentService {
                 {
                     preserveExisting: params.replaceExisting !== true,
                     ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
+                    ...(params.allowImmediateAssignmentForNewSchedule
+                        ? { allowImmediateAssignmentForNewSchedule: true }
+                        : {}),
+                    ...(params.generationId
+                        ? {
+                            recoveryIntentId: claim.id,
+                            recoveryClaimToken: claim.claimToken,
+                            recoveryGenerationId: params.generationId,
+                        }
+                        : {}),
                     ...(params.taskOrigin ? { taskOrigin: true } : {}),
                     ...(params.taskAutomationReference
                         ? { taskAutomationReference: params.taskAutomationReference }
@@ -227,6 +258,13 @@ export class MessageAutomationIntentService {
                     params.scheduleId,
                     {
                         ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt } : {}),
+                        ...(params.generationId
+                            ? {
+                                recoveryIntentId: claim.id,
+                                recoveryClaimToken: claim.claimToken,
+                                recoveryGenerationId: params.generationId,
+                            }
+                            : {}),
                         taskAutomationReference: params.taskAutomationReference,
                     },
                 );
@@ -234,7 +272,16 @@ export class MessageAutomationIntentService {
                 if (params.futureOnlyAt) {
                     await this.serviceRecordLinkService.scheduleForServiceStart(
                         params.scheduleId,
-                        { futureOnlyAt: params.futureOnlyAt },
+                        {
+                            futureOnlyAt: params.futureOnlyAt,
+                            ...(params.generationId
+                                ? {
+                                    recoveryIntentId: claim.id,
+                                    recoveryClaimToken: claim.claimToken,
+                                    recoveryGenerationId: params.generationId,
+                                }
+                                : {}),
+                        },
                     );
                 } else {
                     await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
@@ -341,17 +388,24 @@ export class MessageAutomationIntentService {
     private async claimIntent(
         dedupeKey: string,
         expectedIntentAt?: Date,
+        expectedGenerationId?: string,
     ): Promise<ScheduleIntentClaim | null> {
         const expectedIntentFilter = expectedIntentAt
             ? Prisma.sql`AND scheduled_for = ${expectedIntentAt}`
             : Prisma.empty;
+        const expectedGenerationFilter = expectedGenerationId
+            ? Prisma.sql`AND payload #>> ARRAY['templateVariables', ${MESSAGE_AUTOMATION_INTENT_GENERATION_KEY}] = ${expectedGenerationId}`
+            : Prisma.sql`AND payload #>> ARRAY['templateVariables', ${MESSAGE_AUTOMATION_INTENT_GENERATION_KEY}] IS NULL`;
         const claimed = await this.prisma.$queryRaw<Array<{
             id: string;
             scheduled_for: Date | string;
             updated_at?: Date | string;
+            claim_token?: string;
+            payload?: Prisma.JsonValue;
         }>>(Prisma.sql`
             UPDATE "message_trigger_job"
-            SET next_attempt_at = clock_timestamp() + (${CLAIM_LEASE_MINUTES} * interval '1 minute'),
+            SET claim_token = gen_random_uuid()::text,
+                next_attempt_at = clock_timestamp() + (${CLAIM_LEASE_MINUTES} * interval '1 minute'),
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE dedupe_key = ${dedupeKey}
               AND rule_id = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
@@ -359,17 +413,21 @@ export class MessageAutomationIntentService {
               AND cancel_reason = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
               AND canceled_by_user = false
               ${expectedIntentFilter}
+              ${expectedGenerationFilter}
               AND (next_attempt_at IS NULL OR next_attempt_at <= clock_timestamp())
-            RETURNING id, scheduled_for, updated_at;
+            RETURNING id, scheduled_for, updated_at, claim_token, payload;
         `);
         const row = claimed[0];
         if (!row) return null;
 
         const scheduledFor = toDate(row.scheduled_for);
+        const payloadGeneration = this.readGenerationId(row.payload);
         return {
             id: row.id,
             scheduledFor,
             updatedAt: row.updated_at ? toDate(row.updated_at) : scheduledFor,
+            claimToken: row.claim_token ?? "legacy-test-claim-token",
+            generationId: payloadGeneration,
         };
     }
 
@@ -391,6 +449,15 @@ export class MessageAutomationIntentService {
                 canceledByUser: false,
                 scheduledFor: claim.scheduledFor,
                 updatedAt: claim.updatedAt,
+                claimToken: claim.claimToken,
+                ...(claim.generationId
+                    ? {
+                        payload: {
+                            path: ["templateVariables", MESSAGE_AUTOMATION_INTENT_GENERATION_KEY],
+                            equals: claim.generationId,
+                        },
+                    }
+                    : {}),
             },
             data: {
                 nextAttemptAt: new Date(Date.now() + RETRY_DELAY_MS),
@@ -421,6 +488,15 @@ export class MessageAutomationIntentService {
                 canceledByUser: false,
                 scheduledFor: claim.scheduledFor,
                 updatedAt: claim.updatedAt,
+                claimToken: claim.claimToken,
+                ...(claim.generationId
+                    ? {
+                        payload: {
+                            path: ["templateVariables", MESSAGE_AUTOMATION_INTENT_GENERATION_KEY],
+                            equals: claim.generationId,
+                        },
+                    }
+                    : {}),
             },
         });
         return deleted.count === 1;
@@ -445,6 +521,12 @@ export class MessageAutomationIntentService {
             return false;
         }
         const taskOrigin = variables["taskOrigin"] === "true";
+        const generationId = this.readGenerationId(candidate.payload);
+        if (this.hasGenerationCarrier(candidate.payload) && !generationId) {
+            await this.quarantineInvalidIntent(candidate.id, expectedVersion);
+            return false;
+        }
+        const allowImmediateAssignmentForNewSchedule = variables["allowImmediateAssignmentForNewSchedule"] === "true";
         const taskReference = this.readTaskAutomationReference(candidate.payload);
         // Task-origin retries must carry a strict digest-only pointer to the
         // terminal records committed by the task. An unexpected or malformed
@@ -467,6 +549,9 @@ export class MessageAutomationIntentService {
                 includePast,
                 suppressGreeting: variables["suppressGreeting"] === "true",
                 futureOnlyAt,
+                generationId,
+                recoveryIntentId: candidate.id,
+                recoveryClaimToken: undefined,
                 intentAt: candidate.scheduledFor,
                 taskOrigin,
                 ...(taskReference ? { taskAutomationReference: taskReference } : {}),
@@ -478,6 +563,10 @@ export class MessageAutomationIntentService {
                 scheduleId: candidate.employeeScheduleId,
                 includePast,
                 futureOnlyAt,
+                generationId,
+                recoveryIntentId: candidate.id,
+                recoveryClaimToken: undefined,
+                allowImmediateAssignmentForNewSchedule,
                 replaceExisting,
                 intentAt: candidate.scheduledFor,
                 taskOrigin,
@@ -569,6 +658,21 @@ export class MessageAutomationIntentService {
         if (value === undefined) return undefined;
         const parsed = new Date(value);
         return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+    }
+
+    private readGenerationId(payload: Prisma.JsonValue | undefined): string | undefined {
+        if (!payload || Array.isArray(payload) || typeof payload !== "object") return undefined;
+        const variables = payload["templateVariables"];
+        if (!variables || Array.isArray(variables) || typeof variables !== "object") return undefined;
+        const value = variables[MESSAGE_AUTOMATION_INTENT_GENERATION_KEY];
+        return typeof value === "string" && isMessageAutomationIntentGenerationId(value) ? value : undefined;
+    }
+
+    private hasGenerationCarrier(payload: Prisma.JsonValue): boolean {
+        if (!payload || Array.isArray(payload) || typeof payload !== "object") return false;
+        const variables = payload["templateVariables"];
+        return Boolean(variables && !Array.isArray(variables) && typeof variables === "object"
+            && Object.prototype.hasOwnProperty.call(variables, MESSAGE_AUTOMATION_INTENT_GENERATION_KEY));
     }
 
     /**

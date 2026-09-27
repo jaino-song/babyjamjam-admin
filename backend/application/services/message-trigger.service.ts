@@ -39,7 +39,11 @@ import {
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
-import { EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
+import {
+    EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
+    MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+    MESSAGE_AUTOMATION_INTENT_RULE_ID,
+} from "domain/constants/message-automation-intent";
 import {
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
@@ -113,6 +117,12 @@ export interface MessageTriggerIntentSyncOptions {
     taskOrigin?: boolean;
     /** Digest-only reference to the task records reviewed for this materialization. */
     taskAutomationReference?: AgentAutomationTaskCommitReference;
+    /** Recovery marker CAS fence. Present only for durable intent replay. */
+    recoveryIntentId?: string;
+    recoveryClaimToken?: string;
+    recoveryGenerationId?: string;
+    /** A schedule created in the same OFF->ON transaction may materialize its immediate rule. */
+    allowImmediateAssignmentForNewSchedule?: boolean;
 }
 
 type MessageTriggerRuleValidationParams = Pick<
@@ -1443,7 +1453,7 @@ export class MessageTriggerService {
                     "Client data changed",
                 );
             }
-        } else {
+        } else if (!(intentOptions?.preserveExisting && intentOptions.futureOnlyAt)) {
             const immediateRules = rules.filter(
                 (rule) => rule.offsetType === MessageTriggerOffsetType.IMMEDIATE,
             );
@@ -1513,6 +1523,13 @@ export class MessageTriggerService {
                 intentOptions?.preserveExisting === true,
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
+                intentOptions?.recoveryIntentId && intentOptions.recoveryClaimToken && intentOptions.recoveryGenerationId
+                    ? {
+                        id: intentOptions.recoveryIntentId,
+                        claimToken: intentOptions.recoveryClaimToken,
+                        generationId: intentOptions.recoveryGenerationId,
+                    }
+                    : undefined,
             );
         }
     }
@@ -1585,7 +1602,7 @@ export class MessageTriggerService {
         branchId: string,
         employeeScheduleId: number,
         includePast: boolean,
-        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt" | "taskOrigin" | "taskAutomationReference">,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt" | "taskOrigin" | "taskAutomationReference" | "recoveryIntentId" | "recoveryClaimToken" | "recoveryGenerationId" | "allowImmediateAssignmentForNewSchedule">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1637,13 +1654,14 @@ export class MessageTriggerService {
             if (
                 intentOptions?.futureOnlyAt
                 && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
+                && intentOptions.allowImmediateAssignmentForNewSchedule !== true
             ) {
                 // A schedule enumerated by the client re-enable pass existed
                 // before the durable flag was lifted. Immediate assignment
                 // recipes use materialization time, so their scheduledFor
                 // cannot distinguish that historical event from a new one.
                 // New schedules created by the same client update are synced
-                // separately without futureOnlyAt.
+                // separately with allowImmediateAssignmentForNewSchedule.
                 continue;
             }
             if (await this.hasSentEmployeeAssignmentJobForSameEmployee(job)) {
@@ -1652,11 +1670,21 @@ export class MessageTriggerService {
             const persisted = await this.persistPendingJob(
                 job,
                 rule,
-                includePast,
+                intentOptions?.allowImmediateAssignmentForNewSchedule
+                    && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
+                    ? true
+                    : includePast,
                 false,
                 intentOptions?.preserveExisting === true,
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
+                intentOptions?.recoveryIntentId && intentOptions.recoveryClaimToken && intentOptions.recoveryGenerationId
+                    ? {
+                        id: intentOptions.recoveryIntentId,
+                        claimToken: intentOptions.recoveryClaimToken,
+                        generationId: intentOptions.recoveryGenerationId,
+                    }
+                    : undefined,
             );
             if (!persisted) retryable = true;
         }
@@ -1671,7 +1699,7 @@ export class MessageTriggerService {
     async syncEmployeeAssignmentRulesForClient(
         branchId: string,
         clientId: number,
-        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt">,
+        intentOptions?: Pick<MessageTriggerIntentSyncOptions, "preserveExisting" | "futureOnlyAt" | "recoveryIntentId" | "recoveryClaimToken" | "recoveryGenerationId">,
     ): Promise<boolean> {
         if (!(await this.hasTriggerSchema())) {
             return false;
@@ -1892,6 +1920,7 @@ export class MessageTriggerService {
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
         taskAutomationReference?: AgentAutomationTaskCommitReference,
+        recoveryFence?: { id: string; claimToken: string; generationId: string },
     ): Promise<boolean> {
         if (!job) return true;
         // The reference is carried only in the materialized job payload. It is
@@ -1915,6 +1944,10 @@ export class MessageTriggerService {
         }
         if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
+            if (recoveryFence) {
+                if (!transaction) throw new Error("Recovery intent writes require a transaction");
+                await this.assertRecoveryIntentFence(transaction, recoveryFence);
+            }
             if (automaticJob && materializedJob.clientId !== null && transaction
                 && await lockClientMessageAutomationPolicy(transaction, materializedJob.branchId!, materializedJob.clientId)) {
                 return null;
@@ -1958,6 +1991,25 @@ export class MessageTriggerService {
             )
             : await persist(transaction);
         return persisted !== null;
+    }
+
+    private async assertRecoveryIntentFence(
+        transaction: Prisma.TransactionClient,
+        fence: { id: string; claimToken: string; generationId: string },
+    ): Promise<void> {
+        const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT "id"
+            FROM "message_trigger_job"
+            WHERE "id" = ${fence.id}
+              AND "rule_id" = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+              AND "status" = 'failed'
+              AND "cancel_reason" = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
+              AND "canceled_by_user" = false
+              AND "claim_token" = ${fence.claimToken}
+              AND "payload" #>> ARRAY['templateVariables', 'recoveryGenerationId'] = ${fence.generationId}
+            FOR UPDATE
+        `);
+        if (rows.length !== 1) throw new Error("Recovery intent claim is stale");
     }
 
     private async applyRetroactiveSendConfig(

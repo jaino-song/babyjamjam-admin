@@ -6,6 +6,8 @@ import {
     EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
+    MESSAGE_AUTOMATION_INTENT_GENERATION_KEY,
+    MESSAGE_AUTOMATION_INTENT_NEW_SCHEDULE_KEY,
     MessageAutomationIntentKind,
 } from "domain/constants/message-automation-intent";
 import {
@@ -32,6 +34,8 @@ interface PersistIntentParams {
     replaceExisting: boolean;
     taskOrigin?: boolean;
     taskAutomationReference?: AgentAutomationTaskCommitReference;
+    generationId?: string;
+    allowImmediateAssignmentForNewSchedule?: boolean;
 }
 
 export async function persistClientMessageAutomationIntent(
@@ -45,6 +49,7 @@ export async function persistClientMessageAutomationIntent(
         intentAt: Date;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
+        generationId?: string;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -72,6 +77,8 @@ export async function persistScheduleMessageAutomationIntent(
         replaceExisting?: boolean;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
+        generationId?: string;
+        allowImmediateAssignmentForNewSchedule?: boolean;
     },
 ): Promise<void> {
     await persistMessageAutomationIntent(transaction, {
@@ -89,6 +96,8 @@ export async function persistScheduleMessageAutomationIntent(
         replaceExisting: params.replaceExisting ?? false,
         taskOrigin: params.taskOrigin,
         taskAutomationReference: params.taskAutomationReference,
+        generationId: params.generationId,
+        allowImmediateAssignmentForNewSchedule: params.allowImmediateAssignmentForNewSchedule,
     });
 }
 
@@ -170,6 +179,10 @@ async function persistMessageAutomationIntent(
             suppressGreeting: String(params.suppressGreeting),
             replaceExisting: String(params.replaceExisting),
             ...(params.futureOnlyAt ? { futureOnlyAt: params.futureOnlyAt.toISOString() } : {}),
+            ...(params.generationId ? { [MESSAGE_AUTOMATION_INTENT_GENERATION_KEY]: params.generationId } : {}),
+            ...(params.allowImmediateAssignmentForNewSchedule
+                ? { [MESSAGE_AUTOMATION_INTENT_NEW_SCHEDULE_KEY]: "true" }
+                : {}),
             ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
         ...(taskAutomationReference ? { taskAutomationReference } : {}),
@@ -192,6 +205,7 @@ async function persistMessageAutomationIntent(
             payload,
             attempts: 0,
             nextAttemptAt: params.intentAt,
+            claimToken: null,
         },
         update: {
             status: "failed",
@@ -208,6 +222,7 @@ async function persistMessageAutomationIntent(
             payload,
             attempts: 0,
             nextAttemptAt: params.intentAt,
+            claimToken: null,
         },
     });
 }

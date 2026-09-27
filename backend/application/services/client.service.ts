@@ -1687,11 +1687,15 @@ export class ClientService {
         branchId: string,
         clientId: number,
         futureOnlyAt: Date,
+        generationId: string,
+        newScheduleId: number | null,
     ): Promise<number[]> {
         return this.messageAutomationIntentService.persistReenableIntents(transaction, {
             branchId,
             clientId,
             futureOnlyAt,
+            generationId,
+            newScheduleId,
         });
     }
 
@@ -1699,6 +1703,8 @@ export class ClientService {
         branchId: string,
         clientId: number,
         futureOnlyAt: Date,
+        generationId: string,
+        newScheduleId: number | null,
         scheduleIds: readonly number[],
     ): Promise<void> {
         try {
@@ -1708,6 +1714,8 @@ export class ClientService {
                 includePast: false,
                 suppressGreeting: false,
                 futureOnlyAt,
+                generationId,
+                recoveryIntentId: undefined,
                 intentAt: futureOnlyAt,
             });
         } catch (error) {
@@ -1720,8 +1728,10 @@ export class ClientService {
                     branchId,
                     scheduleId,
                     includePast: false,
-                    futureOnlyAt,
-                    intentAt: futureOnlyAt,
+                futureOnlyAt,
+                generationId,
+                intentAt: futureOnlyAt,
+                allowImmediateAssignmentForNewSchedule: scheduleId === newScheduleId,
                 });
             } catch (error) {
                 this.logger.error(`Failed to fulfill schedule message automation re-enable intent for schedule ${scheduleId}: ${error}`);
@@ -1881,6 +1891,7 @@ export class ClientService {
         let createdScheduleId: number | null = null;
         let replacedScheduleId: number | null = null;
         let messageAutomationReenabledAt: Date | null = null;
+        let messageAutomationReenabledGenerationId: string | null = null;
         let messageAutomationReenabledScheduleIds: number[] = [];
         const ordinaryMutationId = randomUUID();
 
@@ -1955,6 +1966,7 @@ export class ClientService {
                 );
             } else if (durableAutomationDisableChanged && params.messageAutomationDisabled === false) {
                 messageAutomationReenabledAt = await this.transactionNow(transaction);
+                messageAutomationReenabledGenerationId = randomUUID();
             }
             const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
                 startDate: startDateUpdate,
@@ -2186,6 +2198,8 @@ export class ClientService {
                     branchid,
                     id,
                     messageAutomationReenabledAt,
+                    messageAutomationReenabledGenerationId!,
+                    createdScheduleId,
                 );
             }
             await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
@@ -2232,6 +2246,8 @@ export class ClientService {
                 branchid,
                 id,
                 messageAutomationReenabledAt,
+                messageAutomationReenabledGenerationId!,
+                createdScheduleId,
                 messageAutomationReenabledScheduleIds,
             );
         } else if (this.triggerService) {

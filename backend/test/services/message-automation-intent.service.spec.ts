@@ -103,6 +103,29 @@ describe("MessageAutomationIntentService", () => {
         );
     });
 
+    it("carries a recovery generation into the marker payload", async () => {
+        const { service, transaction } = setup();
+        const generationId = "70000000-0000-4000-8000-000000000099";
+
+        await service.persistClientIntent(transaction as never, {
+            branchId: "branch-1",
+            clientId: 31,
+            includePast: false,
+            futureOnlyAt: new Date("2026-09-28T01:02:03.000Z"),
+            suppressGreeting: false,
+            intentAt: new Date("2026-09-28T01:02:03.000Z"),
+            generationId,
+        });
+
+        const call = transaction.message_trigger_job.upsert.mock.calls.at(-1)?.[0] as {
+            create: { payload: Record<string, unknown>; claimToken: string | null };
+        };
+        expect(call.create.payload).toEqual(expect.objectContaining({
+            templateVariables: expect.objectContaining({ recoveryGenerationId: generationId }),
+        }));
+        expect(call.create.claimToken).toBeNull();
+    });
+
     it("stores cutoff-aware client and schedule recovery intents in one transaction", async () => {
         const { service, transaction } = setup();
         const futureOnlyAt = new Date("2026-09-28T01:02:03.000Z");
@@ -519,6 +542,37 @@ describe("MessageAutomationIntentService", () => {
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
     });
 
+    it("releases a stale client claimant only with its generation and fresh claim token", async () => {
+        const { service, prisma, triggerService } = setup();
+        const generationId = "70000000-0000-4000-8000-000000000099";
+        const claimToken = "70000000-0000-4000-8000-000000000098";
+        prisma.$queryRaw.mockResolvedValueOnce([{
+            id: "intent-1",
+            scheduled_for: new Date("2026-09-28T01:02:03.000Z"),
+            claim_token: claimToken,
+        }]);
+        triggerService.syncClientRulesForClient.mockRejectedValue(new Error("sync unavailable"));
+
+        await expect(service.fulfillClientIntent({
+            branchId: "branch-1",
+            clientId: 31,
+            includePast: false,
+            suppressGreeting: false,
+            generationId,
+        })).rejects.toThrow("sync unavailable");
+
+        expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                id: "intent-1",
+                claimToken,
+                payload: expect.objectContaining({
+                    path: ["templateVariables", "recoveryGenerationId"],
+                    equals: generationId,
+                }),
+            }),
+        }));
+    });
+
     it("rebases a client intent delayed beyond 24 hours to its first approved claim", async () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-08-22T01:02:03.000Z"));
         try {
@@ -790,6 +844,40 @@ describe("MessageAutomationIntentService", () => {
         );
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
         expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+    });
+
+    it("releases a stale schedule claimant only with its generation and fresh claim token", async () => {
+        const { service, prisma, triggerService } = setup();
+        const generationId = "70000000-0000-4000-8000-000000000097";
+        const claimToken = "70000000-0000-4000-8000-000000000096";
+        prisma.$queryRaw.mockResolvedValueOnce([{
+            id: "intent-1",
+            scheduled_for: new Date("2026-09-28T01:02:03.000Z"),
+            updated_at: new Date("2026-09-28T01:02:04.000Z"),
+            claim_token: claimToken,
+            payload: { templateVariables: { recoveryGenerationId: generationId } },
+        }]);
+        triggerService.syncEmployeeAssignmentRulesForSchedule.mockRejectedValue(
+            new Error("schedule sync unavailable"),
+        );
+
+        await expect(service.fulfillScheduleIntent({
+            branchId: "branch-1",
+            scheduleId: 72,
+            includePast: false,
+            generationId,
+        })).rejects.toThrow("schedule sync unavailable");
+
+        expect(prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({
+                id: "intent-1",
+                claimToken,
+                payload: expect.objectContaining({
+                    path: ["templateVariables", "recoveryGenerationId"],
+                    equals: generationId,
+                }),
+            }),
+        }));
     });
 
     it("does not generate schedule jobs while sender approval is absent", async () => {
