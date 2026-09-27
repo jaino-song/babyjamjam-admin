@@ -152,6 +152,30 @@ describe("ClientFormDialog prefill", () => {
         }));
     });
 
+    it("prefills durable message suppression and persists the enabled toggle on edit", async () => {
+        const client = createClient({
+            messageAutomationDisabled: true,
+            duration: null,
+            fullPrice: null,
+            actualPrice: null,
+            startDate: null,
+            endDate: null,
+        });
+        mockUpdateClient.mockResolvedValue({ id: client.id });
+        render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
+
+        const automationSwitch = await screen.findByRole("switch", { name: "메시지 자동 전송" });
+        await waitFor(() => expect(automationSwitch).not.toBeChecked());
+        fireEvent.click(automationSwitch);
+        expect(automationSwitch).toBeChecked();
+        fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+        await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledWith({
+            id: client.id,
+            dto: expect.objectContaining({ messageAutomationDisabled: false }),
+        }));
+    });
+
     it.each([["860709", "1986-07-09"], ["580303", "1958-03-03"], ["1905-01-01", "1905-01-01"]])("keeps normalized birthday %s as %s", async (birthday, expected) => {
         render(<ClientFormDialog open onClose={jest.fn()} prefill={{ birthday }} />);
         await waitFor(() => expect(screen.getByLabelText("생년월일*")).toHaveValue(expected));

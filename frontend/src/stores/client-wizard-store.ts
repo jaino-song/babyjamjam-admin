@@ -22,6 +22,7 @@ interface ClientWizardFormData {
   breastPump: boolean;
   serviceStatus: ServiceStatus;
   applyMessageAutomation: boolean;
+  messageAutomationDisabled: boolean;
 }
 
 interface ClientWizardStore extends ClientWizardFormData {
@@ -57,6 +58,7 @@ const INITIAL_FORM: ClientWizardFormData = {
   breastPump: false,
   serviceStatus: "pre_booking",
   applyMessageAutomation: true,
+  messageAutomationDisabled: false,
 };
 
 export const useClientWizardStore = create<ClientWizardStore>((set) => ({
