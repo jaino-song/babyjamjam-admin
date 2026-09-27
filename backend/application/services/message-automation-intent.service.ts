@@ -20,6 +20,7 @@ import { ServiceRecordLinkService } from "./service-record-link.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import { isClientMessageAutomationDisabled } from "./client-message-automation-policy";
 
 const CLAIM_LEASE_MINUTES = 10;
 const RETRY_DELAY_MS = 5 * 60 * 1000;
@@ -68,6 +69,7 @@ export class MessageAutomationIntentService {
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
+        if (await isClientMessageAutomationDisabled(transaction, params.clientId)) return;
         await persistClientMessageAutomationIntent(transaction, params);
     }
 
@@ -84,6 +86,7 @@ export class MessageAutomationIntentService {
             taskAutomationReference?: AgentAutomationTaskCommitReference;
         },
     ): Promise<void> {
+        if (await isClientMessageAutomationDisabled(transaction, params.clientId)) return;
         await persistScheduleMessageAutomationIntent(transaction, params);
     }
 

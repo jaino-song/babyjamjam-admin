@@ -28,6 +28,7 @@ interface UpdateClientProps {
     breastPump?: boolean;
     eDocId?: string | null;
     areaId?: string | null;
+    messageAutomationDisabled?: boolean;
 }
 
 interface CreateClientProps {
@@ -53,6 +54,7 @@ interface CreateClientProps {
     areaId?: string | null;
     createdAt?: Date | null;
     suppressGreetingSms?: boolean;
+    messageAutomationDisabled?: boolean;
 }
 
 /**
@@ -120,6 +122,8 @@ function deriveCreatedClientDuration(
 }
 
 export class ClientEntity {
+    private messageAutomationDisabledExplicit = false;
+
     constructor(
         public readonly id: number,
         public name: string,
@@ -148,7 +152,13 @@ export class ClientEntity {
         public birthDate: Date | null = null,
         /** Canonical identity key; display formatting remains in `phone`. */
         public phoneNormalized: string | null = normalizePhone(phone),
+        /** Durable opt-out for every client-related automatic message routine. */
+        public messageAutomationDisabled: boolean = false,
     ) {}
+
+    hasExplicitMessageAutomationDisabled(): boolean {
+        return this.messageAutomationDisabledExplicit;
+    }
 
     isGoingToCareCenter(): boolean {
         return this.careCenter === true;
@@ -185,7 +195,7 @@ export class ClientEntity {
             props.duration,
             props.allowBusinessDayMismatch,
         );
-        return new ClientEntity(
+        const client = new ClientEntity(
             0,
             props.name,
             props.address,
@@ -210,7 +220,10 @@ export class ClientEntity {
             props.suppressGreetingSms ?? false,
             props.birthDate,
             phoneNormalized,
+            props.messageAutomationDisabled ?? false,
         );
+        client.messageAutomationDisabledExplicit = props.messageAutomationDisabled !== undefined;
+        return client;
     }
 
     update(props: UpdateClientProps): void {
@@ -274,6 +287,10 @@ export class ClientEntity {
         if (props.breastPump !== undefined) this.breastPump = props.breastPump;
         if (props.eDocId !== undefined) this.eDocId = props.eDocId;
         if (props.areaId !== undefined) this.areaId = props.areaId;
+        if (props.messageAutomationDisabled !== undefined) {
+            this.messageAutomationDisabled = props.messageAutomationDisabled;
+            this.messageAutomationDisabledExplicit = true;
+        }
     }
 
     /**
@@ -305,6 +322,7 @@ export class ClientEntity {
         suppressGreetingSms: boolean = false,
         birthDate: Date | null = null,
         phoneNormalized?: string | null,
+        messageAutomationDisabled: boolean = false,
     ): ClientEntity {
         return new ClientEntity(
             id,
@@ -335,6 +353,7 @@ export class ClientEntity {
             suppressGreetingSms,
             birthDate,
             phoneNormalized,
+            messageAutomationDisabled,
         );
     }
 }

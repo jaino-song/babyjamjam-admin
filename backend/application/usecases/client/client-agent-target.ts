@@ -4,7 +4,7 @@ import type { ClientEntity } from "domain/entities/client.entity";
 
 type ClientAgentVersionFields = Pick<ClientEntity, "id" | "name" | "address" | "phone" | "type" | "duration"
     | "fullPrice" | "grant" | "actualPrice" | "startDate" | "endDate" | "dueDate" | "birthDate" | "careCenter"
-    | "voucherClient" | "birthday" | "serviceStatus" | "breastPump" | "areaId">;
+    | "voucherClient" | "birthday" | "serviceStatus" | "breastPump" | "areaId" | "messageAutomationDisabled">;
 
 export function clientAgentTargetVersion(client: ClientAgentVersionFields | null): string {
     if (!client) return "missing";
@@ -15,6 +15,7 @@ export function clientAgentTargetVersion(client: ClientAgentVersionFields | null
         dueDate: client.dueDate?.toISOString() ?? null, birthDate: client.birthDate?.toISOString() ?? null,
         careCenter: client.careCenter, voucherClient: client.voucherClient, birthday: client.birthday,
         serviceStatus: client.serviceStatus, breastPump: client.breastPump, areaId: client.areaId,
+        messageAutomationDisabled: client.messageAutomationDisabled,
     };
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }

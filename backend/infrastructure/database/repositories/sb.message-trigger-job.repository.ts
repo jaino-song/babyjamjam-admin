@@ -19,7 +19,10 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import {
+    CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
+    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+} from "domain/constants/message-automation-policy";
 import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
@@ -851,7 +854,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'canceled'
               AND "message_trigger_job"."canceled_by_user" = false
-              AND "message_trigger_job"."cancel_reason" = ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}`
+              AND "message_trigger_job"."cancel_reason" IN (
+                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON},
+                  ${CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON}
+              )`
             : Prisma.sql`DO UPDATE SET
                 status = 'pending',
                 scheduled_for = EXCLUDED.scheduled_for,

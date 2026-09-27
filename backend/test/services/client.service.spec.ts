@@ -1103,6 +1103,29 @@ describe("ClientService", () => {
             expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
         });
 
+        it("does not apply automatic message routines when the durable client opt-out is true", async () => {
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            await service.create(branchId, {
+                name: "Opted Out Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                messageAutomationDisabled: true,
+            });
+
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ messageAutomationDisabled: true }),
+                expect.anything(),
+            );
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(messageAutomationIntentService.persistClientIntent).not.toHaveBeenCalled();
+            expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
+        });
+
         it("does not schedule assignment or service-record messages when message automation is false", async () => {
             const mockClient = createClientEntity();
             createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
@@ -1721,6 +1744,20 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and no employee change", () => {
+            it("cancels automatic jobs in the same transaction when durable opt-out is enabled", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await service.update(branchId, existingClient.id, { messageAutomationDisabled: true });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: existingClient.id, branchId },
+                    data: expect.objectContaining({ messageAutomationDisabled: true }),
+                }));
+                expect(prismaService.$queryRaw).toHaveBeenCalled();
+                expect(triggerService.syncClientRulesForClient).toHaveBeenCalled();
+            });
+
             it("revalidates a service-period change inside the owning transaction", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);

@@ -117,6 +117,10 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsBoolean()
+    messageAutomationDisabled?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
     reuseExistingClient?: boolean;
 
     @IsOptional()
@@ -229,6 +233,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     areaId?: string | null;
+
+    @IsOptional()
+    @IsBoolean()
+    messageAutomationDisabled?: boolean;
 }
 
 /**

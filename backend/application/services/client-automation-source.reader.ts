@@ -112,6 +112,7 @@ export class ClientAutomationSourceReader {
                 fullPrice: true,
                 grant: true,
                 actualPrice: true,
+                messageAutomationDisabled: true,
                 ...(supportsAreaId ? { area: { select: { bankAccountInfo: { select: { bankName: true, accNum: true } } } } } : {}),
                 ...(supportsCreatedAt ? { createdAt: true } : {}),
             },

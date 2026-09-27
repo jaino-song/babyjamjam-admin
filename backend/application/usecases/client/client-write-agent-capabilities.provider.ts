@@ -81,6 +81,7 @@ const ClientWriteFields = z.object({
     serviceStatus: z.enum([...SERVICE_STATUS_VALUES] as [ServiceStatusType, ...ServiceStatusType[]]).nullable().optional(),
     breastPump: z.boolean().optional(),
     areaId: z.string().max(100).nullable().optional(),
+    messageAutomationDisabled: z.boolean().optional(),
 });
 
 const CreateClientSchema = ClientWriteFields.extend({
@@ -502,8 +503,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
     }
 
     private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {
-        const { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId } = values;
-        return { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId };
+        const { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId, messageAutomationDisabled } = values;
+        return { name, phone, type, startDate, endDate, duration, fullPrice, grant, actualPrice, areaId, messageAutomationDisabled };
     }
 
     /**

@@ -14,6 +14,7 @@ export interface ClientAutomationWriteValues {
     grant?: string | null;
     actualPrice?: string | null;
     areaId?: string | null;
+    messageAutomationDisabled?: boolean;
 }
 
 export type ClientAutomationWrite =
