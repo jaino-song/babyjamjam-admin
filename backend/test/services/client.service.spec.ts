@@ -117,6 +117,7 @@ describe("ClientService", () => {
         syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
+        readClientAutomationSchedules: jest.fn().mockResolvedValue([]),
         cancelPendingJobsForClientDeletion: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -1334,6 +1335,34 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
             });
 
+            it("rejects an explicit durable opt-out before duplicate-client reuse side effects", async () => {
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+
+                await expect(service.create(branchId, {
+                    name: "Existing Client",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    reuseExistingClient: true,
+                    messageAutomationDisabled: true,
+                })).rejects.toMatchObject({
+                    status: 400,
+                    response: clientProblemResponse(
+                        "VALIDATION_FAILED",
+                        "/messageAutomationDisabled",
+                        "INVALID_VALUE",
+                        "기존 고객 재사용 시 메시지 자동 전송 설정은 변경할 수 없습니다.",
+                    ),
+                });
+
+                expect(prismaService.$transaction).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(triggerService.syncEmployeeAssignmentRulesForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
             it("initializes the service-record lifecycle when reusing a client without an assignment", async () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
@@ -1915,6 +1944,38 @@ describe("ClientService", () => {
                     orderBy: { id: "asc" },
                 });
                 expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
+            });
+
+            it("keeps a no-name durable opt-out re-enable successful when assignment refresh throws", async () => {
+                const existingClient = createClientEntity();
+                existingClient.messageAutomationDisabled = true;
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                triggerService.syncEmployeeAssignmentRulesForClient.mockRejectedValue(
+                    new Error("assignment refresh unavailable"),
+                );
+                prismaService.employee_schedule.findMany.mockResolvedValue([{ id: 12 }]);
+
+                await expect(service.update(branchId, existingClient.id, {
+                    messageAutomationDisabled: false,
+                })).resolves.toBe(existingClient);
+
+                expect(triggerService.syncEmployeeAssignmentRulesForClient).toHaveBeenCalledWith(
+                    branchId,
+                    existingClient.id,
+                    expect.objectContaining({
+                        preserveExisting: true,
+                        futureOnlyAt: expect.any(Date),
+                    }),
+                );
+                expect(messageAutomationIntentService.persistScheduleIntent).toHaveBeenCalledWith(
+                    prismaService,
+                    expect.objectContaining({
+                        branchId,
+                        clientId: existingClient.id,
+                        scheduleId: 12,
+                        replaceExisting: true,
+                    }),
+                );
             });
 
             it("should not refresh assignment jobs when an unrelated client field changes", async () => {

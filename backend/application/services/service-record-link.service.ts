@@ -28,6 +28,7 @@ import {
     CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
 } from "domain/constants/message-automation-policy";
+import { lockClientMessageAutomationForJob } from "./client-message-automation-policy";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -523,18 +524,31 @@ export class ServiceRecordLinkService {
                         : {}),
                 },
             });
-            const promote = (transaction?: Prisma.TransactionClient) => transaction
-                ? this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                    transaction,
-                )
-                : this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                );
+            const promote = async (transaction?: Prisma.TransactionClient) => {
+                if (transaction && await lockClientMessageAutomationForJob(transaction, {
+                    branchId: schedule.branchId,
+                    clientId: schedule.clientId,
+                    employeeScheduleId: scheduleId,
+                })) {
+                    // The durable client opt-out is locked and reread in the
+                    // same transaction as marker promotion. If opt-out won
+                    // the branch/client lock first, the failed lease can no
+                    // longer become a pending reservation.
+                    return null;
+                }
+                return transaction
+                    ? this.jobRepository.promoteAutomaticSchedulingClaim(
+                        automaticSchedulingClaim!.id,
+                        automaticSchedulingClaim!.claimVersion,
+                        pendingJob,
+                        transaction,
+                    )
+                    : this.jobRepository.promoteAutomaticSchedulingClaim(
+                        automaticSchedulingClaim!.id,
+                        automaticSchedulingClaim!.claimVersion,
+                        pendingJob,
+                    );
+            };
             const persistedJob = automaticSchedulingClaim
                 ? await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
                 : await this.jobRepository.upsertPending(pendingJob);

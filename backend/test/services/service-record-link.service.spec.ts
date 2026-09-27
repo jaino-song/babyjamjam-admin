@@ -33,6 +33,9 @@ describe("ServiceRecordLinkService", () => {
             employee_schedule: {
                 findUnique: jest.fn(),
             },
+            client: {
+                findFirst: jest.fn().mockResolvedValue({ messageAutomationDisabled: false }),
+            },
             message_trigger_job: {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
@@ -520,7 +523,7 @@ describe("ServiceRecordLinkService", () => {
 
         await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
 
-        expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
         expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
             tokenService.issueLink.mock.invocationCallOrder[0]!,
         );
@@ -562,6 +565,36 @@ describe("ServiceRecordLinkService", () => {
             }),
             expect.any(Object),
         );
+        expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("does not promote a failed automatic lease after the client opt-out wins", async () => {
+        const prisma = createPrisma();
+        prisma.$queryRaw
+            .mockResolvedValueOnce([{
+                id: "claim-1",
+                claim_version: "2026-07-09 00:00:00.123456+00",
+            }])
+            .mockResolvedValueOnce([{ message_automation_disabled: true }]);
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined,
+            undefined,
+            createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+
+        await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
+
+        expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
@@ -988,7 +1021,7 @@ describe("ServiceRecordLinkService", () => {
             // 3. A legitimate later trigger must be able to enqueue again.
             await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
             expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
-            expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
 
             // claimAutomaticScheduling's raw SQL hardcodes the branch-disabled reason in two
             // allow-lists: the `WHERE NOT EXISTS ... blocker` clause and the

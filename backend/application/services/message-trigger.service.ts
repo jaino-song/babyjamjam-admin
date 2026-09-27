@@ -100,8 +100,8 @@ import {
 import type { AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
 import {
     CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
-    isClientMessageAutomationDisabled,
     lockClientMessageAutomationForJob,
+    lockClientMessageAutomationPolicy,
 } from "./client-message-automation-policy";
 
 export interface MessageTriggerIntentSyncOptions {
@@ -1471,6 +1471,20 @@ export class MessageTriggerService {
             if (rule.templateKey === MessageTriggerTemplateKey.CLIENT_GREETING && suppressGreeting) {
                 continue;
             }
+            // Re-enabling a durable client opt-out must not turn an historical
+            // immediate registration event back into a new job.  Immediate
+            // recipes are intentionally stamped with materialization time, so
+            // their scheduledFor value cannot identify whether the source
+            // event happened before the opt-out was lifted.
+            if (
+                intentOptions?.futureOnlyAt
+                && rule.eventType === MessageTriggerEventType.CLIENT_CREATED
+                && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
+                && client.createdAt
+                && client.createdAt.getTime() <= intentOptions.futureOnlyAt.getTime()
+            ) {
+                continue;
+            }
             if (includePast && this.shouldSkipPreStartCatchUp(rule, client)) {
                 continue;
             }
@@ -1618,6 +1632,13 @@ export class MessageTriggerService {
             const job = this.buildEmployeeAssignmentJob(rule, schedule);
             if (!job) continue;
             if (intentOptions?.futureOnlyAt && job.scheduledFor.getTime() <= intentOptions.futureOnlyAt.getTime()) {
+                continue;
+            }
+            if (
+                intentOptions?.futureOnlyAt
+                && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
+                && await this.hasHistoricalEmployeeAssignmentJob(branchId, schedule, rule, job)
+            ) {
                 continue;
             }
             if (await this.hasSentEmployeeAssignmentJobForSameEmployee(job)) {
@@ -1890,7 +1911,7 @@ export class MessageTriggerService {
         if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
             if (automaticJob && materializedJob.clientId !== null && transaction
-                && await isClientMessageAutomationDisabled(transaction, materializedJob.clientId)) {
+                && await lockClientMessageAutomationPolicy(transaction, materializedJob.branchId!, materializedJob.clientId)) {
                 return null;
             }
             if (automaticJob && materializedJob.branchId) {
@@ -2105,6 +2126,28 @@ export class MessageTriggerService {
             job.employeeScheduleId,
         );
         return sentJobs.some((sentJob) => this.isSameEmployeeAssignmentRecipient(sentJob, job));
+    }
+
+    /**
+     * Immediate assignment recipes are materialized with `now`, so a
+     * futureOnlyAt comparison alone cannot distinguish an old assignment from
+     * one created after re-enable. Existing terminal or canceled history is
+     * the durable evidence that the assignment event already had a generation.
+     */
+    private async hasHistoricalEmployeeAssignmentJob(
+        branchId: string,
+        schedule: EmployeeAssignmentScheduleSource,
+        rule: MessageTriggerRuleEntity,
+        currentJob: MessageTriggerJobEntity,
+    ): Promise<boolean> {
+        const findForReview = this.jobRepository.findForClientAutomationReview;
+        if (typeof findForReview !== "function") return false;
+        const jobs = await findForReview(branchId, schedule.clientId, [rule.id]);
+        return jobs.some((job) => job.ruleId === rule.id
+            && job.employeeScheduleId === schedule.id
+            && job.recipientType === rule.recipientType
+            && (job.dedupeKey === currentJob.dedupeKey
+                || this.isSameEmployeeAssignmentRecipient(job, currentJob)));
     }
 
     private isSameEmployeeAssignmentRecipient(
