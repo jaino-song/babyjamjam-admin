@@ -82,7 +82,9 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
           {isLoading ? (
             <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
           ) : (
-            <Icon className={`h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] ${variant.text}`} />
+            <Icon
+              className={`!h-[calc(24px*var(--glint-ui-scale,1))] !w-[calc(24px*var(--glint-ui-scale,1))] ${variant.text}`}
+            />
           )}
         </div>
         {isLoading ? (

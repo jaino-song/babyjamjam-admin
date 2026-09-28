@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import { AnimatedSlotList } from "../AnimatedSlotList";
 import { ListEmptyState } from "../ListEmptyState";
 import { ListPanel } from "../ListPanel";
 
@@ -100,6 +101,58 @@ describe("ListPanel", () => {
     expect(
       Array.from(content?.children ?? []).some((child) => child.classList.contains("sticky")),
     ).toBe(false);
+  });
+
+  it("keeps the fetch-more boundary after appended rows and preserves row pop-up motion", () => {
+    const renderPanel = (isFetchingMore: boolean) => (
+      <ListPanel
+        data-component="desktop_v3_tests_split-layout_list-panel-fetch-more"
+        title="목록"
+      >
+        <AnimatedSlotList
+          data-component="desktop_v3_tests_split-layout_list-panel-fetch-more_rows"
+          items={[
+            { id: "row-1", name: "첫 번째 행" },
+            { id: "row-2", name: "두 번째 행" },
+          ]}
+          isLoading={false}
+          isFetchingMore={isFetchingMore}
+          fetchingMoreCount={1}
+          hasMore
+          itemDataComponent="desktop_v3_tests_split-layout_list-panel-fetch-more_row"
+          getItemKey={(item) => item.id}
+          render={({ item }) => item?.name ?? null}
+        />
+      </ListPanel>
+    );
+
+    const { container, rerender } = render(renderPanel(false));
+    const content = container.querySelector<HTMLElement>('[data-slot="list-panel-content"]');
+    const rows = () =>
+      container.querySelectorAll(
+        '[data-component="desktop_v3_tests_split-layout_list-panel-fetch-more_row"]',
+      );
+    const list = container.querySelector('[data-slot="animated-slot-list"]');
+    const fetchMore = list?.querySelector('[data-slot="fetch-more"]');
+
+    if (!content || !list || !fetchMore) {
+      throw new Error("ListPanel fetch-more boundary was not rendered");
+    }
+
+    expect(content).toHaveClass("pb-[calc(24px*var(--glint-ui-scale,1))]");
+    expect(content.lastElementChild).toBe(list);
+    expect(list.lastElementChild).toBe(fetchMore);
+    expect(rows()).toHaveLength(2);
+    expect(rows()[0]).not.toHaveClass("animate-v3-pop-up");
+    expect(rows()[1]).toHaveClass("animate-v3-pop-up");
+    expect(rows()[1]).toHaveStyle({ animationDelay: "0.04s" });
+
+    rerender(renderPanel(true));
+
+    expect(list.lastElementChild).toBe(fetchMore);
+    expect(rows()).toHaveLength(3);
+    expect(rows()[1]).toHaveClass("animate-v3-pop-up");
+    expect(rows()[2]).not.toHaveClass("animate-v3-pop-up");
   });
 
   it("waits for loading to finish before rendering the empty state", () => {
