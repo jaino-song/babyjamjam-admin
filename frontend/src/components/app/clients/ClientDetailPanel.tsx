@@ -226,26 +226,52 @@ function ClientMessageHistoryList({
         return (
             <div
                 data-component={`${dataComponentPrefix}_history-list_skeleton`}
-                className="w-full min-w-0 max-w-full space-y-2"
+                data-source-component="ClientMessageHistoryList"
+                role="status"
+                aria-live="polite"
+                aria-busy="true"
+                aria-label="메시지 발송 내역을 불러오는 중"
+                className="w-full min-w-0 max-w-full"
             >
-                {[0, 1, 2].map((index) => (
+                <div
+                    data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
+                    className="flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                >
+                    <Skeleton
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-icon`}
+                        className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white shadow-md"
+                    />
                     <div
-                        key={index}
-                        data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
-                        className="flex min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-copy`}
+                        className="min-w-0 flex-1 space-y-[calc(6px*var(--glint-ui-scale,1))]"
                     >
-                        <Skeleton className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white" />
-                        <div data-component={`${dataComponentPrefix}_history-list_skeleton-copy`} className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
-                        <div data-component={`${dataComponentPrefix}_history-list_skeleton-meta`} className="ml-auto flex shrink-0 flex-col items-end gap-1">
-                            <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-title`}
+                            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-subtitle`}
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-reason`}
+                            className="h-[calc(10px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
                     </div>
-                ))}
+                    <div
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-meta`}
+                        className="ml-auto flex shrink-0 flex-col items-end gap-[calc(6px*var(--glint-ui-scale,1))]"
+                    >
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-status`}
+                            className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-date`}
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
+                        />
+                    </div>
+                </div>
             </div>
         );
     }
