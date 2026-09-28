@@ -43,10 +43,15 @@ describe("client mutation message job invalidation", () => {
 
   it("invalidates upcoming jobs and refetches service records after updating a client", async () => {
     const mutation = useUpdateClient() as unknown as {
-      onSuccess: (client: { id: number }, variables: { id: number }) => Promise<void>;
+      onMutate: () => { branchId: string | null };
+      onSuccess: (
+        client: { id: number },
+        variables: { id: number },
+        context: { branchId: string | null },
+      ) => Promise<void>;
     };
 
-    await mutation.onSuccess({ id: 42 }, { id: 42 });
+    await mutation.onSuccess({ id: 42 }, { id: 42 }, mutation.onMutate());
 
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: clientKeys.all,
