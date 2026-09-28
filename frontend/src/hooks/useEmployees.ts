@@ -150,13 +150,18 @@ export function useEmployeeWorkHistory(employeeId: number, limit = 20) {
 export function useCreateEmployee() {
     const queryClient = useQueryClient();
 
-    return useMutation<Employee, Error, CreateEmployeeDto>({
+    return useMutation<Employee, Error, CreateEmployeeDto, EmployeeCacheMutationContext>({
         mutationFn: async (dto: CreateEmployeeDto) => {
             const { data } = await api.post<Employee>("/employees", dto);
             return data;
         },
-        onSuccess: async (employee) => {
-            mergeEmployeeIntoListCache(queryClient, employee);
+        onMutate: async () => {
+            const queries = captureEmployeeQueryReferences(queryClient);
+            await queryClient.cancelQueries({ queryKey: employeeQueryKeys.lists() });
+            return { queries };
+        },
+        onSuccess: async (employee, _dto, context) => {
+            patchEmployeeListQueries(queryClient, employee, context);
             await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
         onError: (error) => {
@@ -169,13 +174,18 @@ export function useCreateEmployee() {
 export function useUpdateEmployee() {
     const queryClient = useQueryClient();
 
-    return useMutation<Employee, Error, { id: number; dto: UpdateEmployeeDto }>({
+    return useMutation<Employee, Error, { id: number; dto: UpdateEmployeeDto }, EmployeeCacheMutationContext>({
         mutationFn: async ({ id, dto }: { id: number; dto: UpdateEmployeeDto }) => {
             const { data } = await api.patch<Employee>("/employees", dto, { params: { id } });
             return data;
         },
-        onSuccess: async (employee) => {
-            mergeEmployeeIntoListCache(queryClient, employee);
+        onMutate: async () => {
+            const queries = captureEmployeeQueryReferences(queryClient);
+            await queryClient.cancelQueries({ queryKey: employeeQueryKeys.lists() });
+            return { queries };
+        },
+        onSuccess: async (employee, _variables, context) => {
+            patchEmployeeListQueries(queryClient, employee, context);
             await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
     });
@@ -211,10 +221,19 @@ function mergeEmployeeIntoListCacheData(current: unknown, employee: Employee): u
     ));
 }
 
-function mergeEmployeeIntoListCache(queryClient: ReturnType<typeof useQueryClient>, employee: Employee): void {
-    queryClient.setQueryData(employeeQueryKeys.lists(), (current: unknown) => (
-        mergeEmployeeIntoListCacheData(current, employee)
-    ));
+function patchEmployeeListQueries(
+    queryClient: ReturnType<typeof useQueryClient>,
+    employee: Employee,
+    context: EmployeeCacheMutationContext | undefined,
+): void {
+    for (const { queryKey, query } of context?.queries ?? []) {
+        const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
+        if (currentQuery !== query) continue;
+
+        queryClient.setQueryData(queryKey, (current: unknown) => (
+            mergeEmployeeIntoListCacheData(current, employee)
+        ));
+    }
 }
 
 // Delete employee
@@ -246,6 +265,10 @@ export function useDeleteEmployee() {
 interface EmployeeQueryReference {
     queryKey: QueryKey;
     query: unknown;
+}
+
+interface EmployeeCacheMutationContext {
+    queries: EmployeeQueryReference[];
 }
 
 interface ToggleEmployeeOpenStatusContext {
