@@ -298,6 +298,106 @@ describe("SbClientRepository", () => {
             });
         });
 
+        it("applies the selected raw status tab to both rows and total", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+            clientModel.count.mockResolvedValue(51);
+
+            const result = await repository.findAllPaginated(branchId, 1, 50, "Kim", "active");
+            const listWhere = clientModel.findMany.mock.calls[0]?.[0]?.where;
+
+            expect(listWhere).toEqual(expect.objectContaining({
+                branchId,
+                OR: [
+                    { name: { contains: "Kim", mode: "insensitive" } },
+                    { address: { contains: "Kim", mode: "insensitive" } },
+                    { phone: { contains: "Kim", mode: "insensitive" } },
+                ],
+                AND: [{ serviceStatus: "active" }],
+            }));
+            expect(clientModel.count).toHaveBeenCalledWith({ where: listWhere });
+            expect(result.total).toBe(51);
+            expect(result.totalPages).toBe(2);
+        });
+
+        it.each(["completed", "terminated"] as const)(
+            "uses raw serviceStatus equality for the %s tab even when dates are absent",
+            async (tab) => {
+                clientModel.findMany.mockResolvedValue([]);
+                clientModel.count.mockResolvedValue(1);
+
+                await repository.findAllPaginated(branchId, 1, 10, undefined, tab);
+
+                expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: {
+                        branchId,
+                        AND: [{ serviceStatus: tab }],
+                    },
+                }));
+            },
+        );
+
+        it("matches Korean initials against the complete branch candidate set before paginating", async () => {
+            clientModel.findMany
+                .mockResolvedValueOnce([
+                    {
+                        id: 7,
+                        name: "김현아",
+                        address: "서울",
+                        phone: "010-1234-5678",
+                        phoneNormalized: "01012345678",
+                    },
+                    {
+                        id: 8,
+                        name: "박서준",
+                        address: "서울",
+                        phone: "010-9999-9999",
+                        phoneNormalized: "01099999999",
+                    },
+                ])
+                .mockResolvedValueOnce([createClientRow({ id: 7, name: "김현아" })]);
+            clientModel.count.mockResolvedValue(1);
+
+            await repository.findAllPaginated(branchId, 1, 10, "ㄱㅎ", "all");
+
+            expect(clientModel.findMany.mock.calls[0]?.[0]).toEqual({
+                where: { branchId },
+                select: {
+                    id: true,
+                    name: true,
+                    address: true,
+                    phone: true,
+                    phoneNormalized: true,
+                },
+            });
+            expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
+                branchId,
+                AND: [{ id: { in: [7] } }],
+            });
+        });
+
+        it("normalizes +82 phone searches without widening the branch candidate query", async () => {
+            clientModel.findMany
+                .mockResolvedValueOnce([
+                    {
+                        id: 7,
+                        name: "Kim",
+                        address: "Seoul",
+                        phone: "010-1234-5678",
+                        phoneNormalized: "01012345678",
+                    },
+                ])
+                .mockResolvedValueOnce([createClientRow({ id: 7, name: "Kim" })]);
+            clientModel.count.mockResolvedValue(1);
+
+            await repository.findAllPaginated(branchId, 1, 10, "+82 10 1234 5678", "all");
+
+            expect(clientModel.findMany.mock.calls[0]?.[0]?.where).toEqual({ branchId });
+            expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
+                branchId,
+                AND: [{ id: { in: [7] } }],
+            });
+        });
+
         describe("given no results found", () => {
             it("should return empty data with zero totals", async () => {
                 // Arrange
@@ -344,6 +444,68 @@ describe("SbClientRepository", () => {
                 // Assert
                 expect(result.totalPages).toBe(3);
             });
+        });
+    });
+
+    describe("getListSummary", () => {
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        it("uses Korea date boundaries for due months and inclusive active service ends", async () => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-09-30T15:00:00.000Z"));
+            clientModel.count.mockResolvedValue(2);
+
+            const result = await repository.getListSummary(branchId, "Kim");
+
+            expect(result).toEqual({
+                total: 2,
+                byTab: {
+                    all: 2,
+                    pre_booking: 2,
+                    waiting: 2,
+                    replacement_requested: 2,
+                    active: 2,
+                    completed: 2,
+                    terminated: 2,
+                },
+                dueDate: { thisMonth: 2, nextMonth: 2 },
+                serviceEnd: { count: 2, from: "2026-10-01", to: "2026-10-04" },
+            });
+
+            const countArgs = clientModel.count.mock.calls.map(([args]) => args as { where: Record<string, unknown> });
+            expect(countArgs).toHaveLength(11);
+            expect(countArgs.every(({ where }) => where["branchId"] === branchId)).toBe(true);
+            expect(countArgs.some(({ where }) => {
+                const predicates = [where, ...(Array.isArray(where["AND"]) ? where["AND"] : [])] as Array<Record<string, unknown>>;
+                return predicates.some((predicate) => {
+                    const dueDate = predicate["dueDate"] as { gte?: Date; lt?: Date } | undefined;
+                    return dueDate?.gte?.toISOString() === "2026-10-01T00:00:00.000Z"
+                        && dueDate.lt?.toISOString() === "2026-11-01T00:00:00.000Z";
+                });
+            })).toBe(true);
+            expect(countArgs.some(({ where }) => {
+                const predicates = [where, ...(Array.isArray(where["AND"]) ? where["AND"] : [])] as Array<Record<string, unknown>>;
+                return predicates.some((predicate) => {
+                    const endDate = predicate["endDate"] as { gte?: Date; lt?: Date } | undefined;
+                    return predicate["serviceStatus"] === "active"
+                        && endDate?.gte?.toISOString() === "2026-10-01T00:00:00.000Z"
+                        && endDate.lt?.toISOString() === "2026-10-05T00:00:00.000Z";
+                });
+            })).toBe(true);
+        });
+
+        it("does not reuse a summary count across branches", async () => {
+            clientModel.count.mockResolvedValue(1);
+
+            await repository.getListSummary("branch-a", "same search");
+            await repository.getListSummary("branch-b", "same search");
+
+            const countArgs = clientModel.count.mock.calls.map(([args]) => args as { where: Record<string, unknown> });
+            expect(countArgs.some(({ where }) => where["branchId"] === "branch-a")).toBe(true);
+            expect(countArgs.some(({ where }) => where["branchId"] === "branch-b")).toBe(true);
+            expect(countArgs.filter(({ where }) => where["branchId"] === "branch-a")).toHaveLength(11);
+            expect(countArgs.filter(({ where }) => where["branchId"] === "branch-b")).toHaveLength(11);
         });
     });
 

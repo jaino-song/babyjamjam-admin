@@ -75,6 +75,7 @@ describe("ClientController (Integration)", () => {
             create: jest.fn(),
             findAll: jest.fn(),
             findAllPaginated: jest.fn(),
+            getListSummary: jest.fn(),
             findById: jest.fn(),
             getActionRequiredAlerts: jest.fn(),
             getDashboardOverview: jest.fn(),
@@ -402,6 +403,38 @@ describe("ClientController (Integration)", () => {
                 );
             });
 
+            it("should pass the selected status tab to the paginated method", async () => {
+                clientService.findAllPaginated.mockResolvedValue({
+                    data: [],
+                    total: 0,
+                    page: 1,
+                    limit: 10,
+                    totalPages: 0,
+                });
+
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "1", limit: "10", tab: "completed" });
+
+                expect(response.status).toBe(200);
+                expect(clientService.findAllPaginated).toHaveBeenCalledWith(
+                    expect.any(String),
+                    1,
+                    10,
+                    undefined,
+                    "completed",
+                );
+            });
+
+            it("should reject an unknown status tab before calling service", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "1", limit: "10", tab: "unknown" });
+
+                expect(response.status).toBe(400);
+                expect(clientService.findAllPaginated).not.toHaveBeenCalled();
+            });
+
             it("should reject invalid pagination before calling service", async () => {
                 const response = await request(app.getHttpServer())
                     .get("/clients")
@@ -410,6 +443,32 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(400);
                 expect(clientService.findAllPaginated).not.toHaveBeenCalled();
             });
+        });
+
+        it("should return the branch-scoped list summary for the current search", async () => {
+            const summary = {
+                total: 2,
+                byTab: {
+                    all: 2,
+                    pre_booking: 0,
+                    waiting: 0,
+                    replacement_requested: 0,
+                    active: 1,
+                    completed: 1,
+                    terminated: 0,
+                },
+                dueDate: { thisMonth: 1, nextMonth: 0 },
+                serviceEnd: { count: 1, from: "2026-09-28", to: "2026-10-01" },
+            };
+            clientService.getListSummary.mockResolvedValue(summary);
+
+            const response = await request(app.getHttpServer())
+                .get("/clients/list-summary")
+                .query({ search: "Kim" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual(summary);
+            expect(clientService.getListSummary).toHaveBeenCalledWith("org-1", "Kim");
         });
 
         it("should return dashboard overview", async () => {

@@ -5,8 +5,14 @@ import {
     AutomaticServiceStatusUpdateResult,
     IClientRepository,
     InitialClientSchedule,
+    buildClientListWhere,
+    ClientListSummary,
+    ClientListTab,
+    CLIENT_LIST_TAB_VALUES,
+    getClientListDateRanges,
     PaginatedResult,
 } from "domain/repositories/client.repository.interface";
+import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import {
@@ -25,6 +31,78 @@ import {
     ScopedDeleteNotFoundError,
 } from "domain/errors/retention-delete-blocked.error";
 import type { Prisma } from "@prisma/client";
+
+const CHOSUNG_LIST = [
+    "ㄱ", "ㄲ", "ㄴ", "ㄷ", "ㄸ", "ㄹ", "ㅁ", "ㅂ", "ㅃ",
+    "ㅅ", "ㅆ", "ㅇ", "ㅈ", "ㅉ", "ㅊ", "ㅋ", "ㅌ", "ㅍ", "ㅎ",
+] as const;
+const CHOSUNG_SET = new Set<string>(CHOSUNG_LIST);
+const PHONE_LIKE_QUERY_PATTERN = /^\+?[\d\s().-]*\d[\d\s().-]*$/;
+
+// The backend runtime vendor does not expose the frontend korean-search helper.
+// Keep the parity fallback local and scan only branch-scoped candidate fields
+// for query forms that PostgreSQL `contains` cannot represent.
+function getChosungString(value: string): string {
+    return Array.from(value.normalize("NFC"), (character) => {
+        const code = character.charCodeAt(0);
+        if (code >= 0xac00 && code <= 0xd7a3) {
+            return CHOSUNG_LIST[Math.floor((code - 0xac00) / 588)] ?? character;
+        }
+        return character;
+    }).join("");
+}
+
+function normalizePhoneLookupKey(value: string | null | undefined): string {
+    const digits = String(value ?? "").replace(/\D/g, "");
+    if (!digits) return "";
+
+    const nationalDigits = digits.startsWith("0082") ? digits.slice(2) : digits;
+    if (!nationalDigits) return "";
+
+    if (nationalDigits.startsWith("82")) {
+        const domesticDigits = nationalDigits.slice(2);
+        if (!domesticDigits) return "";
+        return domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`;
+    }
+
+    if (/^1\d{9}$/.test(nationalDigits)) return `0${nationalDigits}`;
+    return nationalDigits;
+}
+
+function matchesKoreanSearch(target: string, query: string): boolean {
+    const normalizedTarget = target.normalize("NFC").toLowerCase();
+    const normalizedQuery = query.normalize("NFC").trim().toLowerCase();
+    if (normalizedTarget.includes(normalizedQuery)) return true;
+    if (!Array.from(normalizedQuery).some((character) => CHOSUNG_SET.has(character))) return false;
+
+    return getChosungString(normalizedTarget).replace(/\s/g, "").startsWith(normalizedQuery);
+}
+
+function matchesClientSearch(
+    query: string,
+    values: readonly (string | null | undefined)[],
+): boolean {
+    const normalizedQuery = query.normalize("NFC").trim();
+    if (!normalizedQuery) return true;
+
+    const phoneQuery = PHONE_LIKE_QUERY_PATTERN.test(normalizedQuery)
+        ? normalizePhoneLookupKey(normalizedQuery)
+        : "";
+
+    return values.some((value) => {
+        if (value == null) return false;
+        if (matchesKoreanSearch(value, normalizedQuery)) return true;
+        return phoneQuery.length > 0 && normalizePhoneLookupKey(value).includes(phoneQuery);
+    });
+}
+
+function requiresClientSearchFallback(search: string | undefined): boolean {
+    if (search === undefined) return false;
+    const normalizedQuery = search.normalize("NFC").trim();
+    return normalizedQuery.length === 0
+        || Array.from(normalizedQuery).some((character) => CHOSUNG_SET.has(character))
+        || PHONE_LIKE_QUERY_PATTERN.test(normalizedQuery);
+}
 
 @Injectable()
 export class SbClientRepository implements IClientRepository {
@@ -144,26 +222,56 @@ export class SbClientRepository implements IClientRepository {
         });
     }
 
+    private async findSpecialSearchClientIds(branchid: string, search: string): Promise<number[]> {
+        // This candidate scan is intentionally complete for the authorized
+        // branch so pagination cannot hide a later Korean/phone match.
+        const candidates = await this.prismaService.client.findMany({
+            where: { branchId: branchid },
+            select: {
+                id: true,
+                name: true,
+                address: true,
+                phone: true,
+                phoneNormalized: true,
+            },
+        });
+
+        return candidates
+            .filter((candidate) => matchesClientSearch(search, [
+                candidate.name,
+                candidate.phone,
+                candidate.phoneNormalized,
+                candidate.address,
+            ]))
+            .map((candidate) => candidate.id);
+    }
+
+    private withClientIds(where: Prisma.clientWhereInput, ids: number[]): Prisma.clientWhereInput {
+        const existingAnd = Array.isArray(where.AND)
+            ? where.AND
+            : where.AND
+                ? [where.AND]
+                : [];
+        return {
+            ...where,
+            AND: [...existingAnd, { id: { in: ids } }],
+        };
+    }
+
     async findAllPaginated(
         branchid: string,
         page: number,
         limit: number,
-        search?: string
+        search?: string,
+        tab: ClientListTab = "all",
     ): Promise<PaginatedResult<ClientEntity>> {
         const skip = (page - 1) * limit;
-
-        const where = {
-            branchId: branchid,
-            ...(search
-                ? {
-                      OR: [
-                          { name: { contains: search, mode: 'insensitive' as const } },
-                          { address: { contains: search, mode: 'insensitive' as const } },
-                          { phone: { contains: search, mode: 'insensitive' as const } },
-                      ],
-                  }
-                : {}),
-        };
+        const specialSearch = search !== undefined && requiresClientSearchFallback(search);
+        const matchingIds = specialSearch
+            ? await this.findSpecialSearchClientIds(branchid, search)
+            : undefined;
+        const baseWhere = buildClientListWhere(branchid, specialSearch ? undefined : search, tab);
+        const where = matchingIds === undefined ? baseWhere : this.withClientIds(baseWhere, matchingIds);
 
         try {
             const select = await this.getClientSelect();
@@ -189,6 +297,87 @@ export class SbClientRepository implements IClientRepository {
             console.error('[ClientRepository] findAllPaginated error:', error);
             throw error;
         }
+    }
+
+    async getListSummary(branchid: string, search?: string): Promise<ClientListSummary> {
+        const ranges = getClientListDateRanges();
+        const specialSearch = search !== undefined && requiresClientSearchFallback(search);
+        const matchingIds = specialSearch
+            ? await this.findSpecialSearchClientIds(branchid, search)
+            : undefined;
+        const baseWhereWithoutSearch = buildClientListWhere(branchid, undefined, "all");
+        const baseWhere = matchingIds === undefined
+            ? buildClientListWhere(branchid, search, "all")
+            : this.withClientIds(baseWhereWithoutSearch, matchingIds);
+        const whereForTab = (tab: ClientListTab): Prisma.clientWhereInput => {
+            const withoutSearch = buildClientListWhere(branchid, undefined, tab);
+            return matchingIds === undefined
+                ? buildClientListWhere(branchid, search, tab)
+                : this.withClientIds(withoutSearch, matchingIds);
+        };
+        const withPredicate = (predicate: Prisma.clientWhereInput): Prisma.clientWhereInput => {
+            const existingAnd = Array.isArray(baseWhere.AND)
+                ? baseWhere.AND
+                : baseWhere.AND
+                    ? [baseWhere.AND]
+                    : [];
+            return {
+                ...baseWhere,
+                AND: [...existingAnd, predicate],
+            };
+        };
+
+        const [total, tabCounts, thisMonth, nextMonth, serviceEnd] = await Promise.all([
+            this.prismaService.client.count({ where: baseWhere }),
+            Promise.all(
+                CLIENT_LIST_TAB_VALUES.map(async (tab) => [
+                    tab,
+                    await this.prismaService.client.count({
+                        where: tab === "all" ? baseWhere : whereForTab(tab),
+                    }),
+                ] as const),
+            ),
+            this.prismaService.client.count({
+                where: withPredicate({
+                    dueDate: {
+                        gte: ranges.thisMonthStart,
+                        lt: ranges.nextMonthStart,
+                    },
+                }),
+            }),
+            this.prismaService.client.count({
+                where: withPredicate({
+                    dueDate: {
+                        gte: ranges.nextMonthStart,
+                        lt: ranges.nextMonthEndExclusive,
+                    },
+                }),
+            }),
+            this.prismaService.client.count({
+                where: withPredicate({
+                    serviceStatus: SERVICE_STATUS.ACTIVE,
+                    endDate: {
+                        gte: ranges.todayStart,
+                        lt: ranges.threeDaysLaterEndExclusive,
+                    },
+                }),
+            }),
+        ]);
+
+        const byTab = Object.fromEntries(tabCounts) as Record<ClientListTab, number>;
+        return {
+            total,
+            byTab,
+            dueDate: {
+                thisMonth,
+                nextMonth,
+            },
+            serviceEnd: {
+                count: serviceEnd,
+                from: ranges.today,
+                to: ranges.threeDaysLater,
+            },
+        };
     }
 
     async create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient): Promise<ClientEntity> {
