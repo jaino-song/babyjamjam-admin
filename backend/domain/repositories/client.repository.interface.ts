@@ -56,6 +56,18 @@ export interface ClientListDateRanges {
     nextMonthEndExclusive: Date;
 }
 
+const MANUAL_CLIENT_SERVICE_STATUSES = [
+    SERVICE_STATUS.PRE_BOOKING,
+    SERVICE_STATUS.TERMINATED,
+    SERVICE_STATUS.REPLACEMENT_REQUESTED,
+] as const;
+
+type ClientCalendarDate = `${number}-${number}-${number}`;
+
+function clientCalendarDate(date: Date): ClientCalendarDate {
+    return date.toISOString().slice(0, 10) as ClientCalendarDate;
+}
+
 function parseKoreaCalendarDate(isoDate: string): KoreaCalendarDate {
     const [year = "0", month = "0", day = "0"] = isoDate.split("-");
     return { year: Number(year), month: Number(month), day: Number(day) };
@@ -112,16 +124,91 @@ export function getClientListDateRanges(now = new Date()): ClientListDateRanges 
     };
 }
 
+/**
+ * Resolve the status shown by the client list from the stored status and the
+ * authoritative Korean calendar date. The stored manual states are preserved;
+ * every other state follows the service period dates.
+ */
+export function getEffectiveClientServiceStatus(
+    currentStatus: string | null,
+    startDate: Date | null,
+    endDate: Date | null,
+    now = new Date(),
+): ServiceStatusType {
+    if (currentStatus === SERVICE_STATUS.PRE_BOOKING
+        || currentStatus === SERVICE_STATUS.TERMINATED
+        || currentStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
+        return currentStatus;
+    }
+
+    if (!startDate || !endDate) return SERVICE_STATUS.PRE_BOOKING;
+
+    const today = isoDateInKorea(now);
+    const start = clientCalendarDate(startDate);
+    const end = clientCalendarDate(endDate);
+
+    if (start > today) return SERVICE_STATUS.WAITING;
+    if (end < today) return SERVICE_STATUS.COMPLETED;
+    return SERVICE_STATUS.ACTIVE;
+}
+
+function nonManualClientServiceStatusWhere(): Prisma.clientWhereInput {
+    return {
+        OR: [
+            { serviceStatus: null },
+            { serviceStatus: { notIn: [...MANUAL_CLIENT_SERVICE_STATUSES] } },
+        ],
+    };
+}
+
+function withNonManualStatus(
+    predicates: Prisma.clientWhereInput[],
+): Prisma.clientWhereInput {
+    return {
+        AND: [nonManualClientServiceStatusWhere(), ...predicates],
+    };
+}
+
 export function clientListTabWhere(
     tab: Exclude<ClientListTab, "all">,
+    todayStart = getClientListDateRanges().todayStart,
 ): Prisma.clientWhereInput {
-    return { serviceStatus: tab };
+    switch (tab) {
+        case SERVICE_STATUS.PRE_BOOKING:
+            return {
+                OR: [
+                    { serviceStatus: SERVICE_STATUS.PRE_BOOKING },
+                    withNonManualStatus([
+                        { OR: [{ startDate: null }, { endDate: null }] },
+                    ]),
+                ],
+            };
+        case SERVICE_STATUS.WAITING:
+            return withNonManualStatus([
+                { startDate: { gt: todayStart } },
+                { endDate: { not: null } },
+            ]);
+        case SERVICE_STATUS.ACTIVE:
+            return withNonManualStatus([
+                { startDate: { lte: todayStart } },
+                { endDate: { gte: todayStart } },
+            ]);
+        case SERVICE_STATUS.COMPLETED:
+            return withNonManualStatus([
+                { startDate: { lte: todayStart } },
+                { endDate: { lt: todayStart } },
+            ]);
+        case SERVICE_STATUS.TERMINATED:
+        case SERVICE_STATUS.REPLACEMENT_REQUESTED:
+            return { serviceStatus: tab };
+    }
 }
 
 export function buildClientListWhere(
     branchid: string,
     search?: string,
     tab: ClientListTab = "all",
+    todayStart = getClientListDateRanges().todayStart,
 ): Prisma.clientWhereInput {
     const normalizedSearch = search?.trim();
     const where: Prisma.clientWhereInput = {
@@ -138,7 +225,7 @@ export function buildClientListWhere(
     };
 
     if (tab !== "all") {
-        where.AND = [clientListTabWhere(tab)];
+        where.AND = [clientListTabWhere(tab, todayStart)];
     }
 
     return where;
