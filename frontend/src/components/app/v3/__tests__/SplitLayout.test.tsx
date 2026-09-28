@@ -2,6 +2,22 @@ import { act, render } from "@testing-library/react";
 import { SplitLayout } from "../SplitLayout";
 
 describe("SplitLayout", () => {
+  it("scales the fixed desktop list track from the shared UI scale token", () => {
+    const { container } = render(
+      <SplitLayout data-component="desktop_v3_tests_split-layout-track">
+        <div>목록</div>
+        <div>상세</div>
+      </SplitLayout>,
+    );
+
+    const root = container.querySelector<HTMLElement>('[data-slot="split-layout"]');
+
+    expect(root).toHaveClass(
+      "grid-cols-[calc(400px*var(--glint-ui-scale,1))_minmax(0,1fr)]",
+    );
+    expect(root?.style.transform).toBe("");
+  });
+
   it("remeasures panels when the shell width changes after a window resize", () => {
     jest.useFakeTimers();
     const originalObserver = global.ResizeObserver;

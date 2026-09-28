@@ -1,42 +1,39 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const GLINT_UI_BASE_VIEWPORT_WIDTH = 1920;
-const GLINT_UI_BASE_VIEWPORT_HEIGHT = 1080;
-const GLINT_UI_SCALE_MULTIPLIER = 1.1;
+const GLINT_UI_BASE_VIEWPORT_WIDTH = 1440;
 const GLINT_UI_MOBILE_BREAKPOINT = 768;
-const GLINT_UI_MIN_DESKTOP_SCALE = 0.67;
+const GLINT_UI_MIN_DESKTOP_SCALE = 0.85;
+const GLINT_UI_MAX_DESKTOP_SCALE = 1.1;
 const GLINT_UI_VIEWPORT_SCALE_CSS_VALUE = "var(--glint-ui-viewport-scale, 1)";
-const GLINT_UI_DPR_CHANGE_EPSILON = 0.001;
 
 export type GlintUiScaleStyle = CSSProperties & {
   "--glint-ui-scale": string;
 };
 
-export function getGlintUiScaleForViewport(width: number, height: number): number {
+export function getGlintUiScaleForViewport(width: number, _height?: number): number {
+  // Keep the second argument for existing callers while intentionally sizing from width only.
+  void _height;
+
   if (width < GLINT_UI_MOBILE_BREAKPOINT) {
     return 1;
   }
 
   return Number((
-    Math.max(
-      GLINT_UI_MIN_DESKTOP_SCALE,
-      Math.min(
-        width / GLINT_UI_BASE_VIEWPORT_WIDTH,
-        height / GLINT_UI_BASE_VIEWPORT_HEIGHT,
-      ) * GLINT_UI_SCALE_MULTIPLIER,
+    Math.min(
+      GLINT_UI_MAX_DESKTOP_SCALE,
+      Math.max(GLINT_UI_MIN_DESKTOP_SCALE, width / GLINT_UI_BASE_VIEWPORT_WIDTH),
     )
   ).toFixed(4));
 }
 
 function getGlintUiViewportScaleValue(): string {
-  return String(getGlintUiScaleForViewport(window.innerWidth, window.innerHeight));
+  return String(getGlintUiScaleForViewport(window.innerWidth));
 }
 
 function useStableGlintUiScaleValue(enabled: boolean): string {
-  const lastDprRef = useRef<number | null>(null);
   const [scaleValue, setScaleValue] = useState(GLINT_UI_VIEWPORT_SCALE_CSS_VALUE);
 
   useEffect(() => {
@@ -44,20 +41,11 @@ function useStableGlintUiScaleValue(enabled: boolean): string {
       return;
     }
 
-    lastDprRef.current = window.devicePixelRatio || 1;
     let animationFrameId = 0;
 
     const updateViewportScale = () => {
       window.cancelAnimationFrame(animationFrameId);
       animationFrameId = window.requestAnimationFrame(() => {
-        const previousDpr = lastDprRef.current || window.devicePixelRatio || 1;
-        const currentDpr = window.devicePixelRatio || previousDpr;
-
-        if (Math.abs(currentDpr - previousDpr) > GLINT_UI_DPR_CHANGE_EPSILON) {
-          lastDprRef.current = currentDpr;
-          return;
-        }
-
         const nextScaleValue = getGlintUiViewportScaleValue();
         setScaleValue((currentScaleValue) => currentScaleValue === nextScaleValue ? currentScaleValue : nextScaleValue);
       });
