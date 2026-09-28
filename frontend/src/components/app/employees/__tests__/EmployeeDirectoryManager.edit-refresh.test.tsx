@@ -72,19 +72,33 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
   },
   EmployeeFormPanel: ({
     onDirtyChange,
+    onBeforeClose,
+    onClose,
     renderLayout,
   }: {
     onDirtyChange?: (dirty: boolean) => void;
+    onBeforeClose?: () => boolean;
+    onClose: () => void;
     renderLayout?: (slots: { content: ReactNode; footer: ReactNode }) => ReactNode;
-  }) => renderLayout?.({
-    content: (
-      <label>
-        초안 이름
-        <input aria-label="초안 이름" onChange={() => onDirtyChange?.(true)} />
-      </label>
-    ),
-    footer: null,
-  }) ?? null,
+  }) => {
+    const requestClose = () => {
+      if (onBeforeClose?.() === false) return;
+      onClose();
+    };
+
+    return renderLayout?.({
+      content: (
+        <>
+          <label>
+            초안 이름
+            <input aria-label="초안 이름" onChange={() => onDirtyChange?.(true)} />
+          </label>
+          <button type="button" onClick={requestClose}>패널 닫기</button>
+        </>
+      ),
+      footer: null,
+    }) ?? null;
+  },
 }));
 
 jest.mock("@/components/app/ui/TwoButtonModal", () => ({
@@ -195,7 +209,18 @@ jest.mock("@/components/app/v3", () => ({
     </section>
   ),
   DetailPanel: ({ children }: { children: ReactNode }) => <section>{children}</section>,
-  SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SplitLayout: ({ children, hasSelection, onBack }: {
+    children: ReactNode;
+    hasSelection?: boolean;
+    onBack?: () => void;
+  }) => (
+    <div>
+      {hasSelection ? (
+        <button type="button" onClick={onBack}>직원 목록으로 돌아가기</button>
+      ) : null}
+      {children}
+    </div>
+  ),
   StatsBar: () => null,
 }));
 
@@ -286,6 +311,88 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "배정 불가" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+  });
+
+  it("keeps a dirty create draft when 직원 추가 is clicked again", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
+    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+  });
+
+  it("guards a dirty create draft before selecting another employee", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
+    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.queryByTestId("employee-detail")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+    fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+
+    expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("employee-detail")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "홍길동" })).toBeInTheDocument();
+  });
+
+  it("guards a dirty create draft before compact back", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
+    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.click(screen.getByRole("button", { name: "직원 목록으로 돌아가기" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 목록으로 돌아가기" }));
+    fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+
+    expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
+    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+  });
+
+  it("guards a dirty create draft before the panel close action", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
+    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+    fireEvent.click(screen.getByRole("button", { name: "패널 닫기" }));
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+
+    fireEvent.click(screen.getByRole("button", { name: "패널 닫기" }));
+    fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+
+    expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
     expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 });

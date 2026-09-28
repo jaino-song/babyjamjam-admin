@@ -68,6 +68,7 @@ import {
 interface EmployeeFormDialogProps {
     open: boolean;
     onClose: () => void;
+    onBeforeClose?: () => boolean;
     employee?: Employee | null;
     onSuccess?: (employee: Employee) => void;
 }
@@ -382,6 +383,7 @@ const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
 export function EmployeeFormPanel({
     open = true,
     onClose,
+    onBeforeClose,
     employee,
     onSuccess,
     renderLayout,
@@ -392,6 +394,7 @@ export function EmployeeFormPanel({
             surface="panel"
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             employee={employee}
             onSuccess={onSuccess}
             renderLayout={renderLayout}
@@ -400,12 +403,13 @@ export function EmployeeFormPanel({
     );
 }
 
-export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: EmployeeFormDialogProps) {
+export function EmployeeFormDialog({ open, onClose, onBeforeClose, employee, onSuccess }: EmployeeFormDialogProps) {
     return (
         <EmployeeFormContent
             surface="dialog"
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             employee={employee}
             onSuccess={onSuccess}
         />
@@ -416,6 +420,7 @@ function EmployeeFormContent({
     surface,
     open,
     onClose,
+    onBeforeClose,
     employee,
     onSuccess,
     renderLayout,
@@ -623,6 +628,10 @@ function EmployeeFormContent({
     };
 
     const handleClose = () => {
+        if (onBeforeClose && !onBeforeClose()) {
+            return;
+        }
+
         formDataBaselineRef.current = initialFormData;
         setFormData(initialFormData);
         setTouched({ phone: false, workArea: false });
