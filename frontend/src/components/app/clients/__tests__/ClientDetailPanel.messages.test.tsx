@@ -57,6 +57,12 @@ jest.mock("@/services/api", () => ({
 jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
     getMessageHistoryTimestamp: (record: MessageLogRecord) => record.lastAttemptAt ?? record.updatedAt,
     formatMessageHistoryDate: (value: string) => `날짜 ${value}`,
+    MESSAGE_HISTORY_STATUS_META: {
+        sent: { avatarClass: "status-avatar-sent" },
+        failed: { avatarClass: "status-avatar-failed" },
+        pending: { avatarClass: "status-avatar-pending" },
+        canceled: { avatarClass: "status-avatar-canceled" },
+    },
     normalizeMessageHistoryRecord: (record: MessageLogRecord, options: { recipientNameFallback?: string; recipientListLabelFallback?: string }) => ({
         id: record.id,
         title: record.ruleName ?? record.templateKey,
@@ -68,6 +74,8 @@ jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
         sentAt: record.lastAttemptAt ?? record.updatedAt,
         status: record.status,
         messagePreview: record.messageBody,
+        failureReason: record.status === "failed" ? record.errorMessage ?? undefined : undefined,
+        cancelReason: record.status === "canceled" ? record.errorMessage ?? undefined : undefined,
         recipientType: record.recipientType,
         icon: () => <span aria-hidden="true">아이콘</span>,
     }),
@@ -113,15 +121,18 @@ jest.mock("@/components/app/v3", () => ({
         subtitle,
         meta,
         status,
+        iconContainerClassName,
         "data-component": dataComponent,
     }: {
         title: ReactNode;
         subtitle?: ReactNode;
         meta?: ReactNode;
         status?: ReactNode;
+        iconContainerClassName?: string;
         "data-component"?: string;
     }) => (
         <article data-component={dataComponent}>
+            <div data-slot="icon" className={iconContainerClassName} />
             <h4>{title}</h4>
             {subtitle ? <div data-slot="subtitle">{subtitle}</div> : null}
             {meta ? <div data-slot="meta">{meta}</div> : null}
@@ -209,6 +220,22 @@ const historyRecord: MessageLogRecord = {
     employeeName: null,
 };
 
+const failedHistoryRecord: MessageLogRecord = {
+    ...historyRecord,
+    id: 11,
+    ruleName: "실패 안내",
+    status: "failed",
+    errorMessage: "수신자 번호 오류",
+};
+
+const canceledHistoryRecord: MessageLogRecord = {
+    ...historyRecord,
+    id: 12,
+    ruleName: "취소 안내",
+    status: "canceled",
+    errorMessage: "운영 취소",
+};
+
 const upcomingJob: ClientUpcomingMessageTriggerJob = {
     id: "upcoming-1",
     ruleName: "서비스 종료 안내",
@@ -278,6 +305,23 @@ describe("ClientDetailPanel messages tab", () => {
         expect(historyRow).toBeInTheDocument();
         fireEvent.click(historyRow!);
         expect(screen.getByTestId("message-history-detail-body")).toHaveTextContent(historyRecord.messageBody);
+    });
+
+    it("shows inline failure and cancellation reasons with status-specific icon colors", () => {
+        mockUseMessageHistory.mockReturnValue({
+            data: [failedHistoryRecord, canceledHistoryRecord],
+            isError: false,
+            isLoading: false,
+        });
+        openMessagesTab();
+
+        expect(screen.getByText("사유: 수신자 번호 오류")).toBeInTheDocument();
+        expect(screen.getByText("사유: 운영 취소")).toBeInTheDocument();
+
+        const failedRow = screen.getByRole("heading", { name: "실패 안내" }).closest('[role="button"]');
+        const canceledRow = screen.getByRole("heading", { name: "취소 안내" }).closest('[role="button"]');
+        expect(failedRow?.querySelector('[data-slot="icon"]')).toHaveClass("status-avatar-failed");
+        expect(canceledRow?.querySelector('[data-slot="icon"]')).toHaveClass("status-avatar-canceled");
     });
 
     it("constrains the messages track for both desktop and mobile presentations", () => {
