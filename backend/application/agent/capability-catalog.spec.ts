@@ -10,8 +10,13 @@ import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-
 import type { AgentCapabilityProviderContract } from "./capability.types";
 
 describe("capability catalog", () => {
-    it("keeps voucher pricing restricted to its provider roles", () => {
-        expect(CAPABILITY_CATALOG_BY_NAME.get("vouchers.prices")?.requiredRoles).toEqual(["owner", "admin", "manager"]);
+    it("allows all tenant roles on approved reference reads while preserving narrower capabilities", () => {
+        const allTenantRoles = ["owner", "admin", "manager", "user"];
+
+        expect(CAPABILITY_CATALOG_BY_NAME.get("vouchers.prices")?.requiredRoles).toEqual(allTenantRoles);
+        expect(CAPABILITY_CATALOG_BY_NAME.get("bank.accounts")?.requiredRoles).toEqual(allTenantRoles);
+        expect(CAPABILITY_CATALOG_BY_NAME.get("messages.deliveryHistory")?.requiredRoles)
+            .toEqual(["owner", "admin", "manager"]);
     });
 
     it("agrees with every real provider's own meta.description for all read capabilities", () => {
