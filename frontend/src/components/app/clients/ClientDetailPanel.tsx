@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_HISTORY_STATUS_LABELS,
+    MESSAGE_RECORD_REASON_LABEL,
     MESSAGE_RECIPIENT_LABELS,
     getMessageTemplateLabel,
     normalizeApiError,
@@ -33,6 +34,7 @@ import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
     formatMessageHistoryDate,
+    MESSAGE_HISTORY_STATUS_META,
     normalizeMessageHistoryRecord,
     type MessageHistoryRecord,
 } from "@/components/app/messages/MessageHistoryDetailPanel";
@@ -298,14 +300,27 @@ function ClientMessageHistoryList({
                     const recipientName = normalizedRecord.recipientName.trim()
                         || normalizedRecord.recipientListLabel.trim()
                         || clientName;
+                    const inlineReason = normalizedRecord.status === "failed"
+                        ? normalizedRecord.failureReason
+                        : normalizedRecord.status === "canceled"
+                            ? normalizedRecord.cancelReason
+                            : undefined;
 
                     return (
                         <AnimatedSlotListItemContent
                             dataComponent={`${dataComponentPrefix}_history-list_item_content`}
                             icon={ItemIcon}
-                            iconContainerClassName="text-v3-primary"
+                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[normalizedRecord.status].avatarClass}
                             title={normalizedRecord.title}
                             subtitle={`${recipientLabel}: ${recipientName}`}
+                            meta={inlineReason ? (
+                                <span
+                                    data-component={`${dataComponentPrefix}_history-list_item_reason`}
+                                    className="block max-w-full truncate"
+                                >
+                                    {MESSAGE_RECORD_REASON_LABEL}: {inlineReason}
+                                </span>
+                            ) : undefined}
                             status={
                                 <div
                                     data-component={`${dataComponentPrefix}_history-list_item_meta`}
