@@ -38,6 +38,16 @@ describe("ClientDetailPanel upcoming message presentation", () => {
             timeLabel: "재시도 시각",
             time: "2026-09-28T09:00:00.000Z",
         });
+        expect(getClientUpcomingMessageDisplay({
+            ...baseJob,
+            scheduledFor: "2026-09-27T06:00:00.000Z",
+            effectiveDueAt: "2026-09-28T09:00:00.000Z",
+            nextAttemptAt: "2026-09-28T09:00:00.000Z",
+        }, now)).toMatchObject({
+            label: "재시도 예정",
+            timeLabel: "재시도 시각",
+            time: "2026-09-28T09:00:00.000Z",
+        });
     });
 
     it("labels due pending and processing jobs without exposing message content", () => {

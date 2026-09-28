@@ -32,10 +32,10 @@ export interface ClientUpcomingMessageTriggerJob {
   templateKey: TriggerTemplateKey;
   scheduledFor: string;
   nextAttemptAt: string | null;
-  effectiveDueAt: string | null;
+  effectiveDueAt: string;
   status: ClientUpcomingMessageTriggerJobStatus;
   recipientType: TriggerRecipientType;
-  recipientName: string;
+  recipientName: string | null;
 }
 
 export interface ClientUpcomingMessageTriggerJobsResponse {

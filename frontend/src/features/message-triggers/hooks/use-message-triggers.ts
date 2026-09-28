@@ -164,16 +164,24 @@ export function useClientUpcomingMessageTriggerJobs(
     };
 }
 
-export function useMessageHistory(limit = 200) {
+export interface UseMessageHistoryOptions {
+    enabled?: boolean;
+    refetchInterval?: number | false;
+    refetchOnWindowFocus?: boolean;
+}
+
+export function useMessageHistory(limit = 200, options: UseMessageHistoryOptions = {}) {
     return useQuery<MessageLogRecord[]>({
         queryKey: messageTriggerKeys.history(limit),
         queryFn: () =>
             messageTriggersApi
                 .listHistory(limit)
                 .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        enabled: options.enabled ?? true,
         staleTime: 0,
         refetchOnMount: "always",
-        refetchInterval: 5_000,
+        refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
+        refetchInterval: options.refetchInterval ?? 5_000,
     });
 }
 

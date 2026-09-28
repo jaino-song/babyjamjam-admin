@@ -343,11 +343,13 @@ export function getClientUpcomingMessageDisplay(
     job: ClientUpcomingMessageTriggerJob,
     now = Date.now(),
 ): ClientUpcomingMessageDisplay {
-    const dueAt = new Date(job.effectiveDueAt ?? job.scheduledFor).getTime();
+    const scheduledAt = new Date(job.scheduledFor).getTime();
+    const dueAt = new Date(job.effectiveDueAt).getTime();
     const nextAttemptAt = job.nextAttemptAt ? new Date(job.nextAttemptAt).getTime() : Number.NaN;
-    const hasFutureRetry = Number.isFinite(nextAttemptAt)
-        && Number.isFinite(dueAt)
-        && nextAttemptAt > dueAt
+    const hasFutureRetry = job.status === "pending"
+        && Number.isFinite(nextAttemptAt)
+        && Number.isFinite(scheduledAt)
+        && nextAttemptAt > scheduledAt
         && nextAttemptAt > now;
 
     if (job.status === "processing" || job.status === "dispatching") {
@@ -464,6 +466,7 @@ function ClientUpcomingMessageList({
 
                     const display = getClientUpcomingMessageDisplay(job);
                     const recipientLabel = MESSAGE_RECIPIENT_LABELS[job.recipientType] ?? "수신자";
+                    const recipientName = job.recipientName?.trim() || recipientLabel;
                     return (
                         <AnimatedSlotListItemContent
                             data-component={`${sectionPrefix}_list_item_content`}
@@ -473,7 +476,7 @@ function ClientUpcomingMessageList({
                             subtitle={
                                 <>
                                     <span data-component={`${sectionPrefix}_list_item_recipient`}>
-                                        {recipientLabel}: {job.recipientName}
+                                        {recipientLabel}: {recipientName}
                                     </span>
                                     <span data-component={`${sectionPrefix}_list_item_schedule`}>
                                         {display.timeLabel}: {formatClientUpcomingDate(display.time)}
@@ -737,12 +740,6 @@ function ClientDetailPanelBody({
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const {
-        data: messageHistoryData = [],
-        isLoading: isMessageHistoryLoading,
-        isError: isMessageHistoryError,
-    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT);
-
     const clientBadges = useMemo(() => getClientBadges(client), [client]);
     const clientPhoneKey = useMemo(
         () => normalizeKoreanPhoneLookupKey(client.phone ?? ""),
@@ -772,6 +769,16 @@ function ClientDetailPanelBody({
 
         return detailTabState.key;
     }, [activeScheduleChange, clientId, detailTabState, hasActiveScheduleChange]);
+
+    const {
+        data: messageHistoryData = [],
+        isLoading: isMessageHistoryLoading,
+        isError: isMessageHistoryError,
+    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT, {
+        enabled: activeDetailTab === "messages",
+        refetchInterval: 30_000,
+        refetchOnWindowFocus: true,
+    });
 
     const clientUpcomingMessageQuery = useClientUpcomingMessageTriggerJobs(client.id, {
         enabled: activeDetailTab === "messages",
@@ -1256,7 +1263,7 @@ function ClientDetailPanelBody({
                                 >
                                     <InfoCard
                                         title="예정된 자동 메시지"
-                                        description="자동화 규칙에 따라 이 고객에게 예약된 메시지입니다."
+                                        description="이 고객과 관련된 자동 발송 예정 메시지입니다."
                                         data-component={`${dataComponentPrefix}_content_messages_upcoming-card`}
                                         contentClassName="block"
                                     >
