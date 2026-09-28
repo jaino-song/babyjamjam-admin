@@ -14,7 +14,6 @@ import {
 import { FileInterceptor } from "@nestjs/platform-express";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import {
   BulkUpdateVoucherPriceInfoDto,
@@ -29,7 +28,7 @@ export class VoucherPriceInfoController {
     constructor(private readonly voucherService: VoucherPriceInfoService) {}
 
     @Post()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     create(@Body() dto: CreateVoucherPriceInfoDto) {
         return this.voucherService.create({
             type: dto.type,
@@ -42,15 +41,15 @@ export class VoucherPriceInfoController {
     }
 
     @Get()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     list() {
         return this.voucherService.list();
     }
 
     /**
      * Return the non-sensitive price fields used by contract detail cards.
-     * Contract viewers need a read-only, branch-authenticated view; mutation
-     * routes below remain owner/admin-only.
+     * Contract viewers need an authenticated, active tenant membership. The
+     * projection keeps this consumer from receiving unrelated entity fields.
      */
     @Get("contract-view")
     @UseGuards(JwtGuard, TenantGuard)
@@ -71,25 +70,25 @@ export class VoucherPriceInfoController {
     }
 
     @Get("type")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
         return this.voucherService.findByType(type, parseOptionalInteger(year, "year", { min: 1900, max: 2200 }));
     }
 
     @Get("years")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     getDistinctYears() {
         return this.voucherService.getDistinctYears();
     }
 
     @Get("id")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findById(@Query("id", ParseIntPipe) id: number) {
         return this.voucherService.findById(id);
     }
 
     @Patch()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     update(@Query("id", ParseIntPipe) id: number, @Body() dto: UpdateVoucherPriceInfoDto) {
         return this.voucherService.update(id, {
             type: dto.type ?? undefined,
@@ -102,7 +101,7 @@ export class VoucherPriceInfoController {
     }
 
     @Delete()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     delete(@Query("id", ParseIntPipe) id: number) {
         return this.voucherService.delete(id);
     }
@@ -112,7 +111,7 @@ export class VoucherPriceInfoController {
      * POST /voucher-price-infos/parse-image
      */
     @Post("parse-image")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     @UseInterceptors(FileInterceptor("image"))
     parseImage(@UploadedFile() file: Express.Multer.File) {
         return this.voucherService.parseImage(file);
@@ -125,7 +124,7 @@ export class VoucherPriceInfoController {
      * @param dto.year - 적용 연도 (unique constraint: year + type + duration)
      */
     @Post("bulk-update")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     bulkUpdate(@Body() dto: BulkUpdateVoucherPriceInfoDto) {
         return this.voucherService.bulkUpdate(dto.items, dto.year);
     }

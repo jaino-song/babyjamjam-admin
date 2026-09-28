@@ -16,7 +16,6 @@ describe("ClientController (Integration)", () => {
 
     let app: INestApplication;
     let clientService: jest.Mocked<ClientService>;
-    let ownerOrAdminAllowed: boolean;
 
     type ClientOverrides = Partial<{
         id: number;
@@ -102,11 +101,6 @@ describe("ClientController (Integration)", () => {
                 return true;
             },
         };
-        ownerOrAdminAllowed = true;
-        const mockOwnerOrAdminGuard = {
-            canActivate: () => ownerOrAdminAllowed,
-        };
-
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [ClientController],
             providers: [
@@ -120,8 +114,6 @@ describe("ClientController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
-            .overrideGuard(OwnerOrAdminGuard)
-            .useValue(mockOwnerOrAdminGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -136,16 +128,19 @@ describe("ClientController (Integration)", () => {
     });
 
     describe("unavailable employee activation confirmation", () => {
-        it("protects the activation-and-create route with owner/admin authority", () => {
+        it("inherits the JWT and tenant guards from the controller", () => {
             const guards = Reflect.getMetadata(
                 GUARDS_METADATA,
                 ClientController.prototype.createWithEmployeeActivation,
             ) ?? [];
 
-            expect(guards).toContain(OwnerOrAdminGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
+            expect(Reflect.getMetadata(GUARDS_METADATA, ClientController)).toEqual(
+                expect.arrayContaining([JwtGuard, TenantGuard]),
+            );
         });
 
-        it("enables employee activation only through the protected create route", async () => {
+        it("enables employee activation for any tenant member", async () => {
             clientService.create.mockResolvedValue(createMockClient());
             const body = {
                 name: "Unavailable employee client",
@@ -174,9 +169,8 @@ describe("ClientController (Integration)", () => {
             );
         });
 
-        it("allows normal creation but rejects activation for a non-owner/admin", async () => {
+        it("allows normal creation and activation for a non-owner/admin tenant member", async () => {
             clientService.create.mockResolvedValue(createMockClient());
-            ownerOrAdminAllowed = false;
             const body = {
                 name: "Role boundary client",
                 primaryEmployeeId: 10,
@@ -189,12 +183,16 @@ describe("ClientController (Integration)", () => {
             await request(app.getHttpServer())
                 .post("/clients/with-employee-activation")
                 .send({ ...body, confirmedUnavailableEmployeeIds: [10] })
-                .expect(403);
+                .expect(201);
 
-            expect(clientService.create).toHaveBeenCalledTimes(1);
+            expect(clientService.create).toHaveBeenCalledTimes(2);
             expect(clientService.create).toHaveBeenCalledWith(
                 "org-1",
                 expect.objectContaining({ confirmedUnavailableEmployeeIds: undefined }),
+            );
+            expect(clientService.create).toHaveBeenCalledWith(
+                "org-1",
+                expect.objectContaining({ confirmedUnavailableEmployeeIds: [10] }),
             );
         });
     });
