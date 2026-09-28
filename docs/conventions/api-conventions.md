@@ -278,6 +278,29 @@ export class ClientController {
 }
 ```
 
+### Branch Role Policy (REST/UI)
+
+The API authorizes ordinary branch operations from the verified tenant principal: a global
+`owner` may operate in the selected active branch, while branch `admin` and `manager` roles are
+accepted only for their selected active branch. A global non-owner role in a JWT never substitutes
+for the selected branch membership role. `/auth/me` may expose the additive `branchRole`; it is
+derived from the active `user_branch` membership and fails closed when the membership or branch is
+missing, inactive, or has an unsupported role.
+
+| Operation group | Allowed tenant roles |
+|---|---|
+| Employee create and open-status update (`openToNextWork` only) | owner, admin, manager, user |
+| Employee schedule CRUD; schedule-change apply/approve/reject; client employee activation; document-category create/delete | owner, admin, manager, user |
+| Generic employee edit/delete and ordinary branch-management writes | owner, admin, manager |
+| Voucher and bank-account reads; sender-approval request; eformsign document cancellation | owner, admin, manager, user |
+| Shared/global/admin-console controls | Existing endpoint-specific restrictions remain in force |
+
+Confirmation is a workflow step, not an authorization grant. Legacy employee edit/delete tools
+recheck the current verified branch role at proposal and confirmation, so a role demotion between
+those stages blocks execution. Tool-specific capability catalogs may apply their own narrower
+role sets; this table describes the REST/UI policy and does not rewrite global or admin-console
+boundaries.
+
 ---
 
 ## Pagination
