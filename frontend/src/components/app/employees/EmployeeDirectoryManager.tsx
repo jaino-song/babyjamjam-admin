@@ -46,6 +46,12 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
 type EmployeeFilter = "all" | "active" | "inactive";
 
+type PendingCreateDiscardAction =
+    | { type: "filter"; filter: EmployeeFilter }
+    | { type: "select"; employee: Employee }
+    | { type: "back" }
+    | { type: "close" };
+
 const filterItems: Array<{ label: string; value: EmployeeFilter }> = [
     { label: "전체", value: "all" },
     { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
@@ -71,7 +77,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const [filter, setFilter] = useState<EmployeeFilter>("all");
     const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
     const [isCreateFormDirty, setIsCreateFormDirty] = useState(false);
-    const [pendingFilter, setPendingFilter] = useState<EmployeeFilter | null>(null);
+    const [pendingCreateDiscard, setPendingCreateDiscard] = useState<PendingCreateDiscardAction | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -104,7 +110,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     }, [allEmployees, searchMatchedEmployees]);
 
     const handleAddNew = () => {
-        if (formDialogOpen || pendingFilter !== null) return;
+        if (formDialogOpen || pendingCreateDiscard !== null || isCreatingEmployee) return;
 
         setEditingEmployee(null);
         setFormDialogOpen(false);
@@ -114,9 +120,18 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     };
 
     const handleSelectEmployee = (employee: Employee) => {
-        if (formDialogOpen || pendingFilter !== null) return;
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
 
-        setIsCreatingEmployee(false);
+        if (isCreatingEmployee) {
+            if (isCreateFormDirty) {
+                setPendingCreateDiscard({ type: "select", employee });
+                return;
+            }
+
+            setIsCreatingEmployee(false);
+            setIsCreateFormDirty(false);
+        }
+
         setSelectedEmployee(employee);
     };
 
@@ -159,11 +174,13 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const handleFormPanelClose = () => {
         setIsCreatingEmployee(false);
         setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
     };
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
         setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
         setSelectedEmployee(employee);
     };
 
@@ -176,26 +193,59 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setSelectedEmployee(null);
         setIsCreatingEmployee(false);
         setIsCreateFormDirty(false);
-        setPendingFilter(null);
+        setPendingCreateDiscard(null);
     }, []);
 
     const handleFilterChange = (nextFilter: string) => {
-        if (formDialogOpen) return;
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
 
         const normalizedFilter = filterItems.find((item) => item.value === nextFilter)?.value;
         if (!normalizedFilter || normalizedFilter === filter) return;
 
         if (isCreatingEmployee && isCreateFormDirty) {
-            setPendingFilter(normalizedFilter);
+            setPendingCreateDiscard({ type: "filter", filter: normalizedFilter });
             return;
         }
 
         applyFilterChange(normalizedFilter);
     };
 
-    const handleDiscardCreateAndChangeFilter = () => {
-        if (pendingFilter === null) return;
-        applyFilterChange(pendingFilter);
+    const handleCompactBack = () => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        if (isCreatingEmployee) {
+            if (isCreateFormDirty) {
+                setPendingCreateDiscard({ type: "back" });
+                return;
+            }
+
+            handleFormPanelClose();
+            return;
+        }
+
+        setSelectedEmployee(null);
+    };
+
+    const handleFormPanelBeforeClose = useCallback(() => {
+        if (!isCreateFormDirty) return true;
+
+        setPendingCreateDiscard({ type: "close" });
+        return false;
+    }, [isCreateFormDirty]);
+
+    const handleDiscardCreateDraft = () => {
+        if (pendingCreateDiscard === null) return;
+
+        const action = pendingCreateDiscard;
+        if (action.type === "filter") {
+            applyFilterChange(action.filter);
+            return;
+        }
+
+        setPendingCreateDiscard(null);
+        setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setSelectedEmployee(action.type === "select" ? action.employee : null);
     };
 
     return (
@@ -213,14 +263,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
             <SplitLayout data-component={`${dataComponent}_split-layout`}
                 hasSelection={isCreatingEmployee || !!selectedEmployee}
-                onBack={() => {
-                    if (isCreatingEmployee) {
-                        handleFormPanelClose();
-                        return;
-                    }
-
-                    setSelectedEmployee(null);
-                }}
+                onBack={handleCompactBack}
             >
                 <ListPanel data-component={`${dataComponent}_split-layout_list-panel`}
                     title="직원 목록"
@@ -326,6 +369,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 {isCreatingEmployee ? (
                     <EmployeeFormPanel
                         onClose={handleFormPanelClose}
+                        onBeforeClose={handleFormPanelBeforeClose}
                         onSuccess={handleFormPanelSuccess}
                         onDirtyChange={handleCreateFormDirtyChange}
                         renderLayout={({ content, footer }) => (
@@ -380,15 +424,15 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 onApprove={() => void handleDeleteConfirm()}
             />
             <TwoButtonModal
-                open={pendingFilter !== null}
+                open={pendingCreateDiscard !== null}
                 onOpenChange={(open) => {
-                    if (!open) setPendingFilter(null);
+                    if (!open) setPendingCreateDiscard(null);
                 }}
                 dataComponent={`${dataComponent}_create-discard-approval`}
                 title="작성 중인 직원 정보를 버리시겠습니까?"
                 description="입력한 내용은 저장되지 않습니다."
                 approvalLabel="버리기"
-                onApprove={handleDiscardCreateAndChangeFilter}
+                onApprove={handleDiscardCreateDraft}
             />
             <NotificationOneButtonModal
                 open={deleteErrorMessage !== null}
