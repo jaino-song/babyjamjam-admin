@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post,
 import { ClientService } from "application/services/client.service";
 import { CreateClientDto, CreateClientWithEmployeeActivationDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
 
@@ -16,6 +17,7 @@ export class ClientController {
     }
 
     @Post("with-employee-activation")
+    @UseGuards(OwnerOrAdminGuard)
     createWithEmployeeActivation(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateClientWithEmployeeActivationDto,

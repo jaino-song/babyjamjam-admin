@@ -7,7 +7,6 @@ import { BankAccountInfoService } from "application/services/bank-account-info.s
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
-import { TenantGuard } from "infrastructure/tenant";
 
 describe("BankAccountInfoController (Integration)", () => {
     // ============================================
@@ -72,7 +71,7 @@ describe("BankAccountInfoController (Integration)", () => {
                     return true;
                 },
             })
-            .overrideGuard(TenantGuard)
+            .overrideGuard(OwnerOrAdminGuard)
             .useValue({ canActivate: () => true })
             .compile();
 
@@ -88,13 +87,12 @@ describe("BankAccountInfoController (Integration)", () => {
     });
 
     it.each(["create", "findAll", "findByArea", "update", "delete"] as const)(
-        "protects %s with JWT authentication and tenant membership",
+        "keeps %s protected by owner/admin authority",
         (methodName) => {
             const guards = getMethodGuards(methodName);
 
             expect(guards).toContain(JwtGuard);
-            expect(guards).toContain(TenantGuard);
-            expect(guards).not.toContain(OwnerOrAdminGuard);
+            expect(guards).toContain(OwnerOrAdminGuard);
         },
     );
 
@@ -199,11 +197,10 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos - List All
     // ============================================
     describe("GET /bank-account-infos", () => {
-        it("should require JWT authentication and tenant membership", () => {
+        it("should require owner/admin authentication", () => {
             expect(getMethodGuards("findAll")).toEqual(
-                expect.arrayContaining([JwtGuard, TenantGuard]),
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
             );
-            expect(getMethodGuards("findAll")).not.toContain(OwnerOrAdminGuard);
         });
 
         describe("given bank account infos exist", () => {
@@ -277,11 +274,10 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos/area - Find By Area
     // ============================================
     describe("GET /bank-account-infos/area", () => {
-        it("should require JWT authentication and tenant membership", () => {
+        it("should require owner/admin authentication", () => {
             expect(getMethodGuards("findByArea")).toEqual(
-                expect.arrayContaining([JwtGuard, TenantGuard]),
+                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
             );
-            expect(getMethodGuards("findByArea")).not.toContain(OwnerOrAdminGuard);
         });
 
         describe("given bank account info exists for area", () => {

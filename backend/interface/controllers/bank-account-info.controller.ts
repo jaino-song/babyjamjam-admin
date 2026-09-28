@@ -13,7 +13,7 @@ import {
 } from "@nestjs/common";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { TenantGuard } from "infrastructure/tenant";
+import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CreateBankAccountInfoDto, UpdateBankAccountInfoDto } from "../dto/bank-account-info.dto";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
@@ -22,21 +22,21 @@ export class BankAccountInfoController {
     constructor(private readonly bankAccountInfoService: BankAccountInfoService) {}
 
     @Post()
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     create(@Body() createBankAccountInfoDto: CreateBankAccountInfoDto, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.create(createBankAccountInfoDto, branchId);
     }
 
     @Get()
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     findAll(@Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.findAll(branchId);
     }
 
     @Get("area")
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     async findByArea(@Query("area") area: string, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         const result = await this.bankAccountInfoService.findByArea(this.requireArea(area), branchId);
@@ -44,14 +44,14 @@ export class BankAccountInfoController {
     }
 
     @Patch()
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     update(@Query("area") area: string, @Body() updateBankAccountInfoDto: UpdateBankAccountInfoDto, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.update(this.requireArea(area), updateBankAccountInfoDto, branchId);
     }
 
     @Delete()
-    @UseGuards(JwtGuard, TenantGuard)
+    @UseGuards(JwtGuard, OwnerOrAdminGuard)
     delete(@Query("area") area: string, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.delete(this.requireArea(area), branchId);

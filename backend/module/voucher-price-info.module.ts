@@ -18,6 +18,7 @@ import { DatabaseModule } from "infrastructure/database/database.module";
 import { SbVoucherPriceInfoRepository } from "infrastructure/database/repositories/sb.voucher-price-info.repository";
 import { GeminiApiClient } from "infrastructure/api/gemini-api.client";
 import { VoucherPriceInfoController } from "interface/controllers/voucher-price-info.controller";
+import { VoucherPriceReadGuard } from "infrastructure/auth/voucher-price-read.guard";
 import { VoucherAgentCapabilitiesProvider } from "application/usecases/voucher-price-info/voucher-agent-capabilities.provider";
 import { ResolveVoucherServiceSelectionUsecase } from "application/usecases/voucher-price-info/resolve-voucher-service-selection.usecase";
 
@@ -39,6 +40,7 @@ import { ResolveVoucherServiceSelectionUsecase } from "application/usecases/vouc
         VoucherPriceInfoService,
         VoucherAgentCapabilitiesProvider,
         ResolveVoucherServiceSelectionUsecase,
+        VoucherPriceReadGuard,
         // Repository bindings (Ports & Adapters)
         {
             provide: VOUCHER_PRICE_INFO_REPOSITORY,

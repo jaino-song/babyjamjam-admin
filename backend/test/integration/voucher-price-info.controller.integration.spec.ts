@@ -6,6 +6,7 @@ import { VoucherPriceInfoController } from "interface/controllers/voucher-price-
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { VoucherPriceReadGuard } from "infrastructure/auth/voucher-price-read.guard";
 import { TenantGuard } from "infrastructure/tenant";
 
 describe("VoucherPriceInfoController (Integration)", () => {
@@ -79,6 +80,8 @@ describe("VoucherPriceInfoController (Integration)", () => {
             .useValue({ canActivate: () => true })
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
+            .overrideGuard(VoucherPriceReadGuard)
+            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -95,14 +98,24 @@ describe("VoucherPriceInfoController (Integration)", () => {
     describe("read endpoint guard metadata", () => {
         it.each([
             ["list"],
+            ["findById"],
+        ] as const)("should protect %s with owner/admin guards", (methodName) => {
+            const guards = getMethodGuards(methodName);
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(OwnerOrAdminGuard);
+            expect(guards).not.toContain(TenantGuard);
+        });
+
+        it.each([
             ["findByType"],
             ["getDistinctYears"],
-            ["findById"],
         ] as const)("should protect %s with JWT and tenant guards", (methodName) => {
             const guards = getMethodGuards(methodName);
 
             expect(guards).toContain(JwtGuard);
             expect(guards).toContain(TenantGuard);
+            expect(guards).toContain(VoucherPriceReadGuard);
             expect(guards).not.toContain(OwnerOrAdminGuard);
         });
 
@@ -115,7 +128,7 @@ describe("VoucherPriceInfoController (Integration)", () => {
         });
 
         it.each(["create", "update", "delete", "parseImage", "bulkUpdate"] as const)(
-            "protects %s with JWT and tenant guards",
+            "keeps %s protected by owner/admin guards",
             (methodName) => {
                 const guards = Reflect.getMetadata(
                     GUARDS_METADATA,
@@ -123,8 +136,8 @@ describe("VoucherPriceInfoController (Integration)", () => {
                 ) ?? [];
 
                 expect(guards).toContain(JwtGuard);
-                expect(guards).toContain(TenantGuard);
-                expect(guards).not.toContain(OwnerOrAdminGuard);
+                expect(guards).toContain(OwnerOrAdminGuard);
+                expect(guards).not.toContain(TenantGuard);
             },
         );
     });
