@@ -291,7 +291,7 @@ missing, inactive, or has an unsupported role.
 |---|---|
 | Employee create and open-status update (`openToNextWork` only) | owner, admin, manager, user |
 | Employee schedule CRUD; schedule-change apply/approve/reject; client employee activation; document-category create/delete | owner, admin, manager, user |
-| Generic employee edit/delete and ordinary branch-management writes | owner, admin, manager |
+| Generic employee edit/delete, manual trigger-job cancel/retry, and ordinary branch-management writes | owner, admin, manager |
 | Voucher and bank-account reads; sender-approval request; eformsign document cancellation | owner, admin, manager, user |
 | Shared/global/admin-console controls | Existing endpoint-specific restrictions remain in force |
 

@@ -57,6 +57,7 @@ export class MessageTriggerController {
     }
 
     @Post("message-trigger-jobs/:id/cancel")
+    @UseGuards(BranchManagerGuard)
     cancelJob(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
@@ -91,6 +92,7 @@ export class MessageTriggerController {
     }
 
     @Post("message-logs/:id/retry")
+    @UseGuards(BranchManagerGuard)
     retryHistory(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
