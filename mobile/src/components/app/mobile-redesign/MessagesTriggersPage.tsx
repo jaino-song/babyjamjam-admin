@@ -45,6 +45,7 @@ export function MessagesTriggersPage(): ReactElement {
     canManageBranch(authUserQuery.data)
     && !authUserQuery.isPending
     && !authUserQuery.isLoading
+    && !authUserQuery.isError
     && authUserQuery.isFetching
   );
   const isOpen = canRenderAuthorizedDetail
