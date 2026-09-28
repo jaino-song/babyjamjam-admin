@@ -9,6 +9,10 @@ function TestIcon({ className }: { className?: string }) {
 const DEFAULT_MIN_HEIGHT = "min-h-[calc(85px*var(--glint-ui-scale,1))]";
 const SQUARE_MIN_HEIGHT = "min-h-[calc(96px*var(--glint-ui-scale,1))]";
 const DESKTOP_MIN_HEIGHT = "min-[961px]:min-h-[calc(85px*var(--glint-ui-scale,1))]";
+const ICON_HEIGHT = "!h-[calc(24px*var(--glint-ui-scale,1))]";
+const ICON_WIDTH = "!w-[calc(24px*var(--glint-ui-scale,1))]";
+const LOADING_ICON_HEIGHT = "h-[calc(24px*var(--glint-ui-scale,1))]";
+const LOADING_ICON_WIDTH = "w-[calc(24px*var(--glint-ui-scale,1))]";
 
 function getStatMini(dataComponent: string): HTMLElement {
   const element = document.querySelector(`[data-component="${dataComponent}"]`);
@@ -94,6 +98,108 @@ describe("StatMini", () => {
       const card = getStatMini(dataComponent);
 
       expect(card).toHaveClass("aspect-square", SQUARE_MIN_HEIGHT, DESKTOP_MIN_HEIGHT, "h-auto");
+    }
+  });
+
+  it("keeps loaded icons at the shared scale in every density and interaction mode", () => {
+    render(
+      <>
+        <StatMini
+          data-component="desktop_test_icon_default_regular"
+          icon={TestIcon}
+          value={12}
+          label="진행 계약"
+        />
+        <StatMini
+          data-component="desktop_test_icon_default_interactive"
+          icon={TestIcon}
+          value={12}
+          label="전자문서 처리중"
+          interactive
+        />
+        <StatMini
+          data-component="desktop_test_icon_square_regular"
+          icon={TestIcon}
+          value={12}
+          label="진행 계약"
+          density="responsive-square"
+        />
+        <StatMini
+          data-component="desktop_test_icon_square_interactive"
+          icon={TestIcon}
+          value={12}
+          label="전자문서 처리중"
+          density="responsive-square"
+          interactive
+        />
+      </>,
+    );
+
+    for (const dataComponent of [
+      "desktop_test_icon_default_regular",
+      "desktop_test_icon_default_interactive",
+      "desktop_test_icon_square_regular",
+      "desktop_test_icon_square_interactive",
+    ]) {
+      const card = getStatMini(dataComponent);
+      const iconSlot = card.querySelector('[data-slot="stat-mini-icon"]');
+      const icon = iconSlot?.querySelector('svg[aria-label="stat icon"]');
+
+      expect(iconSlot).toHaveAttribute("data-slot", "stat-mini-icon");
+      expect(icon).toHaveClass(ICON_HEIGHT, ICON_WIDTH);
+    }
+  });
+
+  it("keeps loading icon placeholders at the shared scale for regular and interactive cards", () => {
+    render(
+      <>
+        <StatMini
+          data-component="desktop_test_loading_default_regular"
+          icon={TestIcon}
+          value={12}
+          label="진행 계약"
+          isLoading
+        />
+        <StatMini
+          data-component="desktop_test_loading_default_interactive"
+          icon={TestIcon}
+          value={12}
+          label="전자문서 처리중"
+          isLoading
+          interactive
+        />
+        <StatMini
+          data-component="desktop_test_loading_square_regular"
+          icon={TestIcon}
+          value={12}
+          label="진행 계약"
+          isLoading
+          density="responsive-square"
+        />
+        <StatMini
+          data-component="desktop_test_loading_square_interactive"
+          icon={TestIcon}
+          value={12}
+          label="전자문서 처리중"
+          isLoading
+          density="responsive-square"
+          interactive
+        />
+      </>,
+    );
+
+    for (const dataComponent of [
+      "desktop_test_loading_default_regular",
+      "desktop_test_loading_default_interactive",
+      "desktop_test_loading_square_regular",
+      "desktop_test_loading_square_interactive",
+    ]) {
+      const card = getStatMini(dataComponent);
+      const iconSlot = card.querySelector('[data-slot="stat-mini-icon"]');
+      const placeholder = iconSlot?.firstElementChild;
+
+      expect(iconSlot).toHaveAttribute("data-slot", "stat-mini-icon");
+      expect(placeholder).toHaveClass(LOADING_ICON_HEIGHT, LOADING_ICON_WIDTH);
     }
   });
 
