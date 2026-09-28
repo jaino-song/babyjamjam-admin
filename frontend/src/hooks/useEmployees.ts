@@ -165,8 +165,9 @@ export function useCreateEmployee() {
                 await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
             }
         },
-        onError: (error) => {
+        onError: async (error, _dto, context) => {
             console.error("[useCreateEmployee] onError called:", error);
+            await refetchOwnedEmployeeListQueries(queryClient, context);
         },
     });
 }
@@ -189,6 +190,9 @@ export function useUpdateEmployee() {
             if (patchEmployeeListQueries(queryClient, employee, context)) {
                 await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
             }
+        },
+        onError: async (_error, _variables, context) => {
+            await refetchOwnedEmployeeListQueries(queryClient, context);
         },
     });
 }
@@ -230,12 +234,7 @@ function patchEmployeeListQueries(
 ): boolean {
     let hasOriginalListQuery = false;
 
-    for (const { queryKey, query } of context?.queries ?? []) {
-        if (!isEmployeeListQueryKey(queryKey)) continue;
-
-        const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
-        if (currentQuery !== query) continue;
-
+    for (const { queryKey } of getOwnedEmployeeListQueries(queryClient, context)) {
         hasOriginalListQuery = true;
         queryClient.setQueryData(queryKey, (current: unknown) => (
             mergeEmployeeIntoListCacheData(current, employee)
@@ -243,6 +242,27 @@ function patchEmployeeListQueries(
     }
 
     return hasOriginalListQuery;
+}
+
+function getOwnedEmployeeListQueries(
+    queryClient: ReturnType<typeof useQueryClient>,
+    context: EmployeeCacheMutationContext | undefined,
+): EmployeeQueryReference[] {
+    return (context?.queries ?? []).filter(({ queryKey, query }) => (
+        isEmployeeListQueryKey(queryKey)
+        && queryClient.getQueryCache().find({ queryKey, exact: true }) === query
+    ));
+}
+
+async function refetchOwnedEmployeeListQueries(
+    queryClient: ReturnType<typeof useQueryClient>,
+    context: EmployeeCacheMutationContext | undefined,
+): Promise<void> {
+    await Promise.all(
+        getOwnedEmployeeListQueries(queryClient, context).map(({ queryKey }) => (
+            queryClient.refetchQueries({ queryKey, exact: true })
+        )),
+    );
 }
 
 // Delete employee

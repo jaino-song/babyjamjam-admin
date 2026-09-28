@@ -183,6 +183,100 @@ describe("useToggleEmployeeOpenStatus", () => {
     expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.openToNextWork).toBe(false);
   });
 
+  it("recovers the owned list after a failed create cancels its initial request", async () => {
+    const { wrapper } = createTestContext();
+    let getCalls = 0;
+    mockedApiGet.mockImplementation(() => {
+      getCalls += 1;
+      if (getCalls === 1) return new Promise(() => undefined);
+      return Promise.resolve({ data: [employee(true)] });
+    });
+    mockedApiPost.mockRejectedValue(new Error("create failed"));
+
+    const { result } = renderHook(
+      () => ({
+        employees: useEmployees(),
+        mutation: useCreateEmployee(),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(getCalls).toBe(1));
+
+    act(() => {
+      result.current.mutation.mutate({
+        name: "실패 생성",
+        workArea: ["gangnam"],
+        phone: "01099998888",
+        grade: "A",
+        openToNextWork: true,
+      });
+    });
+
+    await waitFor(() => expect(result.current.mutation.isError).toBe(true));
+    await waitFor(() => expect(getCalls).toBe(2));
+    expect(result.current.employees.data).toEqual([employee(true)]);
+  });
+
+  it("recovers the owned list after a failed update cancels its initial request", async () => {
+    const { wrapper } = createTestContext();
+    let getCalls = 0;
+    mockedApiGet.mockImplementation(() => {
+      getCalls += 1;
+      if (getCalls === 1) return new Promise(() => undefined);
+      return Promise.resolve({ data: [employee(true)] });
+    });
+    mockedApiPatch.mockRejectedValue(new Error("update failed"));
+
+    const { result } = renderHook(
+      () => ({
+        employees: useEmployees(),
+        mutation: useUpdateEmployee(),
+      }),
+      { wrapper },
+    );
+    await waitFor(() => expect(getCalls).toBe(1));
+
+    act(() => {
+      result.current.mutation.mutate({ id: 7, dto: { name: "실패 수정" } });
+    });
+
+    await waitFor(() => expect(result.current.mutation.isError).toBe(true));
+    await waitFor(() => expect(getCalls).toBe(2));
+    expect(result.current.employees.data).toEqual([employee(true)]);
+  });
+
+  it("does not refetch a replacement list after a failed create", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    const branchBEmployee = employee(false);
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+
+    let rejectCreate: ((error: Error) => void) | undefined;
+    mockedApiPost.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectCreate = reject;
+    }));
+
+    const { result } = renderHook(() => useCreateEmployee(), { wrapper });
+    act(() => {
+      result.current.mutate({
+        name: "지연 실패",
+        workArea: ["gangnam"],
+        phone: "01099997777",
+        grade: "A",
+        openToNextWork: true,
+      });
+    });
+    await waitFor(() => expect(mockedApiPost).toHaveBeenCalled());
+
+    queryClient.clear();
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+    rejectCreate?.(new Error("create failed"));
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockedApiGet).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
+    expect(queryClient.getQueryState(employeeQueryKeys.lists())?.isInvalidated).not.toBe(true);
+  });
+
   it("does not write a late create response into a replacement list cache", async () => {
     const { queryClient, wrapper } = createTestContext();
     const branchBEmployee = employee(false);
