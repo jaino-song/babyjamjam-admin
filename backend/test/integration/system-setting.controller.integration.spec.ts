@@ -53,6 +53,8 @@ describe("SystemSettingController (Integration)", () => {
             setMessageSettingsPolicyEnabled: jest.fn(),
         };
         const mockMessageSenderApprovalService = {
+            requestApproval: jest.fn(),
+            canRequest: jest.fn(),
             approvePendingRequest: jest.fn(),
         };
 
@@ -384,6 +386,50 @@ describe("SystemSettingController (Integration)", () => {
 
             expect(guards).toContain(OwnerGuard);
         });
+    });
+
+    describe("POST /settings/message-sender-approval/request", () => {
+        it("uses tenant membership for the request route", () => {
+            const guards = Reflect.getMetadata(
+                GUARDS_METADATA,
+                SystemSettingController.prototype.requestMessageSenderApproval,
+            ) ?? [];
+
+            expect(guards).toContain(TenantGuard);
+        });
+
+        it.each(["owner", "admin", "manager", "user"] as const)(
+            "allows %s to request sender approval",
+            async (branchRole) => {
+                const requestedAt = new Date("2026-06-05T00:00:00.000Z");
+                messageSenderApprovalService.requestApproval.mockResolvedValue({
+                    approvalStatus: "pending",
+                    requestedAt,
+                    approvedAt: null,
+                });
+                messageSenderApprovalService.canRequest.mockReturnValue(true);
+
+                const response = await controller.requestMessageSenderApproval(
+                    {
+                        userId: `${branchRole}-user`,
+                        branchId: "branch-1",
+                        globalRole: branchRole === "owner" ? "owner" : "user",
+                        branchRole,
+                    },
+                    { user: { userId: `${branchRole}-user` } },
+                );
+
+                expect(response).toMatchObject({
+                    approvalStatus: "pending",
+                    canRequest: true,
+                });
+                expect(messageSenderApprovalService.requestApproval).toHaveBeenCalledWith({
+                    branchId: "branch-1",
+                    branchRole,
+                    userId: `${branchRole}-user`,
+                });
+            },
+        );
     });
 });
 

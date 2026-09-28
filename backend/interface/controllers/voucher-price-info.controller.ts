@@ -15,7 +15,6 @@ import { FileInterceptor } from "@nestjs/platform-express";
 import { VoucherPriceInfoService } from "application/services/voucher-price-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
-import { VoucherPriceReadGuard } from "infrastructure/auth/voucher-price-read.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import {
   BulkUpdateVoucherPriceInfoDto,
@@ -43,7 +42,7 @@ export class VoucherPriceInfoController {
     }
 
     @Get()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     list() {
         return this.voucherService.list();
     }
@@ -72,19 +71,19 @@ export class VoucherPriceInfoController {
     }
 
     @Get("type")
-    @UseGuards(JwtGuard, TenantGuard, VoucherPriceReadGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
         return this.voucherService.findByType(type, parseOptionalInteger(year, "year", { min: 1900, max: 2200 }));
     }
 
     @Get("years")
-    @UseGuards(JwtGuard, TenantGuard, VoucherPriceReadGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     getDistinctYears() {
         return this.voucherService.getDistinctYears();
     }
 
     @Get("id")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findById(@Query("id", ParseIntPipe) id: number) {
         return this.voucherService.findById(id);
     }

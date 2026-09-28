@@ -16,7 +16,6 @@ import { VoucherPriceInfoService } from "application/services/voucher-price-info
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { VoucherPriceReadGuard } from "infrastructure/auth/voucher-price-read.guard";
 import { TenantContext } from "infrastructure/tenant/tenant.context";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
@@ -102,9 +101,17 @@ describe("user API access controller guards (HTTP integration)", () => {
         membership = null;
     };
 
-    const allowedVoucherRead = (path: "type" | "years") => {
-        const requestBuilder = request(app.getHttpServer()).get(`/voucher-price-infos/${path}`);
-        return path === "type" ? requestBuilder.query({ type: "standard" }) : requestBuilder;
+    const voucherRead = (path: "list" | "type" | "years" | "id") => {
+        const paths = {
+            list: "/voucher-price-infos",
+            type: "/voucher-price-infos/type",
+            years: "/voucher-price-infos/years",
+            id: "/voucher-price-infos/id",
+        } as const;
+        const requestBuilder = request(app.getHttpServer()).get(paths[path]);
+        if (path === "type") return requestBuilder.query({ type: "standard" });
+        if (path === "id") return requestBuilder.query({ id: "1" });
+        return requestBuilder;
     };
 
     const bankRead = (path: "list" | "area") => {
@@ -152,7 +159,6 @@ describe("user API access controller guards (HTTP integration)", () => {
                 TenantGuard,
                 TenantContext,
                 OwnerOrAdminGuard,
-                VoucherPriceReadGuard,
                 {
                     provide: PrismaService,
                     useValue: {
@@ -178,40 +184,43 @@ describe("user API access controller guards (HTTP integration)", () => {
         await app.close();
     });
 
-    it.each(["owner", "admin", "manager"] as const)(
-        "allows an active %s principal on voucher type and year reads",
+    it.each(["owner", "admin", "manager", "user"] as const)(
+        "allows an active %s principal on all voucher reads",
         async (role) => {
             setPrincipal(role);
 
-            await allowedVoucherRead("type").expect(200);
-            await allowedVoucherRead("years").expect(200);
+            for (const path of ["list", "type", "years", "id"] as const) {
+                await voucherRead(path).expect(200);
+            }
         },
     );
 
-    it("denies a branch user on voucher type and year reads", async () => {
-        setPrincipal("user");
-
-        await allowedVoucherRead("type").expect(403);
-        await allowedVoucherRead("years").expect(403);
+    it("denies anonymous voucher and bank reads", async () => {
+        for (const path of ["list", "type", "years", "id"] as const) {
+            await voucherRead(path).expect(401);
+        }
+        await bankRead("list").expect(401);
+        await bankRead("area").expect(401);
     });
 
-    it("denies anonymous voucher type and year reads", async () => {
-        await allowedVoucherRead("type").expect(401);
-        await allowedVoucherRead("years").expect(401);
-    });
-
-    it("denies voucher type and year reads for missing or inactive membership", async () => {
+    it("denies voucher and bank reads for missing or inactive membership", async () => {
         setMissingMembershipPrincipal();
-        await allowedVoucherRead("type").expect(403);
-        await allowedVoucherRead("years").expect(403);
+        for (const path of ["list", "type", "years", "id"] as const) {
+            await voucherRead(path).expect(403);
+        }
+        await bankRead("list").expect(403);
+        await bankRead("area").expect(403);
 
         setPrincipal("manager", BRANCH_A, false);
-        await allowedVoucherRead("type").expect(403);
-        await allowedVoucherRead("years").expect(403);
+        for (const path of ["list", "type", "years", "id"] as const) {
+            await voucherRead(path).expect(403);
+        }
+        await bankRead("list").expect(403);
+        await bankRead("area").expect(403);
     });
 
-    it.each(["owner", "admin"] as const)(
-        "keeps bank reads available to baseline %s principals and pins the branch",
+    it.each(["owner", "admin", "manager", "user"] as const)(
+        "allows %s bank reads and pins the branch",
         async (role) => {
             setPrincipal(role, BRANCH_B);
             bankAccountInfoService.findAll.mockResolvedValue([{ area: "branch-b-area" }]);
@@ -229,25 +238,7 @@ describe("user API access controller guards (HTTP integration)", () => {
         },
     );
 
-    it.each(["manager", "user"] as const)(
-        "denies %s on baseline bank reads",
-        async (role) => {
-            setPrincipal(role);
-
-            await bankRead("list").expect(403);
-            await bankRead("area").expect(403);
-        },
-    );
-
     const protectedRoutes = [
-        {
-            name: "voucher list",
-            invoke: () => request(app.getHttpServer()).get("/voucher-price-infos"),
-        },
-        {
-            name: "voucher id",
-            invoke: () => request(app.getHttpServer()).get("/voucher-price-infos/id").query({ id: "1" }),
-        },
         {
             name: "voucher create",
             invoke: () => request(app.getHttpServer()).post("/voucher-price-infos").send({

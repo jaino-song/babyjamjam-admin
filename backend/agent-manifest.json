@@ -140,12 +140,14 @@
       "risk": "read",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "flagKey": "agent.capability.bank.accounts",
       "sideEffect": false,
       "sourceFile": "application/usecases/bank-account-info/bank-account-agent-capabilities.provider.ts",
-      "sourceDigest": "e3607fed212e524c5f5239bd6af7c32e0581ae25b1c34e7463ec65fcfd02d2af"
+      "sourceDigest": "df0645481a8e0a49b2575aeeb55d2e185ef9b7ab53c8cc42387079d25b6c2257"
     },
     {
       "name": "calls.list",
@@ -849,12 +851,13 @@
       "requiredRoles": [
         "owner",
         "admin",
-        "manager"
+        "manager",
+        "user"
       ],
       "flagKey": "agent.capability.vouchers.prices",
       "sideEffect": false,
       "sourceFile": "application/usecases/voucher-price-info/voucher-agent-capabilities.provider.ts",
-      "sourceDigest": "4f2faff38dfc00b02ea6d0b81ef85108c689cd220214555af374cc5ac07019ab"
+      "sourceDigest": "3ce40671733789cb191d70b5e9e76334b35f6801349d938745346592b839baa0"
     },
     {
       "name": "website.settings",

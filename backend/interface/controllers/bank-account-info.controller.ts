@@ -14,6 +14,7 @@ import {
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { TenantGuard } from "infrastructure/tenant";
 import { CreateBankAccountInfoDto, UpdateBankAccountInfoDto } from "../dto/bank-account-info.dto";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 
@@ -29,14 +30,14 @@ export class BankAccountInfoController {
     }
 
     @Get()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findAll(@Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.findAll(branchId);
     }
 
     @Get("area")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     async findByArea(@Query("area") area: string, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         const result = await this.bankAccountInfoService.findByArea(this.requireArea(area), branchId);
