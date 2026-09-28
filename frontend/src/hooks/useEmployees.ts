@@ -1,6 +1,12 @@
 "use client";
 
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+    useInfiniteQuery,
+    useQuery,
+    useMutation,
+    useQueryClient,
+    type QueryKey,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import {
     removeById,
@@ -204,16 +210,98 @@ export function useDeleteEmployee() {
     });
 }
 
+interface EmployeeQueryReference {
+    queryKey: QueryKey;
+    query: unknown;
+}
+
+interface ToggleEmployeeOpenStatusContext {
+    queries: EmployeeQueryReference[];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function isEmployeeDetailQueryKey(queryKey: QueryKey): boolean {
+    return queryKey.length === 3
+        && queryKey[0] === employeeQueryKeys.all[0]
+        && queryKey[1] === "detail"
+        && typeof queryKey[2] === "number";
+}
+
+function captureEmployeeQueryReferences(queryClient: ReturnType<typeof useQueryClient>): EmployeeQueryReference[] {
+    const queryKeys = [
+        ...queryClient.getQueriesData({ queryKey: employeeQueryKeys.lists() }).map(([queryKey]) => queryKey),
+        ...queryClient
+            .getQueriesData({ queryKey: employeeQueryKeys.details() })
+            .map(([queryKey]) => queryKey)
+            .filter(isEmployeeDetailQueryKey),
+    ];
+
+    return queryKeys.flatMap((queryKey) => {
+        const query = queryClient.getQueryCache().find({ queryKey, exact: true });
+        return query ? [{ queryKey, query }] : [];
+    });
+}
+
+function updateEmployeeOpenStatusInCache(
+    current: unknown,
+    id: number,
+    openToNextWork: boolean,
+): unknown {
+    if (Array.isArray(current)) {
+        let changed = false;
+        const next = current.map((item) => {
+            if (!isRecord(item) || item.id !== id || item.openToNextWork === openToNextWork) {
+                return item;
+            }
+
+            changed = true;
+            return { ...item, openToNextWork };
+        });
+
+        return changed ? next : current;
+    }
+
+    if (!isRecord(current) || current.id !== id || current.openToNextWork === openToNextWork) {
+        return current;
+    }
+
+    return { ...current, openToNextWork };
+}
+
 // Toggle open status
 export function useToggleEmployeeOpenStatus() {
     const queryClient = useQueryClient();
 
-    return useMutation({
+    return useMutation<unknown, Error, { id: number; openToNextWork: boolean }, ToggleEmployeeOpenStatusContext>({
         mutationFn: async ({ id, openToNextWork }: { id: number; openToNextWork: boolean }) => {
             const { data } = await api.patch("/employees/open-status", { openToNextWork }, { params: { id } });
             return data;
         },
-        onSuccess: async () => {
+        onMutate: async (): Promise<ToggleEmployeeOpenStatusContext> => {
+            const queries = captureEmployeeQueryReferences(queryClient);
+
+            await Promise.all([
+                queryClient.cancelQueries({ queryKey: employeeQueryKeys.lists() }),
+                queryClient.cancelQueries({ queryKey: employeeQueryKeys.details() }),
+            ]);
+
+            return { queries };
+        },
+        onSuccess: async (_data, { id, openToNextWork }, context) => {
+            for (const { queryKey, query } of context?.queries ?? []) {
+                const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
+                if (currentQuery !== query) continue;
+
+                queryClient.setQueryData(queryKey, (current: unknown) => (
+                    updateEmployeeOpenStatusInCache(current, id, openToNextWork)
+                ));
+            }
+
+            // Keep the confirmed mutation value visible while a refresh is pending;
+            // the next server response may still replace it with a newer external value.
             await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
     });

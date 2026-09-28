@@ -52,6 +52,19 @@ const filterItems = [
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
 
+function employeesMatch(left: Employee, right: Employee): boolean {
+    return left.id === right.id
+        && left.name === right.name
+        && left.phone === right.phone
+        && left.grade === right.grade
+        && left.openToNextWork === right.openToNextWork
+        && left.registeredDate === right.registeredDate
+        && left.status === right.status
+        && left.birthday === right.birthday
+        && left.workArea.length === right.workArea.length
+        && left.workArea.every((area, index) => area === right.workArea[index]);
+}
+
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
         <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
@@ -72,6 +85,8 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+    const [selectedEmployeeFromForm, setSelectedEmployeeFromForm] = useState<Employee | null>(null);
+    const [selectedEmployeeFormBaseline, setSelectedEmployeeFormBaseline] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -91,6 +106,22 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const authUserQuery = useGetAuthUser();
     const canManageEmployees = canManageBranchFromAuthQuery(authUserQuery);
 
+    const selectedEmployeeFromList = selectedEmployee
+        ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? selectedEmployee
+        : null;
+    const isFormResultWaitingForList = selectedEmployeeFromForm
+        && selectedEmployeeFromList
+        && (!selectedEmployeeFormBaseline || employeesMatch(selectedEmployeeFromList, selectedEmployeeFormBaseline));
+    const selectedEmployeeForDetail = isFormResultWaitingForList && selectedEmployeeFromList
+        ? {
+            ...selectedEmployeeFromList,
+            ...selectedEmployeeFromForm,
+            // Availability is owned by the live list/cache even while an edit
+            // response is waiting for the list query to catch up.
+            openToNextWork: selectedEmployeeFromList.openToNextWork,
+        }
+        : selectedEmployeeFromList ?? selectedEmployeeFromForm;
+
     const stats = useMemo(() => {
         return {
             total: allEmployees.length,
@@ -104,11 +135,15 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setEditingEmployee(null);
         setFormDialogOpen(false);
         setSelectedEmployee(null);
+        setSelectedEmployeeFromForm(null);
+        setSelectedEmployeeFormBaseline(null);
         setIsCreatingEmployee(true);
     };
 
     const handleSelectEmployee = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setSelectedEmployeeFromForm(null);
+        setSelectedEmployeeFormBaseline(null);
         setSelectedEmployee(employee);
     };
 
@@ -130,6 +165,8 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
             if (selectedEmployee?.id === deleteTargetEmployeeId) {
                 setSelectedEmployee(null);
+                setSelectedEmployeeFromForm(null);
+                setSelectedEmployeeFormBaseline(null);
             }
 
             setDeleteTargetEmployeeId(null);
@@ -154,6 +191,10 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setSelectedEmployeeFormBaseline(
+            allEmployees.find((liveEmployee) => liveEmployee.id === employee.id) ?? null,
+        );
+        setSelectedEmployeeFromForm(employee);
         setSelectedEmployee(employee);
     };
 
@@ -307,7 +348,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     />
                 ) : selectedEmployee ? (
                     <EmployeeDetailPanel key={selectedEmployee.id}
-                        employee={selectedEmployee}
+                        employee={selectedEmployeeForDetail ?? selectedEmployee}
                         canManage={canManageEmployees}
                         onEdit={handleEdit}
                         onDelete={handleDeleteRequest}

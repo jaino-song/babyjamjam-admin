@@ -45,6 +45,9 @@ jest.mock("@/components/app/employees/EmployeeDetailPanel", () => ({
     <section data-testid="employee-detail">
       <h2>{employee.name}</h2>
       <p data-testid="employee-detail-phone">{employee.phone}</p>
+      <p data-testid="employee-detail-availability">
+        {employee.openToNextWork ? "available" : "unavailable"}
+      </p>
       <button type="button" onClick={() => onEdit(employee)}>
         직원 수정
       </button>
@@ -163,7 +166,7 @@ const employee: Employee = {
   status: "available",
 };
 
-function makeQueryResult() {
+function makeQueryResult(overrides: Record<string, unknown> = {}) {
   return {
     employees: [employee],
     allEmployees: [employee],
@@ -174,6 +177,7 @@ function makeQueryResult() {
     hasNextPage: false,
     fetchNextPage: jest.fn(),
     refetch: jest.fn(),
+    ...overrides,
   } as unknown as ReturnType<typeof useInfiniteEmployees>;
 }
 
@@ -198,5 +202,37 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+  });
+
+  it("refreshes the selected detail from the unfiltered list when a filtered row changes", () => {
+    const { rerender } = render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+
+    const refreshedEmployee: Employee = {
+      ...employee,
+      name: "김철수",
+      phone: "01087654321",
+      openToNextWork: false,
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [],
+        allEmployees: [refreshedEmployee],
+        filteredCount: 0,
+      }),
+    );
+
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    const detail = screen.getByTestId("employee-detail");
+    expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
   });
 });
