@@ -12,6 +12,16 @@ jest.mock("@/hooks/useInfiniteEmployees", () => ({
   useInfiniteEmployees: jest.fn(),
 }));
 
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/hooks/useEmployees", () => ({
   useDeleteEmployee: () => ({
     mutateAsync: jest.fn(),
