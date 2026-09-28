@@ -311,6 +311,7 @@ export default function ClientsPage() {
     const deleteClient = useDeleteClient();
     const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
+    const createdClientSelectionRef = useRef<Client | null>(null);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -323,7 +324,7 @@ export default function ClientsPage() {
         () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
         [directory.clients, directory.isBranchContextReady, isSearchSettled],
     );
-    const matchedTotal = isSearchSettled && directory.isBranchContextReady
+    const matchedTotal = isSearchSettled && directory.isBranchContextReady && directory.data !== undefined
         ? directory.matchedTotal
         : null;
     const summary = isSearchSettled && listSummary.isBranchContextReady
@@ -365,6 +366,7 @@ export default function ClientsPage() {
         endingSoonCount: summary?.serviceEnd.count ?? "—",
     };
     const clearClientSelectionSources = useCallback(() => {
+        createdClientSelectionRef.current = null;
         setSelectedClient(null);
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
@@ -673,20 +675,32 @@ export default function ClientsPage() {
     }, [isCreateFormDirty]);
 
     const handleClientFormPanelClose = () => {
+        const createdClient = createdClientSelectionRef.current;
+        createdClientSelectionRef.current = null;
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
+
+        if (createdClient) {
+            setSelectedClient(createdClient);
+            if (clientIdParam || shouldOpenClientFormFromUrl) {
+                setUrlSelectionSuppressed(true);
+                router.replace("/clients");
+            }
+            return;
+        }
+
         clearClientSelectionSources();
     };
 
     const handleClientFormPanelSuccess = (client: Client) => {
+        createdClientSelectionRef.current = client;
         setIsCreatingClient(false);
         setSelectedClient(client);
         setClientFormActiveStep(0);
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
-        if (shouldOpenClientFormFromUrl) router.replace("/clients");
     };
 
     const handleDiscardCreateDraft = () => {
