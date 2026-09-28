@@ -3,7 +3,12 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError } from "@babyjamjam/shared";
+import {
+    MESSAGE_HISTORY_STATUS_LABELS,
+    MESSAGE_RECIPIENT_LABELS,
+    getMessageTemplateLabel,
+    normalizeApiError,
+} from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
@@ -15,8 +20,14 @@ import {
 import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
-import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
-import type { MessageLogRecord } from "@/features/message-triggers/types";
+import {
+    useClientUpcomingMessageTriggerJobs,
+    useMessageHistory,
+} from "@/features/message-triggers/hooks/use-message-triggers";
+import type {
+    ClientUpcomingMessageTriggerJob,
+    MessageLogRecord,
+} from "@/features/message-triggers/types";
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
@@ -54,7 +65,7 @@ import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/ph
 import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
 import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
-import { Users } from "lucide-react";
+import { CalendarClock, Users } from "lucide-react";
 
 const SOURCE_COMPONENT = "ClientDetailPanel";
 
@@ -72,6 +83,7 @@ type ClientDetailTabKey =
     | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
 
 const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
+const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
 const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
 const CLIENT_MESSAGE_STATUS_VARIANT = {
     sent: "success",
@@ -300,6 +312,192 @@ function ClientMessageHistoryList({
                     );
                 }}
             />
+        </div>
+    );
+}
+
+type ClientUpcomingMessageDisplay = {
+    label: string;
+    timeLabel: string;
+    time: string;
+    variant: "warning" | "info";
+};
+
+export function formatClientUpcomingDate(dateString: string | null): string {
+    if (!dateString) return "-";
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return "-";
+
+    return date.toLocaleString("ko-KR", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+}
+
+export function getClientUpcomingMessageDisplay(
+    job: ClientUpcomingMessageTriggerJob,
+    now = Date.now(),
+): ClientUpcomingMessageDisplay {
+    const scheduledAt = new Date(job.scheduledFor).getTime();
+    const dueAt = new Date(job.effectiveDueAt ?? job.scheduledFor).getTime();
+    const nextAttemptAt = job.nextAttemptAt ? new Date(job.nextAttemptAt).getTime() : Number.NaN;
+    const hasFutureRetry = Number.isFinite(nextAttemptAt)
+        && Number.isFinite(dueAt)
+        && nextAttemptAt > dueAt
+        && nextAttemptAt > now;
+
+    if (job.status === "processing" || job.status === "dispatching") {
+        return {
+            label: "발송 처리 중",
+            timeLabel: "요청 시각",
+            time: job.scheduledFor,
+            variant: "info",
+        };
+    }
+
+    if (hasFutureRetry) {
+        return {
+            label: "재시도 예정",
+            timeLabel: "재시도 시각",
+            time: job.nextAttemptAt ?? job.scheduledFor,
+            variant: "warning",
+        };
+    }
+
+    if (Number.isFinite(scheduledAt) && scheduledAt > now) {
+        return {
+            label: "발송 예정",
+            timeLabel: "발송 시각",
+            time: job.scheduledFor,
+            variant: "warning",
+        };
+    }
+
+    return {
+        label: "발송 대기",
+        timeLabel: "요청 시각",
+        time: job.scheduledFor,
+        variant: "warning",
+    };
+}
+
+function ClientUpcomingMessageList({
+    jobs,
+    isError,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    onLoadMore,
+    onRetry,
+    dataComponentPrefix,
+}: {
+    jobs: ClientUpcomingMessageTriggerJob[];
+    isError: boolean;
+    isLoading: boolean;
+    isFetchingNextPage: boolean;
+    hasNextPage: boolean;
+    onLoadMore: () => void;
+    onRetry: () => void;
+    dataComponentPrefix: string;
+}) {
+    const sectionPrefix = `${dataComponentPrefix}_upcoming`;
+
+    if (isError) {
+        return (
+            <div
+                data-component={`${sectionPrefix}_error`}
+                data-source-component="ClientUpcomingMessageList"
+                className="flex flex-col items-center justify-center gap-3 py-8 text-center"
+            >
+                <p className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                    예정된 자동 메시지를 불러오지 못했어요
+                </p>
+                <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                    다시 시도
+                </Button>
+            </div>
+        );
+    }
+
+    if (!isLoading && jobs.length === 0) {
+        return (
+            <DetailEmptyState
+                message="예정된 자동 메시지가 없습니다"
+                className="min-h-0 py-8"
+            />
+        );
+    }
+
+    return (
+        <div
+            data-component={sectionPrefix}
+            data-source-component="ClientUpcomingMessageList"
+            data-slot="upcoming-messages"
+            className="space-y-3"
+        >
+            <AnimatedSlotList<ClientUpcomingMessageTriggerJob>
+                data-component={`${sectionPrefix}_list`}
+                items={jobs}
+                isLoading={isLoading}
+                loadingCount={2}
+                fetchingMoreCount={1}
+                isFetchingMore={isFetchingNextPage}
+                itemVariant="card"
+                itemDataComponent={`${sectionPrefix}_list_item`}
+                getItemKey={(job) => job.id}
+                getSlotState={() => ({ isInteractive: false })}
+                render={({ item: job }) => {
+                    if (!job) return null;
+
+                    const display = getClientUpcomingMessageDisplay(job);
+                    const recipientLabel = MESSAGE_RECIPIENT_LABELS[job.recipientType] ?? "수신자";
+                    return (
+                        <AnimatedSlotListItemContent
+                            data-component={`${sectionPrefix}_list_item_content`}
+                            icon={CalendarClock}
+                            iconContainerClassName="text-v3-primary"
+                            title={job.ruleName || getMessageTemplateLabel(job.templateKey)}
+                            subtitle={
+                                <>
+                                    <span>{recipientLabel}: {job.recipientName}</span>
+                                    <span>{display.timeLabel}: {formatClientUpcomingDate(display.time)}</span>
+                                </>
+                            }
+                            meta={
+                                <span data-slot="template-label">
+                                    {getMessageTemplateLabel(job.templateKey)}
+                                </span>
+                            }
+                            status={
+                                <StatusPill
+                                    data-component={`${sectionPrefix}_list_item_status`}
+                                    variant={display.variant}
+                                    size="sm"
+                                >
+                                    {display.label}
+                                </StatusPill>
+                            }
+                        />
+                    );
+                }}
+            />
+            {hasNextPage ? (
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={isFetchingNextPage}
+                    onClick={onLoadMore}
+                >
+                    {isFetchingNextPage ? "불러오는 중..." : "더 불러오기"}
+                </Button>
+            ) : null}
         </div>
     );
 }
@@ -558,6 +756,11 @@ function ClientDetailPanelBody({
 
         return detailTabState.key;
     }, [activeScheduleChange, clientId, detailTabState, hasActiveScheduleChange]);
+
+    const clientUpcomingMessageQuery = useClientUpcomingMessageTriggerJobs(client.id, {
+        enabled: activeDetailTab === "messages",
+        limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
+    });
 
     const setActiveDetailTab = (key: ClientDetailTabKey, nextClientId: number | null = clientId) => {
         setDetailTabState({ key, clientId: nextClientId });
@@ -1030,16 +1233,45 @@ function ClientDetailPanelBody({
                         {
                             key: "messages",
                             children: (
-                                <ClientMessageHistoryList
-                                    records={clientMessageHistory}
-                                    canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
-                                    isLoading={isMessageHistoryLoading}
-                                    isError={isMessageHistoryError}
-                                    clientName={client.name}
-                                    selectedRecordId={selectedMessageHistoryId}
-                                    onSelectRecord={handleSelectClientMessageHistoryRecord}
-                                    dataComponentPrefix={dataComponentPrefix}
-                                />
+                                <div
+                                    data-component={`${dataComponentPrefix}_content_messages_sections`}
+                                    data-source-component="ClientDetailPanel"
+                                    className="space-y-4"
+                                >
+                                    <InfoCard
+                                        title="예정된 자동 메시지"
+                                        description="자동화 규칙에 따라 이 고객에게 예약된 메시지입니다."
+                                        data-component={`${dataComponentPrefix}_content_messages_upcoming-card`}
+                                        contentClassName="block"
+                                    >
+                                        <ClientUpcomingMessageList
+                                            jobs={clientUpcomingMessageQuery.items}
+                                            isLoading={clientUpcomingMessageQuery.isLoading}
+                                            isError={clientUpcomingMessageQuery.isError}
+                                            isFetchingNextPage={clientUpcomingMessageQuery.isFetchingNextPage}
+                                            hasNextPage={Boolean(clientUpcomingMessageQuery.hasNextPage)}
+                                            onLoadMore={() => void clientUpcomingMessageQuery.fetchNextPage()}
+                                            onRetry={() => void clientUpcomingMessageQuery.refetch()}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                        />
+                                    </InfoCard>
+                                    <InfoCard
+                                        title="발송 기록"
+                                        data-component={`${dataComponentPrefix}_content_messages_history-card`}
+                                        contentClassName="block"
+                                    >
+                                        <ClientMessageHistoryList
+                                            records={clientMessageHistory}
+                                            canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
+                                            isLoading={isMessageHistoryLoading}
+                                            isError={isMessageHistoryError}
+                                            clientName={client.name}
+                                            selectedRecordId={selectedMessageHistoryId}
+                                            onSelectRecord={handleSelectClientMessageHistoryRecord}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                        />
+                                    </InfoCard>
+                                </div>
                             ),
                         },
                         {
