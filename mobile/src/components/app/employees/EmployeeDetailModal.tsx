@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { Pencil, Trash2, X } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
-import { Employee } from "@/hooks/useEmployees";
+import { Employee, useToggleEmployeeOpenStatus } from "@/hooks/useEmployees";
 import { normalizeEmployeeGrade } from "@/features/employees/grade";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -17,6 +18,7 @@ import {
     DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { InfoRow } from "@/components/app/ui/info-row";
@@ -46,6 +48,11 @@ export function EmployeeDetailModal({
 }: EmployeeDetailModalProps) {
     const locale = useLocale();
     const canManage = canManageBranch(useInitialUser());
+    const [openToNextWorkOverride, setOpenToNextWorkOverride] = useState<{ employeeId: number; value: boolean } | null>(null);
+    const openStatusMutation = useToggleEmployeeOpenStatus();
+    const openToNextWork = employee && openToNextWorkOverride && openToNextWorkOverride.employeeId === employee.id
+        ? openToNextWorkOverride.value
+        : employee?.openToNextWork ?? false;
 
     if (!employee) return null;
 
@@ -56,6 +63,22 @@ export function EmployeeDetailModal({
 
     const handleDelete = () => {
         onDelete(employee.id);
+    };
+
+    const handleOpenStatusChange = (nextOpenToNextWork: boolean) => {
+        const previousOpenToNextWork = openToNextWork;
+        setOpenToNextWorkOverride({ employeeId: employee.id, value: nextOpenToNextWork });
+        openStatusMutation.mutate(
+            { id: employee.id, openToNextWork: nextOpenToNextWork },
+            {
+                onError: () => setOpenToNextWorkOverride(
+                    previousOpenToNextWork === employee.openToNextWork
+                        ? null
+                        : { employeeId: employee.id, value: previousOpenToNextWork },
+                ),
+                onSuccess: () => setOpenToNextWorkOverride(null),
+            },
+        );
     };
 
     const getStatusBadge = (openToNextWork: boolean) => {
@@ -130,7 +153,22 @@ export function EmployeeDetailModal({
                         <InfoRow label={t(locale, "employees.form.grade")} value={normalizeEmployeeGrade(employee.grade)} />
                         <InfoRow
                             label={t(locale, "employees.form.open-to-next-work")}
-                            value={getStatusBadge(employee.openToNextWork)}
+                            value={(
+                                <div
+                                    data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_body_work_open-status-control`}
+                                    data-slot="open-status-control"
+                                    className="flex items-center justify-end gap-3"
+                                >
+                                    {getStatusBadge(openToNextWork)}
+                                    <Switch
+                                        data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_body_work_open-status-toggle`}
+                                        aria-label="다음 배정 가능 여부"
+                                        checked={openToNextWork}
+                                        disabled={openStatusMutation.isPending}
+                                        onCheckedChange={handleOpenStatusChange}
+                                    />
+                                </div>
+                            )}
                         />
                     </div>
 

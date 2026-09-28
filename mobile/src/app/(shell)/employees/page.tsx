@@ -10,6 +10,7 @@ import {
   type EmployeeStatus,
   useDeleteEmployee,
   useEmployeeActiveClients, useEmployeeWorkHistory,
+  useToggleEmployeeOpenStatus,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
@@ -53,6 +54,7 @@ import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { useInitialUser } from "@/providers/UserProvider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
 import {
   buildAllEmployeeRowsForList,
@@ -107,9 +109,30 @@ function EmployeeDetailContent({
 }) {
   const locale = useLocale();
   const group = groupForEmployee(employee);
-  const availability = getOpenToNextWorkLabel(employee.openToNextWork);
-  const availabilityTone = employee.openToNextWork ? "green" : "muted";
+  const [openToNextWorkOverride, setOpenToNextWorkOverride] = useState<{ employeeId: number; value: boolean } | null>(null);
+  const openStatusMutation = useToggleEmployeeOpenStatus();
+  const openToNextWork = openToNextWorkOverride?.employeeId === employee.id
+    ? openToNextWorkOverride.value
+    : employee.openToNextWork;
+  const availability = getOpenToNextWorkLabel(openToNextWork);
+  const availabilityTone = openToNextWork ? "green" : "muted";
   const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
+
+  const handleOpenStatusChange = (nextOpenToNextWork: boolean) => {
+    const previousOpenToNextWork = openToNextWork;
+    setOpenToNextWorkOverride({ employeeId: employee.id, value: nextOpenToNextWork });
+    openStatusMutation.mutate(
+      { id: employee.id, openToNextWork: nextOpenToNextWork },
+      {
+        onError: () => setOpenToNextWorkOverride(
+          previousOpenToNextWork === employee.openToNextWork
+            ? null
+            : { employeeId: employee.id, value: previousOpenToNextWork },
+        ),
+        onSuccess: () => setOpenToNextWorkOverride(null),
+      },
+    );
+  };
   const { data: activeClients = [], isLoading: isActiveClientsLoading } =
     useEmployeeActiveClients(employee.id);
   const {
@@ -202,7 +225,22 @@ function EmployeeDetailContent({
           <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
           <InfoRow
             label="다음 배정 가능 여부"
-            value={availability}
+            value={(
+              <div
+                data-component="mobile_employees_detail-panel_info-card_open-status-control"
+                data-slot="open-status-control"
+                className="flex items-center justify-end gap-3"
+              >
+                <span>{availability}</span>
+                <Switch
+                  data-component="mobile_employees_detail-panel_open-status-toggle"
+                  aria-label="다음 배정 가능 여부"
+                  checked={openToNextWork}
+                  disabled={openStatusMutation.isPending}
+                  onCheckedChange={handleOpenStatusChange}
+                />
+              </div>
+            )}
             tone={availabilityTone}
           />
           <InfoRow label="등급" value={employee.grade || "-"} />

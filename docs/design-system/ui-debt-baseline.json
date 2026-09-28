@@ -935,16 +935,16 @@
     },
     "mobile/src/app/(shell)/employees/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "93:10-93:31|pageLocalComponent"
+        "95:10-95:31|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "146:15-151:16|rawUiElement"
+        "169:15-174:16|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "148:27-148:163|visualTailwindInPage",
-        "158:25-158:70|visualTailwindInPage",
-        "163:27-163:96|visualTailwindInPage",
-        "172:27-172:96|visualTailwindInPage"
+        "171:27-171:163|visualTailwindInPage",
+        "181:25-181:70|visualTailwindInPage",
+        "186:27-186:96|visualTailwindInPage",
+        "195:27-195:96|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/logout/page.tsx": {
