@@ -41,6 +41,21 @@ export class MessageTriggerController {
         );
     }
 
+    @Get("message-trigger-jobs/client/:clientId/upcoming")
+    listClientUpcomingJobs(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("clientId") clientId: string,
+        @Query("limit") limit?: string,
+        @Query("cursor") cursor?: string,
+    ) {
+        return this.triggerService.listClientUpcomingJobs(
+            tenant.branchId ?? "",
+            parseInteger(clientId, "clientId", { min: 1 }),
+            parseInteger(limit, "limit", { defaultValue: 50, min: 1, max: 100 }),
+            cursor,
+        );
+    }
+
     @Post("message-trigger-jobs/:id/cancel")
     cancelJob(
         @CurrentTenant() tenant: { branchId?: string },

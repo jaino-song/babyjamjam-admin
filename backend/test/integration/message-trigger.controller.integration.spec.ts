@@ -44,6 +44,7 @@ describe("MessageTriggerController (Integration)", () => {
     let triggerService: {
         listRules: jest.Mock;
         listUpcomingJobs: jest.Mock;
+        listClientUpcomingJobs: jest.Mock;
         listHistory: jest.Mock;
         listHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
@@ -158,6 +159,7 @@ describe("MessageTriggerController (Integration)", () => {
         triggerService = {
             listRules: jest.fn(),
             listUpcomingJobs: jest.fn(),
+            listClientUpcomingJobs: jest.fn(),
             listHistory: jest.fn(),
             listHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
@@ -267,6 +269,36 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(400);
             expect(triggerService.listUpcomingJobs).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("GET /message-trigger-jobs/client/:clientId/upcoming", () => {
+        it("passes the tenant, client, default limit, and cursor to the read service", async () => {
+            triggerService.listClientUpcomingJobs.mockResolvedValue({ items: [], nextCursor: null });
+
+            const response = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/42/upcoming")
+                .query({ cursor: "opaque-cursor" });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.listClientUpcomingJobs).toHaveBeenCalledWith(
+                branchId,
+                42,
+                50,
+                "opaque-cursor",
+            );
+        });
+
+        it("rejects malformed client ids and limits before calling the service", async () => {
+            const invalidClient = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/not-an-integer/upcoming");
+            const invalidLimit = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/42/upcoming")
+                .query({ limit: 101 });
+
+            expect(invalidClient.status).toBe(400);
+            expect(invalidLimit.status).toBe(400);
+            expect(triggerService.listClientUpcomingJobs).not.toHaveBeenCalled();
         });
     });
 

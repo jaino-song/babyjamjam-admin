@@ -6,6 +6,9 @@ import {
     IMessageTriggerJobRepository,
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
+    ClientUpcomingMessageTriggerJobCursor,
+    ClientUpcomingMessageTriggerJobRecord,
+    ClientUpcomingMessageTriggerJobStatus,
 } from "domain/repositories/message-trigger-job.repository.interface";
 import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 import {
@@ -71,6 +74,18 @@ type MessageTriggerJobRawRow = {
     created_at: Date | string;
     updated_at: Date | string;
     claim_token: string | null;
+};
+
+type ClientUpcomingMessageTriggerJobRawRow = {
+    id: string;
+    ruleName: string;
+    templateKey: string;
+    status: string;
+    scheduledFor: Date | string;
+    nextAttemptAt: Date | string | null;
+    effectiveDueAt: Date | string;
+    recipientType: string;
+    recipientName: string | null;
 };
 
 function stableJson(value: unknown): string {
@@ -326,6 +341,86 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             take: limit,
         });
         return rows.map((row) => this.toDomain(row));
+    }
+
+    async findUpcomingByClient(
+        branchId: string,
+        clientId: number,
+        limit: number,
+        cursor?: ClientUpcomingMessageTriggerJobCursor,
+    ): Promise<ClientUpcomingMessageTriggerJobRecord[]> {
+        const ordinaryJob = ordinaryAutomationJobSql({
+            ruleId: Prisma.sql`job.rule_id`,
+            dedupeKey: Prisma.sql`job.dedupe_key`,
+            payload: Prisma.sql`job.payload`,
+        });
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`job.template_key`,
+            ruleId: Prisma.sql`job.rule_id`,
+            dedupeKey: Prisma.sql`job.dedupe_key`,
+        });
+        const after = cursor
+            ? Prisma.sql`(
+                "effectiveDueAt" > ${cursor.effectiveDueAt}
+                OR ("effectiveDueAt" = ${cursor.effectiveDueAt} AND id > ${cursor.id})
+            )`
+            : Prisma.sql`TRUE`;
+
+        const rows = await this.prisma.$queryRaw<ClientUpcomingMessageTriggerJobRawRow[]>(Prisma.sql`
+            WITH visible_jobs AS (
+                SELECT
+                    job.id,
+                    rule.name AS "ruleName",
+                    job.template_key AS "templateKey",
+                    job.status,
+                    job.scheduled_for AS "scheduledFor",
+                    job.next_attempt_at AS "nextAttemptAt",
+                    CASE
+                        WHEN job.status = 'pending'
+                            THEN GREATEST(job.scheduled_for, COALESCE(job.next_attempt_at, job.scheduled_for))
+                        ELSE job.scheduled_for
+                    END AS "effectiveDueAt",
+                    job.recipient_type AS "recipientType",
+                    CASE
+                        WHEN jsonb_typeof(job.payload->'recipientName') = 'string'
+                            THEN job.payload->>'recipientName'
+                        ELSE NULL
+                    END AS "recipientName"
+                FROM "message_trigger_job" AS job
+                INNER JOIN "message_trigger_rule" AS rule ON rule.id = job.rule_id
+                WHERE ${ordinaryJob}
+                  AND NOT ${manualJob}
+                  AND job.branch_id = ${branchId}::uuid
+                  AND job.client_id = ${clientId}
+                  AND job.status IN ('pending', 'processing', 'dispatching')
+            )
+            SELECT
+                id,
+                "ruleName",
+                "templateKey",
+                status,
+                "scheduledFor",
+                "nextAttemptAt",
+                "effectiveDueAt",
+                "recipientType",
+                "recipientName"
+            FROM visible_jobs
+            WHERE ${after}
+            ORDER BY "effectiveDueAt" ASC, id ASC
+            LIMIT ${limit}
+        `);
+
+        return rows.map((row) => ({
+            id: row.id,
+            ruleName: row.ruleName,
+            templateKey: row.templateKey,
+            status: row.status as ClientUpcomingMessageTriggerJobStatus,
+            scheduledFor: this.toDate(row.scheduledFor),
+            nextAttemptAt: this.toNullableDate(row.nextAttemptAt),
+            effectiveDueAt: this.toDate(row.effectiveDueAt),
+            recipientType: row.recipientType,
+            recipientName: typeof row.recipientName === "string" ? row.recipientName : null,
+        }));
     }
 
     async findTerminalByBranch(
