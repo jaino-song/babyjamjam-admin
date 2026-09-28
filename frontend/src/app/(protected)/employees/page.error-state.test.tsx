@@ -17,6 +17,10 @@ jest.mock("@/hooks/useEmployees", () => ({
     mutateAsync: jest.fn(),
     isPending: false,
   }),
+  useToggleEmployeeOpenStatus: () => ({
+    mutate: jest.fn(),
+    isPending: false,
+  }),
 }));
 
 jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
