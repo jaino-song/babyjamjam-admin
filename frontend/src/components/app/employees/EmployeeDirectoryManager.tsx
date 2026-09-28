@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
@@ -10,7 +10,6 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import {
     Users,
     UserCheck,
-    Clock,
     Briefcase,
     CircleOff,
     Plus,
@@ -44,7 +43,9 @@ import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { useLocale } from "@/providers/LocaleProvider";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
-const filterItems = [
+type EmployeeFilter = "all" | "active" | "inactive";
+
+const filterItems: Array<{ label: string; value: EmployeeFilter }> = [
     { label: "전체", value: "all" },
     { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
@@ -66,8 +67,10 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: string }) {
     const [search, setSearch] = useState("");
-    const [filter, setFilter] = useState("all");
+    const [filter, setFilter] = useState<EmployeeFilter>("all");
     const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
+    const [isCreateFormDirty, setIsCreateFormDirty] = useState(false);
+    const [pendingFilter, setPendingFilter] = useState<EmployeeFilter | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
@@ -77,6 +80,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const {
         employees,
         allEmployees,
+        searchMatchedEmployees,
         isLoading,
         isError,
         isFetchingNextPage,
@@ -88,22 +92,28 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const locale = useLocale();
 
     const stats = useMemo(() => {
+        const matchedEmployees = searchMatchedEmployees ?? allEmployees ?? [];
+
         return {
-            total: allEmployees.length,
-            working: allEmployees.filter((e: Employee) => e.status === "working").length,
-            available: allEmployees.filter((e: Employee) => e.status === "available").length,
-            unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length,
+            total: matchedEmployees.length,
+            available: matchedEmployees.filter((e: Employee) => e.openToNextWork === true).length,
+            unavailable: matchedEmployees.filter((e: Employee) => e.openToNextWork === false).length,
         };
-    }, [allEmployees]);
+    }, [allEmployees, searchMatchedEmployees]);
 
     const handleAddNew = () => {
+        if (formDialogOpen || pendingFilter !== null) return;
+
         setEditingEmployee(null);
         setFormDialogOpen(false);
         setSelectedEmployee(null);
+        setIsCreateFormDirty(false);
         setIsCreatingEmployee(true);
     };
 
     const handleSelectEmployee = (employee: Employee) => {
+        if (formDialogOpen || pendingFilter !== null) return;
+
         setIsCreatingEmployee(false);
         setSelectedEmployee(employee);
     };
@@ -146,11 +156,44 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelClose = () => {
         setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
     };
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
         setSelectedEmployee(employee);
+    };
+
+    const handleCreateFormDirtyChange = useCallback((dirty: boolean) => {
+        setIsCreateFormDirty(dirty);
+    }, []);
+
+    const applyFilterChange = useCallback((nextFilter: EmployeeFilter) => {
+        setFilter(nextFilter);
+        setSelectedEmployee(null);
+        setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setPendingFilter(null);
+    }, []);
+
+    const handleFilterChange = (nextFilter: string) => {
+        if (formDialogOpen) return;
+
+        const normalizedFilter = filterItems.find((item) => item.value === nextFilter)?.value;
+        if (!normalizedFilter || normalizedFilter === filter) return;
+
+        if (isCreatingEmployee && isCreateFormDirty) {
+            setPendingFilter(normalizedFilter);
+            return;
+        }
+
+        applyFilterChange(normalizedFilter);
+    };
+
+    const handleDiscardCreateAndChangeFilter = () => {
+        if (pendingFilter === null) return;
+        applyFilterChange(pendingFilter);
     };
 
     return (
@@ -159,10 +202,9 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 name="employees"
                 isLoading={isLoading}
                 items={[
-                    { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
-                    { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: EMPLOYEE_STATUS_LABELS.available, counter: "명", colorIndex: 2 },
-                    { icon: CircleOff, value: stats.unavailable, label: EMPLOYEE_STATUS_LABELS.unavailable, counter: "명", colorIndex: 0 },
+                    { icon: Users, value: stats.total, label: filterItems[0].label, counter: "명" },
+                    { icon: Briefcase, value: stats.available, label: filterItems[1].label, counter: "명", colorIndex: 2 },
+                    { icon: CircleOff, value: stats.unavailable, label: filterItems[2].label, counter: "명", colorIndex: 0 },
                 ]}
             />
 
@@ -181,7 +223,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     title="직원 목록"
                     tabs={filterItems}
                     activeTab={filter}
-                    onTabChange={setFilter}
+                    onTabChange={handleFilterChange}
                     searchValue={search}
                     onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 지역으로 검색..."
@@ -282,6 +324,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     <EmployeeFormPanel
                         onClose={handleFormPanelClose}
                         onSuccess={handleFormPanelSuccess}
+                        onDirtyChange={handleCreateFormDirtyChange}
                         renderLayout={({ content, footer }) => (
                             <DetailPanel data-component={`${dataComponent}_split-layout_detail-panel_create`}
                                 compactBackLabel="직원 목록으로 돌아가기"
@@ -332,6 +375,17 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 approvalVariant="destructive"
                 isPending={deleteEmployee.isPending}
                 onApprove={() => void handleDeleteConfirm()}
+            />
+            <TwoButtonModal
+                open={pendingFilter !== null}
+                onOpenChange={(open) => {
+                    if (!open) setPendingFilter(null);
+                }}
+                dataComponent={`${dataComponent}_create-discard-approval`}
+                title="작성 중인 직원 정보를 버리시겠습니까?"
+                description="입력한 내용은 저장되지 않습니다."
+                approvalLabel="버리기"
+                onApprove={handleDiscardCreateAndChangeFilter}
             />
             <NotificationOneButtonModal
                 open={deleteErrorMessage !== null}

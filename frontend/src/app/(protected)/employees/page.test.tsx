@@ -18,18 +18,22 @@ describe("EmployeesPage deletion conflicts", () => {
 
   it("uses semantic stat colors for assignment availability", () => {
     expect(source).toContain(
-      'label: EMPLOYEE_STATUS_LABELS.available, counter: "명", colorIndex: 2',
+      'label: filterItems[1].label, counter: "명", colorIndex: 2',
     );
     expect(source).toContain(
-      'label: EMPLOYEE_STATUS_LABELS.unavailable, counter: "명", colorIndex: 0',
+      'label: filterItems[2].label, counter: "명", colorIndex: 0',
     );
   });
 
-  it("counts derived work status separately from next-work availability", () => {
-    expect(source).toContain('working: allEmployees.filter((e: Employee) => e.status === "working").length');
-    expect(source).toContain('available: allEmployees.filter((e: Employee) => e.status === "available").length');
-    expect(source).toContain('unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length');
+  it("counts search matches using the same availability predicates as the tabs", () => {
+    expect(source).toContain("const matchedEmployees = searchMatchedEmployees ?? allEmployees");
+    expect(source).toContain('available: matchedEmployees.filter((e: Employee) => e.openToNextWork === true).length');
+    expect(source).toContain('unavailable: matchedEmployees.filter((e: Employee) => e.openToNextWork === false).length');
+    expect(source).toContain('label: filterItems[0].label, counter: "명"');
+    expect(source).toContain('label: filterItems[1].label');
+    expect(source).toContain('label: filterItems[2].label');
     expect(source).toContain("OPEN_TO_NEXT_WORK_LABELS");
+    expect(source).not.toContain('e.status === "working"');
   });
 
 });
