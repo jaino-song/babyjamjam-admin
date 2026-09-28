@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+    MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_HISTORY_STATUS_LABELS,
     MESSAGE_RECIPIENT_LABELS,
     getMessageTemplateLabel,
@@ -12,7 +13,7 @@ import {
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/app/ui/status-badge";
+import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import {
     useApproveScheduleChange,
     useRejectScheduleChange,
@@ -31,6 +32,7 @@ import type {
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
+    formatMessageHistoryDate,
     normalizeMessageHistoryRecord,
     type MessageHistoryRecord,
 } from "@/components/app/messages/MessageHistoryDetailPanel";
@@ -85,12 +87,6 @@ type ClientDetailTabKey =
 const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
 const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
 const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
-const CLIENT_MESSAGE_STATUS_VARIANT = {
-    sent: "success",
-    pending: "warning",
-    failed: "danger",
-    canceled: "neutral",
-} as const;
 const formatDate = (dateStr: string | null): string => {
     return formatDateForDisplay(dateStr);
 };
@@ -226,20 +222,23 @@ function ClientMessageHistoryList({
 
     if (isLoading) {
         return (
-            <div data-component={`${dataComponentPrefix}-messages-skeleton-list`} className="space-y-2">
+            <div
+                data-component={`${dataComponentPrefix}_history-list_skeleton`}
+                className="w-full min-w-0 max-w-full space-y-2"
+            >
                 {[0, 1, 2].map((index) => (
                     <div
                         key={index}
-                        data-component={`${dataComponentPrefix}-messages-skeleton-item`}
-                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
+                        className="flex min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
                     >
                         <Skeleton className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white" />
-                        <div data-component={`${dataComponentPrefix}-messages-skeleton-copy`} className="min-w-0 flex-1 space-y-2">
+                        <div data-component={`${dataComponentPrefix}_history-list_skeleton-copy`} className="min-w-0 flex-1 space-y-2">
                             <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                             <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                             <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                         </div>
-                        <div data-component={`${dataComponentPrefix}-messages-skeleton-meta`} className="ml-auto flex shrink-0 flex-col items-end gap-1">
+                        <div data-component={`${dataComponentPrefix}_history-list_skeleton-meta`} className="ml-auto flex shrink-0 flex-col items-end gap-1">
                             <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
                             <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                         </div>
@@ -251,7 +250,10 @@ function ClientMessageHistoryList({
 
     if (isError) {
         return (
-            <div data-component={`${dataComponentPrefix}-messages-error`} className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+            <div
+                data-component={`${dataComponentPrefix}_history-list_error`}
+                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-v3-text-muted"
+            >
                 메시지 발송 내역을 불러오지 못했습니다
             </div>
         );
@@ -266,12 +268,16 @@ function ClientMessageHistoryList({
     }
 
     return (
-        <div data-component={`${dataComponentPrefix}-messages-list`}>
+        <div
+            data-component={`${dataComponentPrefix}_history-list`}
+            className="w-full min-w-0 max-w-full"
+        >
             <AnimatedSlotList<MessageLogRecord>
                 items={records}
                 isLoading={false}
+                className="mx-0 w-full max-w-full space-y-2 px-0"
                 itemVariant="card"
-                itemDataComponent={`${dataComponentPrefix}-messages-list-item`}
+                itemDataComponent={`${dataComponentPrefix}_history-list_item`}
                 getItemKey={(record) => String(record.id)}
                 getSlotState={({ item }) => ({
                     isActive: item?.id === selectedRecordId,
@@ -286,26 +292,38 @@ function ClientMessageHistoryList({
                         recipientListLabelFallback: clientName,
                     });
                     const ItemIcon = normalizedRecord.icon;
+                    const recipientLabel = normalizedRecord.recipientType
+                        ? MESSAGE_RECIPIENT_LABELS[normalizedRecord.recipientType]
+                        : "수신자";
+                    const recipientName = normalizedRecord.recipientName.trim()
+                        || normalizedRecord.recipientListLabel.trim()
+                        || clientName;
 
                     return (
                         <AnimatedSlotListItemContent
-                            dataComponent={`${dataComponentPrefix}-messages-list-item`}
+                            dataComponent={`${dataComponentPrefix}_history-list_item_content`}
                             icon={ItemIcon}
                             iconContainerClassName="text-v3-primary"
                             title={normalizedRecord.title}
-                            subtitle={normalizedRecord.messagePreview}
+                            subtitle={`${recipientLabel}: ${recipientName}`}
                             status={
                                 <div
-                                    data-component={`${dataComponentPrefix}-messages-list-item-meta`}
+                                    data-component={`${dataComponentPrefix}_history-list_item_meta`}
                                     className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
                                 >
-                                    <StatusPill
-                                        data-component={`${dataComponentPrefix}-messages-list-item-status`}
-                                        variant={CLIENT_MESSAGE_STATUS_VARIANT[normalizedRecord.status]}
+                                    <MessageStatusBadge
+                                        data-component={`${dataComponentPrefix}_history-list_item_status`}
+                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.status]}
                                         size="sm"
                                     >
                                         {MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
-                                    </StatusPill>
+                                    </MessageStatusBadge>
+                                    <span
+                                        data-component={`${dataComponentPrefix}_history-list_item_date`}
+                                        className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                                    >
+                                        {formatMessageHistoryDate(normalizedRecord.sentAt)}
+                                    </span>
                                 </div>
                             }
                         />
@@ -413,7 +431,7 @@ function ClientUpcomingMessageList({
             <div
                 data-component={`${sectionPrefix}_error`}
                 data-source-component="ClientUpcomingMessageList"
-                className="flex flex-col items-center justify-center gap-3 py-8 text-center"
+                className="flex w-full min-w-0 max-w-full flex-col items-center justify-center gap-3 py-8 text-center"
             >
                 <p
                     data-component={`${sectionPrefix}_error_message`}
@@ -448,7 +466,7 @@ function ClientUpcomingMessageList({
             data-component={sectionPrefix}
             data-source-component="ClientUpcomingMessageList"
             data-slot="upcoming-messages"
-            className="space-y-3"
+            className="w-full min-w-0 max-w-full"
         >
             <AnimatedSlotList<ClientUpcomingMessageTriggerJob>
                 data-component={`${sectionPrefix}_list`}
@@ -457,6 +475,7 @@ function ClientUpcomingMessageList({
                 loadingCount={2}
                 fetchingMoreCount={1}
                 isFetchingMore={isFetchingNextPage}
+                className="mx-0 w-full max-w-full space-y-2 px-0"
                 itemVariant="card"
                 itemDataComponent={`${sectionPrefix}_list_item`}
                 getItemKey={(job) => job.id}
@@ -492,13 +511,13 @@ function ClientUpcomingMessageList({
                                 </span>
                             }
                             status={
-                                <StatusPill
+                                <MessageStatusBadge
                                     data-component={`${sectionPrefix}_list_item_status`}
                                     variant={display.variant}
                                     size="sm"
                                 >
                                     {display.label}
-                                </StatusPill>
+                                </MessageStatusBadge>
                             }
                         />
                     );
@@ -636,12 +655,12 @@ function ClientMessageDetailSlide({
         <div
             data-component={`${dataComponentPrefix}-message-slide`}
             data-active-panel={isMessageDetailActive ? "message" : "client"}
-            className="h-full min-h-0 overflow-hidden"
+            className="h-full min-h-0 w-full min-w-0 max-w-full overflow-hidden"
         >
             <div
                 data-component={`${dataComponentPrefix}-message-slide-track`}
                 className={cn(
-                    "flex h-full min-h-0 gap-[var(--compact-panel-gap,16px)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
+                    "flex h-full min-h-0 w-full min-w-0 max-w-full gap-[var(--compact-panel-gap,16px)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
                 )}
                 style={{
                     transform: isMessageDetailActive
@@ -653,7 +672,7 @@ function ClientMessageDetailSlide({
                     data-component={`${dataComponentPrefix}-message-slide-panel`}
                     data-panel="client"
                     aria-hidden={isMessageDetailActive}
-                    className={cn("h-full min-h-0 w-full min-w-0 shrink-0", isMessageDetailActive && "pointer-events-none")}
+                    className={cn("h-full min-h-0 w-full min-w-0 max-w-full shrink-0", isMessageDetailActive && "pointer-events-none")}
                 >
                     {children}
                 </div>
@@ -662,7 +681,7 @@ function ClientMessageDetailSlide({
                     data-panel="message"
                     aria-hidden={!isMessageDetailActive}
                     className={cn(
-                        "h-full min-h-0 w-full min-w-0 shrink-0",
+                        "h-full min-h-0 w-full min-w-0 max-w-full shrink-0",
                         !isMessageDetailActive && "pointer-events-none"
                     )}
                 >
@@ -722,9 +741,9 @@ function ClientDetailPanelBody({
     idPrefix,
     tabsAriaLabel,
     compactBackLabel,
-    tabPanelsClassName = "min-h-full shrink-0",
-    tabPanelsTrackClassName = "min-h-full",
-    tabPanelsPanelClassName = "[&[aria-hidden=false]]:min-h-full",
+    tabPanelsClassName = "min-h-full w-full min-w-0 max-w-full shrink-0",
+    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full",
+    tabPanelsPanelClassName = "w-full min-w-0 max-w-full [&[aria-hidden=false]]:min-h-full",
 }: ClientDetailPanelProps) {
     const locale = useLocale();
     const queryClient = useQueryClient();
@@ -1259,14 +1278,20 @@ function ClientDetailPanelBody({
                                 <div
                                     data-component={`${dataComponentPrefix}_content_messages_sections`}
                                     data-source-component="ClientDetailPanel"
-                                    className="space-y-4"
+                                    className="w-full min-w-0 max-w-full space-y-4"
                                 >
-                                    <InfoCard
-                                        title="예정된 자동 메시지"
-                                        description="이 고객과 관련된 자동 발송 예정 메시지입니다."
-                                        data-component={`${dataComponentPrefix}_content_messages_upcoming-card`}
-                                        contentClassName="block"
+                                    <div
+                                        data-component={`${dataComponentPrefix}_content_messages_zone-upcoming`}
+                                        data-slot="message-zone"
+                                        className="w-full min-w-0 max-w-full"
                                     >
+                                        <div
+                                            data-component={`${dataComponentPrefix}_content_messages_zone-upcoming_label`}
+                                            data-slot="message-zone-label"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                        >
+                                            예정된 자동 메시지
+                                        </div>
                                         <ClientUpcomingMessageList
                                             jobs={clientUpcomingMessageQuery.items}
                                             isLoading={clientUpcomingMessageQuery.isLoading}
@@ -1277,12 +1302,19 @@ function ClientDetailPanelBody({
                                             onRetry={() => void clientUpcomingMessageQuery.refetch()}
                                             dataComponentPrefix={dataComponentPrefix}
                                         />
-                                    </InfoCard>
-                                    <InfoCard
-                                        title="발송 기록"
-                                        data-component={`${dataComponentPrefix}_content_messages_history-card`}
-                                        contentClassName="block"
+                                    </div>
+                                    <div
+                                        data-component={`${dataComponentPrefix}_content_messages_zone-past`}
+                                        data-slot="message-zone"
+                                        className="w-full min-w-0 max-w-full"
                                     >
+                                        <div
+                                            data-component={`${dataComponentPrefix}_content_messages_zone-past_label`}
+                                            data-slot="message-zone-label"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                        >
+                                            발송 기록
+                                        </div>
                                         <ClientMessageHistoryList
                                             records={clientMessageHistory}
                                             canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
@@ -1293,7 +1325,7 @@ function ClientDetailPanelBody({
                                             onSelectRecord={handleSelectClientMessageHistoryRecord}
                                             dataComponentPrefix={dataComponentPrefix}
                                         />
-                                    </InfoCard>
+                                    </div>
                                 </div>
                             ),
                         },
@@ -1351,6 +1383,6 @@ export function ClientDetailPanel(props: ClientDetailPanelProps) {
         data-component={`${props.dataComponentPrefix ?? "desktop_clients-detail_panel"}_presentation`}
         data-slot="client-detail-presentation"
         data-layout={props.layout ?? "desktop"}
-        className="flex h-full min-h-0 flex-1 flex-col"
+        className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-1 flex-col"
     ><ClientDetailPanelBody key={props.client.id} {...props} /></div>;
 }
