@@ -70,11 +70,43 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
       </button>
     );
   },
-  EmployeeFormPanel: () => null,
+  EmployeeFormPanel: ({
+    onDirtyChange,
+    renderLayout,
+  }: {
+    onDirtyChange?: (dirty: boolean) => void;
+    renderLayout?: (slots: { content: ReactNode; footer: ReactNode }) => ReactNode;
+  }) => renderLayout?.({
+    content: (
+      <label>
+        초안 이름
+        <input aria-label="초안 이름" onChange={() => onDirtyChange?.(true)} />
+      </label>
+    ),
+    footer: null,
+  }) ?? null,
 }));
 
 jest.mock("@/components/app/ui/TwoButtonModal", () => ({
-  TwoButtonModal: () => null,
+  TwoButtonModal: ({
+    open,
+    title,
+    approvalLabel,
+    onApprove,
+    onOpenChange,
+  }: {
+    open: boolean;
+    title: string;
+    approvalLabel: string;
+    onApprove: () => void;
+    onOpenChange: (open: boolean) => void;
+  }) => open ? (
+    <div role="dialog">
+      <h2>{title}</h2>
+      <button type="button" onClick={() => onOpenChange(false)}>취소</button>
+      <button type="button" onClick={onApprove}>{approvalLabel}</button>
+    </div>
+  ) : null,
 }));
 
 jest.mock("@/components/app/ui/NotificationOneButtonModal", () => ({
@@ -131,7 +163,38 @@ jest.mock("@/components/app/v3", () => ({
     <button type="button" {...props}>{label}</button>
   ),
   ListEmptyState: ({ message }: { message: string }) => <div>{message}</div>,
-  ListPanel: ({ children }: { children: ReactNode }) => <section>{children}</section>,
+  ListPanel: ({
+    children,
+    tabs,
+    activeTab,
+    onTabChange,
+    headerActions,
+  }: {
+    children: ReactNode;
+    tabs?: Array<{ label: string; value: string }>;
+    activeTab?: string;
+    onTabChange?: (value: string) => void;
+    headerActions?: ReactNode;
+  }) => (
+    <section>
+      {headerActions}
+      <div role="tablist">
+        {tabs?.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.value}
+            onClick={() => onTabChange?.(tab.value)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {children}
+    </section>
+  ),
+  DetailPanel: ({ children }: { children: ReactNode }) => <section>{children}</section>,
   SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   StatsBar: () => null,
 }));
@@ -184,5 +247,45 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+  });
+
+  it("clears the selected detail only after changing the availability tab", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+    expect(screen.getByTestId("employee-detail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "전체" }));
+    expect(screen.getByTestId("employee-detail")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
+    expect(screen.queryByTestId("employee-detail")).not.toBeInTheDocument();
+    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+  });
+
+  it("keeps a dirty create draft on cancel and discards it with the tab change", () => {
+    render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    const draftInput = screen.getByRole("textbox", { name: "초안 이름" });
+    fireEvent.change(draftInput, { target: { value: "임시 직원" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("작성 중인 직원 정보를 버리시겠습니까?");
+
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(screen.getByRole("textbox", { name: "초안 이름" })).toHaveValue("임시 직원");
+    expect(screen.getByRole("tab", { name: "전체" })).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.click(screen.getByRole("tab", { name: "배정 불가" }));
+    fireEvent.click(screen.getByRole("button", { name: "버리기" }));
+
+    expect(screen.queryByRole("textbox", { name: "초안 이름" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "배정 불가" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("직원을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
   });
 });
