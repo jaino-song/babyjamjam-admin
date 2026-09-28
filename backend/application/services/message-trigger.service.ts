@@ -54,6 +54,10 @@ import {
     IMessageTriggerRuleRepository,
 } from "domain/repositories/message-trigger-rule.repository.interface";
 import {
+    CLIENT_REPOSITORY,
+    IClientRepository,
+} from "domain/repositories/client.repository.interface";
+import {
     MESSAGE_TRIGGER_RULE_BRANCH_OVERRIDE_REPOSITORY,
     IMessageTriggerRuleBranchOverrideRepository,
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
@@ -62,6 +66,8 @@ import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
+    type ClientUpcomingMessageTriggerJobCursor,
+    type ClientUpcomingMessageTriggerJobRecord,
 } from "domain/repositories/message-trigger-job.repository.interface";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -256,6 +262,18 @@ export interface UpcomingMessageTriggerJobView {
     updatedAt: Date;
 }
 
+export interface ClientUpcomingMessageTriggerJobView {
+    id: string;
+    ruleName: string;
+    templateKey: MessageTriggerTemplateKey;
+    scheduledFor: Date;
+    nextAttemptAt: Date | null;
+    effectiveDueAt: Date;
+    status: "pending" | "processing" | "dispatching";
+    recipientType: MessageTriggerRecipientType;
+    recipientName: string | null;
+}
+
 export interface MessageLogRecordView {
     id: number | string;
     provider: string;
@@ -304,6 +322,10 @@ interface MessageHistoryCandidate {
 const MESSAGE_HISTORY_CURSOR_VERSION = 1;
 const MESSAGE_HISTORY_MAX_LIMIT = 500;
 const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLIENT_UPCOMING_CURSOR_VERSION = 1;
+const CLIENT_UPCOMING_MAX_LIMIT = 100;
+const CLIENT_UPCOMING_DEFAULT_LIMIT = 50;
+const CLIENT_UPCOMING_CURSOR_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 
 interface MessageHistoryCursorPayload {
     v: typeof MESSAGE_HISTORY_CURSOR_VERSION;
@@ -311,6 +333,14 @@ interface MessageHistoryCursorPayload {
     snapshotAt: string;
     source: MessageHistorySource;
     nativeId: string;
+}
+
+interface ClientUpcomingCursorPayload {
+    v: typeof CLIENT_UPCOMING_CURSOR_VERSION;
+    branchId: string;
+    clientId: number;
+    effectiveDueAt: string;
+    id: string;
 }
 
 function isMessageHistorySource(value: unknown): value is MessageHistorySource {
@@ -362,6 +392,35 @@ function decodeMessageHistoryCursor(cursor: string, branchId: string): MessageHi
         };
     } catch {
         throw new BadRequestException("메시지 발송 기록 페이지 커서가 올바르지 않습니다.");
+    }
+}
+
+function encodeClientUpcomingCursor(payload: ClientUpcomingCursorPayload): string {
+    return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeClientUpcomingCursor(
+    cursor: string,
+    branchId: string,
+    clientId: number,
+): ClientUpcomingMessageTriggerJobCursor {
+    try {
+        if (cursor.length > 4096) throw new Error("cursor too long");
+        const decoded = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<ClientUpcomingCursorPayload>;
+        const effectiveDueAt = parseHistoryCursorDate(decoded.effectiveDueAt);
+        if (
+            decoded.v !== CLIENT_UPCOMING_CURSOR_VERSION
+            || decoded.branchId !== branchId
+            || decoded.clientId !== clientId
+            || !effectiveDueAt
+            || typeof decoded.id !== "string"
+            || !CLIENT_UPCOMING_CURSOR_ID_PATTERN.test(decoded.id)
+        ) {
+            throw new Error("invalid cursor payload");
+        }
+        return { effectiveDueAt, id: decoded.id };
+    } catch {
+        throw new BadRequestException("고객 알림 발송 예정 페이지 커서가 올바르지 않습니다.");
     }
 }
 
@@ -478,6 +537,9 @@ export class MessageTriggerService {
         private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() automationSources?: ClientAutomationSourceReader,
         @Optional() private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
+        @Optional()
+        @Inject(CLIENT_REPOSITORY)
+        private readonly clientRepository?: IClientRepository,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
@@ -565,6 +627,71 @@ export class MessageTriggerService {
         return [...triggerJobs, ...manualScheduledLogs]
             .sort((left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime())
             .slice(0, limit);
+    }
+
+    async listClientUpcomingJobs(
+        branchId: string,
+        clientId: number,
+        limit = CLIENT_UPCOMING_DEFAULT_LIMIT,
+        cursor?: string,
+    ): Promise<{ items: ClientUpcomingMessageTriggerJobView[]; nextCursor: string | null }> {
+        if (!Number.isSafeInteger(clientId) || clientId < 1) {
+            throw new BadRequestException("고객 ID가 올바르지 않습니다.");
+        }
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > CLIENT_UPCOMING_MAX_LIMIT) {
+            throw new BadRequestException("고객 알림 발송 예정 페이지 크기가 올바르지 않습니다.");
+        }
+
+        const decodedCursor = cursor === undefined
+            ? undefined
+            : decodeClientUpcomingCursor(cursor, branchId, clientId);
+
+        const client = this.clientRepository
+            ? await this.clientRepository.findById(branchId, clientId)
+            : this.prisma.client?.findFirst
+                ? await this.prisma.client.findFirst({
+                    where: { id: clientId, branchId },
+                    select: { id: true },
+                })
+                : null;
+        if (!client) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+
+        if (!(await this.hasTriggerSchema())) {
+            return { items: [], nextCursor: null };
+        }
+
+        const rows = await this.jobRepository.findUpcomingByClient(
+            branchId,
+            clientId,
+            limit + 1,
+            decodedCursor,
+        );
+        const visibleRows = rows.slice(0, limit);
+        const items = visibleRows.map((row: ClientUpcomingMessageTriggerJobRecord): ClientUpcomingMessageTriggerJobView => ({
+            id: row.id,
+            ruleName: row.ruleName,
+            templateKey: row.templateKey as MessageTriggerTemplateKey,
+            scheduledFor: row.scheduledFor,
+            nextAttemptAt: row.nextAttemptAt,
+            effectiveDueAt: row.effectiveDueAt,
+            status: row.status,
+            recipientType: row.recipientType as MessageTriggerRecipientType,
+            recipientName: row.recipientName,
+        }));
+        const last = visibleRows[visibleRows.length - 1];
+        const nextCursor = rows.length > limit && last
+            ? encodeClientUpcomingCursor({
+                v: CLIENT_UPCOMING_CURSOR_VERSION,
+                branchId,
+                clientId,
+                effectiveDueAt: last.effectiveDueAt.toISOString(),
+                id: last.id,
+            })
+            : null;
+
+        return { items, nextCursor };
     }
 
     async listHistory(
