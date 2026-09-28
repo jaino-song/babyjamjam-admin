@@ -3,7 +3,6 @@ import { EmployeeScheduleService } from "application/services/employee-schedule.
 import { CreateEmployeeScheduleDto, UpdateEmployeeScheduleDto } from "interface/dto/employee-schedule.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { parseInteger } from "interface/parse-integer";
 
 @Controller("employee-schedules")
@@ -12,7 +11,6 @@ export class EmployeeScheduleController {
     constructor(private readonly employeeScheduleService: EmployeeScheduleService) {}
 
     @Post()
-    @UseGuards(OwnerOrAdminGuard)
     create(@CurrentTenant() tenant: { branchId?: string }, @Body() dto: CreateEmployeeScheduleDto) {
         return this.employeeScheduleService.create(tenant.branchId ?? "", {
             clientId: dto.clientId,
@@ -58,7 +56,6 @@ export class EmployeeScheduleController {
     }
 
     @Patch()
-    @UseGuards(OwnerOrAdminGuard)
     update(
         @CurrentTenant() tenant: { branchId?: string },
         @Query("id") id: string,
@@ -73,7 +70,6 @@ export class EmployeeScheduleController {
     }
 
     @Delete()
-    @UseGuards(OwnerOrAdminGuard)
     delete(@CurrentTenant() tenant: { branchId?: string }, @Query("id") id: string) {
         return this.employeeScheduleService.delete(tenant.branchId ?? "", parseInteger(id, "id", { min: 1 }));
     }

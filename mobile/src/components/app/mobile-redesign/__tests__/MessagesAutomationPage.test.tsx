@@ -9,6 +9,17 @@ const mockPush = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
+  usePathname: () => "/messages/automation",
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 describe("MessagesAutomationPage", () => {

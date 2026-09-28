@@ -11,6 +11,21 @@ import {
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 
+jest.mock("next/navigation", () => ({
+  usePathname: () => "/clients",
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/hooks/useServiceRecords", () => ({
   applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),

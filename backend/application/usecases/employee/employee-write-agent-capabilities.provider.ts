@@ -137,7 +137,7 @@ export class EmployeeWriteAgentCapabilitiesProvider implements AgentCapabilityPr
 
     getCapabilities(): CapabilityDefinition[] {
         const common = {
-            domain: "employees", version: "1.0.0", requiredRoles: ["owner", "admin"],
+            domain: "employees", version: "1.0.0", requiredRoles: ["owner", "admin", "manager", "user"],
             risk: "reversible-write" as const, sideEffect: true, renderer: "action-proposal" as const,
             approvalPolicy: "structured" as const, idempotencyPolicy: "action-id" as const,
         };
@@ -173,7 +173,7 @@ export class EmployeeWriteAgentCapabilitiesProvider implements AgentCapabilityPr
                 },
             },
             {
-                meta: { ...common, name: "employees.update", description: "Update an employee after explicit approval", flagKey: "agent.capability.employees.update" },
+                meta: { ...common, requiredRoles: ["owner", "admin", "manager"], name: "employees.update", description: "Update an employee after explicit approval", flagKey: "agent.capability.employees.update" },
                 inputSchema: UpdateEmployeeSchema, outputSchema: OutputSchema,
                 formFields: EMPLOYEE_UPDATE_FIELDS,
                 inspect: async (context, rawInput) => this.inspectEmployee(context.principal.branchId, UpdateEmployeeSchema.parse(rawInput).id),

@@ -20,7 +20,7 @@ describe("MessageSenderApprovalService", () => {
     });
 
     describe("canRequest", () => {
-        it.each(["owner", "admin", "manager"])(
+        it.each(["owner", "admin", "manager", "user"])(
             "should allow %s to request sender approval",
             (branchRole) => {
                 expect(service.canRequest(branchRole)).toBe(true);

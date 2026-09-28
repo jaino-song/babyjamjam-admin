@@ -2,13 +2,14 @@ import { ForbiddenException } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { ConfigService } from "@nestjs/config";
 import { NotificationService } from "application/services/notification.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { NotificationController } from "interface/controllers/notification.controller";
 
 describe("NotificationController", () => {
-    const getMethodGuards = (methodName: "testBroadcast") => {
+    const getMethodGuards = (methodName: "sendNotification" | "broadcastNotification" | "testBroadcast") => {
         return Reflect.getMetadata(
             GUARDS_METADATA,
             NotificationController.prototype[methodName],
@@ -22,6 +23,18 @@ describe("NotificationController", () => {
         expect(guards).toContain(TenantGuard);
         expect(guards).toContain(OwnerOrAdminGuard);
     });
+
+    it.each(["sendNotification", "broadcastNotification"] as const)(
+        "protects %s with tenant branch-manager authority",
+        (methodName) => {
+            const guards = getMethodGuards(methodName);
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).toContain(BranchManagerGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
+        },
+    );
 
     it("should block the test broadcast endpoint in production before broadcasting", async () => {
         const notificationService = {

@@ -85,6 +85,11 @@ const CLIENT_SERVICE_STATUSES = [
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 const PROBLEM_OUTCOMES: readonly string[] = ["NOT_APPLIED", "FAILED", "PARTIALLY_APPLIED", "UNKNOWN"];
+const BRANCH_MANAGER_MUTATION_TOOLS = new Set([
+    "updateEmployee",
+    "deleteEmployee",
+    "createAndSendContract",
+]);
 
 @Injectable()
 export class ToolExecutorService {
@@ -120,6 +125,15 @@ export class ToolExecutorService {
             const validationError = this.validateMutationPayload(toolName, args);
             if (validationError) {
                 return { success: false, error: validationError, code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" };
+            }
+
+            if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !this.canManageBranch(context)) {
+                return {
+                    success: false,
+                    error: "이 작업을 수행할 권한이 없습니다",
+                    code: "ACCESS_DENIED",
+                    outcome: "NOT_APPLIED",
+                };
             }
 
             if (!this.isBoundContext(context) || !this.confirmationService) {
@@ -247,6 +261,15 @@ export class ToolExecutorService {
             return { success: false, error: "Only confirmed mutation tools can use this path", code: "ACCESS_DENIED", outcome: "NOT_APPLIED" };
         }
 
+        if (BRANCH_MANAGER_MUTATION_TOOLS.has(toolName) && !this.canManageBranch(context)) {
+            return {
+                success: false,
+                error: "이 작업을 수행할 권한이 없습니다",
+                code: "ACCESS_DENIED",
+                outcome: "NOT_APPLIED",
+            };
+        }
+
         const sanitizedArgs = sanitizeLegacyChatToolPayload(args);
         try {
             switch (toolName) {
@@ -314,6 +337,12 @@ export class ToolExecutorService {
         }
 
         return contextOrBranchId;
+    }
+
+    private canManageBranch(context: LegacyChatToolContext): boolean {
+        return context.globalRole === "owner"
+            || context.branchRole === "admin"
+            || context.branchRole === "manager";
     }
 
     private isBoundContext(context: LegacyChatToolContext): context is LegacyChatToolContext {
@@ -1200,7 +1229,7 @@ export class ToolExecutorService {
 
     private async listBankAccounts(context: LegacyChatToolContext): Promise<ToolExecutionResult> {
         if (!this.canReadBankAccounts(context)) {
-            return { success: false, error: "은행 계좌 정보는 지점 관리자만 조회할 수 있습니다" };
+            return { success: false, error: "은행 계좌 정보를 조회할 권한이 없습니다" };
         }
 
         const accounts = await this.bankAccountInfoService.findAll(context.branchId);
@@ -1216,7 +1245,7 @@ export class ToolExecutorService {
 
     private async getBankAccountByArea(context: LegacyChatToolContext, args: ToolArgs): Promise<ToolExecutionResult> {
         if (!this.canReadBankAccounts(context)) {
-            return { success: false, error: "은행 계좌 정보는 지점 관리자만 조회할 수 있습니다" };
+            return { success: false, error: "은행 계좌 정보를 조회할 권한이 없습니다" };
         }
 
         const area = this.parseRequiredStringArg(args, "area");
@@ -1235,7 +1264,8 @@ export class ToolExecutorService {
     }
 
     private canReadBankAccounts(context: LegacyChatToolContext): boolean {
-        return [context.globalRole, context.branchRole].some((role) => role === "owner" || role === "admin");
+        if (context.globalRole === "owner") return true;
+        return ["admin", "manager", "user"].includes(context.branchRole ?? "");
     }
 
     private maskAccountNumber(account: string | null): string | null {

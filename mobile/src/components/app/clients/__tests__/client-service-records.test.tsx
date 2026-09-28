@@ -10,6 +10,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 const mockMutateAsync = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT =
     "mobile_clients_detail-sheet_stack_detail-page_content_tab-panel_service-records_content";
 const TEST_START_DATE = "2026-07-16T00:00:00+09:00";
@@ -28,6 +29,10 @@ jest.mock("@/hooks/useServiceRecords", () => ({
 
 jest.mock("@/hooks/use-toast", () => ({
     toast: jest.fn(),
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 const client = {
@@ -109,6 +114,13 @@ describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockMutateAsync.mockResolvedValue(undefined);
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
     });
 
     it("renders the main link states", () => {
@@ -141,6 +153,21 @@ describe("ClientServiceRecords", () => {
         );
         expect(editLink).toHaveAttribute("target", "_blank");
         expect(editLink).toHaveAttribute("rel", "noopener noreferrer");
+    });
+
+    it("hides the service-record edit link for a branch user while keeping send available", () => {
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "admin", branchRole: "user" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
+
+        renderComponent({ assignments: [createAssignment(1, "none")] });
+
+        expect(screen.queryByRole("link", { name: "제공기록지 수정" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
     });
 
     it("adds the 7-day grace period to the fallback link-expiry shown before a link is issued", () => {

@@ -9,7 +9,12 @@ import {
 
 describe("employees page shared error mapper", () => {
   it("routes delete failures and read errors through the shared problem-aware mapper", () => {
-    const source = fs.readFileSync(path.join(__dirname, "..", "page.tsx"), "utf8");
+    const pageSource = fs.readFileSync(path.join(__dirname, "..", "page.tsx"), "utf8");
+    const detailSource = fs.readFileSync(
+      path.join(__dirname, "..", "../../../components/app/employees/EmployeeDetailContent.tsx"),
+      "utf8",
+    );
+    const source = `${pageSource}\n${detailSource}`;
 
     expect(source).toContain("getUserErrorMessage");
     expect(source).toContain("normalizeApiError");

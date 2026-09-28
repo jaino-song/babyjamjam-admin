@@ -10,6 +10,7 @@ import { NavButton } from "./nav-button";
 import { LanguageSwitcher } from "./language-switcher";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 
 interface NavBarProps {
     onClose: () => void;
@@ -18,7 +19,7 @@ interface NavBarProps {
 export const NavBar = ({ onClose }: NavBarProps) => {
     const locale = useLocale();
     const pathname = usePathname();
-    const { data: user } = useGetAuthUser();
+    const authUserQuery = useGetAuthUser();
 
     const isDashboard = pathname === "/dashboard";
     const isMessages = pathname === "/messages";
@@ -27,8 +28,10 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/notification" || pathname === "/settings";
     const isEmployees = pathname === "/employees";
-    const isAdminOrOwner = user?.role === 'admin' || user?.role === 'owner';
-    const isAdmin = pathname === '/admin' || pathname?.startsWith('/admin/');
+    const canManageBranchNavigation = canManageBranchFromAuthQuery(authUserQuery);
+    const isFeedback = pathname === '/admin'
+        || pathname === '/admin/feedback'
+        || pathname?.startsWith('/admin/feedback/');
 
     const navItems = [
         { href: "/dashboard", label: t(locale, "nav-bar.dashboard"), icon: <House className="h-4 w-4" />, active: isDashboard },
@@ -71,15 +74,15 @@ export const NavBar = ({ onClose }: NavBarProps) => {
                         />
                     ))}
 
-                    {/* Admin section - only for admin/owner */}
-                    {isAdminOrOwner && (
+                    {/* Branch management feedback is available to branch managers. */}
+                    {canManageBranchNavigation && (
                         <>
                             <Separator className="my-2 bg-sidebar-border" />
                             <NavButton
                                 href="/admin/feedback"
                                 label="관리자"
                                 icon={<ShieldCheck className="h-4 w-4" />}
-                                active={isAdmin}
+                                active={isFeedback}
                                 onClick={onClose}
                             />
                         </>

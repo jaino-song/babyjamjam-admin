@@ -3,7 +3,6 @@ import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DocumentCategoryService } from "application/services/document-category.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { DocumentCategoryController } from "interface/controllers/document-category.controller";
 import request from "supertest";
@@ -58,8 +57,6 @@ describe("DocumentCategoryController (Integration)", () => {
             .useValue(authGuard)
             .overrideGuard(TenantGuard)
             .useValue(authGuard)
-            .overrideGuard(OwnerOrAdminGuard)
-            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -83,13 +80,13 @@ describe("DocumentCategoryController (Integration)", () => {
     it.each([
         ["create"],
         ["delete"],
-    ] as const)("should require owner/admin privileges for %s", (methodName) => {
+    ] as const)("allows tenant members on %s", (methodName) => {
         const guards = Reflect.getMetadata(
             GUARDS_METADATA,
             DocumentCategoryController.prototype[methodName],
         ) ?? [];
 
-        expect(guards).toContain(OwnerOrAdminGuard);
+        expect(guards).toEqual([]);
     });
 
     it("should list categories scoped to the selected branch", async () => {

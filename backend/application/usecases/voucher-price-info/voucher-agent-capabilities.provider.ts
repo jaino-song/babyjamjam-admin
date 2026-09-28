@@ -19,7 +19,7 @@ export class VoucherAgentCapabilitiesProvider implements AgentCapabilityProvider
 
     getCapabilities(): CapabilityDefinition[] {
         return [{
-            meta: { name: "vouchers.prices", domain: "vouchers", version: "1.0.0", description: "Read the branch's voucher price list (government voucher service pricing by type, duration and year) — not an individual client's voucher balance or usage. Use for: 바우처 단가, 정부지원 가격표, 서비스 요금 확인. Input: optional year (2000-2100) and optional type keyword, matched partially. Returns, up to 100 rows: id, type, duration, fullPrice, grant, actualPrice, year.", risk: "read", requiredRoles: ["owner", "admin", "manager"], renderer: "text", flagKey: "agent.capability.vouchers.prices", sideEffect: false },
+            meta: { name: "vouchers.prices", domain: "vouchers", version: "1.0.0", description: "Read the branch's voucher price list (government voucher service pricing by type, duration and year) — not an individual client's voucher balance or usage. Use for: 바우처 단가, 정부지원 가격표, 서비스 요금 확인. Input: optional year (2000-2100) and optional type keyword, matched partially. Returns, up to 100 rows: id, type, duration, fullPrice, grant, actualPrice, year.", risk: "read", requiredRoles: ["owner", "admin", "manager", "user"], renderer: "text", flagKey: "agent.capability.vouchers.prices", sideEffect: false },
             inputSchema: InputSchema, outputSchema: OutputSchema,
             execute: async (_context, rawInput) => {
                 const input = InputSchema.parse(rawInput);
