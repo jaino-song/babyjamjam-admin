@@ -3,15 +3,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
-import { useEmployees } from "../useEmployees";
+import { useEmployees, useToggleEmployeeOpenStatus } from "../useEmployees";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
     get: jest.fn(),
+    patch: jest.fn(),
   },
 }));
 
 const mockedApiGet = api.get as jest.MockedFunction<typeof api.get>;
+const mockedApiPatch = api.patch as jest.MockedFunction<typeof api.patch>;
 
 function createWrapper() {
   const queryClient = new QueryClient({
@@ -30,6 +32,7 @@ function createWrapper() {
 describe("useEmployees", () => {
   beforeEach(() => {
     mockedApiGet.mockReset();
+    mockedApiPatch.mockReset();
   });
 
   it("keeps a valid array payload succeeding", async () => {
@@ -89,5 +92,21 @@ describe("useEmployees", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
 
     expect(result.current.error?.message).toBe("직원 목록 응답을 확인할 수 없습니다.");
+  });
+
+  it("uses the dedicated open-status endpoint with only the availability field", async () => {
+    mockedApiPatch.mockResolvedValue({ data: { id: 7, openToNextWork: false } });
+
+    const { result } = renderHook(() => useToggleEmployeeOpenStatus(), { wrapper: createWrapper() });
+
+    result.current.mutate({ id: 7, openToNextWork: false });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(mockedApiPatch).toHaveBeenCalledWith(
+      "/employees/open-status",
+      { openToNextWork: false },
+      { params: { id: 7 } },
+    );
   });
 });

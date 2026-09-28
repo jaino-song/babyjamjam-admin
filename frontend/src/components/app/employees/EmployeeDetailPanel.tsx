@@ -18,6 +18,7 @@ import { DetailTabPanels } from "@/components/app/v3/DetailTabPanels";
 import { DetailTabs } from "@/components/app/v3/DetailTabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -43,6 +44,7 @@ import {
     type EmployeeWorkHistoryEntry,
     useEmployeeActiveClients,
     useEmployeeWorkHistory,
+    useToggleEmployeeOpenStatus,
 } from "@/hooks/useEmployees";
 import { getEmployeeGradeBadgeStyle, normalizeEmployeeGrade } from "@/features/employees/grade";
 
@@ -341,7 +343,28 @@ export function EmployeeDetailPanel({
     const locale = useLocale();
     const [activeTab, setActiveTab] = useState<DetailTabId>("basic");
     const [selectedAssignment, setSelectedAssignment] = useState<SelectedAssignment | null>(null);
+    const [openToNextWorkOverride, setOpenToNextWorkOverride] = useState<{ employeeId: number; value: boolean } | null>(null);
+    const openStatusMutation = useToggleEmployeeOpenStatus();
+    const openToNextWork = openToNextWorkOverride?.employeeId === employee.id
+        ? openToNextWorkOverride.value
+        : employee.openToNextWork;
     const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
+
+    const handleOpenStatusChange = (nextOpenToNextWork: boolean) => {
+        const previousOpenToNextWork = openToNextWork;
+        setOpenToNextWorkOverride({ employeeId: employee.id, value: nextOpenToNextWork });
+        openStatusMutation.mutate(
+            { id: employee.id, openToNextWork: nextOpenToNextWork },
+            {
+                onError: () => setOpenToNextWorkOverride(
+                    previousOpenToNextWork === employee.openToNextWork
+                        ? null
+                        : { employeeId: employee.id, value: previousOpenToNextWork },
+                ),
+                onSuccess: () => setOpenToNextWorkOverride(null),
+            },
+        );
+    };
 
     const tabs = useMemo(
         () => [
@@ -353,7 +376,7 @@ export function EmployeeDetailPanel({
     );
 
     const gradeBadge = getGradeBadge(employee.grade);
-    const availabilityBadge = getOpenToNextWorkBadge(employee.openToNextWork);
+    const availabilityBadge = getOpenToNextWorkBadge(openToNextWork);
 
     return (
         <>
@@ -422,7 +445,25 @@ export function EmployeeDetailPanel({
                                     <InfoCard data-component="desktop_employees_detail-panel_info-card" title="제공인력 정보">
                                         <InfoRow label="이름" value={employee.name} />
                                         <InfoRow label="연락처" value={formatKoreanPhoneNumber(employee.phone) || "-"} />
-                                        <InfoRow label="다음 배정 가능 여부" value={OPEN_TO_NEXT_WORK_LABELS[employee.openToNextWork ? "true" : "false"]} />
+                                        <InfoRow
+                                            label="다음 배정 가능 여부"
+                                            value={(
+                                                <div
+                                                    data-component="desktop_employees_detail-panel_info-card_open-status-control"
+                                                    data-slot="open-status-control"
+                                                    className="flex items-center justify-end gap-3"
+                                                >
+                                                    <span>{OPEN_TO_NEXT_WORK_LABELS[openToNextWork ? "true" : "false"]}</span>
+                                                    <Switch
+                                                        data-component={`${dataComponent}_employees-detail-open-status-toggle`}
+                                                        aria-label="다음 배정 가능 여부"
+                                                        checked={openToNextWork}
+                                                        disabled={openStatusMutation.isPending}
+                                                        onCheckedChange={handleOpenStatusChange}
+                                                    />
+                                                </div>
+                                            )}
+                                        />
                                         <InfoRow label="등급" value={normalizeEmployeeGrade(employee.grade)} />
                                         <InfoRow
                                             label="근무 지역"
