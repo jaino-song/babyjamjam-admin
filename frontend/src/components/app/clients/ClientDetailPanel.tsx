@@ -423,7 +423,7 @@ function ClientUpcomingMessageList({
         );
     }
 
-    if (!isLoading && jobs.length === 0) {
+    if (!isLoading && jobs.length === 0 && !hasNextPage) {
         return (
             <DetailEmptyState
                 message="예정된 자동 메시지가 없습니다"
