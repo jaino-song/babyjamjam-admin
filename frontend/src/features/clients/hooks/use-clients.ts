@@ -346,19 +346,22 @@ export function useUpdateClient() {
   return useMutation({
     mutationFn: ({ id, dto }: { id: number; dto: UpdateClientDto }) =>
       clientsApi.update(id, dto).then(r => r.data),
-    onSuccess: async (updatedClient, { id }) => {
-      const activeBranchId = getActiveBranchId();
-      queryClient.setQueriesData(
-        {
-          queryKey: clientKeys.all,
-          predicate: (query) => belongsToBranch(query.queryKey, activeBranchId),
-        },
-        (currentData) => updateClientCacheData(currentData, updatedClient)
-      );
-      queryClient.setQueryData(
-        activeBranchId ? clientKeys.detail(id, activeBranchId) : clientKeys.detail(id),
-        updatedClient,
-      );
+    onMutate: () => ({ branchId: getActiveBranchId() }),
+    onSuccess: async (updatedClient, { id }, mutationContext) => {
+      const capturedBranchId = mutationContext?.branchId ?? null;
+      if (capturedBranchId && isBranchContextAligned(capturedBranchId)) {
+        queryClient.setQueriesData(
+          {
+            queryKey: clientKeys.all,
+            predicate: (query) => belongsToBranch(query.queryKey, capturedBranchId),
+          },
+          (currentData) => updateClientCacheData(currentData, updatedClient)
+        );
+        queryClient.setQueryData(
+          clientKeys.detail(id, capturedBranchId),
+          updatedClient,
+        );
+      }
 
       await queryClient.invalidateQueries({ queryKey: clientKeys.all });
       await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
