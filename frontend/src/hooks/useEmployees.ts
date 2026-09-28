@@ -155,7 +155,8 @@ export function useCreateEmployee() {
             const { data } = await api.post<Employee>("/employees", dto);
             return data;
         },
-        onSuccess: async () => {
+        onSuccess: async (employee) => {
+            mergeEmployeeIntoListCache(queryClient, employee);
             await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
         onError: (error) => {
@@ -168,12 +169,13 @@ export function useCreateEmployee() {
 export function useUpdateEmployee() {
     const queryClient = useQueryClient();
 
-    return useMutation({
+    return useMutation<Employee, Error, { id: number; dto: UpdateEmployeeDto }>({
         mutationFn: async ({ id, dto }: { id: number; dto: UpdateEmployeeDto }) => {
-            const { data } = await api.patch("/employees", dto, { params: { id } });
+            const { data } = await api.patch<Employee>("/employees", dto, { params: { id } });
             return data;
         },
-        onSuccess: async () => {
+        onSuccess: async (employee) => {
+            mergeEmployeeIntoListCache(queryClient, employee);
             await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
         },
     });
@@ -183,6 +185,36 @@ export function useUpdateEmployee() {
 function removeEmployeeFromCacheData(current: unknown, id: number): unknown {
     if (!Array.isArray(current)) return current;
     return removeById(current as Employee[], id);
+}
+
+function isEmployeeStatus(value: unknown): value is Employee["status"] {
+    return value === "available" || value === "working" || value === "unavailable";
+}
+
+function mergeEmployeeIntoListCacheData(current: unknown, employee: Employee): unknown {
+    if (!Array.isArray(current)) return current;
+
+    const existing = current.find((item) => isRecord(item) && item.id === employee.id);
+    const status = existing?.status === "working"
+        ? "working"
+        : isEmployeeStatus(employee.status)
+            ? employee.status
+            : deriveEmployeeStatus(false, employee.openToNextWork);
+    const nextEmployee = { ...employee, status };
+
+    if (!existing) return [...current, nextEmployee];
+
+    return current.map((item) => (
+        isRecord(item) && item.id === employee.id
+            ? { ...item, ...nextEmployee }
+            : item
+    ));
+}
+
+function mergeEmployeeIntoListCache(queryClient: ReturnType<typeof useQueryClient>, employee: Employee): void {
+    queryClient.setQueryData(employeeQueryKeys.lists(), (current: unknown) => (
+        mergeEmployeeIntoListCacheData(current, employee)
+    ));
 }
 
 // Delete employee
@@ -285,10 +317,6 @@ function updateEmployeeOpenStatusInCache(
     }
 
     return { ...current, openToNextWork, status: nextStatus };
-}
-
-function isEmployeeStatus(value: unknown): value is Employee["status"] {
-    return value === "available" || value === "working" || value === "unavailable";
 }
 
 function getConfirmedEmployeeStatus(data: unknown): Employee["status"] | undefined {

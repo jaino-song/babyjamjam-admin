@@ -52,17 +52,48 @@ const filterItems = [
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
 
-function employeesMatch(left: Employee, right: Employee): boolean {
-    return left.id === right.id
-        && left.name === right.name
-        && left.phone === right.phone
-        && left.grade === right.grade
-        && left.openToNextWork === right.openToNextWork
-        && left.registeredDate === right.registeredDate
-        && left.status === right.status
-        && left.birthday === right.birthday
-        && left.workArea.length === right.workArea.length
-        && left.workArea.every((area, index) => area === right.workArea[index]);
+function employeeWorkAreasMatch(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((area, index) => area === right[index]);
+}
+
+function isEmployeeStatus(value: unknown): value is Employee["status"] {
+    return value === "available" || value === "working" || value === "unavailable";
+}
+
+function mergeConfirmedFormFields(
+    liveEmployee: Employee,
+    formEmployee: Employee,
+    baselineEmployee: Employee,
+): Employee {
+    const mergedEmployee = { ...liveEmployee };
+
+    if (formEmployee.name !== baselineEmployee.name && liveEmployee.name === baselineEmployee.name) {
+        mergedEmployee.name = formEmployee.name;
+    }
+    if (formEmployee.phone !== baselineEmployee.phone && liveEmployee.phone === baselineEmployee.phone) {
+        mergedEmployee.phone = formEmployee.phone;
+    }
+    if (formEmployee.grade !== baselineEmployee.grade && liveEmployee.grade === baselineEmployee.grade) {
+        mergedEmployee.grade = formEmployee.grade;
+    }
+    if (!employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
+        && employeeWorkAreasMatch(liveEmployee.workArea, baselineEmployee.workArea)) {
+        mergedEmployee.workArea = [...formEmployee.workArea];
+    }
+    if (formEmployee.openToNextWork !== baselineEmployee.openToNextWork
+        && liveEmployee.openToNextWork === baselineEmployee.openToNextWork) {
+        mergedEmployee.openToNextWork = formEmployee.openToNextWork;
+    }
+    if (formEmployee.birthday !== baselineEmployee.birthday && liveEmployee.birthday === baselineEmployee.birthday) {
+        mergedEmployee.birthday = formEmployee.birthday;
+    }
+    if (isEmployeeStatus(formEmployee.status)
+        && formEmployee.status !== baselineEmployee.status
+        && liveEmployee.status === baselineEmployee.status) {
+        mergedEmployee.status = formEmployee.status;
+    }
+
+    return mergedEmployee;
 }
 
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
@@ -110,19 +141,14 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? null
         : null;
     const selectedEmployeeFromList = liveSelectedEmployee ?? selectedEmployee;
-    const isFormResultWaitingForList = selectedEmployeeFromForm
-        && selectedEmployeeFromList
-        && (selectedEmployeeFormBaseline
-            ? employeesMatch(selectedEmployeeFromList, selectedEmployeeFormBaseline)
-            : !liveSelectedEmployee);
-    const selectedEmployeeForDetail = isFormResultWaitingForList && selectedEmployeeFromList
-        ? {
-            ...selectedEmployeeFromList,
-            ...selectedEmployeeFromForm,
-            // Preserve the confirmed form result while the list query still
-            // contains the pre-save snapshot. Once the list changes, the
-            // branch above stops applying and the live row wins.
-        }
+    const selectedEmployeeForDetail = selectedEmployeeFromForm && selectedEmployeeFromList && selectedEmployeeFormBaseline
+        ? mergeConfirmedFormFields(
+            selectedEmployeeFromList,
+            selectedEmployeeFromForm,
+            selectedEmployeeFormBaseline,
+        )
+        : selectedEmployeeFromForm && !liveSelectedEmployee
+            ? selectedEmployeeFromForm
         : selectedEmployeeFromList ?? selectedEmployeeFromForm;
 
     const stats = useMemo(() => {

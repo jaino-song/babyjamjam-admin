@@ -255,6 +255,27 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     );
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
 
+    const toggledStaleEmployee: Employee = {
+      ...employee,
+      openToNextWork: false,
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        isError: true,
+        // The availability cache patch changed only the derived status fields;
+        // the confirmed form fields still need to survive this stale row.
+        employees: [toggledStaleEmployee],
+        allEmployees: [toggledStaleEmployee],
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
     const savedEmployee: Employee = {
       ...employee,
       name: "김철수",
