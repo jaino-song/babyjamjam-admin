@@ -11,6 +11,7 @@ import {
     type FinalizeEformsignDocumentJobRequest,
 } from "@/services/api";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 
 export type {
     CreateEformsignDocumentJobRequest,
@@ -27,7 +28,11 @@ const JOB_LIST_REFETCH_INTERVAL_MS = 3_000;
 
 export const eformsignDocumentJobsQueryKeys = {
     all: ["eformsign-document-jobs"] as const,
-    summary: () => [...eformsignDocumentJobsQueryKeys.all, "summary"] as const,
+    summary: (branchId: string | null) => [
+        ...eformsignDocumentJobsQueryKeys.all,
+        "summary",
+        branchId ?? "unavailable",
+    ] as const,
     list: () => [...eformsignDocumentJobsQueryKeys.all, "list"] as const,
 };
 
@@ -35,14 +40,25 @@ export const eformsignDocumentJobsQueryKeys = {
 export const eformsignDocumentJobQueryKeys = eformsignDocumentJobsQueryKeys;
 
 export function useEformsignDocumentJobsSummary(isAuthenticated = true) {
-    return useQuery<EformsignDocumentJobSummary>({
-        queryKey: eformsignDocumentJobsQueryKeys.summary(),
-        queryFn: () => eformsignApi.getDocumentJobSummary(),
-        enabled: isAuthenticated,
+    const activeBranchId = useActiveBranchId();
+    const branchContextReady = isBranchContextAligned(activeBranchId);
+    const query = useQuery<EformsignDocumentJobSummary>({
+        queryKey: eformsignDocumentJobsQueryKeys.summary(activeBranchId),
+        queryFn: () => {
+            if (!activeBranchId || !isBranchContextAligned(activeBranchId)) {
+                throw new Error("Branch selection required");
+            }
+            return eformsignApi.getDocumentJobSummary();
+        },
+        enabled: isAuthenticated && branchContextReady,
         refetchInterval: JOB_SUMMARY_REFETCH_INTERVAL_MS,
         refetchIntervalInBackground: true,
         refetchOnWindowFocus: false,
     });
+
+    // A branch switch changes the query key, but hide any cached result until
+    // the new cookie identity is aligned so an old tenant's count cannot flash.
+    return branchContextReady ? query : { ...query, data: undefined };
 }
 
 export interface UseEformsignDocumentJobsOptions {
