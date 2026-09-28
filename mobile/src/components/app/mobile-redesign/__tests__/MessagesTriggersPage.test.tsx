@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import { MessagesTriggersPage } from "../MessagesTriggersPage";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
@@ -25,9 +26,11 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-  useInitialUser: () => ({ role: "user", branchRole: "manager" }),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: jest.fn(),
 }));
+
+const mockUseGetAuthUser = useGetAuthUser as jest.Mock;
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageTriggerRules: () => ({
@@ -82,6 +85,13 @@ describe("MessagesTriggersPage", () => {
     mockPush.mockReset();
     mockReplace.mockReset();
     mockBack.mockReset();
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
   });
 
   it("uses the shared sliding card and list pane for mobile automation", () => {

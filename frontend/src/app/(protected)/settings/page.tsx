@@ -19,10 +19,9 @@ import { CallIngestTokenSection } from "@/components/app/call-ingest-tokens/Call
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { SectionNav } from "@/components/app/v3";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { usePushNotification } from "@/hooks/usePushNotification";
 import { getRoleLabel } from "@/lib/constants/roles";
-import { useInitialUser } from "@/providers/UserProvider";
 import { settingsApi } from "@/services/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -93,10 +92,9 @@ const THEME_OPTIONS = [
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SectionId>("profile");
-  const initialUser = useInitialUser();
-  const authUserQuery = useGetAuthUser({ initialData: initialUser });
+  const authUserQuery = useGetAuthUser();
   const { data: user } = authUserQuery;
-  const canManageBranchSettings = canManageBranch(user);
+  const canManageBranchSettings = canManageBranchFromAuthQuery(authUserQuery);
   // `AuthUser` doesn't declare `branchId` (extending it is out of this
   // section's scope), but the backend's `/auth/me` response includes it —
   // see backend/interface/controllers/auth.controller.ts:189-193.

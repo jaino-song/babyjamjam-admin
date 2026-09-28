@@ -11,7 +11,6 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { usePushNotification } from "@/hooks/usePushNotification";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api/client";
-import { useInitialUser } from "@/providers/UserProvider";
 import { settingsApi } from "@/services/api";
 import {
   NOTIFICATION_EMAIL_ENABLED,
@@ -87,8 +86,7 @@ export default function NotificationPage() {
   const [isAppNotificationUpdating, setIsAppNotificationUpdating] = useState(false);
 
   const { toast } = useToast();
-  const initialUser = useInitialUser();
-  const { data: user } = useGetAuthUser({ initialData: initialUser });
+  const { data: user } = useGetAuthUser();
   const queryClient = useQueryClient();
   const {
     isSupported: isAppNotificationSupported,

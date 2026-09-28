@@ -22,11 +22,11 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
-import { useInitialUser } from "@/providers/UserProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -925,7 +925,8 @@ function LinkStatusCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "link-card");
     const { link, employee } = assignment;
-    const canEditServiceRecord = canManageBranch(useInitialUser());
+    const authUserQuery = useGetAuthUser();
+    const canEditServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
     const usesResendLayout = isResend || isSendingResend;

@@ -18,7 +18,7 @@ import {
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
 import { toast } from "@/hooks/use-toast";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
@@ -52,7 +52,7 @@ import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/Serv
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
-import { useInitialUser } from "@/providers/UserProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -629,7 +629,8 @@ export function ClientDetailContent({
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
-  const canManageBranchFeatures = canManageBranch(useInitialUser());
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);

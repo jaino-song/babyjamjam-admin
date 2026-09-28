@@ -24,8 +24,8 @@ import { AllSettingsRedesign } from "@/components/app/mobile-redesign/AllSetting
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
-import { useInitialUser } from "@/providers/UserProvider";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 
 /** Canonical data-component base for the /all route. */
 const ALL_PAGE_BASE = "mobile_all_page";
@@ -42,9 +42,10 @@ function safeArrayPayload<T>(payload: unknown): T[] {
 }
 
 export default function AllMenuPage() {
-  const initialUser = useInitialUser();
+  const authUserQuery = useGetAuthUser();
+  const initialUser = authUserQuery.data;
   const isOwner = initialUser?.role === "owner";
-  const canManageBranchFeatures = canManageBranch(initialUser);
+  const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
   const clientsQuery = useAllClients();
   const employeesQuery = useEmployees();
   const messageTemplatesQuery = useMessageTemplates();

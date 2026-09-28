@@ -10,7 +10,7 @@ import { NavButton } from "./nav-button";
 import { LanguageSwitcher } from "./language-switcher";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 
 interface NavBarProps {
     onClose: () => void;
@@ -19,7 +19,7 @@ interface NavBarProps {
 export const NavBar = ({ onClose }: NavBarProps) => {
     const locale = useLocale();
     const pathname = usePathname();
-    const { data: user } = useGetAuthUser();
+    const authUserQuery = useGetAuthUser();
 
     const isDashboard = pathname === "/dashboard";
     const isMessages = pathname === "/messages";
@@ -28,7 +28,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/notification" || pathname === "/settings";
     const isEmployees = pathname === "/employees";
-    const canManageBranchNavigation = canManageBranch(user);
+    const canManageBranchNavigation = canManageBranchFromAuthQuery(authUserQuery);
     const isFeedback = pathname === '/admin'
         || pathname === '/admin/feedback'
         || pathname?.startsWith('/admin/feedback/');

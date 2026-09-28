@@ -62,7 +62,7 @@ describe("MessagesPage trigger section gating", () => {
     expect(unreleasedIds).not.toContain('"scheduled"');
     expect(unreleasedIds).not.toContain('"history"');
     expect(unreleasedIds).toContain('"triggers"');
-    expect(source).toContain("const canManageBranchMessages = canManageBranch(user)");
+    expect(source).toContain("const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery)");
     expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages");
     expect(source).not.toContain("ROLES.owner");
   });
@@ -99,17 +99,25 @@ const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplates = jest.fn();
 const mockUseSystemTemplate = jest.fn();
-const mockUseInitialUser = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const mockUpdateSystemTemplate = jest.fn();
+
+function mockAuthUser(data: Record<string, unknown> | null) {
+  mockUseGetAuthUser.mockReturnValue({
+    data,
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
+}
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-  // Non-owner role on purpose: history must be reachable for anyone once SMS
-  // sending is approved, not just the branch owner.
-  useInitialUser: () => mockUseInitialUser(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -427,7 +435,7 @@ function getDetailPanel() {
 
 beforeEach(() => {
   document.cookie = "selected_branch_id=branch-test; path=/";
-  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "user", branchRole: "manager" });
+  mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
@@ -463,7 +471,7 @@ beforeEach(() => {
 
 describe("messages page — server system-template catalog", () => {
   it("saves only the newly selected template's content and variables after switching editors", async () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
     const templates = [
       buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE_A", name: "첫 서버 템플릿", content: "첫 번째 본문" }),
@@ -539,7 +547,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("keeps cached rows and the editor draft visible when the catalog refetch fails", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const template = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -571,7 +579,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("waits for fresh detail data before mounting an editable unknown template", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const listTemplate = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -609,7 +617,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("preserves a dirty draft when fresher detail data arrives and previews that draft", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const initialTemplate = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -995,7 +1003,7 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 
   it("keeps branch template editing available to nonowners while sending remains approval-gated", () => {
-    mockUseInitialUser.mockReturnValue({ id: "manager-1", role: "user", branchRole: "manager" });
+    mockAuthUser({ id: "manager-1", role: "user", branchRole: "manager" });
     mockUseMessageSenderApproval.mockReturnValue({
       data: {
         approvalStatus: "pending",

@@ -14,7 +14,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 
 interface NavBarProps {
     onClose: () => void;
@@ -24,7 +24,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const locale = useLocale();
     const pathname = usePathname();
     const queryClient = useQueryClient();
-    const { data: user } = useGetAuthUser();
+    const authUserQuery = useGetAuthUser();
 
     useEffect(() => {
         let cancelled = false;
@@ -59,7 +59,7 @@ export const NavBar = ({ onClose }: NavBarProps) => {
     const isClients = pathname === "/clients";
     const isSettings = pathname === "/settings";
     const isEmployees = pathname === "/employees";
-    const canManageBranchNavigation = canManageBranch(user);
+    const canManageBranchNavigation = canManageBranchFromAuthQuery(authUserQuery);
     const isFeedback = pathname === '/admin'
         || pathname === '/admin/feedback'
         || pathname?.startsWith('/admin/feedback/');

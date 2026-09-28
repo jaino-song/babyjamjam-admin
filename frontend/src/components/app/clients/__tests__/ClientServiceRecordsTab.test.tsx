@@ -10,7 +10,7 @@ import type {
 
 const mutateAsync = jest.fn();
 const toast = jest.fn();
-const mockUseInitialUser = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT = "desktop_clients-detail_panel_service-records";
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
@@ -24,8 +24,8 @@ jest.mock("@/hooks/use-toast", () => ({
     useToast: () => ({ toast }),
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-    useInitialUser: () => mockUseInitialUser(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 function createAssignment(
@@ -114,7 +114,13 @@ describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
         toast.mockReset();
-        mockUseInitialUser.mockReturnValue({ role: "user", branchRole: "manager" });
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
     });
 
     afterEach(() => {
@@ -135,7 +141,13 @@ describe("ClientServiceRecordsTab", () => {
     });
 
     it("hides the service-record edit link for a branch user", () => {
-        mockUseInitialUser.mockReturnValue({ role: "admin", branchRole: "user" });
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "admin", branchRole: "user" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
 
         render(
             <ClientServiceRecordsTab

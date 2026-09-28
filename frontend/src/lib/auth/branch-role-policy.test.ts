@@ -1,4 +1,4 @@
-import { canManageBranch } from "./branch-role-policy";
+import { canManageBranch, canManageBranchFromAuthQuery } from "./branch-role-policy";
 
 describe("canManageBranch", () => {
   it.each([
@@ -21,5 +21,26 @@ describe("canManageBranch", () => {
     undefined,
   ])("denies %j without an allowed active branch role", (user) => {
     expect(canManageBranch(user)).toBe(false);
+  });
+});
+
+describe("canManageBranchFromAuthQuery", () => {
+  it.each([
+    { isPending: true },
+    { isLoading: true },
+    { isFetching: true, data: { role: "user", branchRole: "manager" } },
+    { isError: true, data: { role: "user", branchRole: "manager" } },
+  ])("fails closed while authority is unresolved: %j", (query) => {
+    expect(canManageBranchFromAuthQuery(query)).toBe(false);
+  });
+
+  it("allows a resolved manager authority", () => {
+    expect(canManageBranchFromAuthQuery({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    })).toBe(true);
   });
 });

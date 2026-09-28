@@ -10,7 +10,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 const mockMutateAsync = jest.fn();
-const mockUseInitialUser = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT =
     "mobile_clients_detail-sheet_stack_detail-page_content_tab-panel_service-records_content";
 const TEST_START_DATE = "2026-07-16T00:00:00+09:00";
@@ -31,8 +31,8 @@ jest.mock("@/hooks/use-toast", () => ({
     toast: jest.fn(),
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-    useInitialUser: () => mockUseInitialUser(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 const client = {
@@ -114,7 +114,13 @@ describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockMutateAsync.mockResolvedValue(undefined);
-        mockUseInitialUser.mockReturnValue({ role: "user", branchRole: "manager" });
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
     });
 
     it("renders the main link states", () => {
@@ -150,7 +156,13 @@ describe("ClientServiceRecords", () => {
     });
 
     it("hides the service-record edit link for a branch user while keeping send available", () => {
-        mockUseInitialUser.mockReturnValue({ role: "admin", branchRole: "user" });
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "admin", branchRole: "user" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
 
         renderComponent({ assignments: [createAssignment(1, "none")] });
 

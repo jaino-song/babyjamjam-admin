@@ -22,8 +22,8 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { InfoRow } from "@/components/app/ui/info-row";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
-import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 interface EmployeeDetailModalProps {
     open: boolean;
@@ -47,7 +47,8 @@ export function EmployeeDetailModal({
     onDelete,
 }: EmployeeDetailModalProps) {
     const locale = useLocale();
-    const canManage = canManageBranch(useInitialUser());
+    const authUserQuery = useGetAuthUser();
+    const canManage = canManageBranchFromAuthQuery(authUserQuery);
     const [openToNextWorkOverride, setOpenToNextWorkOverride] = useState<{ employeeId: number; value: boolean } | null>(null);
     const openStatusMutation = useToggleEmployeeOpenStatus();
     const openToNextWork = employee && openToNextWorkOverride && openToNextWorkOverride.employeeId === employee.id
