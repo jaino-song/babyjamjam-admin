@@ -123,14 +123,15 @@ export function buildClientListWhere(
     search?: string,
     tab: ClientListTab = "all",
 ): Prisma.clientWhereInput {
+    const normalizedSearch = search?.trim();
     const where: Prisma.clientWhereInput = {
         branchId: branchid,
-        ...(search
+        ...(normalizedSearch
             ? {
                 OR: [
-                    { name: { contains: search, mode: "insensitive" as const } },
-                    { address: { contains: search, mode: "insensitive" as const } },
-                    { phone: { contains: search, mode: "insensitive" as const } },
+                    { name: { contains: normalizedSearch, mode: "insensitive" as const } },
+                    { address: { contains: normalizedSearch, mode: "insensitive" as const } },
+                    { phone: { contains: normalizedSearch, mode: "insensitive" as const } },
                 ],
             }
             : {}),

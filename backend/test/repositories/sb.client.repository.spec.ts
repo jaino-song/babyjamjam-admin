@@ -298,6 +298,19 @@ describe("SbClientRepository", () => {
             });
         });
 
+        it("treats whitespace-only search as an ordinary branch-scoped query", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+            clientModel.count.mockResolvedValue(0);
+
+            await repository.findAllPaginated(branchId, 1, 10, "   ");
+
+            expect(clientModel.findMany).toHaveBeenCalledTimes(1);
+            expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: { branchId },
+            }));
+            expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId } });
+        });
+
         it("applies the selected raw status tab to both rows and total", async () => {
             clientModel.findMany.mockResolvedValue([]);
             clientModel.count.mockResolvedValue(51);

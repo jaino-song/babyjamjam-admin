@@ -99,8 +99,7 @@ function matchesClientSearch(
 function requiresClientSearchFallback(search: string | undefined): boolean {
     if (search === undefined) return false;
     const normalizedQuery = search.normalize("NFC").trim();
-    return normalizedQuery.length === 0
-        || Array.from(normalizedQuery).some((character) => CHOSUNG_SET.has(character))
+    return Array.from(normalizedQuery).some((character) => CHOSUNG_SET.has(character))
         || PHONE_LIKE_QUERY_PATTERN.test(normalizedQuery);
 }
 
