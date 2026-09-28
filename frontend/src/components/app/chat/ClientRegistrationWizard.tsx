@@ -269,6 +269,7 @@ export function ClientRegistrationWizard({
                 careCenter,
                 voucherClient,
                 breastPump,
+                messageAutomationDisabled: false,
             };
 
             if (!isValidCompactDateInput(dueDate)) delete payload.dueDate;

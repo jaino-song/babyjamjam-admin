@@ -29,6 +29,7 @@ type CreateClientParams = {
     breastPump: boolean;
     eDocId?: string | null;
     areaId?: string | null;
+    messageAutomationDisabled?: boolean;
 };
 
 @Injectable()

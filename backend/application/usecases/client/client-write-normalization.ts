@@ -78,13 +78,16 @@ export function normalizeClientCreateInput(
         serviceStatus: input.serviceStatus ?? null,
         breastPump: input.breastPump ?? false,
         areaId: input.areaId ?? null,
+        ...(input.messageAutomationDisabled === undefined
+            ? {}
+            : { messageAutomationDisabled: input.messageAutomationDisabled }),
     };
 }
 
 const CLIENT_UPDATE_FIELDS = [
     "name", "address", "phone", "type", "duration", "fullPrice", "grant", "actualPrice",
     "startDate", "endDate", "careCenter", "voucherClient", "birthday", "dueDate", "birthDate",
-    "serviceStatus", "breastPump", "areaId",
+    "serviceStatus", "breastPump", "areaId", "messageAutomationDisabled",
 ] as const satisfies readonly (keyof ClientWriteInput)[];
 
 export function normalizeClientUpdateInput(existing: ClientWriteExisting, input: ClientWriteInput): UpdateClientParams {

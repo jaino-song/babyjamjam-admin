@@ -96,6 +96,7 @@ export interface IClientRepository {
             breastPump: boolean;
             eDocId: string | null;
             areaId: string | null;
+            messageAutomationDisabled: boolean;
         }>,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null>;

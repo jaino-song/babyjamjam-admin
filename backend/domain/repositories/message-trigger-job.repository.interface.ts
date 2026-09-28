@@ -33,7 +33,7 @@ export interface ClientUpcomingMessageTriggerJobCursor {
 
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
-    update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
+    update(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
     /** Branch-fenced read for request-path callers; a branch mismatch resolves to null, not another branch's row. */
     findByIdInBranch(branchId: string, id: string): Promise<MessageTriggerJobEntity | null>;
     /**
@@ -105,6 +105,7 @@ export interface IMessageTriggerJobRepository {
     findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity[]>;
     findSentByRuleIdAndEmployeeScheduleId(
         ruleId: string,

@@ -24,6 +24,7 @@ type ClientRow = {
     areaId?: string | null;
     branchId?: string | null;
     suppressGreetingSms?: boolean;
+    messageAutomationDisabled?: boolean;
     phoneNormalized?: string | null;
 };
 
@@ -54,6 +55,7 @@ export class ClientMapper {
             row.suppressGreetingSms ?? false,
             row.birthDate ?? null,
             row.phoneNormalized,
+            row.messageAutomationDisabled ?? false,
         );
     }
 
@@ -81,6 +83,9 @@ export class ClientMapper {
             eDocId: entity.eDocId,
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
+            ...(entity.hasExplicitMessageAutomationDisabled()
+                ? { messageAutomationDisabled: entity.messageAutomationDisabled }
+                : {}),
         };
     }
 
@@ -107,6 +112,9 @@ export class ClientMapper {
             eDocId: entity.eDocId,
             areaId: entity.areaId,
             suppressGreetingSms: entity.suppressGreetingSms,
+            ...(entity.hasExplicitMessageAutomationDisabled()
+                ? { messageAutomationDisabled: entity.messageAutomationDisabled }
+                : {}),
         };
     }
 }

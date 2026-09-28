@@ -22,7 +22,10 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import {
+    CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON,
+    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+} from "domain/constants/message-automation-policy";
 import {
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
@@ -173,16 +176,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return this.toDomain(row);
     }
 
-    async update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
+    async update(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
         const branchWhere = this.branchWhereFragment(job);
+        const client = transaction ?? this.prisma;
         if (job.claimToken) {
-            const result = await this.prisma.message_trigger_job.updateMany({
+            const result = await client.message_trigger_job.updateMany({
                 where: { id: job.id, claimToken: job.claimToken, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 data: this.toUpdate(job),
             });
             if (result.count !== 1) {
-                const current = await this.prisma.message_trigger_job.findUnique({
+                const current = await client.message_trigger_job.findUnique({
                     where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
                 });
                 if (!current) {
@@ -190,7 +194,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 }
                 return this.toDomain(current);
             }
-            const current = await this.prisma.message_trigger_job.findUnique({
+            const current = await client.message_trigger_job.findUnique({
                 where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             });
             if (!current) {
@@ -198,7 +202,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
             return this.toDomain(current);
         }
-        const row = await this.prisma.message_trigger_job.update({
+        const row = await client.message_trigger_job.update({
             where: { id: job.id, ...branchWhere, ...ordinaryAutomationJobWhere() },
             data: this.toUpdate(job),
         });
@@ -580,9 +584,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async findPendingByRuleIdsAndEmployeeScheduleId(
         ruleIds: string[],
         employeeScheduleId: number,
+        transaction?: Prisma.TransactionClient,
     ): Promise<MessageTriggerJobEntity[]> {
         if (ruleIds.length === 0) return [];
-        const rows = await this.prisma.message_trigger_job.findMany({
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
             where: { ...ordinaryAutomationJobWhere(),
                 ruleId: { in: ruleIds },
                 employeeScheduleId,
@@ -946,7 +951,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'canceled'
               AND "message_trigger_job"."canceled_by_user" = false
-              AND "message_trigger_job"."cancel_reason" = ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}`
+              AND "message_trigger_job"."cancel_reason" IN (
+                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON},
+                  ${CLIENT_MESSAGE_AUTOMATION_DISABLED_CANCEL_REASON}
+              )`
             : Prisma.sql`DO UPDATE SET
                 status = 'pending',
                 scheduled_for = EXCLUDED.scheduled_for,

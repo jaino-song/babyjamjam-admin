@@ -248,6 +248,7 @@ model client {
   phone                  String?
   phoneNormalized        String?                   @map("phone_normalized")
   suppressGreetingSms    Boolean                   @default(false) @map("suppress_greeting_sms")
+  messageAutomationDisabled Boolean                 @default(false) @map("message_automation_disabled")
   type                   String?
   duration               Int?                      @db.SmallInt
   fullPrice              String?                   @map("full_price")

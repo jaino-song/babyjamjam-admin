@@ -215,6 +215,17 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             : { kind: "client", clientId: write.clientId, clientIdentity: clientIdentity! };
         const after = this.mergeSource(before, write.values, now);
         if (!after.name || !after.phone) return this.unavailable("missing-input");
+        if (after.messageAutomationDisabled === true) {
+            return {
+                availability: "none",
+                effects: [],
+                grandfatheredEffects: [],
+                complete: true,
+                clientIdentity,
+                sourceGuard: sourceHash({ version: VERSION, branchId, subject, before, after }),
+                affectedJobs: [],
+            };
+        }
         if (write.values.areaId !== undefined) {
             after.area = write.values.areaId === null ? null : (transaction ? await this.sources.readClientAutomationArea(branchId, write.values.areaId, transaction)
                 : await this.sources.readClientAutomationArea(branchId, write.values.areaId));

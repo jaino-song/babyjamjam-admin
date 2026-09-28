@@ -117,6 +117,7 @@ describe("ClientService", () => {
         syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForClient: jest.fn().mockResolvedValue(undefined),
         syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
+        readClientAutomationSchedules: jest.fn().mockResolvedValue([]),
         cancelPendingJobsForClientDeletion: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -131,6 +132,7 @@ describe("ClientService", () => {
     ) => ({
         persistClientIntent: jest.fn().mockResolvedValue(undefined),
         persistScheduleIntent: jest.fn().mockResolvedValue(undefined),
+        persistReenableIntents: jest.fn().mockResolvedValue([12]),
         fulfillClientIntent: jest.fn().mockImplementation(async (params: {
             branchId: string;
             clientId: number;
@@ -1103,6 +1105,29 @@ describe("ClientService", () => {
             expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
         });
 
+        it("does not apply automatic message routines when the durable client opt-out is true", async () => {
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            await service.create(branchId, {
+                name: "Opted Out Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                messageAutomationDisabled: true,
+            });
+
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ messageAutomationDisabled: true }),
+                expect.anything(),
+            );
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(messageAutomationIntentService.persistClientIntent).not.toHaveBeenCalled();
+            expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
+        });
+
         it("does not schedule assignment or service-record messages when message automation is false", async () => {
             const mockClient = createClientEntity();
             createClientUsecase.executeWithInitialSchedule.mockResolvedValue({
@@ -1309,6 +1334,34 @@ describe("ClientService", () => {
                 // Assert: no side-effects fired
                 expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("rejects an explicit durable opt-out before duplicate-client reuse side effects", async () => {
+                const existingClient = createClientEntity();
+                clientRepository.findByPhone.mockResolvedValue(existingClient);
+
+                await expect(service.create(branchId, {
+                    name: "Existing Client",
+                    phone: "010-1234-5678",
+                    careCenter: false,
+                    voucherClient: true,
+                    breastPump: false,
+                    reuseExistingClient: true,
+                    messageAutomationDisabled: true,
+                })).rejects.toMatchObject({
+                    status: 400,
+                    response: clientProblemResponse(
+                        "VALIDATION_FAILED",
+                        "/messageAutomationDisabled",
+                        "INVALID_VALUE",
+                        "기존 고객 재사용 시 메시지 자동 전송 설정은 변경할 수 없습니다.",
+                    ),
+                });
+
+                expect(prismaService.$transaction).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(triggerService.syncEmployeeAssignmentRulesForClient).not.toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
 
             it("initializes the service-record lifecycle when reusing a client without an assignment", async () => {
@@ -1721,6 +1774,20 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and no employee change", () => {
+            it("cancels automatic jobs in the same transaction when durable opt-out is enabled", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await service.update(branchId, existingClient.id, { messageAutomationDisabled: true });
+
+                expect(prismaService.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: { id: existingClient.id, branchId },
+                    data: expect.objectContaining({ messageAutomationDisabled: true }),
+                }));
+                expect(prismaService.$queryRaw).toHaveBeenCalled();
+                expect(triggerService.syncClientRulesForClient).toHaveBeenCalled();
+            });
+
             it("revalidates a service-period change inside the owning transaction", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
@@ -1878,6 +1945,44 @@ describe("ClientService", () => {
                     orderBy: { id: "asc" },
                 });
                 expect(messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
+            });
+
+            it("keeps a no-name durable opt-out re-enable successful when durable recovery is fulfilled", async () => {
+                const existingClient = createClientEntity();
+                existingClient.messageAutomationDisabled = true;
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                prismaService.employee_schedule.findMany.mockResolvedValue([{ id: 12 }]);
+
+                await expect(service.update(branchId, existingClient.id, {
+                    messageAutomationDisabled: false,
+                })).resolves.toBe(existingClient);
+
+                expect(messageAutomationIntentService.fulfillClientIntent).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        branchId,
+                        clientId: existingClient.id,
+                        includePast: false,
+                        futureOnlyAt: expect.any(Date),
+                        intentAt: expect.any(Date),
+                    }),
+                );
+                expect(messageAutomationIntentService.fulfillScheduleIntent).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        branchId,
+                        scheduleId: 12,
+                        includePast: false,
+                        futureOnlyAt: expect.any(Date),
+                        intentAt: expect.any(Date),
+                    }),
+                );
+                expect(messageAutomationIntentService.persistReenableIntents).toHaveBeenCalledWith(
+                    prismaService,
+                    expect.objectContaining({
+                        branchId,
+                        clientId: existingClient.id,
+                        futureOnlyAt: expect.any(Date),
+                    }),
+                );
             });
 
             it("should not refresh assignment jobs when an unrelated client field changes", async () => {

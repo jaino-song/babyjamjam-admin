@@ -56,6 +56,7 @@ export class SbClientRepository implements IClientRepository {
             breastPump: true,
             eDocId: true,
             suppressGreetingSms: true,
+            messageAutomationDisabled: true,
             // Tenant key — every where-clause already relies on this column,
             // and reads must carry it so ClientEntity.branchId is populated.
             branchId: true,

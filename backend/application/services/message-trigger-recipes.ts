@@ -45,6 +45,7 @@ export interface ClientTriggerSource {
     fullPrice?: string | null;
     grant?: string | null;
     actualPrice?: string | null;
+    messageAutomationDisabled?: boolean;
     area?: { bankAccountInfo: { bankName: string | null; accNum: string | null } | null } | null;
 }
 

@@ -3594,6 +3594,7 @@ describe("MessageTriggerService", () => {
                 return job;
             }),
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
+            findForClientAutomationReview: jest.fn().mockResolvedValue([]),
             cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
             cancelPendingForRuleGeneration: jest.fn().mockImplementation(async (
                 _branchId: string,
@@ -3698,6 +3699,7 @@ describe("MessageTriggerService", () => {
                 return job;
             }),
             findPendingByRuleIdsAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
+            findForClientAutomationReview: jest.fn().mockResolvedValue([]),
             findSentByRuleIdAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
             cancelPendingForRuleGeneration: jest.fn().mockImplementation(async (
                 _branchId: string,
@@ -4060,6 +4062,72 @@ describe("MessageTriggerService", () => {
         create.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
         await create.service.syncClientRulesForClient(branchId, 1, true);
         expect(create.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not resurrect a historical immediate client-created job when opt-out is re-enabled", async () => {
+        const reenabledAt = new Date("2026-07-09T12:00:00.000Z");
+        jest.useFakeTimers().setSystemTime(reenabledAt);
+        try {
+        const greetingRule = createRule({
+            id: "rule-historical-greeting",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const futureRule = createRule({
+            id: "rule-future-service-info",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 1,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const sync = createSyncService({
+            createdAt: new Date("2026-06-27T00:00:00.000Z"),
+            startDate: new Date("2026-07-20T00:00:00.000Z"),
+        });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule, futureRule]);
+
+        await sync.service.syncClientRulesForClient(branchId, 1, false, false, {
+            stableBatchAt: reenabledAt,
+            preserveExisting: true,
+            futureOnlyAt: reenabledAt,
+        });
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.upsertPending.mock.calls[0]?.[0].ruleId).toBe(futureRule.id);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("rechecks the client opt-out under the materialization lock before inserting an automatic job", async () => {
+        const futureRule = createRule({
+            id: "rule-lock-race",
+            eventType: MessageTriggerEventType.SERVICE_START,
+            offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+            offsetDays: 1,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+        });
+        const sync = createSyncService({ startDate: new Date("2026-12-20T00:00:00.000Z") });
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([futureRule]);
+        sync.prisma.client.findFirst
+            .mockResolvedValueOnce({
+                id: 1,
+                name: "김산모",
+                phone: "010-1234-5678",
+                type: null,
+                startDate: new Date("2026-12-20T00:00:00.000Z"),
+                endDate: null,
+                serviceEndNoticeSentAt: null,
+                createdAt: new Date("2026-06-27T00:00:00.000Z"),
+                messageAutomationDisabled: false,
+            })
+            .mockResolvedValueOnce({ messageAutomationDisabled: true });
+
+        await sync.service.syncClientRulesForClient(branchId, 1, true);
+
+        expect(sync.prisma.client.findFirst).toHaveBeenCalledTimes(2);
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
     it("keeps the still-pending IMMEDIATE greeting alive on an includePast=false resync", async () => {
@@ -4692,6 +4760,69 @@ describe("MessageTriggerService", () => {
             77,
         );
         expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("does not resurrect an existing immediate assignment when opt-out is re-enabled, even without job history", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-reenable",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true, {
+            preserveExisting: true,
+            futureOnlyAt: new Date("2026-07-08T00:00:00.000Z"),
+        });
+
+        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+    });
+
+    it("materializes a genuinely new assignment when the caller uses normal sync after re-enable", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-new-after-reenable",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, true);
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.upsertPending.mock.calls[0]?.[0]).toMatchObject({
+            employeeScheduleId: 77,
+            ruleId: employeeRule.id,
+        });
+    });
+
+    it("materializes an immediate assignment for a schedule created in the same re-enable transaction", async () => {
+        const employeeRule = createRule({
+            id: "rule-employee-new-after-reenable-cutoff",
+            eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+        });
+        const sync = createEmployeeSyncService();
+        sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([employeeRule]);
+
+        await sync.service.syncEmployeeAssignmentRulesForSchedule(branchId, 77, false, {
+            preserveExisting: true,
+            futureOnlyAt: new Date("2026-07-08T00:00:00.000Z"),
+            allowImmediateAssignmentForNewSchedule: true,
+        });
+
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+        expect(sync.jobRepository.upsertPending.mock.calls[0]?.[0]).toMatchObject({
+            employeeScheduleId: 77,
+            ruleId: employeeRule.id,
+        });
     });
 
     it("re-assignment to a new employee creates a new assignment job", async () => {
