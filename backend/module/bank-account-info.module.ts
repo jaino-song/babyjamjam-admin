@@ -14,6 +14,7 @@ import { BankAccountInfoController } from "interface/controllers/bank-account-in
 import { BANK_ACCOUNT_INFO_REPOSITORY } from "domain/repositories/bank-account-info.repository.interface";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-account-info/bank-account-agent-capabilities.provider";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 @Module({
     imports: [DatabaseModule],
@@ -26,6 +27,7 @@ import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-
         DeleteBankAccountInfoUsecase,
         BankAccountInfoService,
         BankAccountAgentCapabilitiesProvider,
+        BranchManagerGuard,
         {
             provide: BANK_ACCOUNT_INFO_REPOSITORY,
             useClass: SbBankAccountInfoRepository,

@@ -77,6 +77,17 @@ const mockClients: Client[] = [
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
+  usePathname: () => "/messages/new",
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 jest.mock("@/hooks/use-message-templates", () => ({

@@ -13,7 +13,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
-import { useInitialUser } from "@/providers/UserProvider";
 import { settingsApi, type MessageSenderApprovalResponse } from "@/services/api";
 
 import styles from "./sender-approval-detail.module.css";
@@ -89,8 +88,7 @@ export function SenderApprovalDetail({
   const { isNavigationPending, startNavigation } = useNavigationPending();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const initialUser = useInitialUser();
-  const { data: user } = useGetAuthUser({ initialData: initialUser });
+  const { data: user } = useGetAuthUser();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [agreements, setAgreements] = useState<AgreementState>({
     aligoTerms: false,

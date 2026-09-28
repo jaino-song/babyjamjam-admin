@@ -10,7 +10,6 @@ import {
 } from "interface/dto/client.dto";
 import type { ClientListTab } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
 import { problemBody } from "application/utils/problem-bodies";
@@ -39,7 +38,6 @@ export class ClientController {
     }
 
     @Post("with-employee-activation")
-    @UseGuards(OwnerOrAdminGuard)
     createWithEmployeeActivation(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateClientWithEmployeeActivationDto,

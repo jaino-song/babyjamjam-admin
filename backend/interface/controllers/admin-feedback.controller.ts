@@ -11,7 +11,8 @@ import {
     DefaultValuePipe,
 } from '@nestjs/common';
 import { JwtGuard } from 'infrastructure/auth/jwt.guard';
-import { OwnerOrAdminGuard } from 'infrastructure/auth/owner-or-admin.guard';
+import { BranchManagerGuard } from 'infrastructure/auth/branch-manager.guard';
+import { TenantGuard } from 'infrastructure/tenant';
 import { ChatFeedbackRepository } from 'infrastructure/database/repositories/chat-feedback.repository';
 import { codeOnlyProblemBody } from 'application/utils/problem-bodies';
 import {
@@ -22,7 +23,7 @@ import {
 } from 'interface/dto/admin-feedback.dto';
 
 @Controller('admin/feedback')
-@UseGuards(JwtGuard, OwnerOrAdminGuard)
+@UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
 export class AdminFeedbackController {
     constructor(
         private readonly feedbackRepository: ChatFeedbackRepository,

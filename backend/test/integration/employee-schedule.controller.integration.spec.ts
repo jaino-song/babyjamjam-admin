@@ -7,15 +7,14 @@ import { EmployeeScheduleService } from "application/services/employee-schedule.
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 
 describe("EmployeeScheduleController (Integration)", () => {
-    it.each(["create", "update", "delete"])("requires owner/admin authority for %s", (methodName) => {
+    it.each(["create", "update", "delete"])("keeps %s available to tenant members", (methodName) => {
         const guards = Reflect.getMetadata(
             GUARDS_METADATA,
             EmployeeScheduleController.prototype[methodName as keyof typeof EmployeeScheduleController.prototype],
         ) ?? [];
-        expect(guards).toContain(OwnerOrAdminGuard);
+        expect(guards).toEqual([]);
     });
     // ============================================
     // Test Fixtures & Setup

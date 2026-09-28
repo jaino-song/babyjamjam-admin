@@ -30,6 +30,7 @@ import { WEB_PUSH_PORT } from "domain/ports/web-push.port";
 import { SystemSettingModule } from "./system-setting.module";
 import { NotificationAgentCapabilitiesProvider } from "application/usecases/notification/notification-agent-capabilities.provider";
 import { MessageModule } from "./message.module";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 @Module({
     imports: [DatabaseModule, ConfigModule, AuthModule, SystemSettingModule, MessageModule],
@@ -48,6 +49,7 @@ import { MessageModule } from "./message.module";
         PwaNotificationSchedulerService,
         NotificationCleanupSchedulerService,
         NotificationAgentCapabilitiesProvider,
+        BranchManagerGuard,
         // Repository bindings (Port -> Adapter)
         {
             provide: PUSH_SUBSCRIPTION_REPOSITORY,

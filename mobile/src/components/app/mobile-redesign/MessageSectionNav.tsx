@@ -18,7 +18,8 @@ import {
 
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { MobileSectionNav } from "@/components/app/mobile-redesign/primitives";
-import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 const SOURCE_COMPONENT = "MessageSectionNav";
 
@@ -46,15 +47,13 @@ export const MESSAGE_NAVIGATION_ITEMS: MessageNavigationItem[] =
     icon: MESSAGE_NAVIGATION_PRESENTATION[section.id],
   }));
 
-// Sections that are still 출시 예정. The owner gets early access to them; everyone
-// else sees them disabled until the features ship.
+// Templates remain owner-only. Trigger rules are branch-management controls and
+// are available to an owner or an admin/manager of the active branch.
 // "scheduled" no longer has a nav entry (folded into the merged 발송 기록
 // screen) and "history" is gated only by sending approval below, so neither
 // belongs in this set anymore.
-const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([
-  "templates",
-  "triggers",
-]);
+const OWNER_ONLY_SECTION_IDS = new Set<MessageSectionId>(["templates"]);
+const BRANCH_MANAGEMENT_SECTION_IDS = new Set<MessageSectionId>(["triggers"]);
 const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings"]);
 
 export function MessageSectionNav({
@@ -65,8 +64,10 @@ export function MessageSectionNav({
   activeId: MessageSectionId;
 }) {
   const router = useRouter();
-  const user = useInitialUser();
+  const authUserQuery = useGetAuthUser();
+  const user = authUserQuery.data;
   const isOwner = user?.role === "owner";
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
   const { isLoading, needsSenderApproval } = useMessagesPermissionGuard();
 
   const sectionNavItems = useMemo(
@@ -77,9 +78,10 @@ export function MessageSectionNav({
         icon: item.icon,
         disabled:
           (needsSenderApproval && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(item.id)) ||
-          (UNRELEASED_SECTION_IDS.has(item.id) && !isOwner),
+          (OWNER_ONLY_SECTION_IDS.has(item.id) && !isOwner) ||
+          (BRANCH_MANAGEMENT_SECTION_IDS.has(item.id) && !canManageBranchMessages),
       })),
-    [isOwner, needsSenderApproval],
+    [canManageBranchMessages, isOwner, needsSenderApproval],
   );
 
   const handleSectionSelect = (sectionId: MessageSectionId) => {

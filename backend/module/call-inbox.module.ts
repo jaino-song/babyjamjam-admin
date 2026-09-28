@@ -15,6 +15,7 @@ import { CallExtractionRetrySchedulerService } from "application/services/call-e
 import { CallInboxService } from "application/services/call-inbox.service";
 import { CallTranscriptWebhookController } from "interface/controllers/call-transcript-webhook.controller";
 import { CallIngestTokenController } from "interface/controllers/call-ingest-token.controller";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CallRecordController } from "interface/controllers/call-record.controller";
 import { ClientDraftController } from "interface/controllers/client-draft.controller";
 import { ClientModule } from "./client.module";
@@ -29,6 +30,7 @@ import { ClientModule } from "./client.module";
     ],
     providers: [
         CallIngestGuard,
+        BranchManagerGuard,
         CallIngestTokenService,
         CallIngestionService,
         CallProcessingService,

@@ -71,7 +71,7 @@ const CAPABILITY_ROLES: Record<EformsignProviderCapability, readonly string[]> =
     "contract.adopt": ["owner", "admin", "manager"],
     "document.read": ["owner", "admin", "manager"],
     "document.backfill": ["owner", "admin", "manager"],
-    "document.cancel": ["owner", "admin"],
+    "document.cancel": ["owner", "admin", "manager", "user"],
     "document.re_request": ["owner", "admin", "manager"],
 };
 

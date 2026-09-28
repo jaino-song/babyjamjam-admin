@@ -148,11 +148,11 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(schedule.inputSchema.safeParse({ receiver: "01012345678", message: "안내", scheduledDate: date, scheduledTime: time }).success).toBe(false);
     });
 
-    it("requires owner/admin authority for SMS side-effect capabilities", () => {
+    it("requires branch-manager authority for SMS side-effect capabilities", () => {
         const { capabilities } = setup();
         for (const name of ["messages.sendSms", "messages.scheduleSms", "messages.retrySms"]) {
             const capability = capabilities.find((entry) => entry.meta.name === name)!;
-            expect(capability.meta.requiredRoles).toEqual(["owner", "admin"]);
+            expect(capability.meta.requiredRoles).toEqual(["owner", "admin", "manager"]);
         }
     });
 

@@ -2330,6 +2330,23 @@
         ]
       },
       {
+        "name": "EmployeeDetailContent",
+        "layer": "organism",
+        "import": "@/components/app/employees/EmployeeDetailContent",
+        "file": "mobile/src/components/app/employees/EmployeeDetailContent.tsx",
+        "exports": [
+          "EmployeeDetailContent",
+          "EmployeeDetailContentProps",
+          "EmployeeDetailTabId"
+        ],
+        "replaces": [
+          "mobile employee page-local detail composition"
+        ],
+        "requiredFor": [
+          "mobile employee detail presentation and role-aware actions"
+        ]
+      },
+      {
         "name": "useClientDetailController",
         "layer": "hook",
         "import": "@/components/app/clients/client-detail-controller",

@@ -1,6 +1,6 @@
 import { Logger } from "@nestjs/common";
 import { ToolExecutorService } from "../tool-executor.service";
-import { hashLegacyChatPayload, redactSensitiveLegacyChatContent } from "../legacy-chat-confirmation.service";
+import { LegacyChatConfirmationService, hashLegacyChatPayload, redactSensitiveLegacyChatContent } from "../legacy-chat-confirmation.service";
 import { allTools, CUD_TOOLS } from "../tools";
 
 describe("legacy chat tool security boundary", () => {
@@ -45,7 +45,23 @@ describe("legacy chat tool security boundary", () => {
             employeeScheduleService as never,
             confirmationService as never,
         );
-        return { executor, clientService, bankAccountInfoService, confirmationService };
+        return {
+            executor,
+            clientService,
+            employeeService,
+            bankAccountInfoService,
+            confirmationService,
+            mocks: {
+                clientService,
+                employeeService,
+                messageService,
+                areaTemplateService,
+                eformsignDocService,
+                voucherPriceInfoService,
+                bankAccountInfoService,
+                employeeScheduleService,
+            },
+        };
     }
 
     it("does not treat model-supplied confirmed:true as authority", async () => {
@@ -82,13 +98,139 @@ describe("legacy chat tool security boundary", () => {
         logSpy.mockRestore();
     });
 
-    it("denies bank account reads to a non-admin branch role", async () => {
+    it.each(["manager", "user"] as const)("allows bank account reads to %s branch roles", async (branchRole) => {
         const { executor, bankAccountInfoService } = createExecutor();
 
-        const result = await executor.execute({ ...context, branchRole: "user" }, "getBankAccountByArea", { area: "인천" });
+        const result = await executor.execute({ ...context, branchRole }, "getBankAccountByArea", { area: "인천" });
 
-        expect(result).toEqual({ success: false, error: expect.stringContaining("관리자") });
+        expect(result).toMatchObject({ success: true });
+        expect(bankAccountInfoService.findByArea).toHaveBeenCalledWith("인천", "branch-1");
+    });
+
+    it.each([
+        { globalRole: "admin", branchRole: undefined },
+        { globalRole: "user", branchRole: undefined },
+        { globalRole: "user", branchRole: "invalid" },
+    ])("fails closed for an unverified bank principal %o", async (principal) => {
+        const { executor, bankAccountInfoService } = createExecutor();
+
+        const result = await executor.execute({ ...context, ...principal }, "getBankAccountByArea", { area: "인천" });
+
+        expect(result).toMatchObject({ success: false, error: expect.stringContaining("권한") });
         expect(bankAccountInfoService.findByArea).not.toHaveBeenCalled();
+    });
+
+    it.each(["updateEmployee", "deleteEmployee"] as const)(
+        "denies staff before creating a confirmation intent for %s",
+        async (toolName) => {
+            const { executor, confirmationService, employeeService } = createExecutor();
+
+            const result = await executor.execute(
+                { ...context, branchRole: "user" },
+                toolName,
+                { employeeId: 7 },
+            );
+
+            expect(result).toMatchObject({ success: false, code: "ACCESS_DENIED", outcome: "NOT_APPLIED" });
+            expect(confirmationService.createIntent).not.toHaveBeenCalled();
+            expect(employeeService.update).not.toHaveBeenCalled();
+            expect(employeeService.delete).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(["updateEmployee", "deleteEmployee"] as const)(
+        "allows a branch manager to prepare %s",
+        async (toolName) => {
+            const { executor, confirmationService } = createExecutor();
+
+            const result = await executor.execute(
+                { ...context, branchRole: "manager" },
+                toolName,
+                { employeeId: 7 },
+            );
+
+            expect(result).toMatchObject({ success: true, requiresConfirmation: true });
+            expect(confirmationService.createIntent).toHaveBeenCalled();
+        },
+    );
+
+    it.each(["updateEmployee", "deleteEmployee"] as const)(
+        "rejects a global admin with an unverified branch user role for %s",
+        async (toolName) => {
+            const { executor, confirmationService } = createExecutor();
+
+            const result = await executor.execute(
+                { ...context, globalRole: "admin", branchRole: "user" },
+                toolName,
+                { employeeId: 7 },
+            );
+
+            expect(result).toMatchObject({ success: false, code: "ACCESS_DENIED" });
+            expect(confirmationService.createIntent).not.toHaveBeenCalled();
+        },
+    );
+
+    it("keeps contract dispatch manager-scoped at proposal time", async () => {
+        const { executor, confirmationService } = createExecutor();
+        const args = { clientId: 7, areaId: "incheon" };
+
+        const denied = await executor.execute({ ...context, branchRole: "user" }, "createAndSendContract", args, {
+            branchId: context.branchId,
+            globalRole: "user",
+            branchRole: "user",
+        });
+        expect(denied).toMatchObject({ success: false, code: "ACCESS_DENIED" });
+        expect(confirmationService.createIntent).not.toHaveBeenCalled();
+
+        const allowed = await executor.execute({ ...context, branchRole: "manager" }, "createAndSendContract", args, {
+            branchId: context.branchId,
+            globalRole: "user",
+            branchRole: "manager",
+        });
+        expect(allowed).toMatchObject({ success: true, requiresConfirmation: true });
+    });
+
+    it("rechecks the current branch role after proposal before executing an employee update", async () => {
+        const { mocks } = createExecutor();
+        let stored: Record<string, unknown> | null = null;
+        const confirmationService = new LegacyChatConfirmationService({
+            legacy_chat_confirmation_intent: {
+                create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+                    stored = { id: "intent-1", expiresAt: new Date(Date.now() + 60_000), ...data };
+                    return Promise.resolve({ id: "intent-1", expiresAt: stored["expiresAt"] });
+                }),
+                findFirst: jest.fn().mockImplementation(() => Promise.resolve(stored)),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        } as never);
+        const executor = new ToolExecutorService(
+            mocks.clientService as never,
+            mocks.employeeService as never,
+            mocks.messageService as never,
+            mocks.areaTemplateService as never,
+            mocks.eformsignDocService as never,
+            mocks.voucherPriceInfoService as never,
+            mocks.bankAccountInfoService as never,
+            mocks.employeeScheduleService as never,
+            confirmationService,
+        );
+        const manager = { ...context, branchRole: "manager" };
+        const args = { employeeId: 7 };
+        const proposal = await executor.execute(manager, "updateEmployee", args);
+        const consumed = await confirmationService.consumeIntent(manager, {
+            intentId: String(proposal.confirmationIntentId),
+            nonce: String(proposal.confirmationNonce),
+        });
+
+        const result = await executor.executeAuthorized(
+            { ...manager, branchRole: "user" },
+            "updateEmployee",
+            args,
+            consumed,
+        );
+
+        expect(result).toMatchObject({ success: false, code: "ACCESS_DENIED", outcome: "NOT_APPLIED" });
+        expect(mocks.employeeService.update).not.toHaveBeenCalled();
     });
 
     it("requires a consumed, payload-bound intent before authorized mutation execution", async () => {

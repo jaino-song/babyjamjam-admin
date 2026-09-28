@@ -5,8 +5,10 @@ import request from "supertest";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { TenantGuard } from "infrastructure/tenant";
 
 describe("BankAccountInfoController (Integration)", () => {
     // ============================================
@@ -36,7 +38,7 @@ describe("BankAccountInfoController (Integration)", () => {
         );
     };
 
-    const getMethodGuards = (methodName: "findAll" | "findByArea") => {
+    const getMethodGuards = (methodName: "create" | "findAll" | "findByArea" | "update" | "delete") => {
         return Reflect.getMetadata(
             GUARDS_METADATA,
             BankAccountInfoController.prototype[methodName],
@@ -71,6 +73,10 @@ describe("BankAccountInfoController (Integration)", () => {
                     return true;
                 },
             })
+            .overrideGuard(TenantGuard)
+            .useValue({ canActivate: () => true })
+            .overrideGuard(BranchManagerGuard)
+            .useValue({ canActivate: () => true })
             .overrideGuard(OwnerOrAdminGuard)
             .useValue({ canActivate: () => true })
             .compile();
@@ -85,6 +91,29 @@ describe("BankAccountInfoController (Integration)", () => {
     afterEach(async () => {
         await app.close();
     });
+
+    it.each(["create", "update", "delete"] as const)(
+        "protects %s with tenant branch-manager authority",
+        (methodName) => {
+            const guards = getMethodGuards(methodName);
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).toContain(BranchManagerGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
+        },
+    );
+
+    it.each(["findAll", "findByArea"] as const)(
+        "protects %s with JWT authentication and tenant membership",
+        (methodName) => {
+            const guards = getMethodGuards(methodName);
+
+            expect(guards).toContain(JwtGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
+        },
+    );
 
     // ============================================
     // POST /bank-account-infos - Create
@@ -187,9 +216,9 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos - List All
     // ============================================
     describe("GET /bank-account-infos", () => {
-        it("should require owner/admin authentication", () => {
+        it("should require JWT authentication and tenant membership", () => {
             expect(getMethodGuards("findAll")).toEqual(
-                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+                expect.arrayContaining([JwtGuard, TenantGuard]),
             );
         });
 
@@ -264,9 +293,9 @@ describe("BankAccountInfoController (Integration)", () => {
     // GET /bank-account-infos/area - Find By Area
     // ============================================
     describe("GET /bank-account-infos/area", () => {
-        it("should require owner/admin authentication", () => {
+        it("should require JWT authentication and tenant membership", () => {
             expect(getMethodGuards("findByArea")).toEqual(
-                expect.arrayContaining([JwtGuard, OwnerOrAdminGuard]),
+                expect.arrayContaining([JwtGuard, TenantGuard]),
             );
         });
 

@@ -184,7 +184,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
 
     getCapabilities(): CapabilityDefinition[] {
         const common = { domain: "messages", version: "1.0.0", requiredRoles: ["owner", "admin", "manager"], sideEffect: true, approvalPolicy: "strong" as const, idempotencyPolicy: "action-id" as const };
-        const smsCommon = { ...common, requiredRoles: ["owner", "admin"] };
+        const smsCommon = { ...common, requiredRoles: ["owner", "admin", "manager"] };
         return [
             {
                 meta: { domain: "messages", version: "1.0.0", requiredRoles: ["owner", "admin", "manager", "user"], sideEffect: false, name: "messages.previewSms", description: "Preview SMS content and cost category", risk: "read" as const, renderer: "activity" as const, flagKey: "agent.capability.messages.previewSms" },
