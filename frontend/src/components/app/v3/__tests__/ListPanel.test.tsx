@@ -80,6 +80,28 @@ describe("ListPanel", () => {
     expect(screen.getByText("항목이 없습니다.")).toBeInTheDocument();
   });
 
+  it("keeps bottom space in the scroll container without a sticky opaque spacer", () => {
+    const { container } = render(
+      <ListPanel
+        data-component="desktop_v3_tests_split-layout_list-panel-bottom-space"
+        title="목록"
+      >
+        <button data-testid="last-list-row" type="button">
+          마지막 행
+        </button>
+      </ListPanel>,
+    );
+
+    const content = container.querySelector<HTMLElement>('[data-slot="list-panel-content"]');
+    const lastRow = screen.getByTestId("last-list-row");
+
+    expect(content).toHaveClass("pb-[calc(24px*var(--glint-ui-scale,1))]");
+    expect(content?.lastElementChild).toBe(lastRow);
+    expect(
+      Array.from(content?.children ?? []).some((child) => child.classList.contains("sticky")),
+    ).toBe(false);
+  });
+
   it("waits for loading to finish before rendering the empty state", () => {
     const emptyState = <ListEmptyState message="항목이 없습니다." />;
     const content = <div data-testid="list-panel-content-child">본문</div>;
