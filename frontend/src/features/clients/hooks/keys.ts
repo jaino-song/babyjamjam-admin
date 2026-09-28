@@ -63,5 +63,12 @@ export const clientKeys = {
       search: searchScope(filters.search),
     }] as const,
   details: () => [...clientKeys.all, "detail"] as const,
-  detail: (id: number) => [...clientKeys.details(), id] as const,
+  /**
+   * Keep the historical unscoped key available as a prefix for invalidation
+   * while branch-aware detail queries append their branch identity.
+   */
+  detail: (id: number, branchId?: string | null) =>
+    branchId === undefined
+      ? [...clientKeys.details(), id] as const
+      : [...clientKeys.details(), id, { branchId: branchScope(branchId) }] as const,
 };

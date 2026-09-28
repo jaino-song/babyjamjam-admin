@@ -299,11 +299,26 @@ export function useAllClients(options: { branchId?: string | null } = {}) {
  * Fetch single client by ID
  */
 export function useClient(id: number) {
-  return useQuery<Client>({
-    queryKey: clientKeys.detail(id),
-    queryFn: () => clientsApi.getById(id).then(r => r.data),
-    enabled: !!id,
+  const branchId = useActiveBranchId();
+  const branchContextReady = isBranchContextAligned(branchId);
+  const query = useQuery<Client>({
+    queryKey: clientKeys.detail(id, branchId),
+    queryFn: async () => {
+      if (!branchId || !isBranchContextAligned(branchId)) {
+        throw new Error('Branch selection required');
+      }
+
+      const response = await clientsApi.getById(id);
+      return response.data;
+    },
+    enabled: id > 0 && branchContextReady,
   });
+
+  return {
+    ...query,
+    data: branchContextReady ? query.data : undefined,
+    isBranchContextReady: branchContextReady,
+  };
 }
 
 /**
@@ -340,7 +355,10 @@ export function useUpdateClient() {
         },
         (currentData) => updateClientCacheData(currentData, updatedClient)
       );
-      queryClient.setQueryData(clientKeys.detail(id), updatedClient);
+      queryClient.setQueryData(
+        activeBranchId ? clientKeys.detail(id, activeBranchId) : clientKeys.detail(id),
+        updatedClient,
+      );
 
       await queryClient.invalidateQueries({ queryKey: clientKeys.all });
       await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
