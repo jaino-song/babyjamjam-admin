@@ -161,8 +161,9 @@ export function useCreateEmployee() {
             return { queries };
         },
         onSuccess: async (employee, _dto, context) => {
-            patchEmployeeListQueries(queryClient, employee, context);
-            await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            if (patchEmployeeListQueries(queryClient, employee, context)) {
+                await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            }
         },
         onError: (error) => {
             console.error("[useCreateEmployee] onError called:", error);
@@ -185,8 +186,9 @@ export function useUpdateEmployee() {
             return { queries };
         },
         onSuccess: async (employee, _variables, context) => {
-            patchEmployeeListQueries(queryClient, employee, context);
-            await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            if (patchEmployeeListQueries(queryClient, employee, context)) {
+                await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            }
         },
     });
 }
@@ -225,15 +227,22 @@ function patchEmployeeListQueries(
     queryClient: ReturnType<typeof useQueryClient>,
     employee: Employee,
     context: EmployeeCacheMutationContext | undefined,
-): void {
+): boolean {
+    let hasOriginalListQuery = false;
+
     for (const { queryKey, query } of context?.queries ?? []) {
+        if (!isEmployeeListQueryKey(queryKey)) continue;
+
         const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
         if (currentQuery !== query) continue;
 
+        hasOriginalListQuery = true;
         queryClient.setQueryData(queryKey, (current: unknown) => (
             mergeEmployeeIntoListCacheData(current, employee)
         ));
     }
+
+    return hasOriginalListQuery;
 }
 
 // Delete employee
@@ -284,6 +293,12 @@ function isEmployeeDetailQueryKey(queryKey: QueryKey): boolean {
         && queryKey[0] === employeeQueryKeys.all[0]
         && queryKey[1] === "detail"
         && typeof queryKey[2] === "number";
+}
+
+function isEmployeeListQueryKey(queryKey: QueryKey): boolean {
+    return queryKey.length >= 2
+        && queryKey[0] === employeeQueryKeys.all[0]
+        && queryKey[1] === "list";
 }
 
 function captureEmployeeQueryReferences(queryClient: ReturnType<typeof useQueryClient>): EmployeeQueryReference[] {
@@ -368,10 +383,14 @@ export function useToggleEmployeeOpenStatus() {
         },
         onSuccess: async (_data, { id, openToNextWork }, context) => {
             const confirmedStatus = getConfirmedEmployeeStatus(_data);
+            let hasOriginalListQuery = false;
             for (const { queryKey, query } of context?.queries ?? []) {
                 const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
                 if (currentQuery !== query) continue;
 
+                if (isEmployeeListQueryKey(queryKey)) {
+                    hasOriginalListQuery = true;
+                }
                 queryClient.setQueryData(queryKey, (current: unknown) => (
                     updateEmployeeOpenStatusInCache(current, id, openToNextWork, confirmedStatus)
                 ));
@@ -379,7 +398,9 @@ export function useToggleEmployeeOpenStatus() {
 
             // Keep the confirmed mutation value visible while a refresh is pending;
             // the next server response may still replace it with a newer external value.
-            await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            if (hasOriginalListQuery) {
+                await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
+            }
         },
     });
 }
