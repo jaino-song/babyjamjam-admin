@@ -238,7 +238,7 @@ describe("user API access controller guards (HTTP integration)", () => {
         },
     );
 
-    const protectedRoutes = [
+    const voucherMutationRoutes = [
         {
             name: "voucher create",
             invoke: () => request(app.getHttpServer()).post("/voucher-price-infos").send({
@@ -266,6 +266,9 @@ describe("user API access controller guards (HTTP integration)", () => {
             name: "voucher bulk update",
             invoke: () => request(app.getHttpServer()).post("/voucher-price-infos/bulk-update").send({ items: [], year: 2026 }),
         },
+    ] as const;
+
+    const bankMutationRoutes = [
         {
             name: "bank create",
             invoke: () => request(app.getHttpServer()).post("/bank-account-infos").send({ area: "Seoul", bankName: "은행", accNum: "123" }),
@@ -278,35 +281,57 @@ describe("user API access controller guards (HTTP integration)", () => {
             name: "bank delete",
             invoke: () => request(app.getHttpServer()).delete("/bank-account-infos").query({ area: "Seoul" }),
         },
-        {
-            name: "client employee activation",
-            invoke: () => request(app.getHttpServer()).post("/clients/with-employee-activation").send(activationBody),
-        },
     ] as const;
 
-    it.each(protectedRoutes)("allows owner on $name", async ({ invoke }) => {
+    const activationRoute = {
+        name: "client employee activation",
+        invoke: () => request(app.getHttpServer()).post("/clients/with-employee-activation").send(activationBody),
+    } as const;
+
+    it.each(voucherMutationRoutes)("allows owner on $name", async ({ invoke }) => {
         setPrincipal("owner");
         const response = await invoke();
         expect(response.status).toBeGreaterThanOrEqual(200);
         expect(response.status).toBeLessThan(300);
     });
 
-    it.each(protectedRoutes)("allows global admin on $name", async ({ invoke }) => {
+    it.each(voucherMutationRoutes)("allows global admin on $name", async ({ invoke }) => {
         setPrincipal("admin");
         const response = await invoke();
         expect(response.status).toBeGreaterThanOrEqual(200);
         expect(response.status).toBeLessThan(300);
     });
 
-    it.each(protectedRoutes)("denies branch manager on $name", async ({ invoke }) => {
+    it.each(voucherMutationRoutes)("denies branch manager on $name", async ({ invoke }) => {
         setPrincipal("manager");
         const response = await invoke();
         expect(response.status).toBe(403);
     });
 
-    it.each(protectedRoutes)("denies branch user on $name", async ({ invoke }) => {
+    it.each(voucherMutationRoutes)("denies branch user on $name", async ({ invoke }) => {
         setPrincipal("user");
         const response = await invoke();
         expect(response.status).toBe(403);
+    });
+
+    it.each(bankMutationRoutes)("allows global admin and manager on $name", async ({ invoke }) => {
+        for (const role of ["admin", "manager"] as const) {
+            setPrincipal(role);
+            const response = await invoke();
+            expect(response.status).toBeGreaterThanOrEqual(200);
+            expect(response.status).toBeLessThan(300);
+        }
+    });
+
+    it.each(bankMutationRoutes)("denies branch user on $name", async ({ invoke }) => {
+        setPrincipal("user");
+        expect((await invoke()).status).toBe(403);
+    });
+
+    it("allows client employee activation for every active tenant role", async () => {
+        for (const role of ["owner", "admin", "manager", "user"] as const) {
+            setPrincipal(role);
+            expect((await activationRoute.invoke()).status).toBe(201);
+        }
     });
 });
