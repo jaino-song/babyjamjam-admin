@@ -834,8 +834,7 @@
   }
 
   [data-slot="main-content-body"]:has(
-    [data-slot="clients-sections"]
-      [data-slot="split-layout"][data-has-selection="false"]
+    [data-slot="clients-sections"] [data-slot="split-layout"]
   ) {
     overflow-y: auto;
   }
@@ -846,7 +845,7 @@
   }
 
   [data-slot="clients-sections"]
-    [data-slot="split-layout"][data-has-selection="false"] {
+    [data-slot="split-layout"] {
     min-height: calc(28rem * var(--glint-ui-scale, 1));
   }
 }
