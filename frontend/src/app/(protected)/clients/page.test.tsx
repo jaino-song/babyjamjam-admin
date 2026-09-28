@@ -6,6 +6,8 @@ const mockRouter = { replace: jest.fn(), push: jest.fn() };
 let mockSearchParams = new URLSearchParams();
 const mockDirectory = jest.fn();
 const mockListSummary = jest.fn();
+let mockActiveBranchId = "branch-a";
+let mockClientFromParam: { id: number; name: string } | undefined;
 const mockQueryClient = {
   cancelQueries: jest.fn(),
   getQueryData: jest.fn(),
@@ -41,14 +43,14 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 }));
 
 jest.mock("@/features/system-templates/branch-context", () => ({
-  useActiveBranchId: () => "branch-a",
+  useActiveBranchId: () => mockActiveBranchId,
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
   useClientDirectory: () => mockDirectory(),
   useClientListSummary: () => mockListSummary(),
   useDeleteClient: () => ({ mutateAsync: jest.fn(), isPending: false }),
-  useClient: () => ({ data: undefined }),
+  useClient: () => ({ data: mockClientFromParam, isBranchContextReady: mockActiveBranchId !== null }),
 }));
 
 jest.mock("@/features/clients/hooks/use-send-client-receipt", () => ({
@@ -270,6 +272,11 @@ jest.mock("@/services/api", () => ({
     updateClientRegistrationPolicy: jest.fn(),
   },
 }));
+
+afterEach(() => {
+  mockActiveBranchId = "branch-a";
+  mockClientFromParam = undefined;
+});
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 const formSource = fs.readFileSync(
@@ -532,6 +539,35 @@ describe("ClientsPage directory subtitle behavior", () => {
       "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
     );
     expect(screen.getByRole("alert")).toHaveTextContent("최근에 확인된 목록을 표시하고 있어요");
+  });
+
+  it("does not render a URL-selected detail from branch A after a cross-tab branch switch to B", () => {
+    mockSearchParams = new URLSearchParams("id=7");
+    mockClientFromParam = { id: 7, name: "지점 A 고객" };
+
+    const { rerender } = renderClientsPage({
+      clients: [],
+      data: { pages: [{ data: [], total: 0 }] },
+    });
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent("지점 A 고객");
+
+    mockActiveBranchId = "branch-b";
+    rerender(<ClientsPage />);
+
+    expect(screen.queryByTestId("client-detail")).not.toBeInTheDocument();
+  });
+
+  it("keeps normal same-branch URL selection visible", () => {
+    mockSearchParams = new URLSearchParams("id=8");
+    mockClientFromParam = { id: 8, name: "지점 A 고객 2" };
+
+    renderClientsPage({
+      clients: [],
+      data: { pages: [{ data: [], total: 0 }] },
+    });
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent("지점 A 고객 2");
   });
 });
 

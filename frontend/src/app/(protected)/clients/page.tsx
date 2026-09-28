@@ -320,7 +320,10 @@ export default function ClientsPage() {
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
 
-    const { data: clientFromParam } = useClient(
+    const {
+        data: clientFromParam,
+        isBranchContextReady: isClientDetailBranchContextReady,
+    } = useClient(
         effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
     );
 
@@ -351,7 +354,9 @@ export default function ClientsPage() {
     }, [clients, effectiveClientIdParam]);
     const isBranchScopeStable = previousBranchIdRef.current === undefined
         || previousBranchIdRef.current === activeBranchId;
-    const activeSelectedClient = directory.isBranchContextReady && isBranchScopeStable
+    const activeSelectedClient = directory.isBranchContextReady
+        && isClientDetailBranchContextReady
+        && isBranchScopeStable
         ? selectedClientFromList ?? (effectiveClientIdParam ? clientFromParamList ?? clientFromParam ?? null : null)
         : null;
     const panelFormClient = null;

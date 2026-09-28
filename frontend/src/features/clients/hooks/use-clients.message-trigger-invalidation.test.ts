@@ -18,6 +18,7 @@ describe("client mutation message job invalidation", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    document.cookie = "selected_branch_id=branch-a; path=/";
     (useMutation as jest.Mock).mockImplementation((options) => options);
     (useQueryClient as jest.Mock).mockReturnValue({
       invalidateQueries,
@@ -53,6 +54,10 @@ describe("client mutation message job invalidation", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: messageTriggerKeys.upcoming(),
     });
+    expect(setQueryData).toHaveBeenCalledWith(
+      clientKeys.detail(42, "branch-a"),
+      { id: 42 },
+    );
     expect(refetchQueries).toHaveBeenCalledWith({
       queryKey: serviceRecordKeys.clientOverview(42),
     });
