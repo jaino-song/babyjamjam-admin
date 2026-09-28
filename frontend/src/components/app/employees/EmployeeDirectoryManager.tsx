@@ -10,6 +10,7 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import {
     Users,
     UserCheck,
+    Clock,
     Briefcase,
     CircleOff,
     Plus,
@@ -96,6 +97,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
         return {
             total: matchedEmployees.length,
+            working: matchedEmployees.filter((e: Employee) => e.status === "working").length,
             available: matchedEmployees.filter((e: Employee) => e.openToNextWork === true).length,
             unavailable: matchedEmployees.filter((e: Employee) => e.openToNextWork === false).length,
         };
@@ -205,6 +207,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     { icon: Users, value: stats.total, label: filterItems[0].label, counter: "명" },
                     { icon: Briefcase, value: stats.available, label: filterItems[1].label, counter: "명", colorIndex: 2 },
                     { icon: CircleOff, value: stats.unavailable, label: filterItems[2].label, counter: "명", colorIndex: 0 },
+                    { icon: Clock, value: stats.working, label: "근무 중 (검색 결과)", counter: "명", colorIndex: 1 },
                 ]}
             />
 

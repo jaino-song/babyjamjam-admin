@@ -27,13 +27,14 @@ describe("EmployeesPage deletion conflicts", () => {
 
   it("counts search matches using the same availability predicates as the tabs", () => {
     expect(source).toContain("const matchedEmployees = searchMatchedEmployees ?? allEmployees");
+    expect(source).toContain('working: matchedEmployees.filter((e: Employee) => e.status === "working").length');
     expect(source).toContain('available: matchedEmployees.filter((e: Employee) => e.openToNextWork === true).length');
     expect(source).toContain('unavailable: matchedEmployees.filter((e: Employee) => e.openToNextWork === false).length');
     expect(source).toContain('label: filterItems[0].label, counter: "명"');
     expect(source).toContain('label: filterItems[1].label');
     expect(source).toContain('label: filterItems[2].label');
+    expect(source).toContain('label: "근무 중 (검색 결과)"');
     expect(source).toContain("OPEN_TO_NEXT_WORK_LABELS");
-    expect(source).not.toContain('e.status === "working"');
   });
 
 });
