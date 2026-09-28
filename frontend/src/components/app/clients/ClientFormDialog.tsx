@@ -71,6 +71,8 @@ export interface ClientFormDialogProps {
     "data-component"?: string;
     open: boolean;
     onClose: () => void;
+    /** Return false to keep a dirty form open while the caller confirms discard. */
+    onBeforeClose?: () => boolean;
     client?: Client | null; // null/undefined for create mode, Client for edit mode
     /** 생성 모드에서 다이얼로그가 open 상태로 전환될 때 적용된다. 열린 뒤 참조가 바뀌어도 반영되지 않으며, client가 있으면(수정 모드) 무시된다. */
     prefill?: Partial<ClientFormData>;
@@ -83,6 +85,7 @@ export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"
     open?: boolean;
     activeStep?: number;
     onActiveStepChange?: (step: number) => void;
+    onDirtyChange?: (dirty: boolean) => void;
     renderLayout?: (parts: { content: ReactNode; footer: ReactNode }) => ReactNode;
 }
 
@@ -316,11 +319,13 @@ export function ClientFormPanel({
     "data-component": dataComponent,
     open = true,
     onClose,
+    onBeforeClose,
     client,
     prefill,
     onSuccess,
     activeStep,
     onActiveStepChange,
+    onDirtyChange,
     renderLayout,
 }: ClientFormPanelProps) {
     return (
@@ -329,11 +334,13 @@ export function ClientFormPanel({
             data-component={dataComponent}
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             client={client}
             prefill={prefill}
             onSuccess={onSuccess}
             activeStep={activeStep}
             onActiveStepChange={onActiveStepChange}
+            onDirtyChange={onDirtyChange}
             renderLayout={renderLayout}
         />
     );
@@ -343,6 +350,7 @@ export function ClientFormDialog({
     "data-component": dataComponent,
     open,
     onClose,
+    onBeforeClose,
     client,
     prefill,
     notice,
@@ -354,6 +362,7 @@ export function ClientFormDialog({
             data-component={dataComponent}
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             client={client}
             prefill={prefill}
             notice={notice}
@@ -367,14 +376,16 @@ function ClientFormContent({
     "data-component": dataComponent,
     open,
     onClose,
+    onBeforeClose,
     client,
     prefill,
     notice,
     onSuccess,
     activeStep: controlledActiveStep,
     onActiveStepChange,
+    onDirtyChange,
     renderLayout,
-}: ClientFormDialogProps & Pick<ClientFormPanelProps, "activeStep" | "onActiveStepChange" | "renderLayout"> & { surface: "dialog" | "panel" }) {
+}: ClientFormDialogProps & Pick<ClientFormPanelProps, "activeStep" | "onActiveStepChange" | "onDirtyChange" | "renderLayout"> & { surface: "dialog" | "panel" }) {
     const base =
         dataComponent ?? (surface === "panel" ? "desktop_clients_form-panel" : "desktop_clients_form-dialog");
     const router = useRouter();
@@ -465,6 +476,7 @@ function ClientFormContent({
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
+    const formDataBaselineRef = useRef<ClientFormData>(formData);
     const [initializedEditClientId, setInitializedEditClientId] = useState<number | null>(null);
     const [hasUserEditedSinceOpen, setHasUserEditedSinceOpen] = useState(false);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -806,6 +818,7 @@ function ClientFormContent({
                 skipNextEndDateRecalculationRef.current = false;
             }
             queueMicrotask(() => {
+                formDataBaselineRef.current = nextFormData;
                 setFormData(nextFormData);
                 setInitializedEditClientId(client?.id ?? null);
                 setHasUserEditedSinceOpen(false);
@@ -838,17 +851,27 @@ function ClientFormContent({
         ) as Partial<ClientFormData>;
         skipNextEndDateRecalculationRef.current = true;
         queueMicrotask(() => {
-            setFormData((current) => ({
-                ...current,
-                ...latePrefill,
-                startDate: normalizeDateForCompactState(latePrefill.startDate ?? current.startDate),
-                endDate: normalizeDateForCompactState(latePrefill.endDate ?? current.endDate),
-            }));
+            setFormData((current) => {
+                const nextFormData = {
+                    ...current,
+                    ...latePrefill,
+                    startDate: normalizeDateForCompactState(latePrefill.startDate ?? current.startDate),
+                    endDate: normalizeDateForCompactState(latePrefill.endDate ?? current.endDate),
+                };
+                formDataBaselineRef.current = nextFormData;
+                return nextFormData;
+            });
             if (latePrefill.fullPrice || latePrefill.grant || latePrefill.actualPrice) {
                 setPricesManuallyEdited(true);
             }
         });
     }, [client, hasUserEditedSinceOpen, open, prefill]);
+
+    useEffect(() => {
+        if (surface !== "panel" || !open || !onDirtyChange) return;
+
+        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(formDataBaselineRef.current));
+    }, [formData, onDirtyChange, open, surface]);
 
     const isLegacyNoopEdit = Boolean(
         isEditMode
@@ -973,6 +996,7 @@ function ClientFormContent({
                 // edit; any user interaction exits this narrow compatibility path.
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: {} });
                 onSuccess?.(updatedClient);
+                onDirtyChange?.(false);
                 onClose();
             } catch (error: unknown) {
                 setMutationError(error);
@@ -1108,6 +1132,7 @@ function ClientFormContent({
                 onSuccess?.(newClient);
             }
             onClose();
+            onDirtyChange?.(false);
         } catch (error: unknown) {
             setMutationError(error);
         } finally {
@@ -1159,11 +1184,16 @@ function ClientFormContent({
     const isUnknownOutcome = error?.outcome === "UNKNOWN";
 
     const handleDialogClose = () => {
+        if (onBeforeClose && !onBeforeClose()) {
+            return;
+        }
+
         setPendingDurationConfirmation(null);
         if (searchParams.get("openClientForm") === "1") {
             router.replace("/clients");
         }
 
+        onDirtyChange?.(false);
         onClose();
     };
 
