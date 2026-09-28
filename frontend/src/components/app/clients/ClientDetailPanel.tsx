@@ -343,7 +343,6 @@ export function getClientUpcomingMessageDisplay(
     job: ClientUpcomingMessageTriggerJob,
     now = Date.now(),
 ): ClientUpcomingMessageDisplay {
-    const scheduledAt = new Date(job.scheduledFor).getTime();
     const dueAt = new Date(job.effectiveDueAt ?? job.scheduledFor).getTime();
     const nextAttemptAt = job.nextAttemptAt ? new Date(job.nextAttemptAt).getTime() : Number.NaN;
     const hasFutureRetry = Number.isFinite(nextAttemptAt)
@@ -369,7 +368,7 @@ export function getClientUpcomingMessageDisplay(
         };
     }
 
-    if (Number.isFinite(scheduledAt) && scheduledAt > now) {
+    if (Number.isFinite(dueAt) && dueAt > now) {
         return {
             label: "발송 예정",
             timeLabel: "발송 시각",

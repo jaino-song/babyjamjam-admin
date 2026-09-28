@@ -48,6 +48,10 @@ describe("ClientDetailPanel upcoming message presentation", () => {
         }, now).label).toBe("발송 대기");
         expect(getClientUpcomingMessageDisplay({
             ...baseJob,
+            effectiveDueAt: "2026-09-27T06:00:00.000Z",
+        }, now).label).toBe("발송 대기");
+        expect(getClientUpcomingMessageDisplay({
+            ...baseJob,
             status: "processing",
         }, now)).toMatchObject({
             label: "발송 처리 중",
