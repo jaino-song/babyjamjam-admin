@@ -3,11 +3,18 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError } from "@babyjamjam/shared";
+import {
+    MESSAGE_LOG_STATUS_BADGE_VARIANT,
+    MESSAGE_HISTORY_STATUS_LABELS,
+    MESSAGE_RECORD_REASON_LABEL,
+    MESSAGE_RECIPIENT_LABELS,
+    getMessageTemplateLabel,
+    normalizeApiError,
+} from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
-import { StatusPill } from "@/components/app/ui/status-badge";
+import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import {
     useApproveScheduleChange,
     useRejectScheduleChange,
@@ -15,11 +22,19 @@ import {
 import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
-import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
-import type { MessageLogRecord } from "@/features/message-triggers/types";
+import {
+    useClientUpcomingMessageTriggerJobs,
+    useMessageHistory,
+} from "@/features/message-triggers/hooks/use-message-triggers";
+import type {
+    ClientUpcomingMessageTriggerJob,
+    MessageLogRecord,
+} from "@/features/message-triggers/types";
 import {
     getMessageHistoryTimestamp,
     MessageHistoryDetailPanel,
+    formatMessageHistoryDate,
+    MESSAGE_HISTORY_STATUS_META,
     normalizeMessageHistoryRecord,
     type MessageHistoryRecord,
 } from "@/components/app/messages/MessageHistoryDetailPanel";
@@ -54,7 +69,7 @@ import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/ph
 import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
 import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
-import { Users } from "lucide-react";
+import { CalendarClock, Users } from "lucide-react";
 
 const SOURCE_COMPONENT = "ClientDetailPanel";
 
@@ -72,13 +87,8 @@ type ClientDetailTabKey =
     | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
 
 const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
+const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
 const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
-const CLIENT_MESSAGE_STATUS_VARIANT = {
-    sent: "success",
-    pending: "warning",
-    failed: "danger",
-    canceled: "neutral",
-} as const;
 const formatDate = (dateStr: string | null): string => {
     return formatDateForDisplay(dateStr);
 };
@@ -214,32 +224,64 @@ function ClientMessageHistoryList({
 
     if (isLoading) {
         return (
-            <div data-component={`${dataComponentPrefix}-messages-skeleton-list`} className="space-y-2">
-                {[0, 1, 2].map((index) => (
+            <div
+                data-component={`${dataComponentPrefix}_history-list_skeleton`}
+                data-source-component="ClientMessageHistoryList"
+                role="status"
+                aria-live="polite"
+                aria-busy="true"
+                aria-label="메시지 발송 내역을 불러오는 중"
+                className="w-full min-w-0 max-w-full"
+            >
+                <div
+                    data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
+                    className="flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                >
+                    <Skeleton
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-icon`}
+                        className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white shadow-md"
+                    />
                     <div
-                        key={index}
-                        data-component={`${dataComponentPrefix}-messages-skeleton-item`}
-                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-copy`}
+                        className="min-w-0 flex-1 space-y-[calc(6px*var(--glint-ui-scale,1))]"
                     >
-                        <Skeleton className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white" />
-                        <div data-component={`${dataComponentPrefix}-messages-skeleton-copy`} className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
-                        <div data-component={`${dataComponentPrefix}-messages-skeleton-meta`} className="ml-auto flex shrink-0 flex-col items-end gap-1">
-                            <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
-                            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                        </div>
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-title`}
+                            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-subtitle`}
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-reason`}
+                            className="h-[calc(10px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                        />
                     </div>
-                ))}
+                    <div
+                        data-component={`${dataComponentPrefix}_history-list_skeleton-meta`}
+                        className="ml-auto flex shrink-0 flex-col items-end gap-[calc(6px*var(--glint-ui-scale,1))]"
+                    >
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-status`}
+                            className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white"
+                        />
+                        <Skeleton
+                            data-component={`${dataComponentPrefix}_history-list_skeleton-date`}
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
+                        />
+                    </div>
+                </div>
             </div>
         );
     }
 
     if (isError) {
         return (
-            <div data-component={`${dataComponentPrefix}-messages-error`} className="text-center py-12 text-v3-text-muted text-[0.85rem]">
+            <div
+                data-component={`${dataComponentPrefix}_history-list_error`}
+                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-v3-text-muted"
+            >
                 메시지 발송 내역을 불러오지 못했습니다
             </div>
         );
@@ -254,12 +296,16 @@ function ClientMessageHistoryList({
     }
 
     return (
-        <div data-component={`${dataComponentPrefix}-messages-list`}>
+        <div
+            data-component={`${dataComponentPrefix}_history-list`}
+            className="w-full min-w-0 max-w-full"
+        >
             <AnimatedSlotList<MessageLogRecord>
                 items={records}
                 isLoading={false}
+                className="mx-0 w-full max-w-full space-y-2 px-0"
                 itemVariant="card"
-                itemDataComponent={`${dataComponentPrefix}-messages-list-item`}
+                itemDataComponent={`${dataComponentPrefix}_history-list_item`}
                 getItemKey={(record) => String(record.id)}
                 getSlotState={({ item }) => ({
                     isActive: item?.id === selectedRecordId,
@@ -274,32 +320,263 @@ function ClientMessageHistoryList({
                         recipientListLabelFallback: clientName,
                     });
                     const ItemIcon = normalizedRecord.icon;
+                    const recipientLabel = normalizedRecord.recipientType
+                        ? MESSAGE_RECIPIENT_LABELS[normalizedRecord.recipientType]
+                        : "수신자";
+                    const recipientName = normalizedRecord.recipientName.trim()
+                        || normalizedRecord.recipientListLabel.trim()
+                        || clientName;
+                    const inlineReason = normalizedRecord.status === "failed"
+                        ? normalizedRecord.failureReason
+                        : normalizedRecord.status === "canceled"
+                            ? normalizedRecord.cancelReason
+                            : undefined;
 
                     return (
                         <AnimatedSlotListItemContent
-                            dataComponent={`${dataComponentPrefix}-messages-list-item`}
+                            dataComponent={`${dataComponentPrefix}_history-list_item_content`}
                             icon={ItemIcon}
-                            iconContainerClassName="text-v3-primary"
+                            iconContainerClassName={MESSAGE_HISTORY_STATUS_META[normalizedRecord.status].avatarClass}
                             title={normalizedRecord.title}
-                            subtitle={normalizedRecord.messagePreview}
+                            subtitle={`${recipientLabel}: ${recipientName}`}
+                            meta={inlineReason ? (
+                                <span
+                                    data-component={`${dataComponentPrefix}_history-list_item_reason`}
+                                    className="block max-w-full truncate"
+                                >
+                                    {MESSAGE_RECORD_REASON_LABEL}: {inlineReason}
+                                </span>
+                            ) : undefined}
                             status={
                                 <div
-                                    data-component={`${dataComponentPrefix}-messages-list-item-meta`}
+                                    data-component={`${dataComponentPrefix}_history-list_item_meta`}
                                     className="flex shrink-0 flex-col items-end justify-end gap-1 text-right"
                                 >
-                                    <StatusPill
-                                        data-component={`${dataComponentPrefix}-messages-list-item-status`}
-                                        variant={CLIENT_MESSAGE_STATUS_VARIANT[normalizedRecord.status]}
+                                    <MessageStatusBadge
+                                        data-component={`${dataComponentPrefix}_history-list_item_status`}
+                                        variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[normalizedRecord.status]}
                                         size="sm"
                                     >
                                         {MESSAGE_HISTORY_STATUS_LABELS[normalizedRecord.status]}
-                                    </StatusPill>
+                                    </MessageStatusBadge>
+                                    <span
+                                        data-component={`${dataComponentPrefix}_history-list_item_date`}
+                                        className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                                    >
+                                        {formatMessageHistoryDate(normalizedRecord.sentAt)}
+                                    </span>
                                 </div>
                             }
                         />
                     );
                 }}
             />
+        </div>
+    );
+}
+
+type ClientUpcomingMessageDisplay = {
+    label: string;
+    timeLabel: string;
+    time: string;
+    variant: "warning" | "info";
+};
+
+export function formatClientUpcomingDate(dateString: string | null): string {
+    if (!dateString) return "-";
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return "-";
+
+    return date.toLocaleString("ko-KR", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    });
+}
+
+export function getClientUpcomingMessageDisplay(
+    job: ClientUpcomingMessageTriggerJob,
+    now = Date.now(),
+): ClientUpcomingMessageDisplay {
+    const scheduledAt = new Date(job.scheduledFor).getTime();
+    const dueAt = new Date(job.effectiveDueAt).getTime();
+    const nextAttemptAt = job.nextAttemptAt ? new Date(job.nextAttemptAt).getTime() : Number.NaN;
+    const hasFutureRetry = job.status === "pending"
+        && Number.isFinite(nextAttemptAt)
+        && Number.isFinite(scheduledAt)
+        && nextAttemptAt > scheduledAt
+        && nextAttemptAt > now;
+
+    if (job.status === "processing" || job.status === "dispatching") {
+        return {
+            label: "발송 처리 중",
+            timeLabel: "요청 시각",
+            time: job.scheduledFor,
+            variant: "info",
+        };
+    }
+
+    if (hasFutureRetry) {
+        return {
+            label: "재시도 예정",
+            timeLabel: "재시도 시각",
+            time: job.nextAttemptAt ?? job.scheduledFor,
+            variant: "warning",
+        };
+    }
+
+    if (Number.isFinite(dueAt) && dueAt > now) {
+        return {
+            label: "발송 예정",
+            timeLabel: "발송 시각",
+            time: job.scheduledFor,
+            variant: "warning",
+        };
+    }
+
+    return {
+        label: "발송 대기",
+        timeLabel: "요청 시각",
+        time: job.scheduledFor,
+        variant: "warning",
+    };
+}
+
+function ClientUpcomingMessageList({
+    jobs,
+    isError,
+    isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    onLoadMore,
+    onRetry,
+    dataComponentPrefix,
+}: {
+    jobs: ClientUpcomingMessageTriggerJob[];
+    isError: boolean;
+    isLoading: boolean;
+    isFetchingNextPage: boolean;
+    hasNextPage: boolean;
+    onLoadMore: () => void;
+    onRetry: () => void;
+    dataComponentPrefix: string;
+}) {
+    const sectionPrefix = `${dataComponentPrefix}_upcoming`;
+
+    if (isError) {
+        return (
+            <div
+                data-component={`${sectionPrefix}_error`}
+                data-source-component="ClientUpcomingMessageList"
+                className="flex w-full min-w-0 max-w-full flex-col items-center justify-center gap-3 py-8 text-center"
+            >
+                <p
+                    data-component={`${sectionPrefix}_error_message`}
+                    className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                >
+                    예정된 자동 메시지를 불러오지 못했어요
+                </p>
+                <Button
+                    data-component={`${sectionPrefix}_error_retry`}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onRetry}
+                >
+                    다시 시도
+                </Button>
+            </div>
+        );
+    }
+
+    if (!isLoading && jobs.length === 0 && !hasNextPage) {
+        return (
+            <DetailEmptyState
+                message="예정된 자동 메시지가 없습니다"
+                className="min-h-0 py-8"
+            />
+        );
+    }
+
+    return (
+        <div
+            data-component={sectionPrefix}
+            data-source-component="ClientUpcomingMessageList"
+            data-slot="upcoming-messages"
+            className="w-full min-w-0 max-w-full"
+        >
+            <AnimatedSlotList<ClientUpcomingMessageTriggerJob>
+                data-component={`${sectionPrefix}_list`}
+                items={jobs}
+                isLoading={isLoading}
+                loadingCount={2}
+                fetchingMoreCount={1}
+                isFetchingMore={isFetchingNextPage}
+                className="mx-0 w-full max-w-full space-y-2 px-0"
+                itemVariant="card"
+                itemDataComponent={`${sectionPrefix}_list_item`}
+                getItemKey={(job) => job.id}
+                getSlotState={() => ({ isInteractive: false })}
+                render={({ item: job }) => {
+                    if (!job) return null;
+
+                    const display = getClientUpcomingMessageDisplay(job);
+                    const recipientLabel = MESSAGE_RECIPIENT_LABELS[job.recipientType] ?? "수신자";
+                    const recipientName = job.recipientName?.trim() || recipientLabel;
+                    return (
+                        <AnimatedSlotListItemContent
+                            data-component={`${sectionPrefix}_list_item_content`}
+                            icon={CalendarClock}
+                            iconContainerClassName="text-v3-primary"
+                            title={job.ruleName || getMessageTemplateLabel(job.templateKey)}
+                            subtitle={
+                                <>
+                                    <span data-component={`${sectionPrefix}_list_item_recipient`}>
+                                        {recipientLabel}: {recipientName}
+                                    </span>
+                                    <span data-component={`${sectionPrefix}_list_item_schedule`}>
+                                        {display.timeLabel}: {formatClientUpcomingDate(display.time)}
+                                    </span>
+                                </>
+                            }
+                            meta={
+                                <span
+                                    data-component={`${sectionPrefix}_list_item_template-label`}
+                                    data-slot="template-label"
+                                >
+                                    {getMessageTemplateLabel(job.templateKey)}
+                                </span>
+                            }
+                            status={
+                                <MessageStatusBadge
+                                    data-component={`${sectionPrefix}_list_item_status`}
+                                    variant={display.variant}
+                                    size="sm"
+                                >
+                                    {display.label}
+                                </MessageStatusBadge>
+                            }
+                        />
+                    );
+                }}
+            />
+            {hasNextPage ? (
+                <Button
+                    data-component={`${sectionPrefix}_load-more`}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    disabled={isFetchingNextPage}
+                    onClick={onLoadMore}
+                >
+                    {isFetchingNextPage ? "불러오는 중..." : "더 불러오기"}
+                </Button>
+            ) : null}
         </div>
     );
 }
@@ -419,12 +696,12 @@ function ClientMessageDetailSlide({
         <div
             data-component={`${dataComponentPrefix}-message-slide`}
             data-active-panel={isMessageDetailActive ? "message" : "client"}
-            className="h-full min-h-0 overflow-hidden"
+            className="h-full min-h-0 w-full min-w-0 max-w-full overflow-hidden"
         >
             <div
                 data-component={`${dataComponentPrefix}-message-slide-track`}
                 className={cn(
-                    "flex h-full min-h-0 gap-[var(--compact-panel-gap,16px)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
+                    "flex h-full min-h-0 w-full min-w-0 max-w-full gap-[var(--compact-panel-gap,16px)] transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform motion-reduce:transition-none",
                 )}
                 style={{
                     transform: isMessageDetailActive
@@ -436,7 +713,7 @@ function ClientMessageDetailSlide({
                     data-component={`${dataComponentPrefix}-message-slide-panel`}
                     data-panel="client"
                     aria-hidden={isMessageDetailActive}
-                    className={cn("h-full min-h-0 w-full min-w-0 shrink-0", isMessageDetailActive && "pointer-events-none")}
+                    className={cn("h-full min-h-0 w-full min-w-0 max-w-full shrink-0", isMessageDetailActive && "pointer-events-none")}
                 >
                     {children}
                 </div>
@@ -445,7 +722,7 @@ function ClientMessageDetailSlide({
                     data-panel="message"
                     aria-hidden={!isMessageDetailActive}
                     className={cn(
-                        "h-full min-h-0 w-full min-w-0 shrink-0",
+                        "h-full min-h-0 w-full min-w-0 max-w-full shrink-0",
                         !isMessageDetailActive && "pointer-events-none"
                     )}
                 >
@@ -505,9 +782,9 @@ function ClientDetailPanelBody({
     idPrefix,
     tabsAriaLabel,
     compactBackLabel,
-    tabPanelsClassName = "min-h-full shrink-0",
-    tabPanelsTrackClassName = "min-h-full",
-    tabPanelsPanelClassName = "[&[aria-hidden=false]]:min-h-full",
+    tabPanelsClassName = "min-h-full w-full min-w-0 max-w-full shrink-0",
+    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full",
+    tabPanelsPanelClassName = "w-full min-w-0 max-w-full [&[aria-hidden=false]]:min-h-full",
 }: ClientDetailPanelProps) {
     const locale = useLocale();
     const queryClient = useQueryClient();
@@ -522,12 +799,6 @@ function ClientDetailPanelBody({
     const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | string | null>(null);
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    const {
-        data: messageHistoryData = [],
-        isLoading: isMessageHistoryLoading,
-        isError: isMessageHistoryError,
-    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT);
 
     const clientBadges = useMemo(() => getClientBadges(client), [client]);
     const clientPhoneKey = useMemo(
@@ -558,6 +829,21 @@ function ClientDetailPanelBody({
 
         return detailTabState.key;
     }, [activeScheduleChange, clientId, detailTabState, hasActiveScheduleChange]);
+
+    const {
+        data: messageHistoryData = [],
+        isLoading: isMessageHistoryLoading,
+        isError: isMessageHistoryError,
+    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT, {
+        enabled: activeDetailTab === "messages",
+        refetchInterval: 30_000,
+        refetchOnWindowFocus: true,
+    });
+
+    const clientUpcomingMessageQuery = useClientUpcomingMessageTriggerJobs(client.id, {
+        enabled: activeDetailTab === "messages",
+        limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
+    });
 
     const setActiveDetailTab = (key: ClientDetailTabKey, nextClientId: number | null = clientId) => {
         setDetailTabState({ key, clientId: nextClientId });
@@ -1030,16 +1316,58 @@ function ClientDetailPanelBody({
                         {
                             key: "messages",
                             children: (
-                                <ClientMessageHistoryList
-                                    records={clientMessageHistory}
-                                    canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
-                                    isLoading={isMessageHistoryLoading}
-                                    isError={isMessageHistoryError}
-                                    clientName={client.name}
-                                    selectedRecordId={selectedMessageHistoryId}
-                                    onSelectRecord={handleSelectClientMessageHistoryRecord}
-                                    dataComponentPrefix={dataComponentPrefix}
-                                />
+                                <div
+                                    data-component={`${dataComponentPrefix}_content_messages_sections`}
+                                    data-source-component="ClientDetailPanel"
+                                    className="w-full min-w-0 max-w-full space-y-4"
+                                >
+                                    <div
+                                        data-component={`${dataComponentPrefix}_content_messages_zone-upcoming`}
+                                        data-slot="message-zone"
+                                        className="w-full min-w-0 max-w-full"
+                                    >
+                                        <div
+                                            data-component={`${dataComponentPrefix}_content_messages_zone-upcoming_label`}
+                                            data-slot="message-zone-label"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                        >
+                                            예정된 자동 메시지
+                                        </div>
+                                        <ClientUpcomingMessageList
+                                            jobs={clientUpcomingMessageQuery.items}
+                                            isLoading={clientUpcomingMessageQuery.isLoading}
+                                            isError={clientUpcomingMessageQuery.isError}
+                                            isFetchingNextPage={clientUpcomingMessageQuery.isFetchingNextPage}
+                                            hasNextPage={Boolean(clientUpcomingMessageQuery.hasNextPage)}
+                                            onLoadMore={() => void clientUpcomingMessageQuery.fetchNextPage()}
+                                            onRetry={() => void clientUpcomingMessageQuery.refetch()}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                        />
+                                    </div>
+                                    <div
+                                        data-component={`${dataComponentPrefix}_content_messages_zone-past`}
+                                        data-slot="message-zone"
+                                        className="w-full min-w-0 max-w-full"
+                                    >
+                                        <div
+                                            data-component={`${dataComponentPrefix}_content_messages_zone-past_label`}
+                                            data-slot="message-zone-label"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                        >
+                                            발송 기록
+                                        </div>
+                                        <ClientMessageHistoryList
+                                            records={clientMessageHistory}
+                                            canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
+                                            isLoading={isMessageHistoryLoading}
+                                            isError={isMessageHistoryError}
+                                            clientName={client.name}
+                                            selectedRecordId={selectedMessageHistoryId}
+                                            onSelectRecord={handleSelectClientMessageHistoryRecord}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                        />
+                                    </div>
+                                </div>
                             ),
                         },
                         {
@@ -1096,6 +1424,6 @@ export function ClientDetailPanel(props: ClientDetailPanelProps) {
         data-component={`${props.dataComponentPrefix ?? "desktop_clients-detail_panel"}_presentation`}
         data-slot="client-detail-presentation"
         data-layout={props.layout ?? "desktop"}
-        className="flex h-full min-h-0 flex-1 flex-col"
+        className="flex h-full min-h-0 w-full min-w-0 max-w-full flex-1 flex-col"
     ><ClientDetailPanelBody key={props.client.id} {...props} /></div>;
 }
