@@ -6,18 +6,22 @@ import { api } from "@/lib/api/client";
 import {
   employeeQueryKeys,
   type Employee,
+  useCreateEmployee,
   useEmployees,
+  useUpdateEmployee,
   useToggleEmployeeOpenStatus,
 } from "../useEmployees";
 
 jest.mock("@/lib/api/client", () => ({
   api: {
     get: jest.fn(),
+    post: jest.fn(),
     patch: jest.fn(),
   },
 }));
 
 const mockedApiGet = api.get as jest.MockedFunction<typeof api.get>;
+const mockedApiPost = api.post as jest.MockedFunction<typeof api.post>;
 const mockedApiPatch = api.patch as jest.MockedFunction<typeof api.patch>;
 
 function createTestContext() {
@@ -61,6 +65,7 @@ function seedEmployeeCaches(queryClient: QueryClient, openToNextWork: boolean, s
 describe("useToggleEmployeeOpenStatus", () => {
   beforeEach(() => {
     mockedApiGet.mockReset();
+    mockedApiPost.mockReset();
     mockedApiPatch.mockReset();
   });
 
@@ -176,5 +181,66 @@ describe("useToggleEmployeeOpenStatus", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]?.openToNextWork).toBe(false);
     expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.openToNextWork).toBe(false);
+  });
+
+  it("does not write a late create response into a replacement list cache", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    const branchBEmployee = employee(false);
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+
+    let resolveCreate: ((response: { data: Employee }) => void) | undefined;
+    mockedApiPost.mockImplementation(() => new Promise((resolve) => {
+      resolveCreate = resolve as (response: { data: Employee }) => void;
+    }));
+
+    const { result } = renderHook(() => useCreateEmployee(), { wrapper });
+    act(() => {
+      result.current.mutate({
+        name: "지연 생성",
+        workArea: ["gangnam"],
+        phone: "01099998888",
+        grade: "A",
+        openToNextWork: true,
+      });
+    });
+    await waitFor(() => expect(mockedApiPost).toHaveBeenCalled());
+
+    queryClient.clear();
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+    resolveCreate?.({ data: { ...employee(true), id: 8, name: "지연 생성" } });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
+  });
+
+  it("does not write a late update response into a replacement list cache", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    const branchBEmployee = employee(false);
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+
+    let resolveUpdate: ((response: { data: Employee }) => void) | undefined;
+    mockedApiPatch.mockImplementation(() => new Promise((resolve) => {
+      resolveUpdate = resolve as (response: { data: Employee }) => void;
+    }));
+
+    const { result } = renderHook(() => useUpdateEmployee(), { wrapper });
+    act(() => {
+      result.current.mutate({
+        id: 7,
+        dto: { name: "지연 수정" },
+      });
+    });
+    await waitFor(() => expect(mockedApiPatch).toHaveBeenCalledWith(
+      "/employees",
+      { name: "지연 수정" },
+      { params: { id: 7 } },
+    ));
+
+    queryClient.clear();
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+    resolveUpdate?.({ data: { ...employee(true), name: "지연 수정" } });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
   });
 });
