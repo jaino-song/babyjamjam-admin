@@ -38,7 +38,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInfiniteContracts";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
-import type { EformsignDocument, EformsignDocumentOption } from "@/lib/eformsign/types";
+import type { EformsignDocument, EformsignDocumentOption, EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import { useDebounce } from "use-debounce";
 import {
@@ -73,6 +73,7 @@ import {
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
+import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ReceiptSendConfirmDialog } from "@/components/app/contracts/ReceiptSendConfirmDialog";
@@ -387,7 +388,6 @@ function normalizeDocumentYear(value: string | null | undefined, fallbackTimesta
 
   return new Date(fallbackTimestamp).getFullYear();
 }
-
 function InfoRowsCard({
   "data-component": dataComponent,
   title,
@@ -470,11 +470,12 @@ export default function ContractsPage() {
   const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
   const [isDocumentJobsPopoverOpen, setIsDocumentJobsPopoverOpen] = useState(false);
   const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
-
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     requireAccessToken: false,
     syncOnWindowFocus: false,
   });
+  const activeBranchId = useActiveBranchId();
+  const isStatsBranchContextReady = isBranchContextAligned(activeBranchId);
   useEformsignDocsLiveStream(isAuthenticated);
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -538,7 +539,6 @@ export default function ContractsPage() {
       ? activeSection
       : undefined;
   const canFetchDocuments = isAuthenticated;
-
   // Fetch filtered docs with infinite scroll for the current tab
   const {
     documents: infiniteDocuments,
@@ -555,21 +555,23 @@ export default function ContractsPage() {
   });
   // 전체 탭 StatsBar 카운터: 서버가 지점(인천=회사 전체) 상태 신호를 한 번 모아 내려주고
   // foldContractStats로 접는다. 무한 스크롤 목록과 분리되어, 스크롤하지 않아도 정확하다.
-  const { data: statusCounts, isLoading: isCountsLoading } = useQuery({
-    queryKey: ["eformsign-status-counts"],
-    queryFn: () => eformsignApi.getDocumentStatusCounts(),
-    enabled: isAuthenticated,
+  const statusCountsQuery = useQuery<EformsignStatusCountsResponse>({
+    queryKey: contractStatsQueryKeys.statusCounts(activeBranchId),
+    queryFn: () => activeBranchId
+      ? eformsignApi.getDocumentStatusCounts()
+      : Promise.reject(new Error("Branch selection required")),
+    enabled: isAuthenticated && isStatsBranchContextReady,
     staleTime: 1000 * 60 * 5,
   });
+  const statusCounts = isStatsBranchContextReady ? statusCountsQuery.data : undefined;
   const isBootstrappingAuth = isLoadingAuth && !isAuthenticated;
-  // Initial loading: first auth bootstrap or first "all" data fetch
   const isInitialLoading = isBootstrappingAuth || isLoadingInfinite;
-  // Content loading: fetching filtered data after initial load is complete
   const isContentLoading = !isInitialLoading && isLoadingInfinite;
-  // Stats are derived from the "전체" tab's data and are independent of which
-  // tab is currently being fetched — only show the skeleton until the very
-  // first stats payload lands.
-  const isStatsLoading = isBootstrappingAuth || isCountsLoading;
+  // Stats are independent of the current list tab; undefined is unavailable while a successful empty response remains genuine zero.
+  const isStatsLoading = isBootstrappingAuth || (isAuthenticated && !isStatsBranchContextReady) || statusCountsQuery.isLoading;
+  const statsError = isStatsBranchContextReady && statusCountsQuery.isError ? statusCountsQuery.error : null;
+  const statsHasData = isStatsBranchContextReady && statusCounts !== undefined;
+  const isStatsRefreshing = isStatsBranchContextReady && statusCountsQuery.isFetching;
   const isServiceRecordListLoading = isInitialLoading;
 
   // Search happens server-side (it is part of the query key), so what the
@@ -585,10 +587,9 @@ export default function ContractsPage() {
   );
 
   const stats = useMemo(
-    () => foldContractStats(statusCounts?.documents ?? []),
+    () => getContractStatsValues(statusCounts),
     [statusCounts],
   );
-
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
     return documents.find((d) => d.id === selectedDocId) ?? null;
@@ -692,7 +693,6 @@ export default function ContractsPage() {
       });
     }
   };
-
   if (authError || error) {
     return (
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
@@ -710,14 +710,14 @@ export default function ContractsPage() {
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
         name="contracts" density="responsive-square"
-        showDocumentJobs={documentJobsEnabled}
-        isLoading={isStatsLoading}
+        showDocumentJobs={documentJobsEnabled} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
+        isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
         items={[
-          { icon: CheckCircle2, value: stats.reviewNeeded, label: "검토 필요", counter: "건", colorIndex: 0 },
-          { icon: FileSignature, value: stats.signed, label: "서명 완료", counter: "건", colorIndex: 1 },
-          { icon: Send, value: stats.sendRequired, label: "이용자 완료 필요", counter: "건", colorIndex: 1 },
-          { icon: FileText, value: stats.drafting, label: "작성 대기중", counter: "건" },
-          { icon: AlertTriangle, value: stats.expired, label: "기간 만료", counter: "건", colorIndex: 3 },
+          { icon: CheckCircle2, value: stats?.reviewNeeded ?? "—", label: "검토 필요", counter: "건", colorIndex: 0 },
+          { icon: FileSignature, value: stats?.signed ?? "—", label: "서명 완료", counter: "건", colorIndex: 1 },
+          { icon: Send, value: stats?.sendRequired ?? "—", label: "이용자 완료 필요", counter: "건", colorIndex: 1 },
+          { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
+          { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
         summary={documentJobsEnabled ? documentJobsQuery.summary : null}
         documentJobs={documentJobsEnabled ? (documentJobsQuery.data ?? null) : null}
@@ -2348,4 +2348,15 @@ export function ContractDetail({
       />
     </DetailPanel>
   );
+}
+
+export const contractStatsQueryKeys = {
+  statusCounts: (branchId: string | null) =>
+    ["eformsign-status-counts", branchId ?? "unavailable"] as const,
+};
+
+export function getContractStatsValues(
+  statusCounts: EformsignStatusCountsResponse | undefined,
+): ReturnType<typeof foldContractStats> | null {
+  return statusCounts ? foldContractStats(statusCounts.documents) : null;
 }
