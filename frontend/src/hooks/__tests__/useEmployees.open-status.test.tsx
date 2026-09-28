@@ -211,6 +211,7 @@ describe("useToggleEmployeeOpenStatus", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
+    expect(queryClient.getQueryState(employeeQueryKeys.lists())?.isInvalidated).not.toBe(true);
   });
 
   it("does not write a late update response into a replacement list cache", async () => {
@@ -242,5 +243,6 @@ describe("useToggleEmployeeOpenStatus", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
+    expect(queryClient.getQueryState(employeeQueryKeys.lists())?.isInvalidated).not.toBe(true);
   });
 });

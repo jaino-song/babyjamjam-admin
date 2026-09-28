@@ -296,6 +296,24 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
 
+    const revertedEmployee: Employee = {
+      ...savedEmployee,
+      name: employee.name,
+      phone: employee.phone,
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [revertedEmployee],
+        allEmployees: [revertedEmployee],
+        filteredCount: 1,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "홍길동" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01012345678");
+
     const externalEmployee: Employee = {
       ...savedEmployee,
       name: "외부 변경",

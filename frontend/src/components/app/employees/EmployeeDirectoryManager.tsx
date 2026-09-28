@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
@@ -58,6 +58,24 @@ function employeeWorkAreasMatch(left: string[], right: string[]): boolean {
 
 function isEmployeeStatus(value: unknown): value is Employee["status"] {
     return value === "available" || value === "working" || value === "unavailable";
+}
+
+function formFieldsMatchLive(
+    liveEmployee: Employee,
+    formEmployee: Employee,
+    baselineEmployee: Employee,
+): boolean {
+    return (formEmployee.name === baselineEmployee.name || liveEmployee.name === formEmployee.name)
+        && (formEmployee.phone === baselineEmployee.phone || liveEmployee.phone === formEmployee.phone)
+        && (formEmployee.grade === baselineEmployee.grade || liveEmployee.grade === formEmployee.grade)
+        && (employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
+            || employeeWorkAreasMatch(liveEmployee.workArea, formEmployee.workArea))
+        && (formEmployee.openToNextWork === baselineEmployee.openToNextWork
+            || liveEmployee.openToNextWork === formEmployee.openToNextWork)
+        && (formEmployee.birthday === baselineEmployee.birthday || liveEmployee.birthday === formEmployee.birthday)
+        && (!isEmployeeStatus(formEmployee.status)
+            || formEmployee.status === baselineEmployee.status
+            || liveEmployee.status === formEmployee.status);
 }
 
 function mergeConfirmedFormFields(
@@ -118,6 +136,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [selectedEmployeeFromForm, setSelectedEmployeeFromForm] = useState<Employee | null>(null);
     const [selectedEmployeeFormBaseline, setSelectedEmployeeFormBaseline] = useState<Employee | null>(null);
+    const [acknowledgedFormEmployee, setAcknowledgedFormEmployee] = useState<Employee | null>(null);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -141,15 +160,37 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? null
         : null;
     const selectedEmployeeFromList = liveSelectedEmployee ?? selectedEmployee;
-    const selectedEmployeeForDetail = selectedEmployeeFromForm && selectedEmployeeFromList && selectedEmployeeFormBaseline
+    const formResultAcknowledged = selectedEmployeeFromForm
+        && selectedEmployeeFromList
+        && (selectedEmployeeFormBaseline
+            ? formFieldsMatchLive(
+                selectedEmployeeFromList,
+                selectedEmployeeFromForm,
+                selectedEmployeeFormBaseline,
+            )
+            : Boolean(liveSelectedEmployee));
+    const formEmployeeToAcknowledge = formResultAcknowledged ? selectedEmployeeFromForm : null;
+    useEffect(() => {
+        if (!formEmployeeToAcknowledge) return;
+
+        // Retire the one-shot form overlay after the authoritative row first
+        // matches it, so a later external reversion is allowed to win.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setAcknowledgedFormEmployee((current) => (
+            current === formEmployeeToAcknowledge ? current : formEmployeeToAcknowledge
+        ));
+    }, [formEmployeeToAcknowledge]);
+
+    const hasAcknowledgedFormResult = acknowledgedFormEmployee === selectedEmployeeFromForm;
+    const selectedEmployeeForDetail = selectedEmployeeFromForm && !hasAcknowledgedFormResult && selectedEmployeeFromList && selectedEmployeeFormBaseline
         ? mergeConfirmedFormFields(
             selectedEmployeeFromList,
             selectedEmployeeFromForm,
             selectedEmployeeFormBaseline,
         )
-        : selectedEmployeeFromForm && !liveSelectedEmployee
+        : selectedEmployeeFromForm && !hasAcknowledgedFormResult && !liveSelectedEmployee
             ? selectedEmployeeFromForm
-        : selectedEmployeeFromList ?? selectedEmployeeFromForm;
+            : selectedEmployeeFromList ?? selectedEmployeeFromForm;
 
     const stats = useMemo(() => {
         return {
@@ -166,6 +207,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setSelectedEmployee(null);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
+        setAcknowledgedFormEmployee(null);
         setIsCreatingEmployee(true);
     };
 
@@ -173,6 +215,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setIsCreatingEmployee(false);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
+        setAcknowledgedFormEmployee(null);
         setSelectedEmployee(employee);
     };
 
@@ -196,6 +239,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 setSelectedEmployee(null);
                 setSelectedEmployeeFromForm(null);
                 setSelectedEmployeeFormBaseline(null);
+                setAcknowledgedFormEmployee(null);
             }
 
             setDeleteTargetEmployeeId(null);
@@ -220,6 +264,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setAcknowledgedFormEmployee(null);
         setSelectedEmployeeFormBaseline(
             allEmployees.find((liveEmployee) => liveEmployee.id === employee.id) ?? null,
         );
