@@ -1200,7 +1200,7 @@ export class ToolExecutorService {
 
     private async listBankAccounts(context: LegacyChatToolContext): Promise<ToolExecutionResult> {
         if (!this.canReadBankAccounts(context)) {
-            return { success: false, error: "은행 계좌 정보는 지점 관리자만 조회할 수 있습니다" };
+            return { success: false, error: "은행 계좌 정보를 조회할 권한이 없습니다" };
         }
 
         const accounts = await this.bankAccountInfoService.findAll(context.branchId);
@@ -1216,7 +1216,7 @@ export class ToolExecutorService {
 
     private async getBankAccountByArea(context: LegacyChatToolContext, args: ToolArgs): Promise<ToolExecutionResult> {
         if (!this.canReadBankAccounts(context)) {
-            return { success: false, error: "은행 계좌 정보는 지점 관리자만 조회할 수 있습니다" };
+            return { success: false, error: "은행 계좌 정보를 조회할 권한이 없습니다" };
         }
 
         const area = this.parseRequiredStringArg(args, "area");
@@ -1235,7 +1235,8 @@ export class ToolExecutorService {
     }
 
     private canReadBankAccounts(context: LegacyChatToolContext): boolean {
-        return [context.globalRole, context.branchRole].some((role) => role === "owner" || role === "admin");
+        if (context.globalRole === "owner") return true;
+        return ["admin", "manager", "user"].includes(context.branchRole ?? "");
     }
 
     private maskAccountNumber(account: string | null): string | null {

@@ -7,9 +7,9 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import { EformsignAutomationStatusService } from "application/services/eformsign-automation-status.service";
 import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 import {
@@ -101,6 +101,8 @@ describe("SystemSettingController (Integration)", () => {
             })
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
+            .overrideGuard(BranchManagerGuard)
+            .useValue({ canActivate: () => true })
             .overrideGuard(OwnerGuard)
             .useValue({ canActivate: () => true })
             .compile();
@@ -172,22 +174,22 @@ describe("SystemSettingController (Integration)", () => {
             expect(guards).toContain(TenantGuard);
         });
 
-        it("should expose a PUT route for past trigger config", () => {
+        it("should expose a manager-scoped PUT route for past trigger config", () => {
             const method = SystemSettingController.prototype.updateMessageAutomationPastTriggerConfig;
 
             expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("message-automation-policies/past-trigger");
             expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.PUT);
-            expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(OwnerOrAdminGuard);
+            expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(BranchManagerGuard);
         });
 
-        it("should expose an owner-only PUT route for policy activation", () => {
+        it("should expose a manager-scoped PUT route for policy activation", () => {
             const method = SystemSettingController.prototype.updateMessageSettingsPolicyActivation;
 
             expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(
                 "message-policy-activations/:policyId",
             );
             expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.PUT);
-            expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(OwnerOrAdminGuard);
+            expect(Reflect.getMetadata(GUARDS_METADATA, method) ?? []).toContain(BranchManagerGuard);
         });
 
         it("should return policies with values computed from runtime constants", async () => {
@@ -288,9 +290,15 @@ describe("SystemSettingController (Integration)", () => {
                 globalRole: "user",
                 branchRole: "user",
             });
+            const manager = await controller.getMessageAutomationPolicies({
+                branchId: "branch-1",
+                globalRole: "user",
+                branchRole: "manager",
+            });
 
             expect(owner.canManageActivation).toBe(true);
             expect(admin.canManageActivation).toBe(true);
+            expect(manager.canManageActivation).toBe(true);
             expect(member.canManageActivation).toBe(false);
         });
 

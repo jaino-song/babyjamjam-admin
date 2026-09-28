@@ -3,6 +3,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import request from "supertest";
 import { CallIngestTokenController } from "interface/controllers/call-ingest-token.controller";
 import { CallIngestTokenService } from "application/services/call-ingest-token.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { TenantContext } from "infrastructure/tenant/tenant.context";
@@ -19,6 +20,7 @@ describe("CallIngestTokenController (Integration)", () => {
             providers: [
                 { provide: CallIngestTokenService, useValue: tokenService },
                 { provide: TenantContext, useValue: tenantContext },
+                BranchManagerGuard,
             ],
         })
             .overrideGuard(JwtGuard).useValue({ canActivate: () => true })

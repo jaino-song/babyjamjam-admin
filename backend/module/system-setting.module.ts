@@ -7,6 +7,7 @@ import { SystemSettingService } from "application/services/system-setting.servic
 import { EformsignAutomationStatusService } from "application/services/eformsign-automation-status.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SystemSettingController } from "interface/controllers/system-setting.controller";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { PublicSettingsController } from "interface/controllers/public-settings.controller";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
@@ -25,6 +26,7 @@ import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automat
         GetSettingUsecase,
         UpdateSettingUsecase,
         SystemSettingService,
+        BranchManagerGuard,
         MessageSenderApprovalService,
         EformsignAutomationStatusService,
         EformsignWebhookEventWriter,
