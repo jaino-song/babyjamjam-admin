@@ -116,9 +116,9 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         ? {
             ...selectedEmployeeFromList,
             ...selectedEmployeeFromForm,
-            // Availability is owned by the live list/cache even while an edit
-            // response is waiting for the list query to catch up.
-            openToNextWork: selectedEmployeeFromList.openToNextWork,
+            // Preserve the confirmed form result while the list query still
+            // contains the pre-save snapshot. Once the list changes, the
+            // branch above stops applying and the live row wins.
         }
         : selectedEmployeeFromList ?? selectedEmployeeFromForm;
 

@@ -39,7 +39,7 @@ function createWrapper() {
   return createTestContext().wrapper;
 }
 
-function employee(openToNextWork: boolean): Employee {
+function employee(openToNextWork: boolean, status: Employee["status"] = openToNextWork ? "available" : "unavailable"): Employee {
   return {
     id: 7,
     name: "홍길동",
@@ -48,14 +48,14 @@ function employee(openToNextWork: boolean): Employee {
     grade: "A",
     openToNextWork,
     registeredDate: "2026-08-27T00:00:00.000Z",
-    status: openToNextWork ? "available" : "unavailable",
+    status,
   };
 }
 
-function seedEmployeeCaches(queryClient: QueryClient, openToNextWork: boolean) {
-  queryClient.setQueryData(employeeQueryKeys.lists(), [employee(openToNextWork)]);
-  queryClient.setQueryData(employeeQueryKeys.list({ status: "all" }), [employee(openToNextWork)]);
-  queryClient.setQueryData(employeeQueryKeys.detail(7), employee(openToNextWork));
+function seedEmployeeCaches(queryClient: QueryClient, openToNextWork: boolean, status?: Employee["status"]) {
+  queryClient.setQueryData(employeeQueryKeys.lists(), [employee(openToNextWork, status)]);
+  queryClient.setQueryData(employeeQueryKeys.list({ status: "all" }), [employee(openToNextWork, status)]);
+  queryClient.setQueryData(employeeQueryKeys.detail(7), employee(openToNextWork, status));
 }
 
 describe("useToggleEmployeeOpenStatus", () => {
@@ -104,7 +104,9 @@ describe("useToggleEmployeeOpenStatus", () => {
 
     await waitFor(() => expect(mockedApiGet).toHaveBeenCalledTimes(1));
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]?.openToNextWork).toBe(true);
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]?.status).toBe("available");
     expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.openToNextWork).toBe(true);
+    expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.status).toBe("available");
 
     resolveRefresh?.({ data: [employee(true)] });
     await waitFor(() => expect(result.current.mutation.isSuccess).toBe(true));
@@ -131,7 +133,33 @@ describe("useToggleEmployeeOpenStatus", () => {
     await waitFor(() => expect(result.current.mutation.isSuccess).toBe(true));
     expect(result.current.employees.isError).toBe(true);
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]?.openToNextWork).toBe(true);
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]?.status).toBe("available");
     expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.openToNextWork).toBe(true);
+    expect(queryClient.getQueryData<Employee>(employeeQueryKeys.detail(7))?.status).toBe("available");
+  });
+
+  it("preserves a working status while patching availability", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    seedEmployeeCaches(queryClient, true, "working");
+    mockedApiPatch.mockResolvedValue({ data: { id: 7, openToNextWork: false } });
+    mockedApiGet.mockRejectedValue(new Error("refresh failed"));
+
+    const { result } = renderHook(
+      () => ({
+        employees: useEmployees({ refetchOnMount: false }),
+        mutation: useToggleEmployeeOpenStatus(),
+      }),
+      { wrapper },
+    );
+
+    act(() => {
+      result.current.mutation.mutate({ id: 7, openToNextWork: false });
+    });
+
+    await waitFor(() => expect(result.current.mutation.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())?.[0]).toEqual(
+      expect.objectContaining({ openToNextWork: false, status: "working" }),
+    );
   });
 
   it("leaves list and detail caches unchanged when the mutation fails", async () => {

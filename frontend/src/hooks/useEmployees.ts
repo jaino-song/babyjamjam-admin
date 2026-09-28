@@ -14,6 +14,7 @@ import {
     snapshotAndTransformQueries,
     type QuerySnapshot,
 } from "@/lib/query/optimistic-list-cache";
+import { deriveEmployeeStatus } from "@babyjamjam/shared/constants/employee-status";
 
 // Employee status type
 export type EmployeeStatus = 'available' | 'working' | 'unavailable';
@@ -249,26 +250,50 @@ function updateEmployeeOpenStatusInCache(
     current: unknown,
     id: number,
     openToNextWork: boolean,
+    confirmedStatus?: Employee["status"],
 ): unknown {
     if (Array.isArray(current)) {
         let changed = false;
         const next = current.map((item) => {
-            if (!isRecord(item) || item.id !== id || item.openToNextWork === openToNextWork) {
+            if (!isRecord(item) || item.id !== id) {
+                return item;
+            }
+
+            const nextStatus = item.status === "working"
+                ? "working"
+                : confirmedStatus ?? deriveEmployeeStatus(false, openToNextWork);
+            if (item.openToNextWork === openToNextWork && item.status === nextStatus) {
                 return item;
             }
 
             changed = true;
-            return { ...item, openToNextWork };
+            return { ...item, openToNextWork, status: nextStatus };
         });
 
         return changed ? next : current;
     }
 
-    if (!isRecord(current) || current.id !== id || current.openToNextWork === openToNextWork) {
+    if (!isRecord(current) || current.id !== id) {
         return current;
     }
 
-    return { ...current, openToNextWork };
+    const nextStatus = current.status === "working"
+        ? "working"
+        : confirmedStatus ?? deriveEmployeeStatus(false, openToNextWork);
+    if (current.openToNextWork === openToNextWork && current.status === nextStatus) {
+        return current;
+    }
+
+    return { ...current, openToNextWork, status: nextStatus };
+}
+
+function isEmployeeStatus(value: unknown): value is Employee["status"] {
+    return value === "available" || value === "working" || value === "unavailable";
+}
+
+function getConfirmedEmployeeStatus(data: unknown): Employee["status"] | undefined {
+    if (!isRecord(data) || !isEmployeeStatus(data.status)) return undefined;
+    return data.status;
 }
 
 // Toggle open status
@@ -291,12 +316,13 @@ export function useToggleEmployeeOpenStatus() {
             return { queries };
         },
         onSuccess: async (_data, { id, openToNextWork }, context) => {
+            const confirmedStatus = getConfirmedEmployeeStatus(_data);
             for (const { queryKey, query } of context?.queries ?? []) {
                 const currentQuery = queryClient.getQueryCache().find({ queryKey, exact: true });
                 if (currentQuery !== query) continue;
 
                 queryClient.setQueryData(queryKey, (current: unknown) => (
-                    updateEmployeeOpenStatusInCache(current, id, openToNextWork)
+                    updateEmployeeOpenStatusInCache(current, id, openToNextWork, confirmedStatus)
                 ));
             }
 
