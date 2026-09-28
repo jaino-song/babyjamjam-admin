@@ -9,8 +9,8 @@ import { MessageTriggerEditor } from "@/components/app/mobile-redesign/MessageTr
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
-import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -23,8 +23,8 @@ const NEW_RULE_ITEM_ID = "new";
 export function MessagesTriggersPage(): ReactElement {
   const router = useRouter();
   const selectedItemId = useSearchParams().get("item");
-  const user = useInitialUser();
-  const canManage = canManageBranch(user);
+  const authUserQuery = useGetAuthUser();
+  const canManage = canManageBranchFromAuthQuery(authUserQuery);
   const didPushDetailRef = useRef(false);
   const rulesQuery = useMessageTriggerRules();
   const rules = useMemo(

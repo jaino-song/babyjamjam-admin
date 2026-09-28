@@ -3,6 +3,14 @@ export interface BranchRoleUser {
   branchRole?: string | null;
 }
 
+export interface BranchRoleAuthQuery {
+  data?: BranchRoleUser | null;
+  isPending?: boolean;
+  isLoading?: boolean;
+  isFetching?: boolean;
+  isError?: boolean;
+}
+
 /**
  * Returns whether the active branch membership permits branch-management actions.
  *
@@ -14,4 +22,12 @@ export function canManageBranch(user: BranchRoleUser | null | undefined): boolea
   return user?.role === "owner"
     || user?.branchRole === "admin"
     || user?.branchRole === "manager";
+}
+
+export function canManageBranchFromAuthQuery(query: BranchRoleAuthQuery): boolean {
+  return !query.isPending
+    && !query.isLoading
+    && !query.isFetching
+    && !query.isError
+    && canManageBranch(query.data);
 }

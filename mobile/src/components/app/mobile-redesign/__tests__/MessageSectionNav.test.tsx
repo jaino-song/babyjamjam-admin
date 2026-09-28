@@ -2,21 +2,21 @@ import { render, screen } from "@testing-library/react";
 
 import { MESSAGE_NAVIGATION_ITEMS, MessageSectionNav } from "../MessageSectionNav";
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
-import { useInitialUser } from "@/providers/UserProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-  useInitialUser: jest.fn(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: jest.fn(),
 }));
 
 jest.mock("@/app/(shell)/messages/MessagesPermissionGuard", () => ({
   useMessagesPermissionGuard: jest.fn(),
 }));
 
-const mockUseInitialUser = useInitialUser as jest.Mock;
+const mockUseGetAuthUser = useGetAuthUser as jest.Mock;
 const mockUseMessagesPermissionGuard = useMessagesPermissionGuard as jest.Mock;
 
 const BRANCH_MANAGEMENT_LABEL = "자동 전송";
@@ -33,8 +33,15 @@ function renderNav() {
 
 describe("MessageSectionNav", () => {
   beforeEach(() => {
-    mockUseInitialUser.mockReset();
+    mockUseGetAuthUser.mockReset();
     mockUseMessagesPermissionGuard.mockReset();
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
     mockUseMessagesPermissionGuard.mockReturnValue({
       isLoading: false,
       needsSenderApproval: false,
@@ -45,7 +52,13 @@ describe("MessageSectionNav", () => {
     ["global user with manager branch role", { role: "user", branchRole: "manager" }],
     ["global owner", { role: "owner", branchRole: null }],
   ])("allows branch-management automation for %s", (_label, user) => {
-    mockUseInitialUser.mockReturnValue(user);
+    mockUseGetAuthUser.mockReturnValue({
+      data: user,
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
 
     renderNav();
 
@@ -63,7 +76,13 @@ describe("MessageSectionNav", () => {
     ["global user without branch role", { role: "user" }],
     ["no resolved user", null],
   ])("keeps automation disabled for %s", (_label, user) => {
-    mockUseInitialUser.mockReturnValue(user);
+    mockUseGetAuthUser.mockReturnValue({
+      data: user,
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
 
     renderNav();
 
@@ -72,7 +91,13 @@ describe("MessageSectionNav", () => {
   });
 
   it("disables every section except send and settings while sender approval is pending", () => {
-    mockUseInitialUser.mockReturnValue({ role: "owner" });
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "owner" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
     mockUseMessagesPermissionGuard.mockReturnValue({
       isLoading: false,
       needsSenderApproval: true,
@@ -89,7 +114,13 @@ describe("MessageSectionNav", () => {
   });
 
   it("shows non-interactive section skeletons while the permission check is loading", () => {
-    mockUseInitialUser.mockReturnValue({ role: "owner" });
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "owner" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
     mockUseMessagesPermissionGuard.mockReturnValue({
       isLoading: true,
       needsSenderApproval: false,
@@ -109,5 +140,51 @@ describe("MessageSectionNav", () => {
       expect(skeleton).toHaveClass("skeleton-base");
       expect(skeleton).toHaveAttribute("aria-hidden", "true");
     });
+  });
+
+  it("fails closed while the live authority query transitions branches", () => {
+    const view = renderNav();
+
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeEnabled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+    });
+    view.rerender(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeDisabled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "user" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    view.rerender(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeDisabled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "user" },
+      isPending: false,
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+    });
+    view.rerender(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeDisabled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    view.rerender(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="send" />);
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeEnabled();
   });
 });

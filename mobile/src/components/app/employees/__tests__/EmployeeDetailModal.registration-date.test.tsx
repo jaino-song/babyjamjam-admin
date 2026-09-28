@@ -4,7 +4,7 @@ import type { Employee } from "@/hooks/useEmployees";
 
 import { EmployeeDetailModal } from "../EmployeeDetailModal";
 
-const mockUseInitialUser = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const mockOpenStatusMutate = jest.fn();
 
 jest.mock("@/hooks/useEmployees", () => ({
@@ -14,8 +14,8 @@ jest.mock("@/hooks/useEmployees", () => ({
   }),
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-  useInitialUser: () => mockUseInitialUser(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 jest.mock("@/components/ui/dialog", () => ({
@@ -77,7 +77,13 @@ const employeeWithoutRegisteredDate = {
 
 describe("EmployeeDetailModal registration date", () => {
   beforeEach(() => {
-    mockUseInitialUser.mockReturnValue({ role: "admin", branchRole: "user" });
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "admin", branchRole: "user" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
     mockOpenStatusMutate.mockReset();
   });
 
@@ -140,7 +146,13 @@ describe("EmployeeDetailModal registration date", () => {
   });
 
   it("keeps generic edit/delete actions for a branch manager alongside availability", () => {
-    mockUseInitialUser.mockReturnValue({ role: "user", branchRole: "manager" });
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
 
     render(
       <EmployeeDetailModal

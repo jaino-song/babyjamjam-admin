@@ -18,8 +18,8 @@ import {
 
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { MobileSectionNav } from "@/components/app/mobile-redesign/primitives";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
-import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 const SOURCE_COMPONENT = "MessageSectionNav";
 
@@ -64,9 +64,10 @@ export function MessageSectionNav({
   activeId: MessageSectionId;
 }) {
   const router = useRouter();
-  const user = useInitialUser();
+  const authUserQuery = useGetAuthUser();
+  const user = authUserQuery.data;
   const isOwner = user?.role === "owner";
-  const canManageBranchMessages = canManageBranch(user);
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
   const { isLoading, needsSenderApproval } = useMessagesPermissionGuard();
 
   const sectionNavItems = useMemo(

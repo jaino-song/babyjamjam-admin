@@ -3,10 +3,11 @@ import fs from "node:fs";
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
 describe("SettingsPage account profile", () => {
-  it("seeds the auth query from the protected layout user", () => {
-    expect(source).toContain('import { useInitialUser } from "@/providers/UserProvider"');
-    expect(source).toContain("const initialUser = useInitialUser()");
-    expect(source).toContain("useGetAuthUser({ initialData: initialUser })");
+  it("reads branch authority from the live auth query", () => {
+    expect(source).toContain('import { useGetAuthUser } from "@/hooks/useGetAuthUser"');
+    expect(source).toContain("const authUserQuery = useGetAuthUser()");
+    expect(source).toContain("canManageBranchFromAuthQuery(authUserQuery)");
+    expect(source).not.toContain("useGetAuthUser({ initialData:");
   });
 });
 
@@ -15,11 +16,11 @@ describe("SettingsPage account profile", () => {
 // policy that decides what is offered; the API remains authoritative.
 describe("SettingsPage call-ingest-token section gating", () => {
   it("offers the token section in the nav to branch managers", () => {
-    expect(source).toContain('import { canManageBranch } from "@/lib/auth/branch-role-policy"');
+    expect(source).toContain('import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy"');
     expect(source).toContain(
       "const navSections = canManageBranchSettings\n    ? [...BASE_NAV_SECTIONS, ...BRANCH_MANAGER_NAV_SECTIONS]",
     );
-    expect(source).toContain("const canManageBranchSettings = canManageBranch(user)");
+    expect(source).toContain("const canManageBranchSettings = canManageBranchFromAuthQuery(authUserQuery)");
     expect(source).toContain('id: "call-ingest-tokens"');
   });
 

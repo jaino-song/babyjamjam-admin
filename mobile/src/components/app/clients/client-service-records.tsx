@@ -39,10 +39,10 @@ import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { getServiceRecordAdminHref } from "@/lib/frontend-origin";
 import { cn } from "@/lib/utils";
-import { useInitialUser } from "@/providers/UserProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 interface ClientServiceRecordsProps {
     "data-component": string;
@@ -271,7 +271,8 @@ function LinkCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("link-card");
     const sendLinkMutation = useSendServiceRecordLink();
-    const canEditServiceRecord = canManageBranch(useInitialUser());
+    const authUserQuery = useGetAuthUser();
+    const canEditServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const [resendModalOpen, setResendModalOpen] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const statusMeta = LINK_STATUS_META[assignment.link.status];

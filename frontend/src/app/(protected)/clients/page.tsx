@@ -58,9 +58,9 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
-import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { useLocale } from "@/providers/LocaleProvider";
-import { useInitialUser } from "@/providers/UserProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -282,7 +282,8 @@ function ClientAutomationSection() {
 
 export default function ClientsPage() {
     const locale = useLocale();
-    const canManageBranchFeatures = canManageBranch(useInitialUser());
+    const authUserQuery = useGetAuthUser();
+    const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
     const router = useRouter();
     const searchParams = useSearchParams();
     const clientIdParam = searchParams.get("id");

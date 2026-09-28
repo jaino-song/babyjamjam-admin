@@ -13,6 +13,16 @@ jest.mock("@/providers/UserProvider", () => ({
   useInitialUser: () => ({ role: "user", branchRole: "manager" }),
 }));
 
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/hooks/useInfiniteEmployees", () => ({
   useInfiniteEmployees: jest.fn(),
 }));
