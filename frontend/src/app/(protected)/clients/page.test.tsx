@@ -30,6 +30,16 @@ jest.mock("use-debounce", () => ({
   useDebounce: <T,>(value: T) => [value],
 }));
 
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "owner", branchRole: null },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/features/system-templates/branch-context", () => ({
   useActiveBranchId: () => "branch-a",
 }));

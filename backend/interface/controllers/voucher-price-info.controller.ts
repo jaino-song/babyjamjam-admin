@@ -42,7 +42,7 @@ export class VoucherPriceInfoController {
     }
 
     @Get()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     list() {
         return this.voucherService.list();
     }
@@ -71,19 +71,19 @@ export class VoucherPriceInfoController {
     }
 
     @Get("type")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findByType(@Query("type") type: string, @Query("year") year?: string) {
         return this.voucherService.findByType(type, parseOptionalInteger(year, "year", { min: 1900, max: 2200 }));
     }
 
     @Get("years")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     getDistinctYears() {
         return this.voucherService.getDistinctYears();
     }
 
     @Get("id")
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard)
     findById(@Query("id", ParseIntPipe) id: number) {
         return this.voucherService.findById(id);
     }

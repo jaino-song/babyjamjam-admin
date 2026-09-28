@@ -6,6 +6,7 @@ import {
   useDeleteEmployee,
   useEmployeeActiveClients,
   useEmployeeWorkHistory,
+  useToggleEmployeeOpenStatus,
   type Employee,
   type EmployeeWorkHistoryEntry,
 } from "@/hooks/useEmployees";
@@ -18,10 +19,21 @@ jest.mock("@/hooks/useInfiniteEmployees", () => ({
   useInfiniteEmployees: jest.fn(),
 }));
 
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
+}));
+
 jest.mock("@/hooks/useEmployees", () => ({
   useDeleteEmployee: jest.fn(),
   useEmployeeActiveClients: jest.fn(),
   useEmployeeWorkHistory: jest.fn(),
+  useToggleEmployeeOpenStatus: jest.fn(),
 }));
 
 jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
@@ -136,6 +148,7 @@ const mockedUseInfiniteEmployees = jest.mocked(useInfiniteEmployees);
 const mockedUseDeleteEmployee = jest.mocked(useDeleteEmployee);
 const mockedUseEmployeeActiveClients = jest.mocked(useEmployeeActiveClients);
 const mockedUseEmployeeWorkHistory = jest.mocked(useEmployeeWorkHistory);
+const mockedUseToggleEmployeeOpenStatus = jest.mocked(useToggleEmployeeOpenStatus);
 
 const employee: Employee = {
   id: 7,
@@ -185,6 +198,10 @@ function renderPage() {
     mutateAsync: jest.fn(),
     isPending: false,
   } as unknown as ReturnType<typeof useDeleteEmployee>);
+  mockedUseToggleEmployeeOpenStatus.mockReturnValue({
+    mutate: jest.fn(),
+    isPending: false,
+  } as unknown as ReturnType<typeof useToggleEmployeeOpenStatus>);
 
   const view = render(<EmployeesPage />);
   fireEvent.click(screen.getByRole("button", { name: employee.name }));

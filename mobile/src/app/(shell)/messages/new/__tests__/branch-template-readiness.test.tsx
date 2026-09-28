@@ -100,6 +100,17 @@ beforeAll(() => {
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
   useSearchParams: () => mockSearchParams,
+  usePathname: () => "/messages/new",
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 jest.mock("@/features/system-templates/hooks", () => ({

@@ -13,6 +13,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NotificationService } from "application/services/notification.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
@@ -164,7 +165,7 @@ export class NotificationController {
      * Send notification to a specific user (admin only)
      */
     @Post("send")
-    @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
     async sendNotification(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: SendNotificationDto,
@@ -183,7 +184,7 @@ export class NotificationController {
      * Broadcast notification to all users (admin only)
      */
     @Post("broadcast")
-    @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
     async broadcastNotification(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: BroadcastNotificationDto,

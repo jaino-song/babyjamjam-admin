@@ -43,6 +43,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { useLocale } from "@/providers/LocaleProvider";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
 type EmployeeFilter = "all" | "active" | "inactive";
 
@@ -97,6 +99,8 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     } = useInfiniteEmployees({ filter, search });
     const deleteEmployee = useDeleteEmployee();
     const locale = useLocale();
+    const authUserQuery = useGetAuthUser();
+    const canManageEmployees = canManageBranchFromAuthQuery(authUserQuery);
 
     const stats = useMemo(() => {
         const matchedEmployees = searchMatchedEmployees ?? allEmployees ?? [];
@@ -394,6 +398,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 ) : selectedEmployee ? (
                     <EmployeeDetailPanel key={selectedEmployee.id}
                         employee={selectedEmployee}
+                        canManage={canManageEmployees}
                         onEdit={handleEdit}
                         onDelete={handleDeleteRequest}
                     />

@@ -25,6 +25,7 @@ import { EmployeeAgentCapabilitiesProvider } from "application/usecases/employee
 import { EmployeeWriteAgentCapabilitiesProvider } from "application/usecases/employee/employee-write-agent-capabilities.provider";
 import { ServiceRecordEntryModule } from "./service-record-entry.module";
 import { MessageModule } from "./message.module";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 @Module({
     imports: [DatabaseModule, MessageModule, ServiceRecordEntryModule],
@@ -48,6 +49,7 @@ import { MessageModule } from "./message.module";
         EmployeeService,
         EmployeeAgentCapabilitiesProvider,
         EmployeeWriteAgentCapabilitiesProvider,
+        BranchManagerGuard,
         {
             provide: EMPLOYEE_REPOSITORY,
             useClass: SbEmployeeRepository,

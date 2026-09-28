@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { getCurrentUser } from "@/lib/auth/cookies";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { appendSafeReturnPath, getSafeServiceRecordAdminReturnPath } from "@/lib/auth/safe-return-path";
 
 interface ServiceRecordAdminClientLayoutProps {
@@ -20,6 +21,10 @@ export default async function ServiceRecordAdminClientLayout({
 
     if (!user) {
         redirect(appendSafeReturnPath("/login", returnPath));
+    }
+
+    if (!canManageBranch(user)) {
+        redirect("/clients");
     }
 
     return children;

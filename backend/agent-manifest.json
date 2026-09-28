@@ -54,7 +54,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.delete",
@@ -73,7 +73,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.list",
@@ -91,7 +91,7 @@
       "flagKey": "agent.capability.automation.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.setActive",
@@ -110,7 +110,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.update",
@@ -129,7 +129,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "bank.accounts",
@@ -140,12 +140,14 @@
       "risk": "read",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "flagKey": "agent.capability.bank.accounts",
       "sideEffect": false,
       "sourceFile": "application/usecases/bank-account-info/bank-account-agent-capabilities.provider.ts",
-      "sourceDigest": "e3607fed212e524c5f5239bd6af7c32e0581ae25b1c34e7463ec65fcfd02d2af"
+      "sourceDigest": "df0645481a8e0a49b2575aeeb55d2e185ef9b7ab53c8cc42387079d25b6c2257"
     },
     {
       "name": "calls.list",
@@ -467,7 +469,9 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.changeAvailability",
@@ -475,7 +479,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "employees.create",
@@ -485,7 +489,9 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.create",
@@ -493,7 +499,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "employees.get",
@@ -557,7 +563,8 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.update",
@@ -565,7 +572,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "files.delete",
@@ -656,7 +663,7 @@
       "flagKey": "agent.capability.messages.deliveryHistory",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.previewSms",
@@ -674,7 +681,7 @@
       "flagKey": "agent.capability.messages.previewSms",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.retrySms",
@@ -684,7 +691,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.retrySms",
@@ -692,7 +700,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.scheduleSms",
@@ -702,7 +710,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.scheduleSms",
@@ -710,7 +719,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.sendSms",
@@ -720,7 +729,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.sendSms",
@@ -728,7 +738,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.updateTemplate",
@@ -849,12 +859,13 @@
       "requiredRoles": [
         "owner",
         "admin",
-        "manager"
+        "manager",
+        "user"
       ],
       "flagKey": "agent.capability.vouchers.prices",
       "sideEffect": false,
       "sourceFile": "application/usecases/voucher-price-info/voucher-agent-capabilities.provider.ts",
-      "sourceDigest": "4f2faff38dfc00b02ea6d0b81ef85108c689cd220214555af374cc5ac07019ab"
+      "sourceDigest": "3ce40671733789cb191d70b5e9e76334b35f6801349d938745346592b839baa0"
     },
     {
       "name": "website.settings",

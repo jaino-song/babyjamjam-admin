@@ -28,12 +28,15 @@ export const Header = ({ initialUser }: HeaderProps) => {
     setIsNavOpen(false);
   };
 
-  // initialUser가 있으면 즉시 사용, 없으면 client-side fetch
-  const { data: user, isLoading } = useGetAuthUser({ initialData: initialUser });
+  // Keep the server snapshot presentation-only. Passing it as React Query
+  // initialData can repopulate the shared auth cache after a branch switch
+  // clears it, making the previous branch role appear authoritative again.
+  const { data: user, isLoading, isFetching } = useGetAuthUser();
+  const displayUser = user ?? initialUser;
   const isE2EAuth = typeof window !== 'undefined'
     && (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__;
 
-  const shouldShowNotifications = Boolean(user) || isE2EAuth;
+  const shouldShowNotifications = Boolean(displayUser) || isE2EAuth;
 
   // Get user initials for avatar fallback
   const getUserInitials = (name?: string | null): string => {
@@ -90,18 +93,18 @@ export const Header = ({ initialUser }: HeaderProps) => {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={user ? "user profile" : "login"}
-            disabled={!initialUser && isLoading}
+            aria-label={displayUser ? "user profile" : "login"}
+            disabled={isLoading || isFetching}
             className="shrink-0 transition-transform duration-200 hover:scale-110 active:scale-95"
           >
-            {!initialUser && isLoading ? (
+            {!displayUser && (isLoading || isFetching) ? (
               <Avatar className="h-10 w-10">
                 <AvatarFallback className="animate-pulse bg-muted" />
               </Avatar>
-            ) : user ? (
+            ) : displayUser ? (
               <Avatar className="h-10 w-10">
-                <AvatarImage src={user?.profileImage || ''} alt={user?.name || 'User'} />
-                <AvatarFallback className="bg-primary text-primary-foreground text-sm">{getUserInitials(user?.name)}</AvatarFallback>
+                <AvatarImage src={displayUser?.profileImage || ''} alt={displayUser?.name || 'User'} />
+                <AvatarFallback className="bg-primary text-primary-foreground text-sm">{getUserInitials(displayUser?.name)}</AvatarFallback>
               </Avatar>
             ) : (
               <LogIn className="h-5 w-5" />

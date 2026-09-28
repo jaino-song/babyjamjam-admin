@@ -10,6 +10,7 @@ import type {
 
 const mutateAsync = jest.fn();
 const toast = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT = "desktop_clients-detail_panel_service-records";
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
@@ -21,6 +22,10 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 
 jest.mock("@/hooks/use-toast", () => ({
     useToast: () => ({ toast }),
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+    useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 function createAssignment(
@@ -109,6 +114,13 @@ describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
         toast.mockReset();
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
     });
 
     afterEach(() => {
@@ -126,6 +138,30 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
         expect(screen.queryByText("수정 이력")).not.toBeInTheDocument();
         expect(mutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("hides the service-record edit link for a branch user", () => {
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "admin", branchRole: "user" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
+
+        render(
+            <ClientServiceRecordsTab
+                data-component={TEST_COMPONENT}
+                layout="mobile"
+                clientId={100}
+                isLoading={false}
+                isError={false}
+                overview={{ assignments: [createAssignment(1, "none")] }}
+            />,
+        );
+
+        expect(screen.queryByRole("link", { name: "제공기록지 수정" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
     });
 
     it("keeps the service-record card containers mounted while loading", () => {

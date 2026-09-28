@@ -7,15 +7,23 @@ import { EmployeeService } from "application/services/employee.service";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 describe("EmployeeController (Integration)", () => {
-    it.each(["create", "changeOpenStatus", "update", "delete"])("requires owner/admin authority for %s", (methodName) => {
+    it.each(["create", "changeOpenStatus"])("inherits tenant membership guard for all-role %s", (methodName) => {
         const guards = Reflect.getMetadata(
             GUARDS_METADATA,
             EmployeeController.prototype[methodName as keyof typeof EmployeeController.prototype],
         ) ?? [];
-        expect(guards).toContain(OwnerOrAdminGuard);
+        expect(guards).not.toContain(BranchManagerGuard);
+    });
+
+    it.each(["update", "delete"])("requires branch manager authority for %s", (methodName) => {
+        const guards = Reflect.getMetadata(
+            GUARDS_METADATA,
+            EmployeeController.prototype[methodName as keyof typeof EmployeeController.prototype],
+        ) ?? [];
+        expect(guards).toContain(BranchManagerGuard);
     });
     // ============================================
     // Test Fixtures & Setup
@@ -98,6 +106,8 @@ describe("EmployeeController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
+            .overrideGuard(BranchManagerGuard)
+            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();

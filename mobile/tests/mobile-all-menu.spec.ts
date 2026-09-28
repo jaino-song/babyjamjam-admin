@@ -214,11 +214,13 @@ test.describe("Mobile nav: center chat + /all menu", () => {
     await expect(page.locator(".menu-value", { hasText: "2명" })).toBeVisible();
     await expect(page.locator(".menu-value", { hasText: "1명" })).toBeVisible();
     await expect(page.locator(".menu-value", { hasText: "5건" })).toBeVisible();
-    await expect(
-      page
-        .locator('[data-component="mobile_all_page_menu_group_row"]', { hasText: "발송 자동화" })
-        .locator(".menu-status-pill", { hasText: "출시 예정" })
-    ).toBeVisible();
+    const automationRow = page.locator(
+      '[data-component="mobile_all_page_menu_group_row"]',
+      { hasText: "발송 자동화" },
+    );
+    await expect(automationRow).toHaveAttribute("href", "/messages/automation");
+    await expect(automationRow.locator(".menu-status-pill")).toHaveCount(0);
+    await expect(automationRow).not.toHaveClass(/menu-row-disabled/);
     await expect(page.locator(".menu-badge", { hasText: "3" })).toBeVisible();
     await expect(page.locator('[data-component="mobile_all_page_menu_group_row_value-skeleton"]')).toHaveCount(0);
     await expect(page.locator('[data-component="mobile_all_page_menu_group_row_badge-skeleton"]')).toHaveCount(0);

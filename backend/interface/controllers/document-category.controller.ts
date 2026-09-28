@@ -2,7 +2,6 @@ import { Body, Controller, Delete, Get, Param, Post, UseGuards } from "@nestjs/c
 import { IsString } from "class-validator";
 import { DocumentCategoryService, DocumentCategory } from "application/services/document-category.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 
 class CreateDocumentCategoryDto {
@@ -27,7 +26,6 @@ export class DocumentCategoryController {
     }
 
     @Post()
-    @UseGuards(OwnerOrAdminGuard)
     async create(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateDocumentCategoryDto,
@@ -41,7 +39,6 @@ export class DocumentCategoryController {
     }
 
     @Delete(":id")
-    @UseGuards(OwnerOrAdminGuard)
     async delete(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,

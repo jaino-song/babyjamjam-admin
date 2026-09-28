@@ -3,8 +3,8 @@ import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/
 import { Test, TestingModule } from "@nestjs/testing";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 
@@ -62,7 +62,7 @@ describe("AdminServiceRecordController (Integration)", () => {
             .useValue({ canActivate: () => true })
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
-            .overrideGuard(OwnerOrAdminGuard)
+            .overrideGuard(BranchManagerGuard)
             .useValue({ canActivate: () => true })
             .compile();
 
@@ -73,16 +73,16 @@ describe("AdminServiceRecordController (Integration)", () => {
         await moduleFixture.close();
     });
 
-    it("protects the read-only editor route with owner/admin authority", () => {
+    it("protects the read-only editor route with branch-manager authority", () => {
         const handler = AdminServiceRecordController.prototype.getClientEditor;
-        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
         expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("client/:clientId/editor");
     });
 
     it("leaves the legacy overview route guard surface unchanged", () => {
         const handler = AdminServiceRecordController.prototype.getClientOverview;
-        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).not.toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).not.toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
         expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("client/:clientId");
     });
@@ -98,10 +98,10 @@ describe("AdminServiceRecordController (Integration)", () => {
     it("protects and scopes revision history and retry routes", async () => {
         const historyHandler = AdminServiceRecordController.prototype.getRevisionHistory;
         const retryHandler = AdminServiceRecordController.prototype.retryRevisionDocument;
-        expect(Reflect.getMetadata(GUARDS_METADATA, historyHandler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(GUARDS_METADATA, historyHandler) ?? []).toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, historyHandler)).toBe(RequestMethod.GET);
         expect(Reflect.getMetadata(PATH_METADATA, historyHandler)).toBe("clients/:clientId/revisions");
-        expect(Reflect.getMetadata(GUARDS_METADATA, retryHandler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(GUARDS_METADATA, retryHandler) ?? []).toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, retryHandler)).toBe(RequestMethod.POST);
         expect(Reflect.getMetadata(PATH_METADATA, retryHandler)).toBe("revisions/:revisionId/documents/:documentStateId/retry");
 
@@ -134,9 +134,9 @@ describe("AdminServiceRecordController (Integration)", () => {
         ["updateDraft", RequestMethod.PATCH, "drafts/:draftId"],
         ["discardDraft", RequestMethod.POST, "drafts/:draftId/discard"],
         ["previewDraft", RequestMethod.POST, "drafts/:draftId/preview"],
-    ] as const)("protects %s with owner/admin authority", (methodName, httpMethod, path) => {
+    ] as const)("protects %s with branch-manager authority", (methodName, httpMethod, path) => {
         const handler = AdminServiceRecordController.prototype[methodName];
-        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(OwnerOrAdminGuard);
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler) ?? []).toContain(BranchManagerGuard);
         expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(httpMethod);
         expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
     });
