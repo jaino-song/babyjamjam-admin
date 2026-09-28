@@ -1,13 +1,15 @@
 import fs from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Clock3 } from "lucide-react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
 import { eformsignApi } from "@/services/api";
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 
-import { ContractDetail } from "./page";
+import { ContractDetail, contractStatsQueryKeys, getContractStatsValues } from "./page";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -64,6 +66,85 @@ describe("ContractsPage maternity template whitelist", () => {
     expect(source).toContain("section: contractsSection");
     expect(source).not.toContain("buildContractTemplateFilter(");
     expect(source).not.toContain("maternityTemplateIds");
+  });
+});
+
+const CONTRACT_STATS_ITEMS: ComponentProps<typeof ContractStatsBar>["items"] = [
+  { icon: Clock3, value: 0, label: "검토 필요", counter: "건" },
+  { icon: Clock3, value: 0, label: "서명 완료", counter: "건" },
+  { icon: Clock3, value: 0, label: "이용자 완료 필요", counter: "건" },
+  { icon: Clock3, value: 0, label: "작성 대기중", counter: "건" },
+  { icon: Clock3, value: 0, label: "기간 만료", counter: "건" },
+];
+
+function renderContractStatsBar(
+  overrides: Partial<ComponentProps<typeof ContractStatsBar>> = {},
+) {
+  return render(
+    <ContractStatsBar
+      name="contracts"
+      items={CONTRACT_STATS_ITEMS}
+      showDocumentJobs={false}
+      {...overrides}
+    />,
+  );
+}
+
+describe("ContractsPage contract stats states", () => {
+  it("keeps successful empty responses as genuine zeroes while undefined stays unavailable", () => {
+    expect(getContractStatsValues(undefined)).toBeNull();
+    expect(getContractStatsValues({ documents: [] })).toEqual({
+      reviewNeeded: 0,
+      signed: 0,
+      sendRequired: 0,
+      drafting: 0,
+      expired: 0,
+    });
+  });
+
+  it("shows unavailable markers and a local retry after an initial stats failure", () => {
+    const onRetryStats = jest.fn();
+    renderContractStatsBar({
+      items: CONTRACT_STATS_ITEMS.map((item) => ({ ...item, value: "—" })),
+      statsError: new Error("status counts unavailable"),
+      onRetryStats,
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("계약 통계를 불러오지 못했어요");
+    expect(screen.getAllByText("—")).toHaveLength(CONTRACT_STATS_ITEMS.length);
+    expect(screen.queryAllByText("0")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "계약 통계 다시 시도" }));
+    expect(onRetryStats).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains successful values and marks the bar stale after a refresh failure", () => {
+    renderContractStatsBar({
+      items: CONTRACT_STATS_ITEMS.map((item, index) => ({ ...item, value: index + 1 })),
+      statsError: new Error("refresh failed"),
+      statsHasData: true,
+      onRetryStats: jest.fn(),
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("최근 성공한 통계를 표시하고 있어요");
+    expect(screen.getByRole("alert")).toHaveTextContent("계약 통계를 최신 상태로 불러오지 못했어요");
+    for (const value of [1, 2, 3, 4, 5]) {
+      expect(screen.getByText(String(value))).toBeInTheDocument();
+    }
+  });
+
+  it("partitions status-counts caches by the authorized branch scope", () => {
+    expect(contractStatsQueryKeys.statusCounts("branch-a")).not.toEqual(
+      contractStatsQueryKeys.statusCounts("branch-b"),
+    );
+    expect(contractStatsQueryKeys.statusCounts("branch-a")).toEqual([
+      "eformsign-status-counts",
+      "branch-a",
+    ]);
+    expect(contractStatsQueryKeys.statusCounts(null)).toEqual([
+      "eformsign-status-counts",
+      "unavailable",
+    ]);
   });
 });
 

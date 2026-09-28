@@ -11,6 +11,8 @@ import {
 } from "@/components/app/contracts/ContractDocumentJobsPopover";
 import { StatMini, type StatMiniDensity } from "@/components/app/v3/StatMini";
 import type { StatsBarItem } from "@/components/app/v3/StatsBar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export interface ContractStatsBarProps {
@@ -25,8 +27,12 @@ export interface ContractStatsBarProps {
   isJobsLoading?: boolean;
   jobsError?: unknown;
   error?: unknown;
+  statsError?: unknown;
+  statsHasData?: boolean;
+  isStatsRefreshing?: boolean;
   onRetryJobs?: () => void;
   onRetry?: () => void;
+  onRetryStats?: () => void;
   onJobsPopoverOpenChange?: (open: boolean) => void;
   className?: string;
   jobsPopoverClassName?: string;
@@ -50,8 +56,12 @@ export function ContractStatsBar({
   isJobsLoading = false,
   jobsError,
   error,
+  statsError,
+  statsHasData = false,
+  isStatsRefreshing = false,
   onRetryJobs,
   onRetry,
+  onRetryStats,
   onJobsPopoverOpenChange,
   className,
   jobsPopoverClassName,
@@ -62,6 +72,7 @@ export function ContractStatsBar({
   const resolvedJobsError = jobsError ?? error;
   const resolvedRetry = onRetryJobs ?? onRetry;
   const activeCount = summary?.activeCount ?? 0;
+  const hasStatsError = statsError !== undefined && statsError !== null;
 
   const popoverProps: JobsPopoverProps = {
     summary,
@@ -115,6 +126,41 @@ export function ContractStatsBar({
           />
         }
       /> : null}
+
+      {hasStatsError ? (
+        <Alert
+          data-component={`${statsBase}_status-alert`}
+          className="basis-full"
+          variant={statsHasData ? "warning" : "destructive"}
+        >
+          <AlertTitle>
+            {statsHasData
+              ? "계약 통계를 최신 상태로 불러오지 못했어요"
+              : "계약 통계를 불러오지 못했어요"}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              {statsHasData
+                ? "최근 성공한 통계를 표시하고 있어요. 다시 시도해 주세요."
+                : "통계를 확인할 수 없어요. 다시 시도해 주세요."}
+            </p>
+            {onRetryStats ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-component={`${statsBase}_status-alert_retry`}
+                className="mt-3"
+                onClick={onRetryStats}
+                disabled={isStatsRefreshing}
+                aria-label="계약 통계 다시 시도"
+              >
+                {isStatsRefreshing ? "다시 시도 중…" : "다시 시도"}
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
     </div>
   );
 }
