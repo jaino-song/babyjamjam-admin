@@ -78,6 +78,8 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
               ...employee,
               name: "김철수",
               phone: "01087654321",
+              openToNextWork: false,
+              status: "unavailable",
             });
           }
           onClose();
@@ -150,7 +152,13 @@ jest.mock("@/components/app/v3", () => ({
   ListEmptyState: ({ message }: { message: string }) => <div>{message}</div>,
   ListPanel: ({ children }: { children: ReactNode }) => <section>{children}</section>,
   SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  StatsBar: () => null,
+  StatsBar: ({ items }: { items: Array<{ label: string; value: number }> }) => (
+    <div data-testid="employee-stats">
+      {items.map((item) => (
+        <span key={item.label} data-testid={`employee-stat-${item.label}`}>{item.value}</span>
+      ))}
+    </div>
+  ),
 }));
 
 const mockedUseInfiniteEmployees = jest.mocked(useInfiniteEmployees);
@@ -202,6 +210,99 @@ describe("EmployeeDirectoryManager edit refresh", () => {
 
     expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+  });
+
+  it("keeps saved availability through a stale or failed refetch before live reconciliation", () => {
+    const { rerender } = render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "홍길동" }));
+    fireEvent.click(screen.getByRole("button", { name: "직원 수정" }));
+    fireEvent.click(screen.getByRole("button", { name: "직원 저장" }));
+
+    const detail = screen.getByTestId("employee-detail");
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        isError: true,
+        // The refetch failed, so allEmployees still contains the pre-save row.
+        employees: [employee],
+        allEmployees: [employee],
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
+    const savedEmployee: Employee = {
+      ...employee,
+      name: "김철수",
+      phone: "01087654321",
+      openToNextWork: false,
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [],
+        allEmployees: [savedEmployee],
+        filteredCount: 0,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "김철수" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
+    const externalEmployee: Employee = {
+      ...savedEmployee,
+      name: "외부 변경",
+      openToNextWork: true,
+      status: "available",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [externalEmployee],
+        allEmployees: [externalEmployee],
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "외부 변경" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("available");
+  });
+
+  it("reflects a cache-patched status in stats while a refetch is failing", () => {
+    const { rerender } = render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    expect(screen.getByTestId("employee-stat-배정 가능")).toHaveTextContent("1");
+    expect(screen.getByTestId("employee-stat-배정 불가")).toHaveTextContent("0");
+
+    const patchedEmployee: Employee = {
+      ...employee,
+      openToNextWork: false,
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [],
+        allEmployees: [patchedEmployee],
+        filteredCount: 0,
+        isError: true,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    expect(screen.getByTestId("employee-stat-배정 가능")).toHaveTextContent("0");
+    expect(screen.getByTestId("employee-stat-배정 불가")).toHaveTextContent("1");
   });
 
   it("refreshes the selected detail from the unfiltered list when a filtered row changes", () => {
