@@ -66,8 +66,8 @@ jest.mock("@/components/app/ui/status-badge", () => ({
 jest.mock("@/components/app/v3", () => ({
   AnimatedSlotList: () => null,
   AnimatedSlotListItemContent: () => null,
-  DetailPanel: ({ children, trailing, tabs }: { children: React.ReactNode; trailing?: React.ReactNode; tabs?: React.ReactNode }) => (
-    <section>{trailing}{tabs}{children}</section>
+  DetailPanel: ({ children, avatar, trailing, tabs }: { children: React.ReactNode; avatar?: React.ReactNode; trailing?: React.ReactNode; tabs?: React.ReactNode }) => (
+    <section>{avatar}{trailing}{tabs}{children}</section>
   ),
   DetailTabPanels: ({ panels, activeTab }: { panels: Array<{ key: string; children: React.ReactNode }>; activeTab: string }) => (
     <>{panels.find((panel) => panel.key === activeTab)?.children}</>
@@ -136,5 +136,52 @@ describe("EmployeeDetailPanel availability action", () => {
     expect(screen.getByText("수정")).toBeInTheDocument();
     expect(screen.getByText("삭제")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" })).toBeChecked();
+  });
+
+  it("reconciles a confirmed toggle with later live props and supports a repeat toggle", () => {
+    const { rerender } = render(
+      <EmployeeDetailPanel
+        employee={employee}
+        canManage={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+
+    const toggle = screen.getByRole("checkbox", { name: "다음 배정 가능 여부" });
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+
+    act(() => {
+      mockOpenStatusMutate.mock.calls[0][1].onSuccess({ id: 7, openToNextWork: false });
+    });
+    rerender(
+      <EmployeeDetailPanel
+        employee={{ ...employee, openToNextWork: false, status: "unavailable" }}
+        canManage={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" })).not.toBeChecked();
+    expect(document.querySelector('[data-component="desktop_employees_split-layout_detail-panel_employees-detail-avatar"]'))
+      .toHaveClass("text-v3-text-muted");
+
+    rerender(
+      <EmployeeDetailPanel
+        employee={{ ...employee, openToNextWork: true, status: "available" }}
+        canManage={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" }));
+    expect(mockOpenStatusMutate).toHaveBeenNthCalledWith(
+      2,
+      { id: 7, openToNextWork: false },
+      expect.objectContaining({ onError: expect.any(Function), onSuccess: expect.any(Function) }),
+    );
   });
 });

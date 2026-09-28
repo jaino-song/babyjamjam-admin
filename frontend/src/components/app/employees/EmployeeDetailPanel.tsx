@@ -345,22 +345,24 @@ export function EmployeeDetailPanel({
     const [selectedAssignment, setSelectedAssignment] = useState<SelectedAssignment | null>(null);
     const [openToNextWorkOverride, setOpenToNextWorkOverride] = useState<{ employeeId: number; value: boolean } | null>(null);
     const openStatusMutation = useToggleEmployeeOpenStatus();
-    const openToNextWork = openToNextWorkOverride?.employeeId === employee.id
-        ? openToNextWorkOverride.value
-        : employee.openToNextWork;
+    const applicableOpenToNextWorkOverride = openToNextWorkOverride
+        && openToNextWorkOverride.employeeId === employee.id
+        && openToNextWorkOverride.value !== employee.openToNextWork
+        ? openToNextWorkOverride
+        : null;
+    const openToNextWork = applicableOpenToNextWorkOverride?.value ?? employee.openToNextWork;
     const unknownDateLabel = t(locale, "employees.form.registered-date-unknown");
 
     const handleOpenStatusChange = (nextOpenToNextWork: boolean) => {
-        const previousOpenToNextWork = openToNextWork;
         setOpenToNextWorkOverride({ employeeId: employee.id, value: nextOpenToNextWork });
         openStatusMutation.mutate(
             { id: employee.id, openToNextWork: nextOpenToNextWork },
             {
-                onError: () => setOpenToNextWorkOverride(
-                    previousOpenToNextWork === employee.openToNextWork
-                        ? null
-                        : { employeeId: employee.id, value: previousOpenToNextWork },
-                ),
+                // The live employee prop is the rollback source. This also
+                // lets an external update win if it arrives before the error.
+                onError: () => setOpenToNextWorkOverride(null),
+                // useToggleEmployeeOpenStatus writes the confirmed value to
+                // the query cache before this callback retires the override.
                 onSuccess: () => setOpenToNextWorkOverride(null),
             },
         );
@@ -385,7 +387,7 @@ export function EmployeeDetailPanel({
                 avatar={(
                     <div
                         data-component={`${dataComponent}_employees-detail-avatar`}
-                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] shadow-lg ${getEmployeeAvatarClassName(employee.openToNextWork)}`}
+                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] shadow-lg ${getEmployeeAvatarClassName(openToNextWork)}`}
                     >
                         <UserCheck className="h-5 w-5 shrink-0" aria-hidden="true" />
                     </div>
