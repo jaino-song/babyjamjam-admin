@@ -1,4 +1,8 @@
-import { tryLocalAutoLogin } from "@/lib/auth/local-auto-login";
+import {
+  isLocalAutoLoginEligible,
+  probeLocalAuthSession,
+  tryLocalAutoLogin,
+} from "@/lib/auth/local-auto-login";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { jwtDecode } from "jwt-decode";
@@ -35,6 +39,7 @@ type RefreshAttempt =
     accessToken: string;
     refreshToken: string;
   }
+  | { kind: "rejected" | "unavailable" }
   | { kind: "concurrent" }
   | null;
 
@@ -117,6 +122,17 @@ function isAutoLoginEnabled(value: string | undefined): boolean {
   return value !== "0" && value !== "false";
 }
 
+function getLocalAutoLoginTarget(request: NextRequest): URL {
+  const returnPath = getSafeReturnPathForRequest(request);
+  if (returnPath) {
+    return new URL(returnPath, request.url);
+  }
+
+  return request.nextUrl.pathname === "/login"
+    ? new URL("/", request.url)
+    : request.nextUrl;
+}
+
 function nextWithUpdatedRequestCookies(
   request: NextRequest,
   accessToken: string,
@@ -155,15 +171,16 @@ async function tryRefreshAuthSession(
         if (error?.code === "AUTH_REFRESH_REPLAY_CONCURRENT") {
           return { kind: "concurrent" };
         }
+        return { kind: "rejected" };
       }
-      return null;
+      return { kind: "unavailable" };
     }
     const data = await response.json() as RefreshResponse;
     if (
       !data.accessToken
       || isAccessTokenExpiredOrInvalid(data.accessToken)
     ) {
-      return null;
+      return { kind: "unavailable" };
     }
     return {
       kind: "success",
@@ -171,7 +188,7 @@ async function tryRefreshAuthSession(
       refreshToken: data.refreshToken || refreshToken,
     };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -186,12 +203,19 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(mobileRedirectUrl);
   }
 
+  const localRecoveryEligible = isLocalAutoLoginEligible(request, {
+    allowExistingCookies: true,
+  });
   const isLocalLoginNavigation = pathname === "/" || pathname === "/login" ||
     !PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
+  const hasExistingAuthCookies = request.cookies.has("auth_token")
+    || request.cookies.has("refresh_token");
+  let localLoginAttempted = false;
   if (isLocalLoginNavigation) {
+    localLoginAttempted = !hasExistingAuthCookies;
     const session = await tryLocalAutoLogin(request);
     if (session && !isAccessTokenExpiredOrInvalid(session.accessToken)) {
-      const target = pathname === "/login" ? new URL("/", request.url) : request.nextUrl;
+      const target = getLocalAutoLoginTarget(request);
       const response = NextResponse.redirect(target);
       setAuthSessionCookies(response.cookies, { ...session, autoLogin: true });
       response.headers.set("Cache-Control", "no-store");
@@ -200,6 +224,27 @@ export async function proxy(request: NextRequest) {
   }
 
   let authToken = request.cookies.get("auth_token")?.value;
+  let staleLocalSession = Boolean(
+    authToken && isAccessTokenExpiredOrInvalid(authToken),
+  );
+
+  if (
+    localRecoveryEligible
+    &&
+    pathname === "/login"
+    && request.method === "GET"
+    && authToken
+    && !staleLocalSession
+  ) {
+    const probe = await probeLocalAuthSession(request, authToken);
+    if (probe === "unknown") {
+      return NextResponse.next();
+    }
+    if (probe === "invalid") {
+      authToken = undefined;
+      staleLocalSession = true;
+    }
+  }
 
   if (
     pathname === "/onboarding" &&
@@ -214,10 +259,12 @@ export async function proxy(request: NextRequest) {
     if (
       pathname.startsWith("/login") &&
       isNavigationRequest &&
-      authToken &&
-      isAccessTokenExpiredOrInvalid(authToken)
+      ((Boolean(authToken) && staleLocalSession)
+        || (isLocalLoginNavigation && localRecoveryEligible && !authToken))
     ) {
       const loginRefreshToken = request.cookies.get("refresh_token")?.value;
+      let refreshRejected = !loginRefreshToken;
+      let refreshUnavailable = false;
       if (loginRefreshToken) {
         const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
         if (refreshAttempt?.kind === "success") {
@@ -241,9 +288,37 @@ export async function proxy(request: NextRequest) {
           response.headers.set("Retry-After", "1");
           return response;
         }
+        refreshRejected = refreshAttempt?.kind === "rejected";
+        refreshUnavailable = refreshAttempt?.kind === "unavailable";
       }
+
+      if (localRecoveryEligible && refreshUnavailable) {
+        return NextResponse.next();
+      }
+
+      if (
+        localRecoveryEligible
+        && refreshRejected
+        && isLocalLoginNavigation
+        && !localLoginAttempted
+        && request.method === "GET"
+      ) {
+        localLoginAttempted = true;
+        const session = await tryLocalAutoLogin(request, {
+          allowExistingCookies: true,
+        });
+        if (session && !isAccessTokenExpiredOrInvalid(session.accessToken)) {
+          const response = NextResponse.redirect(getLocalAutoLoginTarget(request));
+          setAuthSessionCookies(response.cookies, { ...session, autoLogin: true });
+          response.headers.set("Cache-Control", "no-store");
+          return response;
+        }
+      }
+
       const response = NextResponse.next();
-      clearAuthCookies(response);
+      if (staleLocalSession || (localRecoveryEligible && loginRefreshToken)) {
+        clearAuthCookies(response);
+      }
       return response;
     }
     return NextResponse.next();
@@ -255,6 +330,8 @@ export async function proxy(request: NextRequest) {
     request.cookies.get("auto_login")?.value,
   );
   let refreshedSession: Extract<RefreshAttempt, { kind: "success" }> | null = null;
+  let refreshRejected = !refreshToken;
+  let refreshUnavailable = false;
   if ((!authToken || isAccessTokenExpiredOrInvalid(authToken)) && refreshToken) {
     const refreshAttempt = await tryRefreshAuthSession(refreshToken);
     if (refreshAttempt?.kind === "concurrent") {
@@ -275,12 +352,39 @@ export async function proxy(request: NextRequest) {
         return response;
       }
     }
+    refreshRejected = refreshAttempt?.kind === "rejected";
+    refreshUnavailable = refreshAttempt?.kind === "unavailable";
   }
 
   if (!authToken || isAccessTokenExpiredOrInvalid(authToken)) {
+    if (localRecoveryEligible && refreshUnavailable) {
+      return NextResponse.redirect(createLoginUrl(request));
+    }
+
+    if (
+      localRecoveryEligible
+      && refreshRejected
+      && isLocalLoginNavigation
+      && request.method === "GET"
+      && !localLoginAttempted
+    ) {
+      localLoginAttempted = true;
+      const session = await tryLocalAutoLogin(request, {
+        allowExistingCookies: true,
+      });
+      if (session && !isAccessTokenExpiredOrInvalid(session.accessToken)) {
+        const response = NextResponse.redirect(getLocalAutoLoginTarget(request));
+        setAuthSessionCookies(response.cookies, { ...session, autoLogin: true });
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
+    }
+
     const loginUrl = createLoginUrl(request);
     const response = NextResponse.redirect(loginUrl);
-    clearAuthCookies(response);
+    if (!localRecoveryEligible || staleLocalSession || refreshToken) {
+      clearAuthCookies(response);
+    }
     return response;
   }
 
