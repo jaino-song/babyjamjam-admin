@@ -86,7 +86,10 @@ describe("ClientsPage directory and summary contracts", () => {
 
   it("keeps the matched total separate from loaded rows and reaches the final page", () => {
     expect(source).toContain("matchedTotal");
-    expect(source).toContain("일치 {matchedTotal}명 · 현재 {clients.length}명 표시");
+    expect(source).toContain("일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시");
+    expect(source).toContain("const listScopeSubtitle");
+    expect(source).toContain("subtitle={listScopeSubtitle}");
+    expect(source).not.toContain('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count"');
     expect(source).toContain("hasMore={Boolean(directory.hasNextPage && !directory.isNextPageError)}");
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
     expect(source).toContain("isFetchingMore={directory.isFetchingNextPage}");

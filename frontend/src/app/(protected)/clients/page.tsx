@@ -727,34 +727,28 @@ export default function ClientsPage() {
     const isDirectoryUnavailable = !directory.isBranchContextReady;
     const isDirectoryInitialError = isSearchSettled && directory.isInitialError;
     const isDirectoryRefreshError = isSearchSettled && directory.hasStaleData;
-    const listSubHeader = (
-        <div data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope" className="space-y-2">
-            {matchedTotal !== null && !isDirectoryInitialError ? (
-                <span data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count">
-                    {summaryScopeLabel} · 일치 {matchedTotal}명 · 현재 {clients.length}명 표시
-                </span>
-            ) : null}
-            {isDirectoryRefreshError ? (
-                <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
-                    <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
-                    <AlertDescription>
-                        최근에 확인된 목록을 표시하고 있어요.
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error_retry"
-                            className="mt-3"
-                            aria-label="고객 목록 다시 시도"
-                            onClick={() => void directory.refetch()}
-                        >
-                            다시 시도
-                        </Button>
-                    </AlertDescription>
-                </Alert>
-            ) : null}
-        </div>
-    );
+    const listScopeSubtitle = matchedTotal !== null && !isDirectoryInitialError
+        ? `${summaryScopeLabel} · 일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시`
+        : undefined;
+    const listSubHeader = isDirectoryRefreshError ? (
+        <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
+            <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+                최근에 확인된 목록을 표시하고 있어요.
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error_retry"
+                    className="mt-3"
+                    aria-label="고객 목록 다시 시도"
+                    onClick={() => void directory.refetch()}
+                >
+                    다시 시도
+                </Button>
+            </AlertDescription>
+        </Alert>
+    ) : undefined;
 
     return (
         <PageSection name="clients">
@@ -840,6 +834,7 @@ export default function ClientsPage() {
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
                     title="고객 목록"
+                    subtitle={listScopeSubtitle}
                     tabs={FILTER_CHIPS}
                     activeTab={activeFilter}
                     onTabChange={handleFilterChange}
