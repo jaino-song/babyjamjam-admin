@@ -89,7 +89,23 @@ jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
       </button>
     );
   },
-  EmployeeFormPanel: () => null,
+  EmployeeFormPanel: ({ onSuccess }: { onSuccess?: (employee: Employee) => void }) => (
+    <button
+      type="button"
+      onClick={() => onSuccess?.({
+        id: 2,
+        name: "신규 직원",
+        workArea: ["gangnam"],
+        phone: "01022223333",
+        grade: "A",
+        openToNextWork: false,
+        registeredDate: "2026-08-27T00:00:00.000Z",
+        status: "unavailable",
+      })}
+    >
+      직원 저장
+    </button>
+  ),
 }));
 
 jest.mock("@/components/app/ui/TwoButtonModal", () => ({
@@ -150,7 +166,9 @@ jest.mock("@/components/app/v3", () => ({
     <button type="button" {...props}>{label}</button>
   ),
   ListEmptyState: ({ message }: { message: string }) => <div>{message}</div>,
-  ListPanel: ({ children }: { children: ReactNode }) => <section>{children}</section>,
+  ListPanel: ({ children, headerActions }: { children: ReactNode; headerActions?: ReactNode }) => (
+    <section>{headerActions}{children}</section>
+  ),
   SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   StatsBar: ({ items }: { items: Array<{ label: string; value: number }> }) => (
     <div data-testid="employee-stats">
@@ -273,6 +291,76 @@ describe("EmployeeDirectoryManager edit refresh", () => {
       <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
     );
     expect(within(detail).getByRole("heading", { name: "외부 변경" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("available");
+  });
+
+  it("releases a created form snapshot once the new row appears in the live list", () => {
+    const { rerender } = render(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "직원 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "직원 저장" }));
+
+    const detail = screen.getByTestId("employee-detail");
+    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        isError: true,
+        // The create response succeeded, but the failed refetch has not
+        // returned the new employee yet.
+        employees: [employee],
+        allEmployees: [employee],
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+
+    const createdEmployee: Employee = {
+      id: 2,
+      name: "신규 직원",
+      workArea: ["gangnam"],
+      phone: "01022223333",
+      grade: "A",
+      openToNextWork: false,
+      registeredDate: "2026-08-27T00:00:00.000Z",
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [createdEmployee],
+        allEmployees: [createdEmployee],
+        filteredCount: 1,
+        isError: false,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "신규 직원" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
+
+    const externalEmployee: Employee = {
+      ...createdEmployee,
+      name: "외부 신규 변경",
+      openToNextWork: true,
+      status: "available",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [externalEmployee],
+        allEmployees: [externalEmployee],
+        filteredCount: 1,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "외부 신규 변경" })).toBeInTheDocument();
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("available");
   });
 

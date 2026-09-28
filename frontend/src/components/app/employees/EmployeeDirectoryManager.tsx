@@ -106,12 +106,15 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const authUserQuery = useGetAuthUser();
     const canManageEmployees = canManageBranchFromAuthQuery(authUserQuery);
 
-    const selectedEmployeeFromList = selectedEmployee
-        ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? selectedEmployee
+    const liveSelectedEmployee = selectedEmployee
+        ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? null
         : null;
+    const selectedEmployeeFromList = liveSelectedEmployee ?? selectedEmployee;
     const isFormResultWaitingForList = selectedEmployeeFromForm
         && selectedEmployeeFromList
-        && (!selectedEmployeeFormBaseline || employeesMatch(selectedEmployeeFromList, selectedEmployeeFormBaseline));
+        && (selectedEmployeeFormBaseline
+            ? employeesMatch(selectedEmployeeFromList, selectedEmployeeFormBaseline)
+            : !liveSelectedEmployee);
     const selectedEmployeeForDetail = isFormResultWaitingForList && selectedEmployeeFromList
         ? {
             ...selectedEmployeeFromList,
