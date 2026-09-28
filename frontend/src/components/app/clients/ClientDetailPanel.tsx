@@ -413,10 +413,19 @@ function ClientUpcomingMessageList({
                 data-source-component="ClientUpcomingMessageList"
                 className="flex flex-col items-center justify-center gap-3 py-8 text-center"
             >
-                <p className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                <p
+                    data-component={`${sectionPrefix}_error_message`}
+                    className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                >
                     예정된 자동 메시지를 불러오지 못했어요
                 </p>
-                <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                <Button
+                    data-component={`${sectionPrefix}_error_retry`}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={onRetry}
+                >
                     다시 시도
                 </Button>
             </div>
@@ -463,12 +472,19 @@ function ClientUpcomingMessageList({
                             title={job.ruleName || getMessageTemplateLabel(job.templateKey)}
                             subtitle={
                                 <>
-                                    <span>{recipientLabel}: {job.recipientName}</span>
-                                    <span>{display.timeLabel}: {formatClientUpcomingDate(display.time)}</span>
+                                    <span data-component={`${sectionPrefix}_list_item_recipient`}>
+                                        {recipientLabel}: {job.recipientName}
+                                    </span>
+                                    <span data-component={`${sectionPrefix}_list_item_schedule`}>
+                                        {display.timeLabel}: {formatClientUpcomingDate(display.time)}
+                                    </span>
                                 </>
                             }
                             meta={
-                                <span data-slot="template-label">
+                                <span
+                                    data-component={`${sectionPrefix}_list_item_template-label`}
+                                    data-slot="template-label"
+                                >
                                     {getMessageTemplateLabel(job.templateKey)}
                                 </span>
                             }
@@ -487,6 +503,7 @@ function ClientUpcomingMessageList({
             />
             {hasNextPage ? (
                 <Button
+                    data-component={`${sectionPrefix}_load-more`}
                     type="button"
                     variant="outline"
                     size="sm"
