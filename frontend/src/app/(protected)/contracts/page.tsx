@@ -719,8 +719,8 @@ export default function ContractsPage() {
           { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
           { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
-        summary={documentJobsEnabled ? documentJobsQuery.summary : null}
-        documentJobs={documentJobsEnabled ? (documentJobsQuery.data ?? null) : null}
+        summary={documentJobsEnabled ? documentJobsQuery.summary : null} summaryError={documentJobsEnabled ? documentJobsQuery.summaryQuery.error : null} summaryHasData={documentJobsEnabled && documentJobsQuery.summary !== undefined}
+        isSummaryRefreshing={documentJobsEnabled && documentJobsQuery.summaryQuery.isFetching} onRetrySummary={documentJobsEnabled ? () => void documentJobsQuery.summaryQuery.refetch() : undefined} documentJobs={documentJobsEnabled ? (documentJobsQuery.data ?? null) : null}
         isJobsLoading={documentJobsEnabled && (
           documentJobsQuery.summaryQuery.isLoading || documentJobsQuery.isLoading
         )}

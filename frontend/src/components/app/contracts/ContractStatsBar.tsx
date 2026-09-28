@@ -23,6 +23,10 @@ export interface ContractStatsBarProps {
   summary?: ContractDocumentJobsSummary | null;
   jobs?: ContractDocumentJobsData | null;
   documentJobs?: ContractDocumentJobsData | null;
+  summaryError?: unknown;
+  summaryHasData?: boolean;
+  isSummaryRefreshing?: boolean;
+  onRetrySummary?: () => void;
   jobsLoading?: boolean;
   isJobsLoading?: boolean;
   jobsError?: unknown;
@@ -52,6 +56,10 @@ export function ContractStatsBar({
   summary,
   jobs,
   documentJobs,
+  summaryError,
+  summaryHasData,
+  isSummaryRefreshing = false,
+  onRetrySummary,
   jobsLoading = false,
   isJobsLoading = false,
   jobsError,
@@ -71,7 +79,9 @@ export function ContractStatsBar({
   const resolvedJobsLoading = jobsLoading || isJobsLoading;
   const resolvedJobsError = jobsError ?? error;
   const resolvedRetry = onRetryJobs ?? onRetry;
-  const activeCount = summary?.activeCount ?? 0;
+  const hasSummaryData = summaryHasData ?? (summary !== undefined && summary !== null);
+  const activeCount = hasSummaryData && summary ? summary.activeCount : "—";
+  const hasSummaryError = summaryError !== undefined && summaryError !== null;
   const hasStatsError = statsError !== undefined && statsError !== null;
 
   const popoverProps: JobsPopoverProps = {
@@ -126,6 +136,41 @@ export function ContractStatsBar({
           />
         }
       /> : null}
+
+      {showDocumentJobs && hasSummaryError ? (
+        <Alert
+          data-component={`${statsBase}_document-jobs-summary-alert`}
+          className="basis-full"
+          variant={hasSummaryData ? "warning" : "destructive"}
+        >
+          <AlertTitle>
+            {hasSummaryData
+              ? "전자문서 처리 현황을 최신 상태로 불러오지 못했어요"
+              : "전자문서 처리 현황을 불러오지 못했어요"}
+          </AlertTitle>
+          <AlertDescription>
+            <p>
+              {hasSummaryData
+                ? "최근 성공한 처리 현황을 표시하고 있어요. 다시 시도해 주세요."
+                : "처리 중인 전자문서 수를 확인할 수 없어요. 다시 시도해 주세요."}
+            </p>
+            {onRetrySummary ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-component={`${statsBase}_document-jobs-summary-alert_retry`}
+                className="mt-3"
+                onClick={onRetrySummary}
+                disabled={isSummaryRefreshing}
+                aria-label="전자문서 처리 현황 다시 시도"
+              >
+                {isSummaryRefreshing ? "다시 시도 중…" : "다시 시도"}
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {hasStatsError ? (
         <Alert
