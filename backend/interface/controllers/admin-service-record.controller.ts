@@ -17,7 +17,7 @@ import {
 } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
 import { problemBody } from "application/utils/problem-bodies";
 import {
@@ -78,7 +78,7 @@ export class AdminServiceRecordController {
     }
 
     @Get("client/:clientId/editor")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     getClientEditor(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
@@ -88,7 +88,7 @@ export class AdminServiceRecordController {
     }
 
     @Get("clients/:clientId/revisions")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     getRevisionHistory(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
@@ -98,7 +98,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("revisions/:revisionId/documents/:documentStateId/retry")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     retryRevisionDocument(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("revisionId") revisionId: string,
@@ -116,7 +116,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("client/:clientId/draft")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     startDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
@@ -127,7 +127,7 @@ export class AdminServiceRecordController {
     }
 
     @Get("client/:clientId/draft")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     getDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("clientId", ParseIntPipe) clientId: number,
@@ -137,7 +137,7 @@ export class AdminServiceRecordController {
     }
 
     @Patch("drafts/:draftId")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     updateDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("draftId") draftId: string,
@@ -148,7 +148,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("drafts/:draftId/discard")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     discardDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("draftId") draftId: string,
@@ -159,7 +159,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("drafts/:draftId/preview")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     previewDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("draftId") draftId: string,
@@ -170,7 +170,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("drafts/:draftId/confirm")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     confirmDraft(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("draftId") draftId: string,
@@ -210,7 +210,7 @@ export class AdminServiceRecordController {
     }
 
     @Post("schedules/:scheduleId/reset-link")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     resetLink(
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Param("scheduleId", ParseIntPipe) scheduleId: number,

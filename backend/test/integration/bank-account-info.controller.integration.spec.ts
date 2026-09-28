@@ -5,6 +5,7 @@ import request from "supertest";
 import { BankAccountInfoController } from "interface/controllers/bank-account-info.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { BankAccountInfoEntity } from "domain/entities/bank-account-info.entity";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
@@ -74,6 +75,8 @@ describe("BankAccountInfoController (Integration)", () => {
             })
             .overrideGuard(TenantGuard)
             .useValue({ canActivate: () => true })
+            .overrideGuard(BranchManagerGuard)
+            .useValue({ canActivate: () => true })
             .overrideGuard(OwnerOrAdminGuard)
             .useValue({ canActivate: () => true })
             .compile();
@@ -90,12 +93,14 @@ describe("BankAccountInfoController (Integration)", () => {
     });
 
     it.each(["create", "update", "delete"] as const)(
-        "keeps %s protected by owner/admin authority",
+        "protects %s with tenant branch-manager authority",
         (methodName) => {
             const guards = getMethodGuards(methodName);
 
             expect(guards).toContain(JwtGuard);
-            expect(guards).toContain(OwnerOrAdminGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).toContain(BranchManagerGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
         },
     );
 

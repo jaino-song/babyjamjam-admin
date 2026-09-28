@@ -82,12 +82,25 @@ describe("legacy chat tool security boundary", () => {
         logSpy.mockRestore();
     });
 
-    it("denies bank account reads to a non-admin branch role", async () => {
+    it.each(["manager", "user"] as const)("allows bank account reads to %s branch roles", async (branchRole) => {
         const { executor, bankAccountInfoService } = createExecutor();
 
-        const result = await executor.execute({ ...context, branchRole: "user" }, "getBankAccountByArea", { area: "인천" });
+        const result = await executor.execute({ ...context, branchRole }, "getBankAccountByArea", { area: "인천" });
 
-        expect(result).toEqual({ success: false, error: expect.stringContaining("관리자") });
+        expect(result).toMatchObject({ success: true });
+        expect(bankAccountInfoService.findByArea).toHaveBeenCalledWith("인천", "branch-1");
+    });
+
+    it.each([
+        { globalRole: "admin", branchRole: undefined },
+        { globalRole: "user", branchRole: undefined },
+        { globalRole: "user", branchRole: "invalid" },
+    ])("fails closed for an unverified bank principal %o", async (principal) => {
+        const { executor, bankAccountInfoService } = createExecutor();
+
+        const result = await executor.execute({ ...context, ...principal }, "getBankAccountByArea", { area: "인천" });
+
+        expect(result).toMatchObject({ success: false, error: expect.stringContaining("권한") });
         expect(bankAccountInfoService.findByArea).not.toHaveBeenCalled();
     });
 

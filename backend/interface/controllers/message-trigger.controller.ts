@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UseGuards } from "@nestjs/common";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -102,7 +102,7 @@ export class MessageTriggerController {
     }
 
     @Post("message-logs/:id/reconcile")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     reconcileHistory(
         @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @Param("id") id: string,
@@ -119,6 +119,7 @@ export class MessageTriggerController {
     }
 
     @Post("message-trigger-rules")
+    @UseGuards(BranchManagerGuard)
     createRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateMessageTriggerRuleDto,
@@ -135,6 +136,7 @@ export class MessageTriggerController {
     }
 
     @Patch("message-trigger-rules/:id")
+    @UseGuards(BranchManagerGuard)
     updateRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
@@ -144,6 +146,7 @@ export class MessageTriggerController {
     }
 
     @Put("message-trigger-rules/:id/branch-activation")
+    @UseGuards(BranchManagerGuard)
     updateBranchActivation(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,
@@ -153,7 +156,7 @@ export class MessageTriggerController {
     }
 
     @Put("message-trigger-rules/:id/activation-with-parent")
-    @UseGuards(OwnerOrAdminGuard)
+    @UseGuards(BranchManagerGuard)
     activateRuleWithParent(
         @CurrentTenant() tenant: { branchId?: string; userId?: string; globalRole?: string; branchRole?: string },
         @Param("id") id: string,
@@ -174,6 +177,7 @@ export class MessageTriggerController {
     }
 
     @Delete("message-trigger-rules/:id")
+    @UseGuards(BranchManagerGuard)
     deleteRule(
         @CurrentTenant() tenant: { branchId?: string },
         @Param("id") id: string,

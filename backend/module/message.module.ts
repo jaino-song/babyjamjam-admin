@@ -46,6 +46,7 @@ import { AgentAutomationRecordStoreService } from "application/agent/agent-autom
 import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 @Module({
     imports: [
@@ -87,6 +88,7 @@ import { AgentAutomationDeliveryGateService } from "application/services/agent-a
         AgentAutomationAuthorityService,
         AgentAutomationJobAuthorityService,
         AgentAutomationDeliveryGateService,
+        BranchManagerGuard,
         ClientAutomationImpactService,
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],

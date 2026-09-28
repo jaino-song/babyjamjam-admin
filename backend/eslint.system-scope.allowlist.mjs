@@ -24,6 +24,8 @@ export const systemScopeImportAllowlist = [
     // membership during token refresh, before any tenant store branchId
     // exists for the request.
     "application/services/auth-session.service.ts",
+    // AuthController resolves the selected branch membership role for /auth/me.
+    "interface/controllers/auth.controller.ts",
     // Public service-record link/access credentials discover their branch via an exact
     // token-keyed read. Only those lookups use system scope; current-provider reads
     // and challenge writes run in the resolved branch scope with branch-pinned writes.

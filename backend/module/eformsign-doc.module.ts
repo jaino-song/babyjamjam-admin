@@ -42,6 +42,7 @@ import { AreaTemplateModule } from "module/area-template.module";
 import { MessageModule } from "module/message.module";
 import { SystemSettingModule } from "module/system-setting.module";
 import { EformsignDocController } from "interface/controllers/eformsign-doc.controller";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
@@ -119,6 +120,7 @@ import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifi
     ],
     controllers: [EformsignDocController],
     providers: [
+        BranchManagerGuard,
         CreateEmployeeUsecase,
         // Use cases - Local DB
         FindEformsignDocByIdUsecase,

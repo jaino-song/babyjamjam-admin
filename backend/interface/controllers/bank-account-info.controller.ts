@@ -12,8 +12,8 @@ import {
     UseGuards,
 } from "@nestjs/common";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { CreateBankAccountInfoDto, UpdateBankAccountInfoDto } from "../dto/bank-account-info.dto";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
@@ -23,7 +23,7 @@ export class BankAccountInfoController {
     constructor(private readonly bankAccountInfoService: BankAccountInfoService) {}
 
     @Post()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
     create(@Body() createBankAccountInfoDto: CreateBankAccountInfoDto, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.create(createBankAccountInfoDto, branchId);
@@ -45,14 +45,14 @@ export class BankAccountInfoController {
     }
 
     @Patch()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
     update(@Query("area") area: string, @Body() updateBankAccountInfoDto: UpdateBankAccountInfoDto, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.update(this.requireArea(area), updateBankAccountInfoDto, branchId);
     }
 
     @Delete()
-    @UseGuards(JwtGuard, OwnerOrAdminGuard)
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
     delete(@Query("area") area: string, @Request() req: any) {
         const branchId = this.requireBranchId(req);
         return this.bankAccountInfoService.delete(this.requireArea(area), branchId);

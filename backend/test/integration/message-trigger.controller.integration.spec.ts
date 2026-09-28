@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import request from "supertest";
 import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import {
     MessageTriggerService,
     type MessageLogRecordView,
@@ -210,6 +211,8 @@ describe("MessageTriggerController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
+            .overrideGuard(BranchManagerGuard)
+            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();

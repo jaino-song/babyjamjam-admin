@@ -312,7 +312,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         expect(dispatchBoundary.reconcile).not.toHaveBeenCalled();
     });
 
-    it("restricts intent reconciliation to owner/admin operators", async () => {
+    it("denies intent reconciliation to branch staff", async () => {
         authRole = "user";
         const response = await request(app.getHttpServer())
             .post("/eformsign-docs/dispatch-intents/11111111-1111-4111-8111-111111111111/reconcile")
@@ -320,6 +320,19 @@ describe("EformsignDocumentJobController (Integration)", () => {
 
         expect(response.status).toBe(403);
         expect(dispatchBoundary.reconcile).not.toHaveBeenCalled();
+    });
+
+    it("allows a branch manager to reconcile the branch-scoped intent", async () => {
+        authRole = "manager";
+        const response = await request(app.getHttpServer())
+            .post("/eformsign-docs/dispatch-intents/11111111-1111-4111-8111-111111111111/reconcile")
+            .send({ outcome: "delivered", reason: "provider receipt verified" });
+
+        expect(response.status).toBe(200);
+        expect(dispatchBoundary.reconcile).toHaveBeenCalledWith(expect.objectContaining({
+            branchId: "branch-a",
+            actorUserId: "user-a",
+        }));
     });
 
     it("returns branch-scoped summary and list with a 24-hour/50 terminal bound", async () => {

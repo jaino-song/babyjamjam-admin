@@ -54,7 +54,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.delete",
@@ -73,7 +73,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.list",
@@ -91,7 +91,7 @@
       "flagKey": "agent.capability.automation.list",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.setActive",
@@ -110,7 +110,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "automation.update",
@@ -129,7 +129,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "bank.accounts",
@@ -469,7 +469,9 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.changeAvailability",
@@ -477,7 +479,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "employees.create",
@@ -487,7 +489,9 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager",
+        "user"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.create",
@@ -495,7 +499,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "employees.get",
@@ -559,7 +563,8 @@
       "risk": "reversible-write",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.employees.update",
@@ -567,7 +572,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/employee/employee-write-agent-capabilities.provider.ts",
-      "sourceDigest": "19a6185939f873d2f7a1838d528128e34e503c910b91e76192c9e7693c433066"
+      "sourceDigest": "4d3664c20a6398250e2c8bcacf4a0abc82f8ef321e7660befae82967fff58a69"
     },
     {
       "name": "files.delete",
@@ -658,7 +663,7 @@
       "flagKey": "agent.capability.messages.deliveryHistory",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.previewSms",
@@ -676,7 +681,7 @@
       "flagKey": "agent.capability.messages.previewSms",
       "sideEffect": false,
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.retrySms",
@@ -686,7 +691,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.retrySms",
@@ -694,7 +700,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.scheduleSms",
@@ -704,7 +710,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.scheduleSms",
@@ -712,7 +719,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.sendSms",
@@ -722,7 +729,8 @@
       "risk": "external-side-effect",
       "requiredRoles": [
         "owner",
-        "admin"
+        "admin",
+        "manager"
       ],
       "renderer": "action-proposal",
       "flagKey": "agent.capability.messages.sendSms",
@@ -730,7 +738,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/message/message-external-agent-capabilities.provider.ts",
-      "sourceDigest": "a09e7a463023f3275e93b24f528ce5190a7542ce0b61bf1cbd553231354b290e"
+      "sourceDigest": "913aa8381235493b5fefe4f8bce06fff5dbae403c9ea8518a311319588c33061"
     },
     {
       "name": "messages.updateTemplate",

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Optional, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { EformsignAutomationStatusService } from "application/services/eformsign-automation-status.service";
 import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
@@ -105,12 +105,14 @@ export class SystemSettingController {
             this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId),
             this.systemSettingService.getMessageSettingsPolicyActivations(branchId),
         ]);
-        const canManageActivation = tenant?.globalRole === "owner" || tenant?.branchRole === "admin";
+        const canManageActivation = tenant?.globalRole === "owner"
+            || tenant?.branchRole === "admin"
+            || tenant?.branchRole === "manager";
         return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig, policyActivations, canManageActivation);
     }
 
     @Put("message-policy-activations/:policyId")
-    @UseGuards(TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(TenantGuard, BranchManagerGuard)
     async updateMessageSettingsPolicyActivation(
         @CurrentTenant() tenant: SettingsTenant,
         @Param() params: MessageSettingsPolicyParamsDto,
@@ -133,7 +135,7 @@ export class SystemSettingController {
     }
 
     @Put("message-automation-policies/past-trigger")
-    @UseGuards(TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(TenantGuard, BranchManagerGuard)
     async updateMessageAutomationPastTriggerConfig(
         @CurrentTenant() tenant: SettingsTenant,
         @Body() dto: UpdateMessageAutomationPastTriggerConfigDto,
@@ -162,7 +164,7 @@ export class SystemSettingController {
     }
 
     @Put("contract-automation-policies/auto-finalize")
-    @UseGuards(TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(TenantGuard, BranchManagerGuard)
     async updateContractAutoFinalizeConfig(
         @CurrentTenant() tenant: SettingsTenant,
         @Body() dto: UpdateContractAutoFinalizeConfigDto,
@@ -202,7 +204,7 @@ export class SystemSettingController {
     }
 
     @Put("client-registration-policy")
-    @UseGuards(TenantGuard, OwnerOrAdminGuard)
+    @UseGuards(TenantGuard, BranchManagerGuard)
     async updateClientRegistrationPolicy(
         @CurrentTenant() tenant: SettingsTenant,
         @Request() request: { user?: { userId?: string; role?: string; branchRole?: string } },

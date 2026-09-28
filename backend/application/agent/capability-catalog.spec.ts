@@ -17,6 +17,16 @@ describe("capability catalog", () => {
         expect(CAPABILITY_CATALOG_BY_NAME.get("bank.accounts")?.requiredRoles).toEqual(allTenantRoles);
         expect(CAPABILITY_CATALOG_BY_NAME.get("messages.deliveryHistory")?.requiredRoles)
             .toEqual(["owner", "admin", "manager"]);
+        expect(CAPABILITY_CATALOG_BY_NAME.get("employees.create")?.requiredRoles).toEqual(allTenantRoles);
+        expect(CAPABILITY_CATALOG_BY_NAME.get("employees.changeAvailability")?.requiredRoles).toEqual(allTenantRoles);
+        expect(CAPABILITY_CATALOG_BY_NAME.get("employees.update")?.requiredRoles)
+            .toEqual(["owner", "admin", "manager"]);
+        for (const name of ["messages.sendSms", "messages.scheduleSms", "messages.retrySms"]) {
+            expect(CAPABILITY_CATALOG_BY_NAME.get(name)?.requiredRoles)
+                .toEqual(["owner", "admin", "manager"]);
+        }
+        expect(CAPABILITY_CATALOG_BY_NAME.get("notifications.test")?.requiredRoles)
+            .toEqual(["owner", "admin"]);
     });
 
     it("agrees with every real provider's own meta.description for all read capabilities", () => {
