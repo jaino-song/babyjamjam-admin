@@ -315,4 +315,45 @@ describe("MessagesTriggersPage", () => {
 
     expect(mockReplace).toHaveBeenCalledWith("/messages/automation", { scroll: false });
   });
+
+  it("fails closed when a manager refetch keeps stale data with an error", () => {
+    mockRules = [createRule()];
+    mockSearchParams = new URLSearchParams({ item: "rule-1" });
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: true,
+      isError: true,
+    });
+
+    const view = render(<MessagesTriggersPage />);
+
+    expectListVisible(view.container);
+    expect(mockReplace).not.toHaveBeenCalled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "manager" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    view.rerender(<MessagesTriggersPage />);
+
+    expectDetailVisible(view.container);
+    expect(mockReplace).not.toHaveBeenCalled();
+
+    mockUseGetAuthUser.mockReturnValue({
+      data: { role: "user", branchRole: "user" },
+      isPending: false,
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+    });
+    view.rerender(<MessagesTriggersPage />);
+
+    expectListVisible(view.container);
+    expect(mockReplace).toHaveBeenCalledWith("/messages/automation", { scroll: false });
+  });
 });
