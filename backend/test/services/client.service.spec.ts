@@ -4422,6 +4422,108 @@ describe("ClientService", () => {
     // Service status computation tests
     // ============================================
     describe("service status computation", () => {
+        beforeEach(() => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-10-01T00:00:00.000Z"));
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        const createStatusClient = (
+            storedStatus: string | null,
+            startDate: string | null,
+            endDate: string | null,
+        ): ClientEntity => {
+            const client = createClientEntity();
+            client.serviceStatus = storedStatus;
+            client.startDate = startDate ? new Date(`${startDate}T00:00:00.000Z`) : null;
+            client.endDate = endDate ? new Date(`${endDate}T00:00:00.000Z`) : null;
+            return client;
+        };
+
+        it.each([
+            {
+                label: "missing dates",
+                storedStatus: null,
+                startDate: null,
+                endDate: null,
+                effectiveStatus: "pre_booking",
+                badgeStatus: "preBooking",
+            },
+            {
+                label: "start date after today",
+                storedStatus: "active",
+                startDate: "2026-10-02",
+                endDate: "2026-10-03",
+                effectiveStatus: "waiting",
+                badgeStatus: "pending",
+            },
+            {
+                label: "start date equal to today and end date equal to today",
+                storedStatus: "waiting",
+                startDate: "2026-10-01",
+                endDate: "2026-10-01",
+                effectiveStatus: "active",
+                badgeStatus: "active",
+            },
+            {
+                label: "end date before today despite stored active status",
+                storedStatus: "active",
+                startDate: "2026-09-01",
+                endDate: "2026-09-30",
+                effectiveStatus: "completed",
+                badgeStatus: "completed",
+            },
+            {
+                label: "manual pre-booking status",
+                storedStatus: "pre_booking",
+                startDate: "2026-09-01",
+                endDate: "2026-09-30",
+                effectiveStatus: "pre_booking",
+                badgeStatus: "preBooking",
+            },
+            {
+                label: "manual terminated status",
+                storedStatus: "terminated",
+                startDate: "2026-10-02",
+                endDate: "2026-10-03",
+                effectiveStatus: "terminated",
+                badgeStatus: "terminated",
+            },
+            {
+                label: "manual replacement requested status",
+                storedStatus: "replacement_requested",
+                startDate: "2026-09-01",
+                endDate: "2026-09-30",
+                effectiveStatus: "replacement_requested",
+                badgeStatus: "terminated",
+            },
+        ])("uses the effective Korea date status for $label", async ({
+            storedStatus,
+            startDate,
+            endDate,
+            effectiveStatus,
+            badgeStatus,
+        }) => {
+            listClientsUsecase.execute.mockResolvedValue([
+                createStatusClient(storedStatus, startDate, endDate),
+            ]);
+
+            const [result] = await service.findAll(branchId);
+
+            expect(result?.serviceStatus).toBe(effectiveStatus);
+            expect(result?.badges).toEqual(expect.arrayContaining([
+                expect.objectContaining({ key: "service_status", status: badgeStatus }),
+            ]));
+            if (effectiveStatus === "completed" || effectiveStatus === "terminated" || effectiveStatus === "pre_booking") {
+                expect(result?.actionRequired).toBeNull();
+            }
+            if (effectiveStatus === "replacement_requested") {
+                expect(result?.actionRequired).toEqual({ reason: "교체 요청", priority: 1 });
+            }
+        });
+
         it("should attach computed service status to clients", async () => {
             // Arrange
             // Create client with dates that would result in 'active' status

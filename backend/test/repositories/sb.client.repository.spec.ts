@@ -3,6 +3,10 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientEntity } from "domain/entities/client.entity";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
+import {
+    clientListTabWhere,
+    getClientListDateRanges,
+} from "domain/repositories/client.repository.interface";
 
 describe("SbClientRepository", () => {
     // ============================================
@@ -311,29 +315,29 @@ describe("SbClientRepository", () => {
             expect(clientModel.count).toHaveBeenCalledWith({ where: { branchId } });
         });
 
-        it("applies the selected raw status tab to both rows and total", async () => {
+        it("applies the effective status tab to both rows and total", async () => {
             clientModel.findMany.mockResolvedValue([]);
             clientModel.count.mockResolvedValue(51);
 
             const result = await repository.findAllPaginated(branchId, 1, 50, "Kim", "active");
             const listWhere = clientModel.findMany.mock.calls[0]?.[0]?.where;
 
-            expect(listWhere).toEqual(expect.objectContaining({
+            expect(listWhere).toEqual({
                 branchId,
                 OR: [
                     { name: { contains: "Kim", mode: "insensitive" } },
                     { address: { contains: "Kim", mode: "insensitive" } },
                     { phone: { contains: "Kim", mode: "insensitive" } },
                 ],
-                AND: [{ serviceStatus: "active" }],
-            }));
+                AND: [clientListTabWhere("active", getClientListDateRanges().todayStart)],
+            });
             expect(clientModel.count).toHaveBeenCalledWith({ where: listWhere });
             expect(result.total).toBe(51);
             expect(result.totalPages).toBe(2);
         });
 
         it.each(["completed", "terminated"] as const)(
-            "uses raw serviceStatus equality for the %s tab even when dates are absent",
+            "uses the effective status predicate for the %s tab",
             async (tab) => {
                 clientModel.findMany.mockResolvedValue([]);
                 clientModel.count.mockResolvedValue(1);
@@ -343,7 +347,7 @@ describe("SbClientRepository", () => {
                 expect(clientModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
                     where: {
                         branchId,
-                        AND: [{ serviceStatus: tab }],
+                        AND: [clientListTabWhere(tab, getClientListDateRanges().todayStart)],
                     },
                 }));
             },
@@ -497,15 +501,95 @@ describe("SbClientRepository", () => {
                         && dueDate.lt?.toISOString() === "2026-11-01T00:00:00.000Z";
                 });
             })).toBe(true);
-            expect(countArgs.some(({ where }) => {
-                const predicates = [where, ...(Array.isArray(where["AND"]) ? where["AND"] : [])] as Array<Record<string, unknown>>;
-                return predicates.some((predicate) => {
-                    const endDate = predicate["endDate"] as { gte?: Date; lt?: Date } | undefined;
-                    return predicate["serviceStatus"] === "active"
-                        && endDate?.gte?.toISOString() === "2026-10-01T00:00:00.000Z"
-                        && endDate.lt?.toISOString() === "2026-10-05T00:00:00.000Z";
-                });
-            })).toBe(true);
+            const serviceEndCount = countArgs.find(({ where }) => {
+                const containsServiceEndRange = (value: unknown): boolean => {
+                    if (Array.isArray(value)) return value.some(containsServiceEndRange);
+                    if (!value || typeof value !== "object") return false;
+
+                    const record = value as Record<string, unknown>;
+                    const endDate = record["endDate"];
+                    if (endDate && typeof endDate === "object") {
+                        const endDateFilter = endDate as Record<string, unknown>;
+                        return endDateFilter["gte"] instanceof Date
+                            && endDateFilter["lt"] instanceof Date
+                            && endDateFilter["gte"].toISOString() === "2026-10-01T00:00:00.000Z"
+                            && endDateFilter["lt"].toISOString() === "2026-10-05T00:00:00.000Z";
+                    }
+
+                    return Object.values(record).some(containsServiceEndRange);
+                };
+
+                return containsServiceEndRange(where);
+            });
+            expect(serviceEndCount?.where).toMatchObject({
+                branchId,
+                AND: [
+                    {
+                        AND: [
+                            clientListTabWhere("active", new Date("2026-10-01T00:00:00.000Z")),
+                            {
+                                endDate: {
+                                    gte: new Date("2026-10-01T00:00:00.000Z"),
+                                    lt: new Date("2026-10-05T00:00:00.000Z"),
+                                },
+                            },
+                        ],
+                    },
+                ],
+            });
+        });
+
+        it("keeps stale stored statuses in the same completed tab as the summary before lazy writeback", async () => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-10-01T00:00:00.000Z"));
+            clientModel.findMany.mockResolvedValue([
+                createClientRow({
+                    id: 9,
+                    serviceStatus: "active",
+                    startDate: new Date("2026-09-01T00:00:00.000Z"),
+                    endDate: new Date("2026-09-30T00:00:00.000Z"),
+                }),
+            ]);
+            clientModel.count.mockResolvedValue(1);
+
+            const list = await repository.findAllPaginated(branchId, 1, 10, undefined, "completed");
+            const listWhere = clientModel.findMany.mock.calls[0]?.[0]?.where;
+            const todayStart = new Date("2026-10-01T00:00:00.000Z");
+
+            await repository.getListSummary(branchId);
+            const summaryCountArgs = clientModel.count.mock.calls.map(([args]) => args as { where: Record<string, unknown> });
+            const containsEndDateBefore = (value: unknown): boolean => {
+                if (Array.isArray(value)) return value.some(containsEndDateBefore);
+                if (!value || typeof value !== "object") return false;
+
+                const record = value as Record<string, unknown>;
+                const endDate = record["endDate"];
+                if (endDate && typeof endDate === "object") {
+                    const endDateFilter = endDate as Record<string, unknown>;
+                    if (
+                        endDateFilter["lt"] instanceof Date
+                        && endDateFilter["lt"].toISOString() === "2026-10-01T00:00:00.000Z"
+                    ) {
+                        return true;
+                    }
+                }
+
+                return Object.values(record).some(containsEndDateBefore);
+            };
+            const completedSummaryWhere = summaryCountArgs.find(({ where }) => {
+                return containsEndDateBefore(where);
+            })?.where;
+
+            expect(list.data[0]?.serviceStatus).toBe("active");
+            expect(listWhere).toEqual({
+                branchId,
+                AND: [clientListTabWhere("completed", todayStart)],
+            });
+            expect(completedSummaryWhere).toEqual({
+                branchId,
+                AND: [clientListTabWhere("completed", todayStart)],
+            });
+            expect(clientModel.update).not.toHaveBeenCalled();
+            expect(clientModel.updateMany).not.toHaveBeenCalled();
         });
 
         it("does not reuse a summary count across branches", async () => {

@@ -4,6 +4,7 @@ import {
     ClientWithInitialSchedule,
     ClientListSummary,
     ClientListTab,
+    getEffectiveClientServiceStatus,
     getClientListDateRanges,
     IClientRepository,
     InitialClientSchedule,
@@ -90,7 +91,14 @@ export class MockClientRepository implements IClientRepository {
             );
         }
 
-        data = data.filter(client => tab === "all" || client.serviceStatus === tab);
+        data = data.filter(
+            client => tab === "all"
+                || getEffectiveClientServiceStatus(
+                    client.serviceStatus,
+                    client.startDate,
+                    client.endDate,
+                ) === tab,
+        );
 
         const total = data.length;
         const totalPages = Math.ceil(total / limit);
@@ -118,14 +126,19 @@ export class MockClientRepository implements IClientRepository {
             );
         }
 
+        const effectiveStatus = (client: ClientEntity) => getEffectiveClientServiceStatus(
+            client.serviceStatus,
+            client.startDate,
+            client.endDate,
+        );
         const byTab = {
             all: data.length,
-            [SERVICE_STATUS.PRE_BOOKING]: data.filter(client => client.serviceStatus === SERVICE_STATUS.PRE_BOOKING).length,
-            [SERVICE_STATUS.WAITING]: data.filter(client => client.serviceStatus === SERVICE_STATUS.WAITING).length,
-            [SERVICE_STATUS.REPLACEMENT_REQUESTED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED).length,
-            [SERVICE_STATUS.ACTIVE]: data.filter(client => client.serviceStatus === SERVICE_STATUS.ACTIVE).length,
-            [SERVICE_STATUS.COMPLETED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.COMPLETED).length,
-            [SERVICE_STATUS.TERMINATED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.TERMINATED).length,
+            [SERVICE_STATUS.PRE_BOOKING]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.PRE_BOOKING).length,
+            [SERVICE_STATUS.WAITING]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.WAITING).length,
+            [SERVICE_STATUS.REPLACEMENT_REQUESTED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.REPLACEMENT_REQUESTED).length,
+            [SERVICE_STATUS.ACTIVE]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.ACTIVE).length,
+            [SERVICE_STATUS.COMPLETED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.COMPLETED).length,
+            [SERVICE_STATUS.TERMINATED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.TERMINATED).length,
         };
 
         const thisMonth = data.filter(client => {
@@ -137,7 +150,7 @@ export class MockClientRepository implements IClientRepository {
             return client.dueDate >= ranges.nextMonthStart && client.dueDate < ranges.nextMonthEndExclusive;
         }).length;
         const serviceEnd = data.filter(client => {
-            if (client.serviceStatus !== SERVICE_STATUS.ACTIVE || !client.endDate) return false;
+            if (effectiveStatus(client) !== SERVICE_STATUS.ACTIVE || !client.endDate) return false;
             return client.endDate >= ranges.todayStart && client.endDate < ranges.threeDaysLaterEndExclusive;
         }).length;
 

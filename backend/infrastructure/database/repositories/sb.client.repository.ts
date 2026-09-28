@@ -9,6 +9,7 @@ import {
     ClientListSummary,
     ClientListTab,
     CLIENT_LIST_TAB_VALUES,
+    clientListTabWhere,
     getClientListDateRanges,
     PaginatedResult,
 } from "domain/repositories/client.repository.interface";
@@ -265,11 +266,17 @@ export class SbClientRepository implements IClientRepository {
         tab: ClientListTab = "all",
     ): Promise<PaginatedResult<ClientEntity>> {
         const skip = (page - 1) * limit;
+        const ranges = getClientListDateRanges();
         const specialSearch = search !== undefined && requiresClientSearchFallback(search);
         const matchingIds = specialSearch
             ? await this.findSpecialSearchClientIds(branchid, search)
             : undefined;
-        const baseWhere = buildClientListWhere(branchid, specialSearch ? undefined : search, tab);
+        const baseWhere = buildClientListWhere(
+            branchid,
+            specialSearch ? undefined : search,
+            tab,
+            ranges.todayStart,
+        );
         const where = matchingIds === undefined ? baseWhere : this.withClientIds(baseWhere, matchingIds);
 
         try {
@@ -304,14 +311,24 @@ export class SbClientRepository implements IClientRepository {
         const matchingIds = specialSearch
             ? await this.findSpecialSearchClientIds(branchid, search)
             : undefined;
-        const baseWhereWithoutSearch = buildClientListWhere(branchid, undefined, "all");
+        const baseWhereWithoutSearch = buildClientListWhere(
+            branchid,
+            undefined,
+            "all",
+            ranges.todayStart,
+        );
         const baseWhere = matchingIds === undefined
-            ? buildClientListWhere(branchid, search, "all")
+            ? buildClientListWhere(branchid, search, "all", ranges.todayStart)
             : this.withClientIds(baseWhereWithoutSearch, matchingIds);
         const whereForTab = (tab: ClientListTab): Prisma.clientWhereInput => {
-            const withoutSearch = buildClientListWhere(branchid, undefined, tab);
+            const withoutSearch = buildClientListWhere(
+                branchid,
+                undefined,
+                tab,
+                ranges.todayStart,
+            );
             return matchingIds === undefined
-                ? buildClientListWhere(branchid, search, tab)
+                ? buildClientListWhere(branchid, search, tab, ranges.todayStart)
                 : this.withClientIds(withoutSearch, matchingIds);
         };
         const withPredicate = (predicate: Prisma.clientWhereInput): Prisma.clientWhereInput => {
@@ -354,11 +371,15 @@ export class SbClientRepository implements IClientRepository {
             }),
             this.prismaService.client.count({
                 where: withPredicate({
-                    serviceStatus: SERVICE_STATUS.ACTIVE,
-                    endDate: {
-                        gte: ranges.todayStart,
-                        lt: ranges.threeDaysLaterEndExclusive,
-                    },
+                    AND: [
+                        clientListTabWhere(SERVICE_STATUS.ACTIVE, ranges.todayStart),
+                        {
+                            endDate: {
+                                gte: ranges.todayStart,
+                                lt: ranges.threeDaysLaterEndExclusive,
+                            },
+                        },
+                    ],
                 }),
             }),
         ]);

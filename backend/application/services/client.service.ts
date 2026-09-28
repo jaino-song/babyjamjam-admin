@@ -52,6 +52,7 @@ import {
     CLIENT_REPOSITORY,
     ClientListSummary,
     ClientListTab,
+    getEffectiveClientServiceStatus,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
@@ -1496,7 +1497,7 @@ export class ClientService {
             const pendingScheduleChange = pendingScheduleChangeMap.get(client.id);
 
             // Compute current service status based on dates
-            const computedStatus = computeServiceStatus(
+            const computedStatus = getEffectiveClientServiceStatus(
                 client.serviceStatus,
                 client.startDate,
                 client.endDate,
