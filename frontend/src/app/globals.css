@@ -658,13 +658,10 @@
   --glint-ui-viewport-scale: 1;
 }
 
-/* Match the shell's md breakpoint and useGlintUiScale's desktop lower bound. */
+/* Match the shell's md breakpoint and useGlintUiScale's width-only bounds. */
 @media (min-width: 768px) {
   :root {
-    --glint-ui-viewport-scale: max(
-      0.67,
-      calc(min(calc(100vw / 1920px), calc(100vh / 1080px)) * 1.1)
-    );
+    --glint-ui-viewport-scale: clamp(0.85, calc(100vw / 1440px), 1.1);
   }
 }
 
