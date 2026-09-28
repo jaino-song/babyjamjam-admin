@@ -484,7 +484,7 @@ export async function middleware(request: NextRequest) {
 
   // No auth token - redirect to login
   if (!authToken || isTokenExpired(authToken)) {
-    if (localRecoveryEligible && refreshUnavailable) {
+    if (localRecoveryEligible && isLocalLoginNavigation && refreshUnavailable) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
 

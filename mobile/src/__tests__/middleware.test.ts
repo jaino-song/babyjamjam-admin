@@ -338,6 +338,39 @@ describe("middleware API route protection", () => {
     fetchMock.mockRestore();
   });
 
+  it("keeps protected API refresh failures as JSON 401 responses", async () => {
+    Object.defineProperty(process.env, "NODE_ENV", {
+      value: "development",
+      configurable: true,
+    });
+    process.env.LOCAL_AUTO_LOGIN_EMAIL = "developer@example.test";
+    process.env.LOCAL_AUTO_LOGIN_PASSWORD = "test-fixture";
+    mockJwtDecode.mockReturnValue({
+      sub: "user-1",
+      sid: "session-1",
+      role: "manager",
+      type: "access",
+      exp: Math.floor(Date.now() / 1000) - 60,
+    });
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: "temporarily unavailable" }), { status: 503 }),
+    );
+
+    const response = await middleware(createRequest(
+      "/api/clients",
+      "auth_token=expired; refresh_token=current; selected_branch_id=branch-1",
+    ));
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+    await expect(response.json()).resolves.toEqual({
+      code: "AUTH_REFRESH_REQUIRED",
+      error: "Session refresh required",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockRestore();
+  });
+
   it("does not clear cookies when another request is already rotating refresh", async () => {
     mockJwtDecode.mockReturnValue({
       sub: "user-1",
