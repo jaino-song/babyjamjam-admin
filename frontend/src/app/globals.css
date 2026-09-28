@@ -833,8 +833,20 @@
     overflow-y: auto;
   }
 
+  [data-slot="main-content-body"]:has(
+    [data-slot="clients-sections"]
+      [data-slot="split-layout"][data-has-selection="false"]
+  ) {
+    overflow-y: auto;
+  }
+
   :is([data-slot="clients-sections"], [data-slot="contracts-sections"])
     [data-slot="split-layout"]:has([data-slot="detail-panel"][data-has-stepper="true"]) {
+    min-height: calc(28rem * var(--glint-ui-scale, 1));
+  }
+
+  [data-slot="clients-sections"]
+    [data-slot="split-layout"][data-has-selection="false"] {
     min-height: calc(28rem * var(--glint-ui-scale, 1));
   }
 }
