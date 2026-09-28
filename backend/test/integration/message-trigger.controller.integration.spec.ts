@@ -7,6 +7,7 @@ import {
     ValidationPipe,
 } from "@nestjs/common";
 import request from "supertest";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import {
@@ -59,6 +60,7 @@ describe("MessageTriggerController (Integration)", () => {
     let smsRetryService: {
         retryById: jest.Mock;
     };
+    let authRole = "admin";
 
     const branchId = "org-1";
 
@@ -157,6 +159,7 @@ describe("MessageTriggerController (Integration)", () => {
     });
 
     beforeEach(async () => {
+        authRole = "admin";
         triggerService = {
             listRules: jest.fn(),
             listUpcomingJobs: jest.fn(),
@@ -181,14 +184,14 @@ describe("MessageTriggerController (Integration)", () => {
                 requestContext.user = {
                     userId: "user-1",
                     branchId,
-                    role: "admin",
-                    branchRole: "admin",
+                    role: authRole,
+                    branchRole: authRole,
                 };
                 requestContext.tenant = {
                     userId: "user-1",
                     branchId,
-                    globalRole: "admin",
-                    branchRole: "admin",
+                    globalRole: authRole,
+                    branchRole: authRole,
                 };
                 return true;
             },
@@ -197,6 +200,7 @@ describe("MessageTriggerController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [MessageTriggerController],
             providers: [
+                BranchManagerGuard,
                 {
                     provide: MessageTriggerService,
                     useValue: triggerService,
@@ -211,8 +215,6 @@ describe("MessageTriggerController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
-            .overrideGuard(BranchManagerGuard)
-            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -222,6 +224,25 @@ describe("MessageTriggerController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    it("requires branch-manager guard on every message-trigger mutation while leaving reads tenant-only", () => {
+        const mutationHandlers = [
+            "cancelJob",
+            "retryHistory",
+            "reconcileHistory",
+            "createRule",
+            "updateRule",
+            "updateBranchActivation",
+            "activateRuleWithParent",
+            "deleteRule",
+        ] as const;
+        for (const methodName of mutationHandlers) {
+            expect(Reflect.getMetadata(GUARDS_METADATA, MessageTriggerController.prototype[methodName]) ?? [])
+                .toContain(BranchManagerGuard);
+        }
+        expect(Reflect.getMetadata(GUARDS_METADATA, MessageTriggerController.prototype.listRules) ?? [])
+            .not.toContain(BranchManagerGuard);
     });
 
     describe("rule sendTime validation", () => {
@@ -328,6 +349,15 @@ describe("MessageTriggerController (Integration)", () => {
             expect(response.status).toBe(409);
             expect(response.body.message).toBe("이미 발송되었거나 취소할 수 없는 상태입니다");
         });
+
+        it("allows a branch manager and denies staff before service execution", async () => {
+            triggerService.cancelJobByUser.mockResolvedValue({ id: "job-1", status: "canceled" });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(201);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(403);
+            expect(triggerService.cancelJobByUser).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe("GET /message-logs", () => {
@@ -411,6 +441,15 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(400);
             expect(smsRetryService.retryById).not.toHaveBeenCalled();
+        });
+
+        it("allows a branch manager and denies staff before retry execution", async () => {
+            smsRetryService.retryById.mockResolvedValue({ id: 77, status: "pending" });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-logs/77/retry")).status).toBe(201);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-logs/77/retry")).status).toBe(403);
+            expect(smsRetryService.retryById).toHaveBeenCalledTimes(1);
         });
     });
 
