@@ -39,8 +39,10 @@ import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { getServiceRecordAdminHref } from "@/lib/frontend-origin";
 import { cn } from "@/lib/utils";
+import { useInitialUser } from "@/providers/UserProvider";
 
 interface ClientServiceRecordsProps {
     "data-component": string;
@@ -269,6 +271,7 @@ function LinkCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("link-card");
     const sendLinkMutation = useSendServiceRecordLink();
+    const canEditServiceRecord = canManageBranch(useInitialUser());
     const [resendModalOpen, setResendModalOpen] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const statusMeta = LINK_STATUS_META[assignment.link.status];
@@ -372,21 +375,23 @@ function LinkCard({
                 >
                     {isPending ? "발송 중..." : "제공기록지 링크 발송"}
                 </button>
-                <Button
-                    asChild
-                    variant="v3-outline"
-                    size="md"
-                    className="w-full"
-                    data-component={`${dataComponent}_actions_edit-service-record`}
-                >
-                    <a
-                        href={getServiceRecordAdminHref(clientId)}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                {canEditServiceRecord ? (
+                    <Button
+                        asChild
+                        variant="v3-outline"
+                        size="md"
+                        className="w-full"
+                        data-component={`${dataComponent}_actions_edit-service-record`}
                     >
-                        제공기록지 수정
-                    </a>
-                </Button>
+                        <a
+                            href={getServiceRecordAdminHref(clientId)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            제공기록지 수정
+                        </a>
+                    </Button>
+                ) : null}
             </div>
             <ApprovalTwoButtonModal
                 open={resendModalOpen}

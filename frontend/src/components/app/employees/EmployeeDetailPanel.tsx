@@ -50,6 +50,7 @@ type DetailTabId = "basic" | "clients" | "history";
 
 interface EmployeeDetailPanelProps {
     employee: Employee;
+    canManage: boolean;
     onEdit: (employee: Employee) => void;
     onDelete: (id: number) => void;
     "data-component"?: string;
@@ -332,6 +333,7 @@ function AssignmentSheet({
 
 export function EmployeeDetailPanel({
     employee,
+    canManage,
     onEdit,
     onDelete,
     "data-component": dataComponent = DETAIL_ROOT,
@@ -379,7 +381,7 @@ export function EmployeeDetailPanel({
                     </span>
                 )}
                 trailing={(
-                    <DropdownMenu>
+                    canManage ? <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button type="button" variant="ghost" size="icon" aria-label="직원 작업 메뉴 열기">
                                 <MoreVertical className="h-5 w-5 text-v3-text-muted" aria-hidden="true" />
@@ -397,7 +399,7 @@ export function EmployeeDetailPanel({
                                 삭제
                             </DropdownMenuItem>
                         </DropdownMenuContent>
-                    </DropdownMenu>
+                    </DropdownMenu> : undefined
                 )}
                 tabs={(
                     <DetailTabs

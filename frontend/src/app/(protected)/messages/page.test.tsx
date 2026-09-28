@@ -48,8 +48,8 @@ describe("MessagesPage template type labels", () => {
   });
 });
 
-describe("MessagesPage unreleased section gating", () => {
-  it("keeps only trigger rules owner-only while branch users can edit templates", () => {
+describe("MessagesPage trigger section gating", () => {
+  it("uses the active branch-management role for trigger rules", () => {
     const unreleasedIds = source
       .split("const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([")[1]
       ?.split("]);")[0];
@@ -61,10 +61,10 @@ describe("MessagesPage unreleased section gating", () => {
     // owner-only.
     expect(unreleasedIds).not.toContain('"scheduled"');
     expect(unreleasedIds).not.toContain('"history"');
-    expect(unreleasedIds).not.toContain('"templates"');
     expect(unreleasedIds).toContain('"triggers"');
-    expect(source).toContain("const isOwner = user?.role === ROLES.owner");
-    expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !isOwner");
+    expect(source).toContain("const canManageBranchMessages = canManageBranch(user)");
+    expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages");
+    expect(source).not.toContain("ROLES.owner");
   });
 });
 
@@ -427,7 +427,7 @@ function getDetailPanel() {
 
 beforeEach(() => {
   document.cookie = "selected_branch_id=branch-test; path=/";
-  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
@@ -995,7 +995,7 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 
   it("keeps branch template editing available to nonowners while sending remains approval-gated", () => {
-    mockUseInitialUser.mockReturnValue({ id: "manager-1", role: "manager" });
+    mockUseInitialUser.mockReturnValue({ id: "manager-1", role: "user", branchRole: "manager" });
     mockUseMessageSenderApproval.mockReturnValue({
       data: {
         approvalStatus: "pending",

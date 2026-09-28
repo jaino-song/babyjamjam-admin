@@ -8,6 +8,7 @@ export const E2E_AUTH_USER = {
   email: "e2e@example.com",
   profileImage: "",
   role: "admin",
+  branchRole: "admin",
   branchId: "e2e-branch",
   branchName: "E2E Branch",
 } as const;

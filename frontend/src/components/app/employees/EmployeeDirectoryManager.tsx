@@ -43,6 +43,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { useLocale } from "@/providers/LocaleProvider";
+import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
 const filterItems = [
     { label: "전체", value: "all" },
@@ -86,6 +88,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     } = useInfiniteEmployees({ filter, search });
     const deleteEmployee = useDeleteEmployee();
     const locale = useLocale();
+    const canManageEmployees = canManageBranch(useInitialUser());
 
     const stats = useMemo(() => {
         return {
@@ -304,6 +307,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 ) : selectedEmployee ? (
                     <EmployeeDetailPanel key={selectedEmployee.id}
                         employee={selectedEmployee}
+                        canManage={canManageEmployees}
                         onEdit={handleEdit}
                         onDelete={handleDeleteRequest}
                     />

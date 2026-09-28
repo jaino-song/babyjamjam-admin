@@ -58,7 +58,9 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { useLocale } from "@/providers/LocaleProvider";
+import { useInitialUser } from "@/providers/UserProvider";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -280,6 +282,7 @@ function ClientAutomationSection() {
 
 export default function ClientsPage() {
     const locale = useLocale();
+    const canManageBranchFeatures = canManageBranch(useInitialUser());
     const router = useRouter();
     const searchParams = useSearchParams();
     const clientIdParam = searchParams.get("id");
@@ -864,20 +867,22 @@ export default function ClientsPage() {
                                                 산모 계약서 생성
                                             </DropdownMenuItem>
                                         )}
-                                        <DropdownMenuItem
-                                            asChild
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"
-                                        >
-                                            <a
-                                                href={`/service-record-admin/${encodeURIComponent(String(activeSelectedClient.id))}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="w-full"
+                                        {canManageBranchFeatures && (
+                                            <DropdownMenuItem
+                                                asChild
+                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"
                                             >
-                                                <FileSignature className="w-4 h-4" />
-                                                제공기록지 보기
-                                            </a>
-                                        </DropdownMenuItem>
+                                                <a
+                                                    href={`/service-record-admin/${encodeURIComponent(String(activeSelectedClient.id))}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="w-full"
+                                                >
+                                                    <FileSignature className="w-4 h-4" />
+                                                    제공기록지 보기
+                                                </a>
+                                            </DropdownMenuItem>
+                                        )}
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
                                             disabled={isSendingReceipt}
@@ -896,14 +901,16 @@ export default function ClientsPage() {
                                             <CalendarDays className="w-4 h-4" />
                                             서비스 일정 변경
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"
-                                            onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
-                                            className="gap-2"
-                                        >
-                                            <RotateCcw className="w-4 h-4" />
-                                            제공기록지 링크 재설정
-                                        </DropdownMenuItem>
+                                        {canManageBranchFeatures && (
+                                            <DropdownMenuItem
+                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"
+                                                onClick={() => setResetLinkTargetClientId(activeSelectedClient.id)}
+                                                className="gap-2"
+                                            >
+                                                <RotateCcw className="w-4 h-4" />
+                                                제공기록지 링크 재설정
+                                            </DropdownMenuItem>
+                                        )}
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_delete"
                                             onClick={() => handleDeleteRequest(activeSelectedClient.id)}

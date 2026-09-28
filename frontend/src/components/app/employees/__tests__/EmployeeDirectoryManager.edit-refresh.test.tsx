@@ -9,6 +9,10 @@ jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
+jest.mock("@/providers/UserProvider", () => ({
+  useInitialUser: () => ({ role: "user", branchRole: "manager" }),
+}));
+
 jest.mock("@/hooks/useInfiniteEmployees", () => ({
   useInfiniteEmployees: jest.fn(),
 }));

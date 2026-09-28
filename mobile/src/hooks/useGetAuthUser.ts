@@ -11,6 +11,7 @@ export interface AuthUser {
     email?: string;
     profileImage?: string;
     role?: string;
+    branchRole?: string | null;
     branchId?: string | null;
     branchName?: string | null;
 }

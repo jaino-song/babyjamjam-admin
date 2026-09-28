@@ -20,6 +20,8 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { InfoRow } from "@/components/app/ui/info-row";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { useInitialUser } from "@/providers/UserProvider";
 
 interface EmployeeDetailModalProps {
     open: boolean;
@@ -43,6 +45,7 @@ export function EmployeeDetailModal({
     onDelete,
 }: EmployeeDetailModalProps) {
     const locale = useLocale();
+    const canManage = canManageBranch(useInitialUser());
 
     if (!employee) return null;
 
@@ -148,25 +151,27 @@ export function EmployeeDetailModal({
                     </div>
                 </div>
 
-                <DialogFooter data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions`} className="gap-2 sm:gap-0">
-                    <Button
-                        data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions_delete`}
-                        variant="destructive"
-                        onClick={handleDelete}
-                        className="gap-2"
-                    >
-                        <Trash2 className="h-4 w-4" />
-                        {t(locale, "common.delete")}
-                    </Button>
-                    <Button
-                        data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions_edit`}
-                        onClick={handleEdit}
-                        className="gap-2"
-                    >
-                        <Pencil className="h-4 w-4" />
-                        {t(locale, "common.edit")}
-                    </Button>
-                </DialogFooter>
+                {canManage ? (
+                    <DialogFooter data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions`} className="gap-2 sm:gap-0">
+                        <Button
+                            data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions_delete`}
+                            variant="destructive"
+                            onClick={handleDelete}
+                            className="gap-2"
+                        >
+                            <Trash2 className="h-4 w-4" />
+                            {t(locale, "common.delete")}
+                        </Button>
+                        <Button
+                            data-component={`${EMPLOYEE_DETAIL_MODAL_BASE}_content_actions_edit`}
+                            onClick={handleEdit}
+                            className="gap-2"
+                        >
+                            <Pencil className="h-4 w-4" />
+                            {t(locale, "common.edit")}
+                        </Button>
+                    </DialogFooter>
+                ) : null}
             </DialogContent>
         </Dialog>
     );

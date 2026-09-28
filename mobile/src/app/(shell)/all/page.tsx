@@ -25,6 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { MenuGroup } from "@/components/app/mobile-redesign/mockup-data";
 import { useInitialUser } from "@/providers/UserProvider";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 
 /** Canonical data-component base for the /all route. */
 const ALL_PAGE_BASE = "mobile_all_page";
@@ -43,6 +44,7 @@ function safeArrayPayload<T>(payload: unknown): T[] {
 export default function AllMenuPage() {
   const initialUser = useInitialUser();
   const isOwner = initialUser?.role === "owner";
+  const canManageBranchFeatures = canManageBranch(initialUser);
   const clientsQuery = useAllClients();
   const employeesQuery = useEmployees();
   const messageTemplatesQuery = useMessageTemplates();
@@ -139,14 +141,16 @@ export default function AllMenuPage() {
             valueLoading: isMessageTemplatesValueUnavailable,
             valueSkeletonWidth: "32px",
           },
-          {
-            label: "발송 자동화",
-            href: "/messages/automation",
-            icon: Send,
-            tone: "gold",
-            disabled: true,
-            statusLabel: "출시 예정",
-          },
+          canManageBranchFeatures
+            ? { label: "발송 자동화", href: "/messages/automation", icon: Send, tone: "gold" as const }
+            : {
+                label: "발송 자동화",
+                href: "/messages/automation",
+                icon: Send,
+                tone: "gold" as const,
+                disabled: true,
+                statusLabel: "출시 예정",
+              },
         ],
       },
       {
@@ -192,6 +196,7 @@ export default function AllMenuPage() {
     pushNotification.isLoading,
     pushNotification.isSubscribed,
     isOwner,
+    canManageBranchFeatures,
   ]);
 
   return (

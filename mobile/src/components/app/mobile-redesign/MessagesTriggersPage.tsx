@@ -9,6 +9,8 @@ import { MessageTriggerEditor } from "@/components/app/mobile-redesign/MessageTr
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { useInitialUser } from "@/providers/UserProvider";
 
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -21,6 +23,8 @@ const NEW_RULE_ITEM_ID = "new";
 export function MessagesTriggersPage(): ReactElement {
   const router = useRouter();
   const selectedItemId = useSearchParams().get("item");
+  const user = useInitialUser();
+  const canManage = canManageBranch(user);
   const didPushDetailRef = useRef(false);
   const rulesQuery = useMessageTriggerRules();
   const rules = useMemo(
@@ -70,7 +74,7 @@ export function MessagesTriggersPage(): ReactElement {
     router.replace("/messages/automation", { scroll: false });
   };
 
-  const detail = isOpen ? (
+  const detail = canManage && isOpen ? (
     <MessageTriggerEditor
       key={selectedItemId}
       data-component={`${DETAIL_BODY_BASE}_${isCreating ? "new-rule" : `rule-${selectedRule?.id}`}_editor`}
@@ -109,14 +113,15 @@ export function MessagesTriggersPage(): ReactElement {
             list={(
               <MessageTriggerList
                 data-component={AUTOMATION_LIST_BASE}
+                canManage={canManage}
                 selectedId={selectedItemId}
                 onCreate={() => openItem(NEW_RULE_ITEM_ID)}
                 onEdit={(rule) => openItem(rule.id)}
-                beforeItems={(
+                beforeItems={canManage ? (
                   <ClientRegistrationPolicySettings
                     data-component={`${AUTOMATION_LIST_BASE}_client-registration-policy`}
                   />
-                )}
+                ) : undefined}
               />
             )}
             detail={detail}

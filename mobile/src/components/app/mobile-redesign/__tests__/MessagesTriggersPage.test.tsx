@@ -25,6 +25,10 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearchParams,
 }));
 
+jest.mock("@/providers/UserProvider", () => ({
+  useInitialUser: () => ({ role: "user", branchRole: "manager" }),
+}));
+
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageTriggerRules: () => ({
     data: mockRules,

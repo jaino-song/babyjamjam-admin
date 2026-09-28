@@ -18,6 +18,7 @@ import {
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
 import { toast } from "@/hooks/use-toast";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
@@ -51,6 +52,7 @@ import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/Serv
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
+import { useInitialUser } from "@/providers/UserProvider";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -627,6 +629,7 @@ export function ClientDetailContent({
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
     enabled: activeTab === "serviceRecords",
   });
+  const canManageBranchFeatures = canManageBranch(useInitialUser());
   const [resetLinkModalOpen, setResetLinkModalOpen] = useState(false);
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
@@ -1078,14 +1081,16 @@ export function ClientDetailContent({
                 <CalendarDays className="size-[15px]" strokeWidth={2} />
                 서비스 일정 변경
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => setResetLinkModalOpen(true)}
-                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
-                data-component={`${dataComponent}_header_menu_reset-service-record-link`}
-              >
-                <RotateCcw className="size-[15px]" strokeWidth={2} />
-                제공기록지 링크 재설정
-              </DropdownMenuItem>
+              {canManageBranchFeatures ? (
+                <DropdownMenuItem
+                  onClick={() => setResetLinkModalOpen(true)}
+                  className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                  data-component={`${dataComponent}_header_menu_reset-service-record-link`}
+                >
+                  <RotateCcw className="size-[15px]" strokeWidth={2} />
+                  제공기록지 링크 재설정
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem
                 variant="destructive"
                 onClick={() => onDelete(client.id)}

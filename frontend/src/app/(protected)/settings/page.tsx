@@ -19,6 +19,7 @@ import { CallIngestTokenSection } from "@/components/app/call-ingest-tokens/Call
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { SectionNav } from "@/components/app/v3";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { usePushNotification } from "@/hooks/usePushNotification";
 import { getRoleLabel } from "@/lib/constants/roles";
 import { useInitialUser } from "@/providers/UserProvider";
@@ -71,8 +72,8 @@ const BASE_NAV_SECTIONS = [
   { id: "security", label: "보안", icon: Shield },
 ] as const;
 
-/** Owner-only sections, appended to the base nav when the current user is an owner. */
-const OWNER_NAV_SECTIONS = [
+/** Branch-management sections, appended when the active branch role permits them. */
+const BRANCH_MANAGER_NAV_SECTIONS = [
   { id: "call-ingest-tokens", label: "통화 수집 토큰", icon: KeyRound },
 ] as const;
 
@@ -95,12 +96,14 @@ export default function SettingsPage() {
   const initialUser = useInitialUser();
   const authUserQuery = useGetAuthUser({ initialData: initialUser });
   const { data: user } = authUserQuery;
-  const isOwner = user?.role === "owner";
+  const canManageBranchSettings = canManageBranch(user);
   // `AuthUser` doesn't declare `branchId` (extending it is out of this
   // section's scope), but the backend's `/auth/me` response includes it —
   // see backend/interface/controllers/auth.controller.ts:189-193.
   const branchId = (user as { branchId?: string | null } | undefined)?.branchId ?? null;
-  const navSections = isOwner ? [...BASE_NAV_SECTIONS, ...OWNER_NAV_SECTIONS] : BASE_NAV_SECTIONS;
+  const navSections = canManageBranchSettings
+    ? [...BASE_NAV_SECTIONS, ...BRANCH_MANAGER_NAV_SECTIONS]
+    : BASE_NAV_SECTIONS;
   const queryClient = useQueryClient();
   const notificationPreferencesQuery = useQuery({
     queryKey: ["settings", "notification-preferences"],
@@ -431,7 +434,7 @@ export default function SettingsPage() {
           </section>
           )}
 
-          {activeSection === "call-ingest-tokens" && isOwner && (
+          {activeSection === "call-ingest-tokens" && canManageBranchSettings && (
             branchId ? (
               <CallIngestTokenSection branchId={branchId} />
             ) : (

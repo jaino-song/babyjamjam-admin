@@ -19,7 +19,7 @@ jest.mock("@/app/(shell)/messages/MessagesPermissionGuard", () => ({
 const mockUseInitialUser = useInitialUser as jest.Mock;
 const mockUseMessagesPermissionGuard = useMessagesPermissionGuard as jest.Mock;
 
-const UNRELEASED_LABELS = ["템플릿", "자동 전송"];
+const BRANCH_MANAGEMENT_LABEL = "자동 전송";
 const RELEASED_LABELS = ["전송하기", "설정"];
 // 발송 기록 (the merged screen) is gated only by sender approval, not by
 // owner status, so it behaves differently from both groups above: unlike
@@ -41,43 +41,34 @@ describe("MessageSectionNav", () => {
     });
   });
 
-  it.each(["admin", "manager", "user"])("disables the unreleased sections for %s", (role) => {
-    mockUseInitialUser.mockReturnValue({ role });
+  it.each([
+    ["global user with manager branch role", { role: "user", branchRole: "manager" }],
+    ["global owner", { role: "owner", branchRole: null }],
+  ])("allows branch-management automation for %s", (_label, user) => {
+    mockUseInitialUser.mockReturnValue(user);
 
     renderNav();
 
-    for (const label of UNRELEASED_LABELS) {
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
-    }
-    for (const label of RELEASED_LABELS) {
-      expect(screen.getByRole("button", { name: label })).toBeEnabled();
-    }
-    // Not owner-gated: a non-owner with sender approval already sorted
-    // (needsSenderApproval: false, this suite's default mock) sees it enabled.
-    expect(screen.getByRole("button", { name: APPROVAL_GATED_LABEL })).toBeEnabled();
-  });
-
-  it("gives the owner early access to the unreleased sections", () => {
-    mockUseInitialUser.mockReturnValue({ role: "owner" });
-
-    renderNav();
-
-    for (const label of [...UNRELEASED_LABELS, ...RELEASED_LABELS, APPROVAL_GATED_LABEL]) {
-      expect(screen.getByRole("button", { name: label })).toBeEnabled();
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeEnabled();
+    const templates = screen.getByRole("button", { name: "템플릿" });
+    if (user.role === "owner") {
+      expect(templates).toBeEnabled();
+    } else {
+      expect(templates).toBeDisabled();
     }
   });
 
-  it("keeps the unreleased sections disabled when there is no resolved user", () => {
-    mockUseInitialUser.mockReturnValue(null);
+  it.each([
+    ["global admin with user branch role", { role: "admin", branchRole: "user" }],
+    ["global user without branch role", { role: "user" }],
+    ["no resolved user", null],
+  ])("keeps automation disabled for %s", (_label, user) => {
+    mockUseInitialUser.mockReturnValue(user);
 
     renderNav();
 
-    for (const label of UNRELEASED_LABELS) {
-      expect(screen.getByRole("button", { name: label })).toBeDisabled();
-    }
-    // Still not owner-gated even without a resolved user (isOwner is false
-    // either way), so it stays enabled here too.
-    expect(screen.getByRole("button", { name: APPROVAL_GATED_LABEL })).toBeEnabled();
+    expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "템플릿" })).toBeDisabled();
   });
 
   it("disables every section except send and settings while sender approval is pending", () => {
@@ -89,7 +80,7 @@ describe("MessageSectionNav", () => {
 
     renderNav();
 
-    for (const label of [...UNRELEASED_LABELS, APPROVAL_GATED_LABEL]) {
+    for (const label of ["템플릿", BRANCH_MANAGEMENT_LABEL, APPROVAL_GATED_LABEL]) {
       expect(screen.getByRole("button", { name: label })).toBeDisabled();
     }
     for (const label of RELEASED_LABELS) {

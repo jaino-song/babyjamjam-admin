@@ -49,6 +49,8 @@ import {
 } from "@/components/app/mobile-redesign/detail-sheet";
 import "@/components/app/mobile-redesign/redesign.css";
 import { getOpenToNextWorkLabel } from "@babyjamjam/shared/constants/employee-status";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
+import { useInitialUser } from "@/providers/UserProvider";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { getUserErrorMessage, normalizeApiError } from "@babyjamjam/shared";
@@ -94,12 +96,14 @@ function EmployeeDetailContent({
   onTabChange,
   onEdit,
   onDelete,
+  canManage,
 }: {
   employee: Employee;
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
   onEdit: () => void;
   onDelete: () => void;
+  canManage: boolean;
 }) {
   const locale = useLocale();
   const group = groupForEmployee(employee);
@@ -136,7 +140,7 @@ function EmployeeDetailContent({
           { label: group.badge, tone: group.badgeMini },
           ...(employee.grade ? [{ label: employee.grade, tone: "primary" as const }] : []),
         ]}
-        menu={
+        menu={canManage ? (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
@@ -173,7 +177,7 @@ function EmployeeDetailContent({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        }
+        ) : undefined}
       />
 
       <DetailTabPills
@@ -335,6 +339,7 @@ function EmployeeDetailContent({
 export default function EmployeesPage() {
   const locale = useLocale();
   const { toast } = useToast();
+  const canManageEmployees = canManageBranch(useInitialUser());
 
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
@@ -603,6 +608,7 @@ export default function EmployeesPage() {
               onTabChange={setDetailSheetTab}
               onEdit={() => handleEdit(selectedEmployee)}
               onDelete={() => handleDeleteRequest(selectedEmployee.id)}
+              canManage={canManageEmployees}
             />
           ) : (
             <div className="detail-body" data-component="mobile_employees_detail-sheet_stack_detail-page_empty" />

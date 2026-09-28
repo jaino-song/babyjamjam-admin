@@ -22,9 +22,11 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import { canManageBranch } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
+import { useInitialUser } from "@/providers/UserProvider";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import {
     SERVICE_RECORD_FORM_LAYOUT,
@@ -923,6 +925,7 @@ function LinkStatusCard({
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "link-card");
     const { link, employee } = assignment;
+    const canEditServiceRecord = canManageBranch(useInitialUser());
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
     const usesResendLayout = isResend || isSendingResend;
@@ -992,9 +995,11 @@ function LinkStatusCard({
                     {isPending && <Loader2 aria-hidden className="animate-spin" />}
                     {isResend ? "메시지 재전송" : layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송"}
                 </Button>
-                {layout === "mobile" && clientId != null && <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
-                    <Link href={`/service-record-admin/${clientId}`}>제공기록지 수정</Link>
-                </Button>}
+                {layout === "mobile" && clientId != null && canEditServiceRecord && (
+                    <Button asChild variant="outline" className="mt-2 w-full" data-component={`${dataComponent}_actions_edit`}>
+                        <Link href={`/service-record-admin/${clientId}`}>제공기록지 수정</Link>
+                    </Button>
+                )}
             </div>
         </InfoCard>
     );
