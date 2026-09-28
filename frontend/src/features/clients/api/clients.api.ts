@@ -5,8 +5,21 @@ import type {
   UpdateClientDto,
   TerminateServiceDto,
   RequestReplacementDto,
-  PaginatedResponse
+  PaginatedResponse,
+  ClientListSummary,
+  ClientListTab,
 } from '../types';
+
+export interface ClientListParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  tab?: ClientListTab;
+}
+
+export interface ClientListSummaryParams {
+  search?: string;
+}
 
 /**
  * Clients API functions
@@ -16,13 +29,29 @@ export const clientsApi = {
   /**
    * Fetch paginated clients list
    */
-  list: (params?: { page?: number; limit?: number; search?: string }) => {
+  list: (params?: ClientListParams) => {
     const searchParams = new URLSearchParams();
-    if (params?.page) searchParams.set('page', String(params.page));
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.search) searchParams.set('search', params.search);
+    if (params?.page !== undefined) searchParams.set('page', String(params.page));
+    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params?.search !== undefined) searchParams.set('search', params.search);
+    if (params?.tab !== undefined) searchParams.set('tab', params.tab);
 
     return api.get<PaginatedResponse<Client>>(`/clients?${searchParams.toString()}`);
+  },
+
+  /**
+   * Fetch branch- and search-scoped directory metrics.
+   *
+   * The backend owns search matching, so the text is forwarded verbatim.
+   */
+  listSummary: (params?: ClientListSummaryParams) => {
+    const searchParams = new URLSearchParams();
+    if (params?.search !== undefined) searchParams.set('search', params.search);
+
+    const query = searchParams.toString();
+    return api.get<ClientListSummary>(
+      query ? `/clients/list-summary?${query}` : '/clients/list-summary',
+    );
   },
 
   /**

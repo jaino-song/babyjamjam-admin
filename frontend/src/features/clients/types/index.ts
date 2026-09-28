@@ -156,6 +156,32 @@ export interface PaginatedResponse<T> {
     totalPages: number;
 }
 
+export const CLIENT_LIST_TAB_VALUES = [
+    "all",
+    "pre_booking",
+    "waiting",
+    "replacement_requested",
+    "active",
+    "completed",
+    "terminated",
+] as const;
+
+export type ClientListTab = typeof CLIENT_LIST_TAB_VALUES[number];
+
+export interface ClientListSummary {
+    total: number;
+    byTab: Record<ClientListTab, number>;
+    dueDate: {
+        thisMonth: number;
+        nextMonth: number;
+    };
+    serviceEnd: {
+        count: number;
+        from: string;
+        to: string;
+    };
+}
+
 // Service status options (renamed from Contract status)
 export const SERVICE_STATUS_OPTIONS = [
     { value: "pre_booking", label: "예약 전", labelEn: "Pre-booking", color: "default" as const },
