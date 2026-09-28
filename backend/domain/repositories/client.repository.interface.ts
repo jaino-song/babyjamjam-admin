@@ -1,5 +1,6 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { isoDateInKorea } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 
 export type AutomaticServiceStatusUpdateResult = "updated" | "stale";
@@ -10,6 +11,137 @@ export interface PaginatedResult<T> {
     page: number;
     limit: number;
     totalPages: number;
+}
+
+export const CLIENT_LIST_TAB_VALUES = [
+    "all",
+    SERVICE_STATUS.PRE_BOOKING,
+    SERVICE_STATUS.WAITING,
+    SERVICE_STATUS.REPLACEMENT_REQUESTED,
+    SERVICE_STATUS.ACTIVE,
+    SERVICE_STATUS.COMPLETED,
+    SERVICE_STATUS.TERMINATED,
+] as const;
+
+export type ClientListTab = (typeof CLIENT_LIST_TAB_VALUES)[number];
+
+export interface ClientListSummary {
+    total: number;
+    byTab: Record<ClientListTab, number>;
+    dueDate: {
+        thisMonth: number;
+        nextMonth: number;
+    };
+    serviceEnd: {
+        count: number;
+        from: string;
+        to: string;
+    };
+}
+
+interface KoreaCalendarDate {
+    year: number;
+    month: number;
+    day: number;
+}
+
+export interface ClientListDateRanges {
+    today: string;
+    threeDaysLater: string;
+    todayStart: Date;
+    tomorrowStart: Date;
+    threeDaysLaterEndExclusive: Date;
+    thisMonthStart: Date;
+    nextMonthStart: Date;
+    nextMonthEndExclusive: Date;
+}
+
+function parseKoreaCalendarDate(isoDate: string): KoreaCalendarDate {
+    const [year = "0", month = "0", day = "0"] = isoDate.split("-");
+    return { year: Number(year), month: Number(month), day: Number(day) };
+}
+
+function formatKoreaCalendarDate(date: KoreaCalendarDate): string {
+    return [date.year, date.month, date.day]
+        .map((value, index) => index === 0 ? String(value).padStart(4, "0") : String(value).padStart(2, "0"))
+        .join("-");
+}
+
+function shiftCalendarDays(isoDate: string, days: number): string {
+    const { year, month, day } = parseKoreaCalendarDate(isoDate);
+    const shifted = new Date(Date.UTC(year, month - 1, day + days));
+    return formatKoreaCalendarDate({
+        year: shifted.getUTCFullYear(),
+        month: shifted.getUTCMonth() + 1,
+        day: shifted.getUTCDate(),
+    });
+}
+
+function firstOfMonth(isoDate: string, monthOffset: number): string {
+    const { year, month } = parseKoreaCalendarDate(isoDate);
+    const shifted = new Date(Date.UTC(year, month - 1 + monthOffset, 1));
+    return formatKoreaCalendarDate({
+        year: shifted.getUTCFullYear(),
+        month: shifted.getUTCMonth() + 1,
+        day: 1,
+    });
+}
+
+function dateOnlyStart(isoDate: string): Date {
+    return new Date(`${isoDate}T00:00:00.000Z`);
+}
+
+export function getClientListDateRanges(now = new Date()): ClientListDateRanges {
+    const today = isoDateInKorea(now);
+    const tomorrow = shiftCalendarDays(today, 1);
+    const threeDaysLater = shiftCalendarDays(today, 3);
+    const dayAfterThreeDays = shiftCalendarDays(today, 4);
+    const thisMonthStart = firstOfMonth(today, 0);
+    const nextMonthStart = firstOfMonth(today, 1);
+    const monthAfterNextStart = firstOfMonth(today, 2);
+
+    return {
+        today,
+        threeDaysLater,
+        todayStart: dateOnlyStart(today),
+        tomorrowStart: dateOnlyStart(tomorrow),
+        threeDaysLaterEndExclusive: dateOnlyStart(dayAfterThreeDays),
+        thisMonthStart: dateOnlyStart(thisMonthStart),
+        nextMonthStart: dateOnlyStart(nextMonthStart),
+        nextMonthEndExclusive: dateOnlyStart(monthAfterNextStart),
+    };
+}
+
+export function clientListTabWhere(
+    tab: Exclude<ClientListTab, "all">,
+): Prisma.clientWhereInput {
+    return { serviceStatus: tab };
+}
+
+export function buildClientListWhere(
+    branchid: string,
+    search?: string,
+    tab: ClientListTab = "all",
+): Prisma.clientWhereInput {
+    const normalizedSearch = search?.trim();
+    const where: Prisma.clientWhereInput = {
+        branchId: branchid,
+        ...(normalizedSearch
+            ? {
+                OR: [
+                    { name: { contains: normalizedSearch, mode: "insensitive" as const } },
+                    { address: { contains: normalizedSearch, mode: "insensitive" as const } },
+                    { phone: { contains: normalizedSearch, mode: "insensitive" as const } },
+                ],
+            }
+            : {}),
+    };
+
+    if (tab !== "all") {
+        where.AND = [clientListTabWhere(tab)];
+    }
+
+    return where;
 }
 
 export interface InitialClientSchedule {
@@ -42,8 +174,10 @@ export interface IClientRepository {
         branchid: string,
         page: number,
         limit: number,
-        search?: string
+        search?: string,
+        tab?: ClientListTab,
     ): Promise<PaginatedResult<ClientEntity>>;
+    getListSummary?(branchid: string, search?: string): Promise<ClientListSummary>;
     create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient): Promise<ClientEntity>;
     createWithInitialSchedule(
         branchid: string,

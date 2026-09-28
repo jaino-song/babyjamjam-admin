@@ -2,6 +2,9 @@ import { ClientEntity } from "domain/entities/client.entity";
 import {
     AutomaticServiceStatusUpdateResult,
     ClientWithInitialSchedule,
+    ClientListSummary,
+    ClientListTab,
+    getClientListDateRanges,
     IClientRepository,
     InitialClientSchedule,
     PaginatedResult,
@@ -10,6 +13,7 @@ import type { Prisma } from "@prisma/client";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import {
     isAutomaticServiceStatusTransitionAllowed,
+    SERVICE_STATUS,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
 
@@ -67,12 +71,13 @@ export class MockClientRepository implements IClientRepository {
     }
 
     async findAllPaginated(
-        _branchid: string,
+        branchid: string,
         page: number,
         limit: number,
         search?: string,
+        tab: ClientListTab = "all",
     ): Promise<PaginatedResult<ClientEntity>> {
-        let data = Array.from(this.clients.values());
+        let data = Array.from(this.clients.values()).filter(client => client.branchId === branchid);
 
         // 검색 필터 적용
         if (search) {
@@ -85,6 +90,8 @@ export class MockClientRepository implements IClientRepository {
             );
         }
 
+        data = data.filter(client => tab === "all" || client.serviceStatus === tab);
+
         const total = data.length;
         const totalPages = Math.ceil(total / limit);
         const startIndex = (page - 1) * limit;
@@ -96,6 +103,53 @@ export class MockClientRepository implements IClientRepository {
             page,
             limit,
             totalPages,
+        };
+    }
+
+    async getListSummary(branchid: string, search?: string): Promise<ClientListSummary> {
+        const ranges = getClientListDateRanges();
+        let data = Array.from(this.clients.values()).filter(client => client.branchId === branchid);
+        if (search) {
+            const searchLower = search.toLowerCase();
+            data = data.filter(
+                client => client.name.toLowerCase().includes(searchLower)
+                    || client.address?.toLowerCase().includes(searchLower)
+                    || client.phone?.toLowerCase().includes(searchLower),
+            );
+        }
+
+        const byTab = {
+            all: data.length,
+            [SERVICE_STATUS.PRE_BOOKING]: data.filter(client => client.serviceStatus === SERVICE_STATUS.PRE_BOOKING).length,
+            [SERVICE_STATUS.WAITING]: data.filter(client => client.serviceStatus === SERVICE_STATUS.WAITING).length,
+            [SERVICE_STATUS.REPLACEMENT_REQUESTED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED).length,
+            [SERVICE_STATUS.ACTIVE]: data.filter(client => client.serviceStatus === SERVICE_STATUS.ACTIVE).length,
+            [SERVICE_STATUS.COMPLETED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.COMPLETED).length,
+            [SERVICE_STATUS.TERMINATED]: data.filter(client => client.serviceStatus === SERVICE_STATUS.TERMINATED).length,
+        };
+
+        const thisMonth = data.filter(client => {
+            if (!client.dueDate) return false;
+            return client.dueDate >= ranges.thisMonthStart && client.dueDate < ranges.nextMonthStart;
+        }).length;
+        const nextMonth = data.filter(client => {
+            if (!client.dueDate) return false;
+            return client.dueDate >= ranges.nextMonthStart && client.dueDate < ranges.nextMonthEndExclusive;
+        }).length;
+        const serviceEnd = data.filter(client => {
+            if (client.serviceStatus !== SERVICE_STATUS.ACTIVE || !client.endDate) return false;
+            return client.endDate >= ranges.todayStart && client.endDate < ranges.threeDaysLaterEndExclusive;
+        }).length;
+
+        return {
+            total: data.length,
+            byTab,
+            dueDate: { thisMonth, nextMonth },
+            serviceEnd: {
+                count: serviceEnd,
+                from: ranges.today,
+                to: ranges.threeDaysLater,
+            },
         };
     }
 

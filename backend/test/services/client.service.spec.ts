@@ -190,6 +190,7 @@ describe("ClientService", () => {
         findByIdForUpdate: jest.fn(),
         findAll: jest.fn(),
         findAllPaginated: jest.fn(),
+        getListSummary: jest.fn(),
         create: jest.fn(),
         createWithInitialSchedule: jest.fn(),
         update: jest.fn(),
@@ -4328,6 +4329,27 @@ describe("ClientService", () => {
             expect(result.totalPages).toBe(1);
         });
 
+        it("passes the selected client tab through to the paginated use case", async () => {
+            const paginatedResult = {
+                data: [createClientEntity()],
+                total: 1,
+                page: 1,
+                limit: 10,
+                totalPages: 1,
+            };
+            listClientsPaginatedUsecase.execute.mockResolvedValue(paginatedResult);
+
+            await service.findAllPaginated(branchId, 1, 10, "Kim", "active");
+
+            expect(listClientsPaginatedUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                1,
+                10,
+                "Kim",
+                "active",
+            );
+        });
+
         it("should handle empty search results", async () => {
             // Arrange
             const paginatedResult = {
@@ -4345,6 +4367,29 @@ describe("ClientService", () => {
             // Assert
             expect(result.data).toHaveLength(0);
             expect(result.total).toBe(0);
+        });
+    });
+
+    describe("getListSummary", () => {
+        it("returns the branch-scoped summary from the repository", async () => {
+            const summary = {
+                total: 2,
+                byTab: {
+                    all: 2,
+                    pre_booking: 0,
+                    waiting: 0,
+                    replacement_requested: 0,
+                    active: 1,
+                    completed: 1,
+                    terminated: 0,
+                },
+                dueDate: { thisMonth: 1, nextMonth: 0 },
+                serviceEnd: { count: 1, from: "2026-09-28", to: "2026-10-01" },
+            };
+            (clientRepository.getListSummary as jest.Mock).mockResolvedValue(summary);
+
+            await expect(service.getListSummary(branchId, "Kim")).resolves.toEqual(summary);
+            expect(clientRepository.getListSummary).toHaveBeenCalledWith(branchId, "Kim");
         });
     });
 
