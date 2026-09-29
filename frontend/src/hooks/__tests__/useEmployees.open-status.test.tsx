@@ -167,6 +167,39 @@ describe("useToggleEmployeeOpenStatus", () => {
     );
   });
 
+  it("recovers the owned list after a failed toggle cancels a background refresh", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    seedEmployeeCaches(queryClient, false);
+
+    let getCalls = 0;
+    mockedApiGet.mockImplementation(() => {
+      getCalls += 1;
+      if (getCalls === 1) return new Promise(() => undefined);
+      return Promise.resolve({ data: [employee(true)] });
+    });
+    mockedApiPatch.mockRejectedValue(new Error("toggle failed"));
+
+    const { result } = renderHook(
+      () => ({
+        employees: useEmployees({ refetchOnMount: false }),
+        mutation: useToggleEmployeeOpenStatus(),
+      }),
+      { wrapper },
+    );
+    act(() => {
+      void queryClient.refetchQueries({ queryKey: employeeQueryKeys.lists() });
+    });
+    await waitFor(() => expect(getCalls).toBe(1));
+
+    act(() => {
+      result.current.mutation.mutate({ id: 7, openToNextWork: true });
+    });
+
+    await waitFor(() => expect(result.current.mutation.isError).toBe(true));
+    await waitFor(() => expect(getCalls).toBe(2));
+    expect(result.current.employees.data).toEqual([employee(true)]);
+  });
+
   it("leaves list and detail caches unchanged when the mutation fails", async () => {
     const { queryClient, wrapper } = createTestContext();
     seedEmployeeCaches(queryClient, false);
@@ -304,6 +337,32 @@ describe("useToggleEmployeeOpenStatus", () => {
     resolveCreate?.({ data: { ...employee(true), id: 8, name: "지연 생성" } });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
+    expect(queryClient.getQueryState(employeeQueryKeys.lists())?.isInvalidated).not.toBe(true);
+  });
+
+  it("does not refetch a replacement list after a failed toggle", async () => {
+    const { queryClient, wrapper } = createTestContext();
+    const branchBEmployee = employee(false);
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+
+    let rejectToggle: ((error: Error) => void) | undefined;
+    mockedApiPatch.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectToggle = reject;
+    }));
+
+    const { result } = renderHook(() => useToggleEmployeeOpenStatus(), { wrapper });
+    act(() => {
+      result.current.mutate({ id: 7, openToNextWork: true });
+    });
+    await waitFor(() => expect(mockedApiPatch).toHaveBeenCalled());
+
+    queryClient.clear();
+    queryClient.setQueryData(employeeQueryKeys.lists(), [branchBEmployee]);
+    rejectToggle?.(new Error("toggle failed"));
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(mockedApiGet).not.toHaveBeenCalled();
     expect(queryClient.getQueryData<Employee[]>(employeeQueryKeys.lists())).toEqual([branchBEmployee]);
     expect(queryClient.getQueryState(employeeQueryKeys.lists())?.isInvalidated).not.toBe(true);
   });
