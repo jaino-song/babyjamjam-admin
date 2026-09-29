@@ -1,6 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import {
   getGlintUiScaleForViewport,
+  getGlintUiScaleForWindow,
+  getUnzoomedViewportWidth,
   useGlintUiScaleStyle,
 } from "../useGlintUiScale";
 
@@ -8,6 +10,7 @@ describe("Glint UI Scale", () => {
   const originalViewport = {
     width: window.innerWidth,
     height: window.innerHeight,
+    outerWidth: window.outerWidth,
     devicePixelRatio: window.devicePixelRatio,
   };
 
@@ -20,9 +23,50 @@ describe("Glint UI Scale", () => {
       configurable: true,
       value: originalViewport.height,
     });
+    Object.defineProperty(window, "outerWidth", {
+      configurable: true,
+      value: originalViewport.outerWidth,
+    });
     Object.defineProperty(window, "devicePixelRatio", {
       configurable: true,
       value: originalViewport.devicePixelRatio,
+    });
+  });
+
+  describe("browser zoom", () => {
+    it.each([
+      ["100%", 1440, 1440],
+      ["110%", 1309, 1440],
+      ["125%", 1152, 1440],
+      ["150%", 960, 1440],
+      ["175%", 823, 1440],
+    ])("keeps the 1440px-window scale at %s zoom so zoom always enlarges", (_zoom, innerWidth, outerWidth) => {
+      expect(getGlintUiScaleForWindow({ innerWidth, outerWidth })).toBe(1);
+    });
+
+    it("zooming out shrinks too: 80% on a 1440px window keeps the unzoomed scale", () => {
+      expect(getUnzoomedViewportWidth(1800, 1440)).toBe(1440);
+      expect(getGlintUiScaleForWindow({ innerWidth: 1800, outerWidth: 1440 })).toBe(1);
+    });
+
+    it("treats a thin window frame (Windows) as 100%, not zoom", () => {
+      expect(getUnzoomedViewportWidth(1440, 1456)).toBe(1440);
+    });
+
+    it.each([
+      ["DevTools docked (400px)", 1040, 1440],
+      ["side panel (320px)", 1120, 1440],
+      ["side panel (360px) at 125% zoom", 864, 1440],
+    ])("falls back to the page width when the ratio is not a zoom step: %s", (_case, innerWidth, outerWidth) => {
+      expect(getUnzoomedViewportWidth(innerWidth, outerWidth)).toBe(innerWidth);
+    });
+
+    it("falls back to the page width when outerWidth is unavailable", () => {
+      expect(getUnzoomedViewportWidth(1300, 0)).toBe(1300);
+    });
+
+    it("keeps handsets at full size even when zoomed", () => {
+      expect(getGlintUiScaleForWindow({ innerWidth: 700, outerWidth: 875 })).toBe(1);
     });
   });
 
@@ -55,6 +99,7 @@ describe("Glint UI Scale", () => {
 
   it("starts with the CSS fallback and hydrates to the same width-based value", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "outerWidth", { configurable: true, value: 1440 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
     const queuedFrames: FrameRequestCallback[] = [];
     const requestFrameSpy = jest
@@ -87,6 +132,7 @@ describe("Glint UI Scale", () => {
 
   it("does not resize the scale when only the viewport height changes", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    Object.defineProperty(window, "outerWidth", { configurable: true, value: 1280 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 720 });
     const queuedFrames: FrameRequestCallback[] = [];
     const requestFrameSpy = jest
@@ -119,8 +165,9 @@ describe("Glint UI Scale", () => {
     }
   });
 
-  it("updates after browser zoom changes the CSS viewport width and DPR", () => {
+  it("keeps the scale when browser zoom narrows the page, so zoom enlarges the UI", () => {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+    Object.defineProperty(window, "outerWidth", { configurable: true, value: 1440 });
     Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
     Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 1 });
     const queuedFrames: FrameRequestCallback[] = [];
@@ -141,6 +188,7 @@ describe("Glint UI Scale", () => {
       });
       expect(result.current?.["--glint-ui-scale"]).toBe("1");
 
+      // 125% zoom: the page is 1152 CSS px wide inside the same 1440px window.
       Object.defineProperty(window, "innerWidth", { configurable: true, value: 1152 });
       Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: 1.25 });
       act(() => {
@@ -148,7 +196,7 @@ describe("Glint UI Scale", () => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
 
-      expect(result.current?.["--glint-ui-scale"]).toBe("0.85");
+      expect(result.current?.["--glint-ui-scale"]).toBe("1");
     } finally {
       requestFrameSpy.mockRestore();
       cancelFrameSpy.mockRestore();

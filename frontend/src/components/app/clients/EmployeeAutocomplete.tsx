@@ -13,7 +13,7 @@ import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialo
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
-import { getGlintUiScaleForViewport } from "@/components/app/v3/useGlintUiScale";
+import { getGlintUiScaleForWindow } from "@/components/app/v3/useGlintUiScale";
 import {
     Popover,
     PopoverContent,
@@ -95,7 +95,7 @@ export function EmployeeAutocomplete({
     const popoverSideOffset = -44 * (
         typeof window === "undefined"
             ? 1
-            : getGlintUiScaleForViewport(window.innerWidth, window.innerHeight)
+            : getGlintUiScaleForWindow(window)
     );
 
     const availableEmployees = useMemo(() => {
