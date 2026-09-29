@@ -47,6 +47,8 @@ import type {
   UpcomingMessageTriggerJob,
 } from "@/features/message-triggers/types";
 import { toast } from "@/hooks/use-toast";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import {
   ClientMessageHistoryDetail,
   type MessageHistoryDetailTone,
@@ -496,7 +498,8 @@ function UpcomingRow({
   onCancel,
 }: {
   job: UpcomingMessageTriggerJob;
-  onCancel: (job: UpcomingMessageTriggerJob) => void;
+  /** Omitted for users who cannot manage the branch (cancel needs BranchManagerGuard). */
+  onCancel?: (job: UpcomingMessageTriggerJob) => void;
 }) {
   const meta = JOB_STATUS[job.status];
   const StatusIcon = meta.icon;
@@ -507,7 +510,7 @@ function UpcomingRow({
   // pending — manual scheduled entries carry a synthetic manual-sms: ruleId
   // (see isManualScheduledJob) and get no cancel action; a non-pending job
   // would just fail server-side anyway.
-  const isCancelable = job.status === "pending" && !isManualScheduledJob(job);
+  const isCancelable = Boolean(onCancel) && job.status === "pending" && !isManualScheduledJob(job);
 
   return (
     <article className="message-data-row" data-component={UPCOMING_ROW_BASE}>
@@ -536,7 +539,7 @@ function UpcomingRow({
               type="button"
               className="text-[0.68rem] font-bold text-v3-burgundy"
               data-component={`${UPCOMING_ROW_BASE}_cancel-action`}
-              onClick={() => onCancel(job)}
+              onClick={() => onCancel?.(job)}
             >
               {MESSAGE_JOB_CANCEL_COPY.action}
             </button>
@@ -614,6 +617,9 @@ export function MessagesHistoryPage() {
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
   const retryMutation = useRetryMessageHistory();
+  // Cancel and retry require BranchManagerGuard on the server; hide them for
+  // plain branch users instead of letting them hit a 403.
+  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
 
   const upcomingJobs = useMemo(
     () => upcomingData
@@ -809,7 +815,7 @@ export function MessagesHistoryPage() {
   const selectedCancelReason = selectedRecord && normalizedSelectedRecord?.status === "canceled"
     ? getRecordReasonText(selectedRecord)
     : "";
-  const canRetrySelectedRecord = Boolean(
+  const canRetrySelectedRecord = canManageBranchMessages && Boolean(
     selectedRecord
     && typeof selectedRecord.id === "number"
     && selectedRecord.status === "failed",
@@ -947,7 +953,11 @@ export function MessagesHistoryPage() {
                           ))
                         ) : (
                           visibleUpcomingJobs.map((job) => (
-                            <UpcomingRow key={job.id} job={job} onCancel={setJobPendingCancel} />
+                            <UpcomingRow
+                              key={job.id}
+                              job={job}
+                              onCancel={canManageBranchMessages ? setJobPendingCancel : undefined}
+                            />
                           ))
                         )}
                       </div>

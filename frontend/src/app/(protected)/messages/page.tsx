@@ -748,6 +748,9 @@ function MessageHistorySection() {
   const isPanelLoading = isLoading || isLoadingUpcoming;
   const { mutateAsync: retryHistory, isPending: isRetrying } = useRetryMessageHistory();
   const cancelMutation = useCancelUpcomingMessageTriggerJob();
+  // Retry and cancel require BranchManagerGuard on the server; hide them for
+  // plain branch users instead of letting them hit a 403.
+  const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
   const { data: clients = [] } = useAllClients();
   const { toast } = useToast();
   const smsHistoryData = useMemo(
@@ -887,7 +890,8 @@ function MessageHistorySection() {
     }
   }, []);
 
-  const canRetry = !!selectedRecord
+  const canRetry = canManageBranchMessages
+    && !!selectedRecord
     && typeof selectedRecord.id === "number"
     && selectedRecord.status === "failed";
 
@@ -919,7 +923,8 @@ function MessageHistorySection() {
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
   // are never cancellable at all.
-  const canCancelSelectedJob = !!selectedJob
+  const canCancelSelectedJob = canManageBranchMessages
+    && !!selectedJob
     && selectedJob.status === "pending"
     && !isManualScheduledJob(selectedJob);
 
