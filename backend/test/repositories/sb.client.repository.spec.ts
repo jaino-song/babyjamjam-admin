@@ -415,6 +415,24 @@ describe("SbClientRepository", () => {
             });
         });
 
+        it("treats a short digit query starting with 82 as local digits, not a country code", async () => {
+            clientModel.findMany
+                .mockResolvedValueOnce([
+                    { id: 1, name: "A", address: "Seoul", phone: "010-1234-5678", phoneNormalized: "01012345678" },
+                    { id: 2, name: "B", address: "Seoul", phone: "010-8212-0000", phoneNormalized: "01082120000" },
+                    { id: 3, name: "C", address: "Seoul", phone: "010-5555-0120", phoneNormalized: "01055550120" },
+                ])
+                .mockResolvedValueOnce([createClientRow({ id: 2, name: "B" })]);
+            clientModel.count.mockResolvedValue(1);
+
+            await repository.findAllPaginated(branchId, 1, 10, "8212", "all");
+
+            expect(clientModel.findMany.mock.calls[1]?.[0]?.where).toEqual({
+                branchId,
+                AND: [{ id: { in: [2] } }],
+            });
+        });
+
         describe("given no results found", () => {
             it("should return empty data with zero totals", async () => {
                 // Arrange
