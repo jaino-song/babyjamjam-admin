@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
@@ -46,7 +46,15 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { EmployeeDetailPanel } from "@/components/app/employees/EmployeeDetailPanel";
-const filterItems = [
+type EmployeeFilter = "all" | "active" | "inactive";
+
+type PendingCreateDiscardAction =
+    | { type: "filter"; filter: EmployeeFilter }
+    | { type: "select"; employee: Employee }
+    | { type: "back" }
+    | { type: "close" };
+
+const filterItems: Array<{ label: string; value: EmployeeFilter }> = [
     { label: "전체", value: "all" },
     { label: EMPLOYEE_STATUS_LABELS.available, value: "active" },
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
@@ -131,8 +139,10 @@ function getEmployeeAvatarClassName(openToNextWork: boolean): string {
 
 export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: string }) {
     const [search, setSearch] = useState("");
-    const [filter, setFilter] = useState("all");
+    const [filter, setFilter] = useState<EmployeeFilter>("all");
     const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
+    const [isCreateFormDirty, setIsCreateFormDirty] = useState(false);
+    const [pendingCreateDiscard, setPendingCreateDiscard] = useState<PendingCreateDiscardAction | null>(null);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [selectedEmployeeFromForm, setSelectedEmployeeFromForm] = useState<Employee | null>(null);
@@ -145,6 +155,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const {
         employees,
         allEmployees,
+        searchMatchedEmployees,
         isLoading,
         isError,
         isFetchingNextPage,
@@ -194,18 +205,23 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         : selectedEmployeeFromList ?? selectedEmployeeFromForm;
 
     const stats = useMemo(() => {
+        const matchedEmployees = searchMatchedEmployees ?? allEmployees ?? [];
+
         return {
-            total: allEmployees.length,
-            working: allEmployees.filter((e: Employee) => e.status === "working").length,
-            available: allEmployees.filter((e: Employee) => e.status === "available").length,
-            unavailable: allEmployees.filter((e: Employee) => e.status === "unavailable").length,
+            total: matchedEmployees.length,
+            working: matchedEmployees.filter((e: Employee) => e.status === "working").length,
+            available: matchedEmployees.filter((e: Employee) => e.openToNextWork === true).length,
+            unavailable: matchedEmployees.filter((e: Employee) => e.openToNextWork === false).length,
         };
-    }, [allEmployees]);
+    }, [allEmployees, searchMatchedEmployees]);
 
     const handleAddNew = () => {
+        if (formDialogOpen || pendingCreateDiscard !== null || isCreatingEmployee) return;
+
         setEditingEmployee(null);
         setFormDialogOpen(false);
         setSelectedEmployee(null);
+        setIsCreateFormDirty(false);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
         setSettledFormFields([]);
@@ -213,6 +229,18 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     };
 
     const handleSelectEmployee = (employee: Employee) => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        if (isCreatingEmployee) {
+            if (isCreateFormDirty) {
+                setPendingCreateDiscard({ type: "select", employee });
+                return;
+            }
+
+            setIsCreatingEmployee(false);
+            setIsCreateFormDirty(false);
+        }
+
         setIsCreatingEmployee(false);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
@@ -261,10 +289,14 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelClose = () => {
         setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
     };
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
         setSettledFormFields([]);
         setSelectedEmployeeFormBaseline(
             allEmployees.find((liveEmployee) => liveEmployee.id === employee.id) ?? null,
@@ -273,35 +305,92 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setSelectedEmployee(employee);
     };
 
+    const handleCreateFormDirtyChange = useCallback((dirty: boolean) => {
+        setIsCreateFormDirty(dirty);
+    }, []);
+
+    const applyFilterChange = useCallback((nextFilter: EmployeeFilter) => {
+        setFilter(nextFilter);
+        setSelectedEmployee(null);
+        setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
+    }, []);
+
+    const handleFilterChange = (nextFilter: string) => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        const normalizedFilter = filterItems.find((item) => item.value === nextFilter)?.value;
+        if (!normalizedFilter || normalizedFilter === filter) return;
+
+        if (isCreatingEmployee && isCreateFormDirty) {
+            setPendingCreateDiscard({ type: "filter", filter: normalizedFilter });
+            return;
+        }
+
+        applyFilterChange(normalizedFilter);
+    };
+
+    const handleCompactBack = () => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        if (isCreatingEmployee) {
+            if (isCreateFormDirty) {
+                setPendingCreateDiscard({ type: "back" });
+                return;
+            }
+
+            handleFormPanelClose();
+            return;
+        }
+
+        setSelectedEmployee(null);
+    };
+
+    const handleFormPanelBeforeClose = useCallback(() => {
+        if (!isCreateFormDirty) return true;
+
+        setPendingCreateDiscard({ type: "close" });
+        return false;
+    }, [isCreateFormDirty]);
+
+    const handleDiscardCreateDraft = () => {
+        if (pendingCreateDiscard === null) return;
+
+        const action = pendingCreateDiscard;
+        if (action.type === "filter") {
+            applyFilterChange(action.filter);
+            return;
+        }
+
+        setPendingCreateDiscard(null);
+        setIsCreatingEmployee(false);
+        setIsCreateFormDirty(false);
+        setSelectedEmployee(action.type === "select" ? action.employee : null);
+    };
+
     return (
         <div data-component={dataComponent} className="flex min-h-0 flex-1 flex-col gap-4">
             <StatsBar
                 name="employees"
                 isLoading={isLoading}
                 items={[
-                    { icon: Users, value: stats.total, label: "전체 직원", counter: "명" },
-                    { icon: Briefcase, value: stats.working, label: "근무 중", counter: "명", colorIndex: 2 },
-                    { icon: Clock, value: stats.available, label: EMPLOYEE_STATUS_LABELS.available, counter: "명", colorIndex: 2 },
-                    { icon: CircleOff, value: stats.unavailable, label: EMPLOYEE_STATUS_LABELS.unavailable, counter: "명", colorIndex: 0 },
+                    { icon: Users, value: stats.total, label: filterItems[0].label, counter: "명" },
+                    { icon: Briefcase, value: stats.available, label: filterItems[1].label, counter: "명", colorIndex: 2 },
+                    { icon: CircleOff, value: stats.unavailable, label: filterItems[2].label, counter: "명", colorIndex: 0 },
+                    { icon: Clock, value: stats.working, label: "근무 중 (검색 결과)", counter: "명", colorIndex: 1 },
                 ]}
             />
 
             <SplitLayout data-component={`${dataComponent}_split-layout`}
                 hasSelection={isCreatingEmployee || !!selectedEmployee}
-                onBack={() => {
-                    if (isCreatingEmployee) {
-                        handleFormPanelClose();
-                        return;
-                    }
-
-                    setSelectedEmployee(null);
-                }}
+                onBack={handleCompactBack}
             >
                 <ListPanel data-component={`${dataComponent}_split-layout_list-panel`}
                     title="직원 목록"
                     tabs={filterItems}
                     activeTab={filter}
-                    onTabChange={setFilter}
+                    onTabChange={handleFilterChange}
                     searchValue={search}
                     onSearchChange={setSearch}
                     searchPlaceholder="이름, 연락처, 지역으로 검색..."
@@ -401,7 +490,9 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 {isCreatingEmployee ? (
                     <EmployeeFormPanel
                         onClose={handleFormPanelClose}
+                        onBeforeClose={handleFormPanelBeforeClose}
                         onSuccess={handleFormPanelSuccess}
+                        onDirtyChange={handleCreateFormDirtyChange}
                         renderLayout={({ content, footer }) => (
                             <DetailPanel data-component={`${dataComponent}_split-layout_detail-panel_create`}
                                 compactBackLabel="직원 목록으로 돌아가기"
@@ -453,6 +544,17 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 approvalVariant="destructive"
                 isPending={deleteEmployee.isPending}
                 onApprove={() => void handleDeleteConfirm()}
+            />
+            <TwoButtonModal
+                open={pendingCreateDiscard !== null}
+                onOpenChange={(open) => {
+                    if (!open) setPendingCreateDiscard(null);
+                }}
+                dataComponent={`${dataComponent}_create-discard-approval`}
+                title="작성 중인 직원 정보를 버리시겠습니까?"
+                description="입력한 내용은 저장되지 않습니다."
+                approvalLabel="버리기"
+                onApprove={handleDiscardCreateDraft}
             />
             <NotificationOneButtonModal
                 open={deleteErrorMessage !== null}

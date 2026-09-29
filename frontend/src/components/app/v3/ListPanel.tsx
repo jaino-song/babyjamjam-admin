@@ -401,12 +401,11 @@ export function ListPanel({
       <div
         data-component={`${dataComponent}_content`}
         data-slot="list-panel-content"
-        className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))]"
+        className="scrollbar-on-scroll relative flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))]"
         data-scroll-active={isScrollActive ? "true" : "false"}
         onScroll={handleScroll}
       >
         {showContentSkeleton ? contentSkeleton : children}
-        <div className="sticky bottom-0 h-[calc(24px*var(--glint-ui-scale,1))] shrink-0 bg-white" />
       </div>
       {disabled ? (
         <div

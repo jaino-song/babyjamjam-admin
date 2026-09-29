@@ -1,5 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { CLIENT_REPOSITORY, IClientRepository, PaginatedResult } from "domain/repositories/client.repository.interface";
+import {
+    CLIENT_REPOSITORY,
+    ClientListTab,
+    IClientRepository,
+    PaginatedResult,
+} from "domain/repositories/client.repository.interface";
 import { ClientEntity } from "domain/entities/client.entity";
 
 @Injectable()
@@ -13,8 +18,9 @@ export class ListClientsPaginatedUsecase {
         branchid: string,
         page: number,
         limit: number,
-        search?: string
+        search?: string,
+        tab?: ClientListTab,
     ): Promise<PaginatedResult<ClientEntity>> {
-        return this.clientRepository.findAllPaginated(branchid, page, limit, search);
+        return this.clientRepository.findAllPaginated(branchid, page, limit, search, tab);
     }
 }

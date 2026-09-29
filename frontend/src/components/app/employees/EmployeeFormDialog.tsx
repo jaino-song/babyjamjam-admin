@@ -8,7 +8,7 @@ import {
 } from "@babyjamjam/shared";
 
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -68,6 +68,7 @@ import {
 interface EmployeeFormDialogProps {
     open: boolean;
     onClose: () => void;
+    onBeforeClose?: () => boolean;
     employee?: Employee | null;
     onSuccess?: (employee: Employee) => void;
 }
@@ -75,6 +76,7 @@ interface EmployeeFormDialogProps {
 interface EmployeeFormPanelProps extends Omit<EmployeeFormDialogProps, "open"> {
     open?: boolean;
     renderLayout?: (slots: { content: ReactNode; footer: ReactNode }) => ReactNode;
+    onDirtyChange?: (dirty: boolean) => void;
 }
 
 interface FormData {
@@ -94,6 +96,16 @@ const initialFormData: FormData = {
     openToNextWork: true,
     birthday: "",
 };
+
+function areFormDataEqual(left: FormData, right: FormData): boolean {
+    return left.name === right.name
+        && left.phone === right.phone
+        && left.grade === right.grade
+        && left.openToNextWork === right.openToNextWork
+        && left.birthday === right.birthday
+        && left.workArea.length === right.workArea.length
+        && left.workArea.every((area, index) => area === right.workArea[index]);
+}
 
 const GRADE_OPTIONS = [
     { value: GRADES[2], label: GRADES[2] },
@@ -371,28 +383,33 @@ const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
 export function EmployeeFormPanel({
     open = true,
     onClose,
+    onBeforeClose,
     employee,
     onSuccess,
     renderLayout,
+    onDirtyChange,
 }: EmployeeFormPanelProps) {
     return (
         <EmployeeFormContent
             surface="panel"
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             employee={employee}
             onSuccess={onSuccess}
             renderLayout={renderLayout}
+            onDirtyChange={onDirtyChange}
         />
     );
 }
 
-export function EmployeeFormDialog({ open, onClose, employee, onSuccess }: EmployeeFormDialogProps) {
+export function EmployeeFormDialog({ open, onClose, onBeforeClose, employee, onSuccess }: EmployeeFormDialogProps) {
     return (
         <EmployeeFormContent
             surface="dialog"
             open={open}
             onClose={onClose}
+            onBeforeClose={onBeforeClose}
             employee={employee}
             onSuccess={onSuccess}
         />
@@ -403,10 +420,12 @@ function EmployeeFormContent({
     surface,
     open,
     onClose,
+    onBeforeClose,
     employee,
     onSuccess,
     renderLayout,
-}: EmployeeFormDialogProps & Pick<EmployeeFormPanelProps, "renderLayout"> & { surface: "dialog" | "panel" }) {
+    onDirtyChange,
+}: EmployeeFormDialogProps & Pick<EmployeeFormPanelProps, "renderLayout" | "onDirtyChange"> & { surface: "dialog" | "panel" }) {
     const locale = useLocale();
     const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -416,6 +435,7 @@ function EmployeeFormContent({
     });
     const [error, setError] = useState<EmployeeFormErrorState | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const formDataBaselineRef = useRef<FormData>(initialFormData);
 
     const createMutation = useCreateEmployee();
     const updateMutation = useUpdateEmployee();
@@ -495,6 +515,8 @@ function EmployeeFormContent({
                 name: prefillName || "",
             };
 
+        formDataBaselineRef.current = nextFormData;
+
         queueMicrotask(() => {
             if (cancelled) {
                 return;
@@ -509,6 +531,12 @@ function EmployeeFormContent({
             cancelled = true;
         };
     }, [employee, open, prefillName]);
+
+    useEffect(() => {
+        if (surface !== "panel" || !open || !onDirtyChange) return;
+
+        onDirtyChange(!areFormDataEqual(formData, formDataBaselineRef.current));
+    }, [formData, onDirtyChange, open, surface]);
 
     const handleChange = <K extends keyof FormData>(field: K, value: FormData[K]) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -600,9 +628,15 @@ function EmployeeFormContent({
     };
 
     const handleClose = () => {
+        if (onBeforeClose && !onBeforeClose()) {
+            return;
+        }
+
+        formDataBaselineRef.current = initialFormData;
         setFormData(initialFormData);
         setTouched({ phone: false, workArea: false });
         setError(null);
+        onDirtyChange?.(false);
         onClose();
     };
 

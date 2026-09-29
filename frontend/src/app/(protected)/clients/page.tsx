@@ -1,9 +1,10 @@
 "use client";
 
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebounce } from "use-debounce";
 import { normalizeApiError } from "@babyjamjam/shared";
 import {
     Workflow,
@@ -27,8 +28,10 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import {
-    useClients,
+    useClientDirectory,
+    useClientListSummary,
     useDeleteClient,
     useClient,
 } from "@/features/clients/hooks/use-clients";
@@ -36,7 +39,8 @@ import { useSendClientReceipt } from "@/features/clients/hooks/use-send-client-r
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
-import type { Client, ServiceStatus } from "@/lib/client/types";
+import type { Client } from "@/lib/client/types";
+import type { ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
     getClientBadges,
@@ -63,6 +67,8 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
     StatsBar,
@@ -80,11 +86,10 @@ import {
     SectionNav,
     SteppedWizardStepper,
 } from "@/components/app/v3";
-import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
-const FILTER_CHIPS = [
+const FILTER_CHIPS: Array<{ label: string; value: ClientListTab }> = [
     { label: "전체", value: "all" },
     { label: "예약 전", value: "pre_booking" },
     { label: "대기", value: "waiting" },
@@ -100,6 +105,13 @@ const CLIENT_SECTIONS = [
 ] as const;
 
 type ClientSectionId = (typeof CLIENT_SECTIONS)[number]["id"];
+
+type PendingCreateDiscardAction =
+    | { type: "filter"; filter: ClientListTab }
+    | { type: "select"; client: Client }
+    | { type: "back" }
+    | { type: "close" }
+    | { type: "section"; section: ClientSectionId };
 
 type ClientAutomationItem = {
     id: "eformsign-auto-client-registration";
@@ -117,12 +129,6 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
     },
 ];
 
-const toDate = (value: string | null): Date | null => {
-    if (!value) return null;
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-};
-
 const getTodayIsoDate = (): string => {
     const today = new Date();
     const year = today.getFullYear();
@@ -137,25 +143,6 @@ interface ServiceScheduleChangeTarget {
     currentDate: string;
     minimumDate: string;
 }
-
-const filterValueToStatus = (filter: string): ServiceStatus | null => {
-    switch (filter) {
-        case "pre_booking":
-            return "pre_booking";
-        case "waiting":
-            return "waiting";
-        case "replacement_requested":
-            return "replacement_requested";
-        case "active":
-            return "active";
-        case "completed":
-            return "completed";
-        case "terminated":
-            return "terminated";
-        default:
-            return null;
-    }
-};
 
 function ClientAutomationSection() {
     const { toast } = useToast();
@@ -286,11 +273,15 @@ export default function ClientsPage() {
     const canManageBranchFeatures = canManageBranchFromAuthQuery(authUserQuery);
     const router = useRouter();
     const searchParams = useSearchParams();
+    const activeBranchId = useActiveBranchId();
     const clientIdParam = searchParams.get("id");
     const shouldOpenClientFormFromUrl = searchParams.get("openClientForm") === "1";
 
     const [selectedClient, setSelectedClient] = useState<Client | null>(null);
     const [isCreatingClient, setIsCreatingClient] = useState(false);
+    const [isCreateFormDirty, setIsCreateFormDirty] = useState(false);
+    const [pendingCreateDiscard, setPendingCreateDiscard] = useState<PendingCreateDiscardAction | null>(null);
+    const [urlSelectionSuppressed, setUrlSelectionSuppressed] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [maternityContractClient, setMaternityContractClient] = useState<Client | null>(null);
@@ -306,20 +297,46 @@ export default function ClientsPage() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [searchQuery, setSearchQuery] = useState("");
-    const [activeFilter, setActiveFilter] = useState("all");
+    const [activeFilter, setActiveFilter] = useState<ClientListTab>("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
 
-    const { data, isLoading } = useClients(1, 50);
+    const [debouncedSearchQuery] = useDebounce(searchQuery.trim(), 300);
+    const isSearchSettled = searchQuery.trim() === debouncedSearchQuery;
+    const directory = useClientDirectory({
+        search: debouncedSearchQuery || undefined,
+        tab: activeFilter,
+        limit: 20,
+    });
+    const listSummary = useClientListSummary({
+        search: debouncedSearchQuery || undefined,
+    });
     const deleteClient = useDeleteClient();
     const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
+    const previousBranchIdRef = useRef<string | null | undefined>(undefined);
+    const createdClientSelectionRef = useRef<Client | null>(null);
 
-    const { data: clientFromParam } = useClient(
-        clientIdParam ? Number(clientIdParam) : 0
+    const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
+    const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
+
+    const {
+        data: clientFromParam,
+        isBranchContextReady: isClientDetailBranchContextReady,
+    } = useClient(
+        effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
     );
 
-    const clients = useMemo(() => data?.data || [], [data?.data]);
+    const clients = useMemo(
+        () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
+        [directory.clients, directory.isBranchContextReady, isSearchSettled],
+    );
+    const matchedTotal = isSearchSettled && directory.isBranchContextReady && directory.data !== undefined
+        ? directory.matchedTotal
+        : null;
+    const summary = isSearchSettled && listSummary.isBranchContextReady
+        ? listSummary.data
+        : undefined;
     const selectedClientFromList = useMemo(
         () =>
             selectedClient
@@ -328,110 +345,112 @@ export default function ClientsPage() {
         [clients, selectedClient]
     );
     const clientFromParamList = useMemo(() => {
-        if (!clientIdParam) return null;
+        if (!effectiveClientIdParam) return null;
 
-        const parsedClientId = Number(clientIdParam);
+        const parsedClientId = Number(effectiveClientIdParam);
         if (!Number.isFinite(parsedClientId)) return null;
 
         return clients.find((client) => client.id === parsedClientId) ?? null;
-    }, [clientIdParam, clients]);
-    const activeSelectedClient = selectedClientFromList ?? (clientIdParam ? clientFromParamList ?? clientFromParam ?? null : null);
+    }, [clients, effectiveClientIdParam]);
+    const isBranchScopeStable = previousBranchIdRef.current === undefined
+        || previousBranchIdRef.current === activeBranchId;
+    const activeSelectedClient = directory.isBranchContextReady
+        && isClientDetailBranchContextReady
+        && isBranchScopeStable
+        ? selectedClientFromList ?? (effectiveClientIdParam ? clientFromParamList ?? clientFromParam ?? null : null)
+        : null;
     const panelFormClient = null;
-    const shouldShowClientFormPanel = isCreatingClient || shouldOpenClientFormFromUrl;
+    const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
 
-    const filteredClients = useMemo(() => {
-        let result = clients;
-        const statusValue = filterValueToStatus(activeFilter);
-        if (statusValue) result = result.filter((c) => c.serviceStatus === statusValue);
-        if (searchQuery.trim()) {
-            result = result.filter((c) =>
-                matchesSearchQuery(searchQuery, [c.name, c.phone, c.address]),
-            );
+    const summaryScopeLabel = searchQuery.trim()
+        ? `현재 검색 범위: ${searchQuery.trim()}`
+        : "현재 지점 전체";
+    const isDirectoryInitialLoading = !isSearchSettled || directory.isInitialLoading;
+    const isSummaryInitialLoading = !isSearchSettled || listSummary.isInitialLoading;
+    const stats = {
+        thisMonthCount: summary?.dueDate.thisMonth ?? "—",
+        nextMonthCount: summary?.dueDate.nextMonth ?? "—",
+        activeCount: summary?.byTab.active ?? "—",
+        pendingCount: summary?.byTab.waiting ?? "—",
+        endingSoonCount: summary?.serviceEnd.count ?? "—",
+    };
+    const clearClientSelectionSources = useCallback(() => {
+        createdClientSelectionRef.current = null;
+        setSelectedClient(null);
+        setIsCreatingClient(false);
+        setClientFormActiveStep(0);
+        if (clientIdParam || shouldOpenClientFormFromUrl) {
+            setUrlSelectionSuppressed(true);
+            router.replace("/clients");
         }
-        return result;
-    }, [clients, activeFilter, searchQuery]);
+    }, [clientIdParam, router, shouldOpenClientFormFromUrl]);
+    useEffect(() => {
+        if (urlSelectionSuppressed && !clientIdParam && !shouldOpenClientFormFromUrl) {
+            setUrlSelectionSuppressed(false);
+        }
+    }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
+    useEffect(() => {
+        const previousBranchId = previousBranchIdRef.current;
+        if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {
+            clearClientSelectionSources();
+            setIsCreateFormDirty(false);
+            setPendingCreateDiscard(null);
+        }
+        previousBranchIdRef.current = activeBranchId;
+    }, [activeBranchId, clearClientSelectionSources]);
 
-    const stats = useMemo(() => {
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth();
-        const nextMonthDate = new Date(currentYear, currentMonth + 1, 1);
-        const nextMonthYear = nextMonthDate.getFullYear();
-        const nextMonth = nextMonthDate.getMonth();
-
-        const today = new Date(currentYear, currentMonth, now.getDate());
-        const threeDaysLater = new Date(currentYear, currentMonth, now.getDate() + 3);
-
-        const thisMonthCount = clients.filter((c) => {
-            const dueDate = toDate(c.dueDate);
-            return dueDate
-                ? dueDate.getFullYear() === currentYear && dueDate.getMonth() === currentMonth
-                : false;
-        }).length;
-
-        const nextMonthCount = clients.filter((c) => {
-            const dueDate = toDate(c.dueDate);
-            return dueDate
-                ? dueDate.getFullYear() === nextMonthYear && dueDate.getMonth() === nextMonth
-                : false;
-        }).length;
-
-        const activeCount = clients.filter((c) => c.serviceStatus === "active").length;
-        const pendingCount = clients.filter((c) => c.serviceStatus === "waiting").length;
-
-        const endingSoonCount = clients.filter((c) => {
-            const endDate = toDate(c.endDate);
-            if (!endDate) return false;
-
-            const normalizedEndDate = new Date(
-                endDate.getFullYear(),
-                endDate.getMonth(),
-                endDate.getDate()
-            );
-
-            return normalizedEndDate >= today && normalizedEndDate <= threeDaysLater;
-        }).length;
-
-        return { thisMonthCount, nextMonthCount, activeCount, pendingCount, endingSoonCount };
-    }, [clients]);
+    const applySectionChange = (nextSection: ClientSectionId) => {
+        setActiveSection(nextSection);
+        if (nextSection === "automation") {
+            clearClientSelectionSources();
+            setIsCreateFormDirty(false);
+            setPendingCreateDiscard(null);
+        }
+    };
 
     const handleSectionSelect = (sectionId: string) => {
-        const nextSection = sectionId as ClientSectionId;
-        setActiveSection(nextSection);
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
 
-        if (nextSection === "automation") {
-            setIsCreatingClient(false);
-            setSelectedClient(null);
-            setClientFormActiveStep(0);
+        const nextSection = CLIENT_SECTIONS.find((section) => section.id === sectionId)?.id;
+        if (!nextSection || nextSection === activeSection) return;
 
-            if (clientIdParam || shouldOpenClientFormFromUrl) {
-                router.replace("/clients");
-            }
+        if (shouldShowClientFormPanel && isCreateFormDirty) {
+            setPendingCreateDiscard({ type: "section", section: nextSection });
+            return;
         }
+
+        applySectionChange(nextSection);
     };
 
     const handleAddNew = () => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+        if (shouldShowClientFormPanel) return;
+
         setActiveSection("list");
-
-        if (clientIdParam || shouldOpenClientFormFromUrl) {
-            router.replace("/clients");
-        }
-
-        setSelectedClient(null);
+        clearClientSelectionSources();
         setEditingClient(null);
-        setClientFormActiveStep(0);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
         setIsCreatingClient(true);
     };
 
-    const handleSelectClient = (client: Client) => {
+    const applyClientSelection = (client: Client) => {
         setActiveSection("list");
+        clearClientSelectionSources();
+        setSelectedClient(client);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
+    };
 
-        if (clientIdParam || shouldOpenClientFormFromUrl) {
-            router.replace("/clients");
+    const handleSelectClient = (client: Client) => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        if (shouldShowClientFormPanel && isCreateFormDirty) {
+            setPendingCreateDiscard({ type: "select", client });
+            return;
         }
 
-        setIsCreatingClient(false);
-        setSelectedClient(client);
+        applyClientSelection(client);
     };
 
     const handleEdit = (client: Client) => {
@@ -590,6 +609,43 @@ export default function ClientsPage() {
         });
     };
 
+    const applyFilterChange = (nextFilter: ClientListTab) => {
+        setActiveFilter(nextFilter);
+        clearClientSelectionSources();
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
+    };
+
+    const handleFilterChange = (nextFilter: string) => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        const normalizedFilter = FILTER_CHIPS.find((item) => item.value === nextFilter)?.value;
+        if (!normalizedFilter || normalizedFilter === activeFilter) return;
+
+        if (shouldShowClientFormPanel && isCreateFormDirty) {
+            setPendingCreateDiscard({ type: "filter", filter: normalizedFilter });
+            return;
+        }
+
+        applyFilterChange(normalizedFilter);
+    };
+
+    const handleCompactBack = () => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return;
+
+        if (shouldShowClientFormPanel) {
+            if (isCreateFormDirty) {
+                setPendingCreateDiscard({ type: "back" });
+                return;
+            }
+
+            handleClientFormPanelClose();
+            return;
+        }
+
+        clearClientSelectionSources();
+    };
+
     const handleFormDialogClose = () => {
         setFormDialogOpen(false);
         setEditingClient(null);
@@ -616,23 +672,72 @@ export default function ClientsPage() {
         await queryClient.invalidateQueries({ queryKey: ["clients"] });
     };
 
+    const handleCreateFormDirtyChange = useCallback((dirty: boolean) => {
+        setIsCreateFormDirty(dirty);
+    }, []);
+
+    const handleFormPanelBeforeClose = useCallback(() => {
+        if (!isCreateFormDirty) return true;
+
+        setPendingCreateDiscard({ type: "close" });
+        return false;
+    }, [isCreateFormDirty]);
+
     const handleClientFormPanelClose = () => {
+        const createdClient = createdClientSelectionRef.current;
+        createdClientSelectionRef.current = null;
         setIsCreatingClient(false);
         setClientFormActiveStep(0);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
 
-        if (shouldOpenClientFormFromUrl) {
-            router.replace("/clients");
+        if (createdClient) {
+            setSelectedClient(createdClient);
+            if (clientIdParam || shouldOpenClientFormFromUrl) {
+                setUrlSelectionSuppressed(true);
+                router.replace("/clients");
+            }
+            return;
         }
+
+        clearClientSelectionSources();
     };
 
     const handleClientFormPanelSuccess = (client: Client) => {
+        createdClientSelectionRef.current = client;
         setIsCreatingClient(false);
         setSelectedClient(client);
         setClientFormActiveStep(0);
+        setIsCreateFormDirty(false);
+        setPendingCreateDiscard(null);
+    };
 
-        if (shouldOpenClientFormFromUrl) {
-            router.replace("/clients");
+    const handleDiscardCreateDraft = () => {
+        if (pendingCreateDiscard === null) return;
+
+        const action = pendingCreateDiscard;
+        setPendingCreateDiscard(null);
+        setIsCreateFormDirty(false);
+
+        if (action.type === "filter") {
+            applyFilterChange(action.filter);
+            return;
         }
+        if (action.type === "section") {
+            applySectionChange(action.section);
+            return;
+        }
+
+        setIsCreatingClient(false);
+        setClientFormActiveStep(0);
+        if (action.type === "select") {
+            setActiveSection("list");
+            clearClientSelectionSources();
+            setSelectedClient(action.client);
+            return;
+        }
+
+        clearClientSelectionSources();
     };
 
     const handleDetailModalClose = () => {
@@ -642,17 +747,86 @@ export default function ClientsPage() {
         }
     };
 
+    const isDirectoryUnavailable = !directory.isBranchContextReady;
+    const isDirectoryInitialError = isSearchSettled && directory.isInitialError;
+    const isDirectoryRefreshError = isSearchSettled && directory.hasStaleData;
+    const listScopeSubtitle = matchedTotal !== null && !isDirectoryInitialError
+        ? `${summaryScopeLabel} · 일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시`
+        : undefined;
+    const listSubHeader = isDirectoryRefreshError ? (
+        <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
+            <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
+            <AlertDescription>
+                최근에 확인된 목록을 표시하고 있어요.
+                <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error_retry"
+                    className="mt-3"
+                    aria-label="고객 목록 다시 시도"
+                    onClick={() => void directory.refetch()}
+                >
+                    다시 시도
+                </Button>
+            </AlertDescription>
+        </Alert>
+    ) : undefined;
+
     return (
         <PageSection name="clients">
+            {listSummary.isInitialError && isSearchSettled ? (
+                <Alert variant="destructive" data-component="desktop_clients_summary_error">
+                    <AlertTitle>고객 요약을 불러오지 못했어요</AlertTitle>
+                    <AlertDescription>
+                        현재 범위의 출산 예정일과 서비스 종료 수치를 확인할 수 없어요.
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-component="desktop_clients_summary_error_retry"
+                            className="mt-3"
+                            onClick={() => void listSummary.refetch()}
+                        >
+                            다시 시도
+                        </Button>
+                    </AlertDescription>
+                </Alert>
+            ) : null}
+            {listSummary.isRefreshError && summary && isSearchSettled ? (
+                <Alert variant="warning" data-component="desktop_clients_summary_stale">
+                    <AlertTitle>고객 요약을 새로 불러오지 못했어요</AlertTitle>
+                    <AlertDescription>
+                        최근에 확인된 {summaryScopeLabel} 수치를 표시하고 있어요.
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-component="desktop_clients_summary_stale_retry"
+                            className="mt-3"
+                            onClick={() => void listSummary.refetch()}
+                        >
+                            다시 시도
+                        </Button>
+                    </AlertDescription>
+                </Alert>
+            ) : null}
+            {summary && isSearchSettled ? (
+                <Alert variant="info" data-component="desktop_clients_summary_scope">
+                    <AlertDescription>
+                        {summaryScopeLabel} · 상태 탭과 무관한 지점 전체 검색 결과 기준 · 서비스 종료 예정 범위 {summary.serviceEnd.from}~{summary.serviceEnd.to} (한국시간, 양끝 포함)
+                    </AlertDescription>
+                </Alert>
+            ) : null}
             <StatsBar
                 name="clients" density="responsive-square"
-                isLoading={isLoading}
+                isLoading={isSummaryInitialLoading}
                 items={[
-                    { icon: Calendar, value: stats.thisMonthCount, label: "이번달 고객", counter: "명" },
-                    { icon: CalendarDays, value: stats.nextMonthCount, label: "다음달 고객", counter: "명", colorIndex: 1 },
+                    { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },
+                    { icon: CalendarDays, value: stats.nextMonthCount, label: "다음 달 출산 예정", counter: "명", colorIndex: 1 },
                     { icon: UserCheck, value: stats.activeCount, label: "서비스 진행중", counter: "명", colorIndex: 2 },
                     { icon: Clock, value: stats.pendingCount, label: "서비스 대기중", counter: "명", colorIndex: 1 },
-                    { icon: AlertTriangle, value: stats.endingSoonCount, label: "3일내 종료", counter: "명", colorIndex: 3 },
+                    { icon: AlertTriangle, value: stats.endingSoonCount, label: "서비스 종료 예정", counter: "명", colorIndex: 3 },
                 ]}
             />
 
@@ -679,28 +853,19 @@ export default function ClientsPage() {
                         >
                             <SplitLayout data-component="desktop_clients_sections_section-content_list-section_split-layout"
                                 hasSelection={shouldShowClientFormPanel || !!activeSelectedClient}
-                                onBack={() => {
-                                    if (shouldShowClientFormPanel) {
-                                        handleClientFormPanelClose();
-                                        return;
-                                    }
-
-                                    if (clientIdParam) {
-                                        router.replace("/clients");
-                                    }
-
-                                    setSelectedClient(null);
-                                }}
+                                onBack={handleCompactBack}
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
                     title="고객 목록"
+                    subtitle={listScopeSubtitle}
                     tabs={FILTER_CHIPS}
                     activeTab={activeFilter}
-                    onTabChange={setActiveFilter}
+                    onTabChange={handleFilterChange}
                     searchValue={searchQuery}
                     onSearchChange={setSearchQuery}
                     searchPlaceholder={t(locale, "clients.search-placeholder")}
-                    isLoading={isLoading}
+                    isLoading={isDirectoryInitialLoading}
+                    subHeader={!isDirectoryUnavailable && !isDirectoryInitialError ? listSubHeader : undefined}
                     headerActions={
                         <HeaderActionButton
                             icon={Plus}
@@ -715,7 +880,7 @@ export default function ClientsPage() {
                             }
                         />
                     }
-                    emptyState={!isLoading && filteredClients.length === 0 ? (
+                    emptyState={!isDirectoryInitialLoading && !isDirectoryUnavailable && directory.isSuccessfulEmpty ? (
                         <ListEmptyState icon={Users} message={t(locale, "clients.no-data")} />
                     ) : undefined}
                 >
@@ -723,10 +888,38 @@ export default function ClientsPage() {
                         data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content"
                         className="space-y-2"
                     >
-                        <AnimatedSlotList<Client>
-	                                    items={filteredClients}
-	                                    isLoading={isLoading}
+	                        {isDirectoryUnavailable ? (
+	                            <Alert variant="info" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_unavailable">
+	                                <AlertTitle>고객 목록을 확인할 수 없어요</AlertTitle>
+	                                <AlertDescription>현재 지점 정보를 확인한 뒤 다시 시도해 주세요.</AlertDescription>
+	                            </Alert>
+	                        ) : isDirectoryInitialError ? (
+	                            <Alert
+	                                variant="destructive"
+	                                data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_error"
+	                            >
+	                                <AlertTitle>고객 목록을 불러오지 못했어요</AlertTitle>
+	                                <AlertDescription>
+	                                    잠시 후 다시 시도해 주세요.
+	                                    <Button
+	                                        type="button"
+	                                        variant="outline"
+	                                        size="sm"
+	                                        data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_error_retry"
+	                                        className="mt-3"
+	                                        aria-label="고객 목록 다시 시도"
+	                                        onClick={() => void directory.refetch()}
+	                                    >
+	                                        다시 시도
+	                                    </Button>
+	                                </AlertDescription>
+	                            </Alert>
+	                        ) : (
+	                        <AnimatedSlotList<Client>
+	                                    items={clients}
+	                                    isLoading={isDirectoryInitialLoading}
 	                                    loadingCount={10}
+	                                    fetchingMoreCount={3}
 	                                    className="space-y-2"
 	                                    itemVariant="card"
 	                                    getSlotState={({ item, isLoading }) => ({
@@ -734,6 +927,9 @@ export default function ClientsPage() {
 	                                        isInteractive: !isLoading && Boolean(item),
 	                                    })}
 	                                    onSlotClick={(client) => handleSelectClient(client)}
+	                                    hasMore={Boolean(directory.hasNextPage && !directory.isNextPageError)}
+	                                    onLoadMore={() => void directory.fetchNextPage()}
+	                                    isFetchingMore={directory.isFetchingNextPage}
 	                                    render={({ item, isLoading }) => {
 	                                        const client = item;
 	                                        if (isLoading) {
@@ -797,6 +993,31 @@ export default function ClientsPage() {
 	                                        );
 	                                    }}
 	                                />
+                        )}
+                        {directory.isNextPageError ? (
+                            <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_next-page-error">
+                                <AlertTitle>고객 목록을 더 불러오지 못했어요</AlertTitle>
+                                <AlertDescription>
+                                    현재 {clients.length}명까지 표시하고 있어요. 마지막 페이지인지 확인하지 못했어요.
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_next-page-error_retry"
+                                        className="mt-3"
+                                        aria-label="고객 목록 더 불러오기 다시 시도"
+                                        onClick={() => void directory.fetchNextPage()}
+                                    >
+                                        다시 시도
+                                    </Button>
+                                </AlertDescription>
+                            </Alert>
+                        ) : null}
+                        {directory.isEndOfList && clients.length > 0 ? (
+                            <span data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_end-of-list">
+                                모든 검색 결과를 불러왔어요.
+                            </span>
+                        ) : null}
 	                        </div>
 	                </ListPanel>
 
@@ -805,6 +1026,8 @@ export default function ClientsPage() {
                         data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-panel_form-panel"
                         client={panelFormClient}
                         onClose={handleClientFormPanelClose}
+                        onBeforeClose={handleFormPanelBeforeClose}
+                        onDirtyChange={handleCreateFormDirtyChange}
                         onSuccess={handleClientFormPanelSuccess}
                         activeStep={clientFormActiveStep}
                         onActiveStepChange={setClientFormActiveStep}
@@ -845,13 +1068,14 @@ export default function ClientsPage() {
                                 // Avoid overlapping Radix modal layers when an action opens a dialog.
                                 <DropdownMenu modal={false}>
                                     <DropdownMenuTrigger asChild>
-                                        <button
+                                        <Button
                                             type="button"
+                                            variant="ghost"
+                                            size="icon"
                                             aria-label="고객 작업 메뉴 열기"
-                                            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
                                         >
-                                            <MoreVertical className="w-5 h-5 text-v3-text-muted" />
-                                        </button>
+                                            <MoreVertical className="h-5 w-5 text-v3-text-muted" />
+                                        </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="min-w-[140px]">
                                         <DropdownMenuItem onClick={() => handleEdit(activeSelectedClient)} className="gap-2">
@@ -1017,6 +1241,18 @@ export default function ClientsPage() {
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}
+            />
+
+            <TwoButtonModal
+                open={pendingCreateDiscard !== null}
+                onOpenChange={(open) => {
+                    if (!open) setPendingCreateDiscard(null);
+                }}
+                data-component="desktop_clients_modals_create-discard-approval"
+                title="작성 중인 고객 정보를 버리시겠습니까?"
+                description="입력한 내용은 저장되지 않습니다."
+                approvalLabel="버리기"
+                onApprove={handleDiscardCreateDraft}
             />
 
             <NotificationOneButtonModal
