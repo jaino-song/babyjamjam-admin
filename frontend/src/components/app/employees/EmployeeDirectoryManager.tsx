@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
@@ -52,6 +52,69 @@ const filterItems = [
     { label: EMPLOYEE_STATUS_LABELS.unavailable, value: "inactive" },
 ];
 
+function employeeWorkAreasMatch(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((area, index) => area === right[index]);
+}
+
+type EmployeeFormField = "name" | "phone" | "grade" | "workArea" | "openToNextWork" | "birthday";
+
+const EMPLOYEE_FORM_FIELDS: readonly EmployeeFormField[] = [
+    "name",
+    "phone",
+    "grade",
+    "workArea",
+    "openToNextWork",
+    "birthday",
+];
+
+function employeeFormFieldMatches(left: Employee, right: Employee, field: EmployeeFormField): boolean {
+    if (field === "workArea") return employeeWorkAreasMatch(left.workArea, right.workArea);
+    return left[field] === right[field];
+}
+
+function mergeConfirmedFormFields(
+    liveEmployee: Employee,
+    formEmployee: Employee,
+    baselineEmployee: Employee,
+    settledFields: readonly EmployeeFormField[],
+): Employee {
+    const mergedEmployee = { ...liveEmployee };
+    const isSettled = (field: EmployeeFormField) => settledFields.includes(field);
+
+    if (!isSettled("name")
+        && formEmployee.name !== baselineEmployee.name
+        && liveEmployee.name === baselineEmployee.name) {
+        mergedEmployee.name = formEmployee.name;
+    }
+    if (!isSettled("phone")
+        && formEmployee.phone !== baselineEmployee.phone
+        && liveEmployee.phone === baselineEmployee.phone) {
+        mergedEmployee.phone = formEmployee.phone;
+    }
+    if (!isSettled("grade")
+        && formEmployee.grade !== baselineEmployee.grade
+        && liveEmployee.grade === baselineEmployee.grade) {
+        mergedEmployee.grade = formEmployee.grade;
+    }
+    if (!isSettled("workArea")
+        && !employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
+        && employeeWorkAreasMatch(liveEmployee.workArea, baselineEmployee.workArea)) {
+        mergedEmployee.workArea = [...formEmployee.workArea];
+    }
+    if (!isSettled("openToNextWork")
+        && formEmployee.openToNextWork !== baselineEmployee.openToNextWork
+        && liveEmployee.openToNextWork === baselineEmployee.openToNextWork) {
+        mergedEmployee.openToNextWork = formEmployee.openToNextWork;
+    }
+    if (!isSettled("birthday")
+        && formEmployee.birthday !== baselineEmployee.birthday
+        && liveEmployee.birthday === baselineEmployee.birthday) {
+        mergedEmployee.birthday = formEmployee.birthday;
+    }
+
+    return mergedEmployee;
+}
+
 function getOpenToNextWorkBadge(openToNextWork: boolean) {
     return (
         <StatusPill variant={openToNextWork ? "success" : "neutral"} size="sm" className="px-2.5 py-0.5 text-[0.6rem]">
@@ -72,6 +135,9 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const [isCreatingEmployee, setIsCreatingEmployee] = useState(false);
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+    const [selectedEmployeeFromForm, setSelectedEmployeeFromForm] = useState<Employee | null>(null);
+    const [selectedEmployeeFormBaseline, setSelectedEmployeeFormBaseline] = useState<Employee | null>(null);
+    const [settledFormFields, setSettledFormFields] = useState<EmployeeFormField[]>([]);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -91,6 +157,42 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const authUserQuery = useGetAuthUser();
     const canManageEmployees = canManageBranchFromAuthQuery(authUserQuery);
 
+    const liveSelectedEmployee = selectedEmployee
+        ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? null
+        : null;
+    const selectedEmployeeFromList = liveSelectedEmployee ?? selectedEmployee;
+    const formFieldsToSettle = useMemo<EmployeeFormField[]>(() => {
+        if (!selectedEmployeeFromForm || !selectedEmployeeFromList || !liveSelectedEmployee) return [];
+        if (!selectedEmployeeFormBaseline) return [...EMPLOYEE_FORM_FIELDS];
+
+        return EMPLOYEE_FORM_FIELDS.filter((field) => (
+            !employeeFormFieldMatches(selectedEmployeeFromForm, selectedEmployeeFormBaseline, field)
+            && !employeeFormFieldMatches(selectedEmployeeFromList, selectedEmployeeFormBaseline, field)
+        ));
+    }, [liveSelectedEmployee, selectedEmployeeFormBaseline, selectedEmployeeFromForm, selectedEmployeeFromList]);
+    useEffect(() => {
+        if (formFieldsToSettle.length === 0) return;
+
+        // Retire each form field after the live row acknowledges the saved value
+        // or advances beyond both the saved and pre-save values.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSettledFormFields((current) => {
+            const next = Array.from(new Set([...current, ...formFieldsToSettle]));
+            return next.length === current.length ? current : next;
+        });
+    }, [formFieldsToSettle]);
+
+    const selectedEmployeeForDetail = selectedEmployeeFromForm && selectedEmployeeFromList && selectedEmployeeFormBaseline
+        ? mergeConfirmedFormFields(
+            selectedEmployeeFromList,
+            selectedEmployeeFromForm,
+            selectedEmployeeFormBaseline,
+            settledFormFields,
+        )
+        : selectedEmployeeFromForm && !liveSelectedEmployee
+            ? selectedEmployeeFromForm
+        : selectedEmployeeFromList ?? selectedEmployeeFromForm;
+
     const stats = useMemo(() => {
         return {
             total: allEmployees.length,
@@ -104,11 +206,17 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setEditingEmployee(null);
         setFormDialogOpen(false);
         setSelectedEmployee(null);
+        setSelectedEmployeeFromForm(null);
+        setSelectedEmployeeFormBaseline(null);
+        setSettledFormFields([]);
         setIsCreatingEmployee(true);
     };
 
     const handleSelectEmployee = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setSelectedEmployeeFromForm(null);
+        setSelectedEmployeeFormBaseline(null);
+        setSettledFormFields([]);
         setSelectedEmployee(employee);
     };
 
@@ -130,6 +238,9 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
             if (selectedEmployee?.id === deleteTargetEmployeeId) {
                 setSelectedEmployee(null);
+                setSelectedEmployeeFromForm(null);
+                setSelectedEmployeeFormBaseline(null);
+                setSettledFormFields([]);
             }
 
             setDeleteTargetEmployeeId(null);
@@ -154,6 +265,11 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
+        setSettledFormFields([]);
+        setSelectedEmployeeFormBaseline(
+            allEmployees.find((liveEmployee) => liveEmployee.id === employee.id) ?? null,
+        );
+        setSelectedEmployeeFromForm(employee);
         setSelectedEmployee(employee);
     };
 
@@ -307,7 +423,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                     />
                 ) : selectedEmployee ? (
                     <EmployeeDetailPanel key={selectedEmployee.id}
-                        employee={selectedEmployee}
+                        employee={selectedEmployeeForDetail ?? selectedEmployee}
                         canManage={canManageEmployees}
                         onEdit={handleEdit}
                         onDelete={handleDeleteRequest}
