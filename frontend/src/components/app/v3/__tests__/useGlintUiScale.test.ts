@@ -41,12 +41,12 @@ describe("Glint UI Scale", () => {
       ["150%", 960, 1440],
       ["175%", 823, 1440],
     ])("keeps the 1440px-window scale at %s zoom so zoom always enlarges", (_zoom, innerWidth, outerWidth) => {
-      expect(getGlintUiScaleForWindow({ innerWidth, outerWidth })).toBe(1);
+      expect(getGlintUiScaleForWindow({ innerWidth, outerWidth })).toBe(0.9);
     });
 
     it("zooming out shrinks too: 80% on a 1440px window keeps the unzoomed scale", () => {
       expect(getUnzoomedViewportWidth(1800, 1440)).toBe(1440);
-      expect(getGlintUiScaleForWindow({ innerWidth: 1800, outerWidth: 1440 })).toBe(1);
+      expect(getGlintUiScaleForWindow({ innerWidth: 1800, outerWidth: 1440 })).toBe(0.9);
     });
 
     it("treats a thin window frame (Windows) as 100%, not zoom", () => {
@@ -80,15 +80,15 @@ describe("Glint UI Scale", () => {
   it.each([[768, 844], [844, 390], [1024, 600], [1024, 1400]])(
     "keeps desktop shells at the minimum scale when their width is below the reference for %sx%s",
     (width, height) => {
-      expect(getGlintUiScaleForViewport(width, height)).toBe(0.85);
+      expect(getGlintUiScaleForViewport(width, height)).toBe(0.765);
     },
   );
 
   it("clamps the width ratio to the approved desktop range", () => {
-    expect(getGlintUiScaleForViewport(1440, 700)).toBe(1);
-    expect(getGlintUiScaleForViewport(1300, 900)).toBe(0.9028);
-    expect(getGlintUiScaleForViewport(1584, 500)).toBe(1.1);
-    expect(getGlintUiScaleForViewport(1920, 1080)).toBe(1.1);
+    expect(getGlintUiScaleForViewport(1440, 700)).toBe(0.9);
+    expect(getGlintUiScaleForViewport(1300, 900)).toBe(0.8125);
+    expect(getGlintUiScaleForViewport(1584, 500)).toBe(0.99);
+    expect(getGlintUiScaleForViewport(1920, 1080)).toBe(0.99);
   });
 
   it("uses width only so changing height preserves scale and scroll capacity", () => {
@@ -123,7 +123,7 @@ describe("Glint UI Scale", () => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
 
-      expect(result.current?.["--glint-ui-scale"]).toBe("1");
+      expect(result.current?.["--glint-ui-scale"]).toBe("0.9");
     } finally {
       requestFrameSpy.mockRestore();
       cancelFrameSpy.mockRestore();
@@ -150,7 +150,7 @@ describe("Glint UI Scale", () => {
       act(() => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
-      expect(result.current?.["--glint-ui-scale"]).toBe("0.8889");
+      expect(result.current?.["--glint-ui-scale"]).toBe("0.8");
 
       Object.defineProperty(window, "innerHeight", { configurable: true, value: 420 });
       act(() => {
@@ -158,7 +158,7 @@ describe("Glint UI Scale", () => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
 
-      expect(result.current?.["--glint-ui-scale"]).toBe("0.8889");
+      expect(result.current?.["--glint-ui-scale"]).toBe("0.8");
     } finally {
       requestFrameSpy.mockRestore();
       cancelFrameSpy.mockRestore();
@@ -186,7 +186,7 @@ describe("Glint UI Scale", () => {
       act(() => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
-      expect(result.current?.["--glint-ui-scale"]).toBe("1");
+      expect(result.current?.["--glint-ui-scale"]).toBe("0.9");
 
       // 125% zoom: the page is 1152 CSS px wide inside the same 1440px window.
       Object.defineProperty(window, "innerWidth", { configurable: true, value: 1152 });
@@ -196,7 +196,7 @@ describe("Glint UI Scale", () => {
         queuedFrames.splice(0).forEach((callback) => callback(0));
       });
 
-      expect(result.current?.["--glint-ui-scale"]).toBe("1");
+      expect(result.current?.["--glint-ui-scale"]).toBe("0.9");
     } finally {
       requestFrameSpy.mockRestore();
       cancelFrameSpy.mockRestore();
