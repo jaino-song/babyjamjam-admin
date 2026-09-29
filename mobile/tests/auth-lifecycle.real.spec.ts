@@ -1,5 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+type MailpitAddress = { Address?: string; address?: string };
+type MailpitMessage = {
+  ID?: string;
+  id?: string;
+  Subject?: string;
+  subject?: string;
+};
+type MailpitMessageList = {
+  total?: number;
+  messages?: MailpitMessage[];
+};
+type MailpitMessageDetail = MailpitMessage & {
+  To?: MailpitAddress[];
+  to?: MailpitAddress[];
+};
+
+const mailpitMessageId = (message: MailpitMessage): string | undefined =>
+  message.ID ?? message.id;
+
+const mailpitSubject = (message: MailpitMessage): string | undefined =>
+  message.Subject ?? message.subject;
+
+const mailpitRecipients = (message: MailpitMessageDetail): string[] =>
+  (message.To ?? message.to ?? [])
+    .map((recipient) => recipient.Address ?? recipient.address)
+    .filter((recipient): recipient is string => Boolean(recipient));
+
 test("uses a real backend login session on mobile", async ({ request }) => {
   const response = await request.get("/api/auth/me");
   expect(response.status()).toBe(200);
@@ -20,7 +47,13 @@ test("mobile registration is accepted once and delivered through Mailpit", async
   const suffix = Date.now().toString().slice(-8);
   const email = `mobile-${suffix}@auth-e2e.test`;
   const before = await request.get("http://localhost:8025/api/v1/messages");
-  const beforeTotal = ((await before.json()) as { total?: number }).total ?? 0;
+  const beforeMessages = (await before.json()) as MailpitMessageList;
+  const beforeTotal = beforeMessages.total ?? 0;
+  const beforeIds = new Set(
+    (beforeMessages.messages ?? [])
+      .map(mailpitMessageId)
+      .filter((id): id is string => Boolean(id)),
+  );
 
   const registration = await request.post("/api/auth/register", {
     data: {
@@ -37,6 +70,25 @@ test("mobile registration is accepted once and delivered through Mailpit", async
 
   await expect.poll(async () => {
     const messages = await request.get("http://localhost:8025/api/v1/messages");
-    return (((await messages.json()) as { total?: number }).total ?? 0);
-  }, { timeout: 20_000 }).toBeGreaterThan(beforeTotal);
+    const messageList = (await messages.json()) as MailpitMessageList;
+    if ((messageList.total ?? 0) <= beforeTotal) return false;
+
+    for (const message of messageList.messages ?? []) {
+      const id = mailpitMessageId(message);
+      if (!id || beforeIds.has(id)) continue;
+
+      const detailResponse = await request.get(
+        `http://localhost:8025/api/v1/message/${encodeURIComponent(id)}`,
+      );
+      if (!detailResponse.ok()) continue;
+      const detail = (await detailResponse.json()) as MailpitMessageDetail;
+      if (
+        mailpitSubject(detail) === "이메일 인증" &&
+        mailpitRecipients(detail).includes(email)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }, { timeout: 20_000 }).toBe(true);
 });
