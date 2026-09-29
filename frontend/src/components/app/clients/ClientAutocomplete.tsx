@@ -29,7 +29,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
-import { getGlintUiScaleForViewport } from "@/components/app/v3/useGlintUiScale";
+import { getGlintUiScaleForWindow } from "@/components/app/v3/useGlintUiScale";
 import { ClientFormDialog } from "./ClientFormDialog";
 
 interface ClientAutocompleteProps {
@@ -88,7 +88,7 @@ export function ClientAutocomplete({
     const popoverSideOffset = -44 * (
         typeof window === "undefined"
             ? 1
-            : getGlintUiScaleForViewport(window.innerWidth, window.innerHeight)
+            : getGlintUiScaleForWindow(window)
     );
 
     // Filter out excluded clients
