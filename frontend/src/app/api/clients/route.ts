@@ -31,12 +31,14 @@ export async function GET(request: NextRequest) {
         const limit = searchParams.get("limit");
         const search = searchParams.get("search");
         const filter = searchParams.get("filter");
+        const tab = searchParams.get("tab");
 
         const params: Record<string, string> = {};
         if (page) params.page = page;
         if (limit) params.limit = limit;
-        if (search) params.search = search;
+        if (search !== null) params.search = search;
         if (filter) params.filter = filter;
+        if (tab !== null) params.tab = tab;
 
         const response = await serverAPIClient.get("/clients", { 
             params,

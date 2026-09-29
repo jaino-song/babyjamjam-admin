@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
+import { clientKeys } from "./keys";
 import { useCreateClient, useDeleteClient, useUpdateClient } from "./use-clients";
 
 jest.mock("@tanstack/react-query", () => ({
@@ -17,6 +18,7 @@ describe("client mutation message job invalidation", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    document.cookie = "selected_branch_id=branch-a; path=/";
     (useMutation as jest.Mock).mockImplementation((options) => options);
     (useQueryClient as jest.Mock).mockReturnValue({
       invalidateQueries,
@@ -32,20 +34,35 @@ describe("client mutation message job invalidation", () => {
     await mutation.onSuccess();
 
     expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: clientKeys.all,
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: messageTriggerKeys.upcoming(),
     });
   });
 
   it("invalidates upcoming jobs and refetches service records after updating a client", async () => {
     const mutation = useUpdateClient() as unknown as {
-      onSuccess: (client: { id: number }, variables: { id: number }) => Promise<void>;
+      onMutate: () => { branchId: string | null };
+      onSuccess: (
+        client: { id: number },
+        variables: { id: number },
+        context: { branchId: string | null },
+      ) => Promise<void>;
     };
 
-    await mutation.onSuccess({ id: 42 }, { id: 42 });
+    await mutation.onSuccess({ id: 42 }, { id: 42 }, mutation.onMutate());
 
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: clientKeys.all,
+    });
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: messageTriggerKeys.upcoming(),
     });
+    expect(setQueryData).toHaveBeenCalledWith(
+      clientKeys.detail(42, "branch-a"),
+      { id: 42 },
+    );
     expect(refetchQueries).toHaveBeenCalledWith({
       queryKey: serviceRecordKeys.clientOverview(42),
     });
@@ -58,6 +75,9 @@ describe("client mutation message job invalidation", () => {
 
     await mutation.onSettled();
 
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: clientKeys.all,
+    });
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: messageTriggerKeys.upcoming(),
     });

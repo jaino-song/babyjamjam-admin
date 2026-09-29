@@ -2,6 +2,10 @@ import { ClientEntity } from "domain/entities/client.entity";
 import {
     AutomaticServiceStatusUpdateResult,
     ClientWithInitialSchedule,
+    ClientListSummary,
+    ClientListTab,
+    getEffectiveClientServiceStatus,
+    getClientListDateRanges,
     IClientRepository,
     InitialClientSchedule,
     PaginatedResult,
@@ -10,6 +14,7 @@ import type { Prisma } from "@prisma/client";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import {
     isAutomaticServiceStatusTransitionAllowed,
+    SERVICE_STATUS,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
 
@@ -67,12 +72,13 @@ export class MockClientRepository implements IClientRepository {
     }
 
     async findAllPaginated(
-        _branchid: string,
+        branchid: string,
         page: number,
         limit: number,
         search?: string,
+        tab: ClientListTab = "all",
     ): Promise<PaginatedResult<ClientEntity>> {
-        let data = Array.from(this.clients.values());
+        let data = Array.from(this.clients.values()).filter(client => client.branchId === branchid);
 
         // 검색 필터 적용
         if (search) {
@@ -85,6 +91,15 @@ export class MockClientRepository implements IClientRepository {
             );
         }
 
+        data = data.filter(
+            client => tab === "all"
+                || getEffectiveClientServiceStatus(
+                    client.serviceStatus,
+                    client.startDate,
+                    client.endDate,
+                ) === tab,
+        );
+
         const total = data.length;
         const totalPages = Math.ceil(total / limit);
         const startIndex = (page - 1) * limit;
@@ -96,6 +111,58 @@ export class MockClientRepository implements IClientRepository {
             page,
             limit,
             totalPages,
+        };
+    }
+
+    async getListSummary(branchid: string, search?: string): Promise<ClientListSummary> {
+        const ranges = getClientListDateRanges();
+        let data = Array.from(this.clients.values()).filter(client => client.branchId === branchid);
+        if (search) {
+            const searchLower = search.toLowerCase();
+            data = data.filter(
+                client => client.name.toLowerCase().includes(searchLower)
+                    || client.address?.toLowerCase().includes(searchLower)
+                    || client.phone?.toLowerCase().includes(searchLower),
+            );
+        }
+
+        const effectiveStatus = (client: ClientEntity) => getEffectiveClientServiceStatus(
+            client.serviceStatus,
+            client.startDate,
+            client.endDate,
+        );
+        const byTab = {
+            all: data.length,
+            [SERVICE_STATUS.PRE_BOOKING]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.PRE_BOOKING).length,
+            [SERVICE_STATUS.WAITING]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.WAITING).length,
+            [SERVICE_STATUS.REPLACEMENT_REQUESTED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.REPLACEMENT_REQUESTED).length,
+            [SERVICE_STATUS.ACTIVE]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.ACTIVE).length,
+            [SERVICE_STATUS.COMPLETED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.COMPLETED).length,
+            [SERVICE_STATUS.TERMINATED]: data.filter(client => effectiveStatus(client) === SERVICE_STATUS.TERMINATED).length,
+        };
+
+        const thisMonth = data.filter(client => {
+            if (!client.dueDate) return false;
+            return client.dueDate >= ranges.thisMonthStart && client.dueDate < ranges.nextMonthStart;
+        }).length;
+        const nextMonth = data.filter(client => {
+            if (!client.dueDate) return false;
+            return client.dueDate >= ranges.nextMonthStart && client.dueDate < ranges.nextMonthEndExclusive;
+        }).length;
+        const serviceEnd = data.filter(client => {
+            if (effectiveStatus(client) !== SERVICE_STATUS.ACTIVE || !client.endDate) return false;
+            return client.endDate >= ranges.todayStart && client.endDate < ranges.threeDaysLaterEndExclusive;
+        }).length;
+
+        return {
+            total: data.length,
+            byTab,
+            dueDate: { thisMonth, nextMonth },
+            serviceEnd: {
+                count: serviceEnd,
+                from: ranges.today,
+                to: ranges.threeDaysLater,
+            },
         };
     }
 

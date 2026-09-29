@@ -15,7 +15,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
@@ -70,7 +70,7 @@ type SmsProblemBody = Pick<
 >;
 
 @Controller("message-deliveries")
-@UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
+@UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
 export class MessageDeliveryController {
     private readonly logger = new Logger(MessageDeliveryController.name);
 

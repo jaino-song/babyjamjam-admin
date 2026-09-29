@@ -10,6 +10,7 @@ import { GeminiChatGateway } from "infrastructure/api/gemini-chat.gateway";
 import { VercelGeminiGateway } from "infrastructure/api/vercel-gemini.gateway";
 import { createGeminiGateway } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { ChatSessionModule } from "./chat-session.module";
 import { ClientModule } from "./client.module";
@@ -56,6 +57,7 @@ export { GEMINI_GATEWAY } from "./ai-chat.tokens";
         GetChatHistoryUsecase,
         CleanupChatSessionsUsecase,
         OwnerOrAdminGuard,
+        BranchManagerGuard,
     ],
     exports: [AIChatService, GEMINI_GATEWAY],
 })

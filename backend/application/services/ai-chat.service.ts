@@ -657,6 +657,8 @@ export class AIChatService {
                     userId,
                     branchId,
                     sessionId: intent.sessionId,
+                    globalRole: principal?.globalRole,
+                    branchRole: principal?.branchRole,
                 };
                 return principal
                     ? this.toolExecutor.executeAuthorized(

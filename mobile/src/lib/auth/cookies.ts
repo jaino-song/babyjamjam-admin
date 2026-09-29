@@ -4,6 +4,7 @@ import { cache } from "react";
 import { jwtDecode } from "jwt-decode";
 import axios from "axios";
 import { E2E_ROLE_COOKIE, getE2EAuthUser, isE2ETest } from "@/lib/e2e";
+import type { AuthUser } from "@/hooks/useGetAuthUser";
 
 interface TokenPayload {
   sub: string;
@@ -13,6 +14,10 @@ interface TokenPayload {
   organizationId?: string;
   type: "access" | "refresh";
 }
+
+type CurrentUserResponse = AuthUser & {
+  branchRole?: string | null;
+};
 
 // React cache()를 사용하여 같은 request cycle 내에서 중복 호출 방지
 // Next.js의 Request Memoization은 native fetch에만 적용되므로
@@ -46,7 +51,7 @@ export const getCurrentUser = cache(async () => {
     }
 
     console.log("[getCurrentUser] User fetched successfully:", res.data?.name);
-    return res.data;
+    return res.data as CurrentUserResponse;
   } catch (error: unknown) {
     if (axios.isAxiosError(error)) {
       console.error("[getCurrentUser] Failed to fetch user:", {

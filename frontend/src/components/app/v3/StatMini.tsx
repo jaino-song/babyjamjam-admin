@@ -61,8 +61,8 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
     const isResponsiveSquare = density === "responsive-square";
     const rootClassName = cn(
       isResponsiveSquare
-        ? "flex aspect-square w-[calc(96px*var(--glint-ui-scale,1))] items-center justify-center rounded-[20px] bg-white p-[calc(12px*var(--glint-ui-scale,1))] text-center shadow-v3 min-[961px]:aspect-auto min-[961px]:w-[calc(176px*var(--glint-ui-scale,1))] min-[961px]:justify-start min-[961px]:gap-[calc(16px*var(--glint-ui-scale,1))] min-[961px]:p-[calc(16px*var(--glint-ui-scale,1))] min-[961px]:text-left"
-        : "flex w-[calc(176px*var(--glint-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--glint-ui-scale,1))] rounded-[20px] bg-white p-[calc(16px*var(--glint-ui-scale,1))] shadow-v3",
+        ? "flex h-auto min-h-[calc(96px*var(--glint-ui-scale,1))] aspect-square w-[calc(96px*var(--glint-ui-scale,1))] items-center justify-center whitespace-normal rounded-[20px] border-0 bg-white p-[calc(12px*var(--glint-ui-scale,1))] text-center shadow-v3 min-[961px]:min-h-[calc(85px*var(--glint-ui-scale,1))] min-[961px]:aspect-auto min-[961px]:w-[calc(176px*var(--glint-ui-scale,1))] min-[961px]:justify-start min-[961px]:gap-[calc(16px*var(--glint-ui-scale,1))] min-[961px]:p-[calc(16px*var(--glint-ui-scale,1))] min-[961px]:text-left"
+        : "flex h-auto min-h-[calc(85px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] items-center justify-start gap-[calc(16px*var(--glint-ui-scale,1))] whitespace-normal rounded-[20px] border-0 bg-white p-[calc(16px*var(--glint-ui-scale,1))] shadow-v3",
       // Component-level animation so stats behave identically across pages.
       "animate-v3-pop-up",
       className,
@@ -72,8 +72,9 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
       <>
         <div
           data-component={`${dataComponent}_icon`}
+          data-slot="stat-mini-icon"
           className={cn(
-            "h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] items-center justify-center rounded-[14px]",
+            "h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px]",
             isResponsiveSquare ? "hidden min-[961px]:flex" : "flex",
             isLoading ? "bg-v3-dim-white" : variant.bg,
           )}
@@ -81,26 +82,45 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
           {isLoading ? (
             <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
           ) : (
-            <Icon className={`h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] ${variant.text}`} />
+            <Icon
+              className={`!h-[calc(24px*var(--glint-ui-scale,1))] !w-[calc(24px*var(--glint-ui-scale,1))] ${variant.text}`}
+            />
           )}
         </div>
         {isLoading ? (
-          <div className={cn("space-y-[calc(8px*var(--glint-ui-scale,1))]", isResponsiveSquare && "min-[961px]:text-left")}>
-            <Skeleton className="h-[calc(33px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-            <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+          <div
+            data-slot="stat-mini-content"
+            className={cn("min-w-0 space-y-[calc(8px*var(--glint-ui-scale,1))]", isResponsiveSquare && "min-[961px]:text-left")}
+          >
+            <Skeleton
+              data-slot="stat-mini-value"
+              className="h-[calc(33px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] bg-v3-dim-white"
+            />
+            <Skeleton
+              data-slot="stat-mini-label"
+              className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
+            />
           </div>
         ) : (
-          <div className={cn(isResponsiveSquare && "min-w-0")}>
+          <div data-slot="stat-mini-content" className="min-w-0">
             <span
+              data-slot="stat-mini-value-row"
               className={cn(
                 "flex items-center gap-[calc(4px*var(--glint-ui-scale,1))]",
                 isResponsiveSquare && "justify-center min-[961px]:justify-start",
               )}
             >
-              <p className="text-[calc(24px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{value}</p>
+              <p
+                data-slot="stat-mini-value"
+                className="min-w-0 break-words text-[calc(24px*var(--glint-ui-scale,1))] font-bold text-v3-dark"
+              >
+                {value}
+              </p>
               <p className="mb-[calc(4px*var(--glint-ui-scale,1))] self-end text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">{counter}</p>
             </span>
-            <p className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">{label}</p>
+            <p data-slot="stat-mini-label" className="break-words text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
+              {label}
+            </p>
           </div>
         )}
       </>
@@ -113,6 +133,7 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
           type="button"
           variant="ghost"
           data-component={dataComponent}
+          data-slot="stat-mini"
           className={rootClassName}
           style={animationStyle}
           onClick={onClick}
@@ -131,6 +152,7 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
       <div
         ref={ref as React.Ref<HTMLDivElement>}
         data-component={dataComponent}
+        data-slot="stat-mini"
         className={rootClassName}
         style={animationStyle}
         {...rest}

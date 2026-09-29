@@ -39,7 +39,7 @@ interface SplitLayoutSelectionOptions {
 
 function getDesktopGridClass(columns: 2 | 3): string {
   if (columns === 3) return "grid-cols-1 lg:grid-cols-3";
-  return "grid-cols-[400px_minmax(0,1fr)]";
+  return "grid-cols-[calc(400px*var(--glint-ui-scale,1))_minmax(0,1fr)]";
 }
 
 export function useSplitLayoutSelection<TId extends SplitLayoutSelectionId>(

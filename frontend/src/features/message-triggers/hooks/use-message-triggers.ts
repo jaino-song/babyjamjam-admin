@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     removeById,
     restoreQueries,
@@ -13,6 +13,8 @@ import type {
     MessageLogRecord,
     MessageTriggerRule,
     CreateMessageTriggerRuleDto,
+    ClientUpcomingMessageTriggerJob,
+    ClientUpcomingMessageTriggerJobsResponse,
     TriggerEventType,
     TriggerRecipientType,
     TriggerTemplateCatalogItem,
@@ -49,6 +51,24 @@ function normalizeSinglePayload<T>(payload: unknown): T | null {
     }
 
     return null;
+}
+
+function normalizeClientUpcomingPayload(payload: unknown): ClientUpcomingMessageTriggerJobsResponse {
+    const candidate = payload !== null && typeof payload === "object" && "data" in payload
+        ? (payload as { data?: unknown }).data
+        : payload;
+    if (!candidate || typeof candidate !== "object") {
+        return { items: [], nextCursor: null };
+    }
+
+    const value = candidate as { items?: unknown; nextCursor?: unknown };
+    const items = Array.isArray(value.items) ? value.items as ClientUpcomingMessageTriggerJob[] : [];
+    return {
+        items,
+        nextCursor: typeof value.nextCursor === "string" && value.nextCursor.length > 0
+            ? value.nextCursor
+            : null,
+    };
 }
 
 export function useMessageTriggerRules() {
@@ -97,16 +117,71 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
     });
 }
 
-export function useMessageHistory(limit = 200) {
+export function useClientUpcomingMessageTriggerJobs(
+    clientId: number | null,
+    options: { enabled?: boolean; limit?: number } = {},
+) {
+    const limit = options.limit ?? 50;
+    const enabled = (options.enabled ?? true)
+        && Number.isSafeInteger(clientId)
+        && (clientId ?? 0) > 0;
+    const query = useInfiniteQuery<ClientUpcomingMessageTriggerJobsResponse, Error>({
+        queryKey: messageTriggerKeys.clientUpcoming(clientId ?? 0),
+        initialPageParam: null,
+        queryFn: ({ pageParam }) =>
+            messageTriggersApi
+                .listClientUpcomingJobs(clientId as number, {
+                    limit,
+                    cursor: typeof pageParam === "string" ? pageParam : null,
+                })
+                .then((response) => normalizeClientUpcomingPayload(response.data)),
+        getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+        enabled,
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnWindowFocus: true,
+        refetchInterval: 30_000,
+        refetchIntervalInBackground: false,
+    });
+
+    const items = query.isError
+        ? []
+        : Array.from(
+            new Map(
+                (query.data?.pages.flatMap((page) => page.items) ?? [])
+                    .filter((job) => (
+                        job.status === "pending"
+                        || job.status === "processing"
+                        || job.status === "dispatching"
+                    ))
+                    .map((job) => [job.id, job] as const),
+            ).values(),
+        );
+
+    return {
+        ...query,
+        items,
+    };
+}
+
+export interface UseMessageHistoryOptions {
+    enabled?: boolean;
+    refetchInterval?: number | false;
+    refetchOnWindowFocus?: boolean;
+}
+
+export function useMessageHistory(limit = 200, options: UseMessageHistoryOptions = {}) {
     return useQuery<MessageLogRecord[]>({
         queryKey: messageTriggerKeys.history(limit),
         queryFn: () =>
             messageTriggersApi
                 .listHistory(limit)
                 .then((response) => normalizeArrayPayload<MessageLogRecord>(response.data)),
+        enabled: options.enabled ?? true,
         staleTime: 0,
         refetchOnMount: "always",
-        refetchInterval: 5_000,
+        refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
+        refetchInterval: options.refetchInterval ?? 5_000,
     });
 }
 

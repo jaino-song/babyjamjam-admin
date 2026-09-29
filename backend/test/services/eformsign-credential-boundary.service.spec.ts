@@ -22,7 +22,6 @@ describe("EformsignCredentialBoundary", () => {
     it("capability denials carry ACCESS_DENIED", () => {
         for (const principal of [
             { ...owner, branchId: undefined },
-            { ...owner, globalRole: "user", branchRole: "user" },
         ]) {
             try {
                 assertEformsignProviderCapability(principal, "document.cancel");
@@ -37,14 +36,24 @@ describe("EformsignCredentialBoundary", () => {
     it("requires an operation capability for the principal role", () => {
         expect(() => assertEformsignProviderCapability(
             { ...owner, globalRole: "user", branchRole: "user" },
-            "document.cancel",
+            "document.re_request",
         )).toThrow(ForbiddenException);
 
         expect(() => assertEformsignProviderCapability(
             { ...owner, globalRole: "user", branchRole: "manager" },
-            "document.cancel",
-        )).toThrow(ForbiddenException);
+            "document.re_request",
+        )).not.toThrow();
     });
+
+    it.each(["owner", "admin", "manager", "user"] as const)(
+        "allows %s to cancel a document",
+        (role) => {
+            const principal = role === "owner"
+                ? owner
+                : { ...owner, globalRole: "user", branchRole: role };
+            expect(() => assertEformsignProviderCapability(principal, "document.cancel")).not.toThrow();
+        },
+    );
 
     it("rejects worker principals that carry user or role identity", () => {
         expect(() => assertEformsignProviderCapability(

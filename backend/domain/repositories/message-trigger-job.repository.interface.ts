@@ -11,6 +11,26 @@ export interface MessageTriggerJobCancellationScope {
 /** Internal review read; user cancellation is needed to match the existing upsert fence. */
 export type MessageTriggerJobReviewSnapshot = MessageTriggerJobEntity & { readonly canceledByUser: boolean };
 
+export type ClientUpcomingMessageTriggerJobStatus = "pending" | "processing" | "dispatching";
+
+/** Safe, client-scoped projection for the customer notification schedule. */
+export interface ClientUpcomingMessageTriggerJobRecord {
+    id: string;
+    ruleName: string;
+    templateKey: string;
+    status: ClientUpcomingMessageTriggerJobStatus;
+    scheduledFor: Date;
+    nextAttemptAt: Date | null;
+    effectiveDueAt: Date;
+    recipientType: string;
+    recipientName: string | null;
+}
+
+export interface ClientUpcomingMessageTriggerJobCursor {
+    effectiveDueAt: Date;
+    id: string;
+}
+
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
@@ -28,6 +48,17 @@ export interface IMessageTriggerJobRepository {
         branchId: string,
         limit?: number,
     ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Read-only, branch/client-fenced upcoming automation projection. The
+     * repository returns only the requested page (including one lookahead row)
+     * and never reconciles or mutates jobs.
+     */
+    findUpcomingByClient(
+        branchId: string,
+        clientId: number,
+        limit: number,
+        cursor?: ClientUpcomingMessageTriggerJobCursor,
+    ): Promise<ClientUpcomingMessageTriggerJobRecord[]>;
     findTerminalByBranch(
         branchId: string,
         limit?: number,

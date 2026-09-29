@@ -30,6 +30,17 @@ const mockToast = toast as jest.Mock;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/messages/history",
+}));
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: "manager" },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 const cancelableJob = {

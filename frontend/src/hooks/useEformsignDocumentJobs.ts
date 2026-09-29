@@ -11,6 +11,7 @@ import {
     type FinalizeEformsignDocumentJobRequest,
 } from "@/services/api";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 
 export type {
     CreateEformsignDocumentJobRequest,
@@ -27,22 +28,42 @@ const JOB_LIST_REFETCH_INTERVAL_MS = 3_000;
 
 export const eformsignDocumentJobsQueryKeys = {
     all: ["eformsign-document-jobs"] as const,
-    summary: () => [...eformsignDocumentJobsQueryKeys.all, "summary"] as const,
-    list: () => [...eformsignDocumentJobsQueryKeys.all, "list"] as const,
+    summary: (branchId: string | null) => [
+        ...eformsignDocumentJobsQueryKeys.all,
+        "summary",
+        branchId ?? "unavailable",
+    ] as const,
+    list: (branchId: string | null) => [
+        ...eformsignDocumentJobsQueryKeys.all,
+        "list",
+        branchId ?? "unavailable",
+    ] as const,
 };
 
 // Singular alias keeps the factory discoverable alongside other eformsign keys.
 export const eformsignDocumentJobQueryKeys = eformsignDocumentJobsQueryKeys;
 
 export function useEformsignDocumentJobsSummary(isAuthenticated = true) {
-    return useQuery<EformsignDocumentJobSummary>({
-        queryKey: eformsignDocumentJobsQueryKeys.summary(),
-        queryFn: () => eformsignApi.getDocumentJobSummary(),
-        enabled: isAuthenticated,
+    const activeBranchId = useActiveBranchId();
+    const branchContextReady = isBranchContextAligned(activeBranchId);
+    const summaryContextReady = isAuthenticated && branchContextReady;
+    const query = useQuery<EformsignDocumentJobSummary>({
+        queryKey: eformsignDocumentJobsQueryKeys.summary(activeBranchId),
+        queryFn: () => {
+            if (!activeBranchId || !isBranchContextAligned(activeBranchId)) {
+                throw new Error("Branch selection required");
+            }
+            return eformsignApi.getDocumentJobSummary();
+        },
+        enabled: summaryContextReady,
         refetchInterval: JOB_SUMMARY_REFETCH_INTERVAL_MS,
         refetchIntervalInBackground: true,
         refetchOnWindowFocus: false,
     });
+
+    // A branch switch changes the query key, but hide any cached result until
+    // the new cookie identity is aligned so an old tenant's count cannot flash.
+    return summaryContextReady ? query : { ...query, data: undefined };
 }
 
 export interface UseEformsignDocumentJobsOptions {
@@ -54,13 +75,21 @@ export function useEformsignDocumentJobs({
     isAuthenticated = true,
     isPopoverOpen = false,
 }: UseEformsignDocumentJobsOptions = {}) {
+    const activeBranchId = useActiveBranchId();
+    const branchContextReady = isBranchContextAligned(activeBranchId);
+    const listContextReady = isAuthenticated && branchContextReady;
     const summaryQuery = useEformsignDocumentJobsSummary(isAuthenticated);
     const hasActiveJobs = (summaryQuery.data?.activeCount ?? 0) > 0;
-    const shouldFetchList = isAuthenticated && (isPopoverOpen || hasActiveJobs);
+    const shouldFetchList = listContextReady && (isPopoverOpen || hasActiveJobs);
 
     const listQuery = useQuery<EformsignDocumentJobList>({
-        queryKey: eformsignDocumentJobsQueryKeys.list(),
-        queryFn: () => eformsignApi.getDocumentJobs(),
+        queryKey: eformsignDocumentJobsQueryKeys.list(activeBranchId),
+        queryFn: () => {
+            if (!activeBranchId || !isBranchContextAligned(activeBranchId)) {
+                throw new Error("Branch selection required");
+            }
+            return eformsignApi.getDocumentJobs();
+        },
         enabled: shouldFetchList,
         refetchInterval: shouldFetchList ? JOB_LIST_REFETCH_INTERVAL_MS : false,
         refetchIntervalInBackground: true,
@@ -69,6 +98,7 @@ export function useEformsignDocumentJobs({
 
     return {
         ...listQuery,
+        data: listContextReady ? listQuery.data : undefined,
         summary: summaryQuery.data,
         summaryQuery,
     };

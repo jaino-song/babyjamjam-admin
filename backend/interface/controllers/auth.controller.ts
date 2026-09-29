@@ -36,6 +36,7 @@ import {
 } from "../../infrastructure/auth/kakao-auth.guard";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
 @Controller("auth")
 export class AuthController {
@@ -182,16 +183,42 @@ export class AuthController {
         const branchPromise = req.user.branchId
             ? this.prisma.branch.findUnique({
                 where: { id: req.user.branchId },
-                select: { name: true, slug: true },
+                select: { name: true, slug: true, isActive: true },
             })
             : Promise.resolve(null);
 
         const [user, org] = await Promise.all([userPromise, branchPromise]);
         const branchId = req.user.branchId ?? null;
+        let branchRole: "owner" | "admin" | "manager" | "user" | null = null;
+        if (branchId && org?.isActive) {
+            if (user?.role === "owner") {
+                branchRole = "owner";
+            } else {
+                const membership = await runSystemScope(() => this.prisma.user_branch.findUnique({
+                    where: {
+                        userId_branchId: {
+                            userId: req.user.userId,
+                            branchId,
+                        },
+                    },
+                    select: {
+                        role: true,
+                        branch: { select: { isActive: true } },
+                    },
+                }));
+                if (membership?.branch.isActive) {
+                    if (membership.role === null || membership.role === "user") {
+                        branchRole = "user";
+                    } else if (["admin", "manager"].includes(membership.role)) {
+                        branchRole = membership.role as "admin" | "manager";
+                    }
+                }
+            }
+        }
         const branchName = org?.name ?? null;
         const branchSlug = org?.slug ?? null;
 
-        return { ...user, branchId, branchName, branchSlug };
+        return { ...user, branchId, branchName, branchSlug, branchRole };
     }
 
     @Post("token")

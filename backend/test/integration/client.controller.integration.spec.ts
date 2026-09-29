@@ -4,7 +4,6 @@ import request from "supertest";
 import { ClientController } from "interface/controllers/client.controller";
 import { ClientService } from "application/services/client.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { ClientEntity } from "domain/entities/client.entity";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
@@ -16,7 +15,6 @@ describe("ClientController (Integration)", () => {
 
     let app: INestApplication;
     let clientService: jest.Mocked<ClientService>;
-    let ownerOrAdminAllowed: boolean;
 
     type ClientOverrides = Partial<{
         id: number;
@@ -75,6 +73,7 @@ describe("ClientController (Integration)", () => {
             create: jest.fn(),
             findAll: jest.fn(),
             findAllPaginated: jest.fn(),
+            getListSummary: jest.fn(),
             findById: jest.fn(),
             getActionRequiredAlerts: jest.fn(),
             getDashboardOverview: jest.fn(),
@@ -102,11 +101,6 @@ describe("ClientController (Integration)", () => {
                 return true;
             },
         };
-        ownerOrAdminAllowed = true;
-        const mockOwnerOrAdminGuard = {
-            canActivate: () => ownerOrAdminAllowed,
-        };
-
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [ClientController],
             providers: [
@@ -120,8 +114,6 @@ describe("ClientController (Integration)", () => {
             .useValue(mockAuthGuard)
             .overrideGuard(TenantGuard)
             .useValue(mockAuthGuard)
-            .overrideGuard(OwnerOrAdminGuard)
-            .useValue(mockOwnerOrAdminGuard)
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -136,13 +128,13 @@ describe("ClientController (Integration)", () => {
     });
 
     describe("unavailable employee activation confirmation", () => {
-        it("protects the activation-and-create route with owner/admin authority", () => {
+        it("inherits the controller JWT and tenant guards", () => {
             const guards = Reflect.getMetadata(
                 GUARDS_METADATA,
                 ClientController.prototype.createWithEmployeeActivation,
             ) ?? [];
 
-            expect(guards).toContain(OwnerOrAdminGuard);
+            expect(guards).toEqual([]);
         });
 
         it("enables employee activation only through the protected create route", async () => {
@@ -174,9 +166,8 @@ describe("ClientController (Integration)", () => {
             );
         });
 
-        it("allows normal creation but rejects activation for a non-owner/admin", async () => {
+        it("allows normal creation and activation for a tenant member", async () => {
             clientService.create.mockResolvedValue(createMockClient());
-            ownerOrAdminAllowed = false;
             const body = {
                 name: "Role boundary client",
                 primaryEmployeeId: 10,
@@ -189,12 +180,16 @@ describe("ClientController (Integration)", () => {
             await request(app.getHttpServer())
                 .post("/clients/with-employee-activation")
                 .send({ ...body, confirmedUnavailableEmployeeIds: [10] })
-                .expect(403);
+                .expect(201);
 
-            expect(clientService.create).toHaveBeenCalledTimes(1);
+            expect(clientService.create).toHaveBeenCalledTimes(2);
             expect(clientService.create).toHaveBeenCalledWith(
                 "org-1",
                 expect.objectContaining({ confirmedUnavailableEmployeeIds: undefined }),
+            );
+            expect(clientService.create).toHaveBeenCalledWith(
+                "org-1",
+                expect.objectContaining({ confirmedUnavailableEmployeeIds: [10] }),
             );
         });
     });
@@ -402,6 +397,38 @@ describe("ClientController (Integration)", () => {
                 );
             });
 
+            it("should pass the selected status tab to the paginated method", async () => {
+                clientService.findAllPaginated.mockResolvedValue({
+                    data: [],
+                    total: 0,
+                    page: 1,
+                    limit: 10,
+                    totalPages: 0,
+                });
+
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "1", limit: "10", tab: "completed" });
+
+                expect(response.status).toBe(200);
+                expect(clientService.findAllPaginated).toHaveBeenCalledWith(
+                    expect.any(String),
+                    1,
+                    10,
+                    undefined,
+                    "completed",
+                );
+            });
+
+            it("should reject an unknown status tab before calling service", async () => {
+                const response = await request(app.getHttpServer())
+                    .get("/clients")
+                    .query({ page: "1", limit: "10", tab: "unknown" });
+
+                expect(response.status).toBe(400);
+                expect(clientService.findAllPaginated).not.toHaveBeenCalled();
+            });
+
             it("should reject invalid pagination before calling service", async () => {
                 const response = await request(app.getHttpServer())
                     .get("/clients")
@@ -410,6 +437,32 @@ describe("ClientController (Integration)", () => {
                 expect(response.status).toBe(400);
                 expect(clientService.findAllPaginated).not.toHaveBeenCalled();
             });
+        });
+
+        it("should return the branch-scoped list summary for the current search", async () => {
+            const summary = {
+                total: 2,
+                byTab: {
+                    all: 2,
+                    pre_booking: 0,
+                    waiting: 0,
+                    replacement_requested: 0,
+                    active: 1,
+                    completed: 1,
+                    terminated: 0,
+                },
+                dueDate: { thisMonth: 1, nextMonth: 0 },
+                serviceEnd: { count: 1, from: "2026-09-28", to: "2026-10-01" },
+            };
+            clientService.getListSummary.mockResolvedValue(summary);
+
+            const response = await request(app.getHttpServer())
+                .get("/clients/list-summary")
+                .query({ search: "Kim" });
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual(summary);
+            expect(clientService.getListSummary).toHaveBeenCalledWith("org-1", "Kim");
         });
 
         it("should return dashboard overview", async () => {

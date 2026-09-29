@@ -22,6 +22,7 @@ describe("AuthController (Integration)", () => {
     let prismaService: jest.Mocked<PrismaService>;
     let rateLimitGuard: jest.Mocked<Pick<RateLimitGuard, "canActivate" | "resetForKey">>;
     let authController: AuthController;
+    let jwtUser: { userId: string; role: string; branchId?: string };
 
     // Several callback tests mutate process.env (NODE_ENV, *_FRONTEND_URL).
     // Snapshot once, give each test a fresh copy, and restore at the end so the
@@ -70,7 +71,7 @@ describe("AuthController (Integration)", () => {
     const mockJwtGuard = {
         canActivate: jest.fn((context) => {
             const req = context.switchToHttp().getRequest();
-            req.user = { userId: mockUser.id, role: mockUser.role };
+            req.user = jwtUser;
             return true;
         }),
     };
@@ -92,6 +93,7 @@ describe("AuthController (Integration)", () => {
 
     beforeEach(async () => {
         process.env = { ...OLD_ENV };
+        jwtUser = { userId: mockUser.id, role: mockUser.role };
         const mockAuthService = {
             validateKakaoUser: jest.fn(),
             validateEmailPassword: jest.fn(),
@@ -117,6 +119,12 @@ describe("AuthController (Integration)", () => {
                 findUnique: jest.fn(),
                 findFirst: jest.fn(),
                 create: jest.fn(),
+            },
+            branch: {
+                findUnique: jest.fn(),
+            },
+            user_branch: {
+                findUnique: jest.fn(),
             },
         };
         const mockRateLimitGuard = {
@@ -616,6 +624,7 @@ describe("AuthController (Integration)", () => {
                     branchId: null,
                     branchName: null,
                     branchSlug: null,
+                    branchRole: null,
                 });
                 expect(prismaService.user.findUnique).toHaveBeenCalledWith({
                     where: { id: mockUser.id },
@@ -647,8 +656,84 @@ describe("AuthController (Integration)", () => {
                     branchId: null,
                     branchName: null,
                     branchSlug: null,
+                    branchRole: null,
                 });
             });
+        });
+
+        it("resolves the selected branch membership role from the database", async () => {
+            jwtUser = { userId: mockUser.id, role: "user", branchId: "branch-1" };
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, role: "user" });
+            (prismaService.branch.findUnique as jest.Mock).mockResolvedValue({
+                name: "Branch 1",
+                slug: "branch-1",
+                isActive: true,
+            });
+            (prismaService.user_branch.findUnique as jest.Mock).mockResolvedValue({
+                role: "manager",
+                branch: { isActive: true },
+            });
+
+            const response = await request(app.getHttpServer()).get("/auth/me");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toMatchObject({
+                branchId: "branch-1",
+                branchName: "Branch 1",
+                branchSlug: "branch-1",
+                branchRole: "manager",
+            });
+            expect(prismaService.user_branch.findUnique).toHaveBeenCalledWith({
+                where: { userId_branchId: { userId: mockUser.id, branchId: "branch-1" } },
+                select: { role: true, branch: { select: { isActive: true } } },
+            });
+        });
+
+        it.each([
+            ["missing membership", null],
+            ["inactive branch membership", { role: "manager", branch: { isActive: false } }],
+            ["invalid role membership", { role: "owner", branch: { isActive: true } }],
+        ])("fails closed for %s", async (_label, membership) => {
+            jwtUser = { userId: mockUser.id, role: "manager", branchId: "branch-1" };
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, role: "manager" });
+            (prismaService.branch.findUnique as jest.Mock).mockResolvedValue({
+                name: "Branch 1", slug: "branch-1", isActive: true,
+            });
+            (prismaService.user_branch.findUnique as jest.Mock).mockResolvedValue(membership);
+
+            const response = await request(app.getHttpServer()).get("/auth/me");
+
+            expect(response.status).toBe(200);
+            expect(response.body.branchRole).toBe(null);
+        });
+
+        it("defaults a nullable membership role to user when the branch is active", async () => {
+            jwtUser = { userId: mockUser.id, role: "manager", branchId: "branch-1" };
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, role: "manager" });
+            (prismaService.branch.findUnique as jest.Mock).mockResolvedValue({
+                name: "Branch 1", slug: "branch-1", isActive: true,
+            });
+            (prismaService.user_branch.findUnique as jest.Mock).mockResolvedValue({
+                role: null,
+                branch: { isActive: true },
+            });
+
+            const response = await request(app.getHttpServer()).get("/auth/me");
+
+            expect(response.body.branchRole).toBe("user");
+        });
+
+        it("resolves owner compatibility without requiring membership", async () => {
+            jwtUser = { userId: mockUser.id, role: "owner", branchId: "branch-1" };
+            (prismaService.user.findUnique as jest.Mock).mockResolvedValue({ ...mockUser, role: "owner" });
+            (prismaService.branch.findUnique as jest.Mock).mockResolvedValue({
+                name: "Branch 1", slug: "branch-1", isActive: true,
+            });
+
+            const response = await request(app.getHttpServer()).get("/auth/me");
+
+            expect(response.body.branchRole).toBe("owner");
+            expect(prismaService.user_branch.findUnique).not.toHaveBeenCalled();
         });
 
         describe("given different user roles", () => {

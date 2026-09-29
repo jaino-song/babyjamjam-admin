@@ -133,12 +133,14 @@ function toDataComponentToken(value: string) {
 
 export function MessageTriggerList({
   "data-component": dataComponent,
+  canManage,
   onEdit,
   onCreate,
   selectedId = null,
   beforeItems,
 }: {
   "data-component": string;
+  canManage: boolean;
   onEdit?: (rule: MessageTriggerRule) => void;
   onCreate?: () => void;
   selectedId?: string | null;
@@ -219,8 +221,8 @@ export function MessageTriggerList({
       title="자동 전송"
       count={displayRows.length}
       subtitle="메시지 자동 전송 규칙을 정할 수 있어요"
-      actionLabel={onCreate ? "+ 규칙" : undefined}
-      onAction={onCreate}
+      actionLabel={canManage && onCreate ? "+ 규칙" : undefined}
+      onAction={canManage ? onCreate : undefined}
     >
       {beforeItems}
       {displayRows.map((row) => {
@@ -249,19 +251,21 @@ export function MessageTriggerList({
               title={row.title}
               subtitle={`${countLabel} · ${row.timingLabel} · ${row.channelLabel}`}
               isSelected={selectedId === rowKey}
-              onSelect={onEdit
+              onSelect={!canManage
+                ? undefined
+                : onEdit
                 ? isSystemRule
                   ? undefined
                   : () => onEdit(row.rule)
                 : () => handleToggle(row)}
-              isDisabled={!onEdit && (isTogglePending || row.rule.isLockedByGlobal === true)}
-              showChevron={Boolean(onEdit && !isSystemRule)}
+              isDisabled={!canManage || (!onEdit && (isTogglePending || row.rule.isLockedByGlobal === true))}
+              showChevron={Boolean(canManage && onEdit && !isSystemRule)}
               dataAttributes={{
                 "data-trigger-id": triggerId,
                 "data-trigger-key": triggerKey,
                 "data-trigger-channel": row.channelLabel,
               }}
-              control={onEdit ? (
+              control={canManage && onEdit ? (
                 <Switch
                   data-component={`${itemBase}_trailing_switch`}
                   thumbDataComponent={`${itemBase}_trailing_switch_thumb`}

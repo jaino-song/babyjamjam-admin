@@ -1,10 +1,31 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Query, Patch, Post, UseGuards } from "@nestjs/common";
 import { ClientService } from "application/services/client.service";
-import { CreateClientDto, CreateClientWithEmployeeActivationDto, UpdateClientDto, TerminateServiceDto, RequestReplacementDto } from "interface/dto/client.dto";
+import {
+    CLIENT_LIST_TAB_VALUES,
+    CreateClientDto,
+    CreateClientWithEmployeeActivationDto,
+    UpdateClientDto,
+    TerminateServiceDto,
+    RequestReplacementDto,
+} from "interface/dto/client.dto";
+import type { ClientListTab } from "interface/dto/client.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
 import { parseInteger } from "interface/parse-integer";
+import { problemBody } from "application/utils/problem-bodies";
+
+function parseClientListTab(value: string | undefined): ClientListTab {
+    if (value === undefined || value === "") return "all";
+    if ((CLIENT_LIST_TAB_VALUES as readonly string[]).includes(value)) {
+        return value as ClientListTab;
+    }
+
+    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+        pointer: "/tab",
+        code: "INVALID_VALUE",
+        detail: "tab 값이 올바르지 않아요.",
+    }));
+}
 
 @Controller("clients")
 @UseGuards(JwtGuard, TenantGuard)
@@ -17,7 +38,6 @@ export class ClientController {
     }
 
     @Post("with-employee-activation")
-    @UseGuards(OwnerOrAdminGuard)
     createWithEmployeeActivation(
         @CurrentTenant() tenant: { branchId?: string },
         @Body() dto: CreateClientWithEmployeeActivationDto,
@@ -68,16 +88,24 @@ export class ClientController {
         @Query("limit") limit?: string,
         @Query("search") search?: string,
         @Query("filter") filter?: string,
+        @Query("tab") tab?: string,
     ) {
         if (filter) {
             return this.clientService.findByFilter(tenant.branchId ?? "", filter);
         }
-        if (page !== undefined || limit !== undefined) {
+        if (page !== undefined || limit !== undefined || tab !== undefined) {
+            const branchid = tenant.branchId ?? "";
+            const parsedPage = parseInteger(page, "page", { defaultValue: 1, min: 1 });
+            const parsedLimit = parseInteger(limit, "limit", { defaultValue: 20, min: 1, max: 100 });
+            if (tab === undefined) {
+                return this.clientService.findAllPaginated(branchid, parsedPage, parsedLimit, search);
+            }
             return this.clientService.findAllPaginated(
-                tenant.branchId ?? "",
-                parseInteger(page, "page", { defaultValue: 1, min: 1 }),
-                parseInteger(limit, "limit", { defaultValue: 20, min: 1, max: 100 }),
+                branchid,
+                parsedPage,
+                parsedLimit,
                 search,
+                parseClientListTab(tab),
             );
         }
         return this.clientService.findAll(tenant.branchId ?? "");
@@ -87,6 +115,14 @@ export class ClientController {
     @Get("stats")
     getStats(@CurrentTenant() tenant: { branchId?: string }) {
         return this.clientService.getStats(tenant.branchId ?? "");
+    }
+
+    @Get("list-summary")
+    getListSummary(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Query("search") search?: string,
+    ) {
+        return this.clientService.getListSummary(tenant.branchId ?? "", search);
     }
 
     @Get("dashboard-overview")

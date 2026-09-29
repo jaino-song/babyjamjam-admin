@@ -38,8 +38,8 @@ import {
 } from "@babyjamjam/shared/types/system-template";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
-import { useInitialUser } from "@/providers/UserProvider";
-import { ROLES } from "@/lib/constants/roles";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
@@ -1443,8 +1443,8 @@ export default function MessagesPage() {
   const systemTemplateEditorRef = useRef<SystemTemplateEditorHandle>(null);
   const [templateSendSubmitState, setTemplateSendSubmitState] =
     useState<TemplateSendFormSubmitState | null>(null);
-  const user = useInitialUser();
-  const isOwner = user?.role === ROLES.owner;
+  const authUserQuery = useGetAuthUser();
+  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
   const activeBranchId = useActiveBranchId();
   const { data: senderApproval } = useMessageSenderApproval();
   const isSenderApprovalRequired = senderApproval?.isApproved === false;
@@ -1453,9 +1453,9 @@ export default function MessagesPage() {
       ...section,
       disabled:
         (isSenderApprovalRequired && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(section.id)) ||
-        (UNRELEASED_SECTION_IDS.has(section.id) && !isOwner),
+        (UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages),
     })),
-    [isOwner, isSenderApprovalRequired],
+    [canManageBranchMessages, isSenderApprovalRequired],
   );
 
   const { data: userTemplatesData, isLoading: isLoadingUserTemplates } = useMessageTemplates(1, 100);
