@@ -276,6 +276,42 @@ describe("EmployeeDirectoryManager edit refresh", () => {
     expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
     expect(within(detail).getByTestId("employee-detail-availability")).toHaveTextContent("unavailable");
 
+    const conflictingEmployee: Employee = {
+      ...toggledStaleEmployee,
+      name: "외부 선행 변경",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [conflictingEmployee],
+        allEmployees: [conflictingEmployee],
+        filteredCount: 1,
+        isError: false,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "외부 선행 변경" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+
+    const baselineAfterConflict: Employee = {
+      ...employee,
+      openToNextWork: false,
+      status: "unavailable",
+    };
+    mockedUseInfiniteEmployees.mockReturnValue(
+      makeQueryResult({
+        employees: [baselineAfterConflict],
+        allEmployees: [baselineAfterConflict],
+        filteredCount: 1,
+      }),
+    );
+    rerender(
+      <EmployeeDirectoryManager dataComponent="desktop_employees_sections_section-content_directory_manager" />,
+    );
+    expect(within(detail).getByRole("heading", { name: "홍길동" })).toBeInTheDocument();
+    expect(within(detail).getByTestId("employee-detail-phone")).toHaveTextContent("01087654321");
+
     const savedEmployee: Employee = {
       ...employee,
       name: "김철수",
