@@ -825,6 +825,32 @@ describe("messages page — merged 발송 기록 section", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    { label: "plain branch user", user: { id: "user-2", role: "user", branchRole: "user" }, visible: false },
+    { label: "branch manager", user: { id: "manager-2", role: "user", branchRole: "manager" }, visible: true },
+  ])("shows cancel and retry only to users who can manage the branch ($label)", ({ user, visible }) => {
+    // POST /message-trigger-jobs/:id/cancel and /message-logs/:id/retry require
+    // BranchManagerGuard, so a plain branch user must not be offered them.
+    mockAuthUser(user);
+    mockData({
+      upcoming: [buildUpcomingJob()],
+      history: [buildHistoryRecord({ status: "failed" })],
+    });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    fireEvent.click(screen.getByText("김서연"));
+    const cancel = within(getDetailPanel() as HTMLElement).queryByRole("button", { name: "발송 취소" });
+    if (visible) expect(cancel).toBeInTheDocument();
+    else expect(cancel).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("이하은"));
+    const retry = document.querySelector('[data-component$="_detail-retry"]');
+    if (visible) expect(retry).toBeInTheDocument();
+    else expect(retry).not.toBeInTheDocument();
+  });
+
   it("cancels an upcoming send after confirmation, shows exactly one success notification, and the row moves zones on refetch", async () => {
     mockData({
       upcoming: [buildUpcomingJob()],
