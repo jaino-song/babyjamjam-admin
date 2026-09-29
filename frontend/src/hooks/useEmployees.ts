@@ -248,9 +248,17 @@ function getOwnedEmployeeListQueries(
     queryClient: ReturnType<typeof useQueryClient>,
     context: EmployeeCacheMutationContext | undefined,
 ): EmployeeQueryReference[] {
-    return (context?.queries ?? []).filter(({ queryKey, query }) => (
+    return getOwnedEmployeeQueries(queryClient, context).filter(({ queryKey }) => (
         isEmployeeListQueryKey(queryKey)
-        && queryClient.getQueryCache().find({ queryKey, exact: true }) === query
+    ));
+}
+
+function getOwnedEmployeeQueries(
+    queryClient: ReturnType<typeof useQueryClient>,
+    context: EmployeeCacheMutationContext | undefined,
+): EmployeeQueryReference[] {
+    return (context?.queries ?? []).filter(({ queryKey, query }) => (
+        queryClient.getQueryCache().find({ queryKey, exact: true }) === query
     ));
 }
 
@@ -260,6 +268,17 @@ async function refetchOwnedEmployeeListQueries(
 ): Promise<void> {
     await Promise.all(
         getOwnedEmployeeListQueries(queryClient, context).map(({ queryKey }) => (
+            queryClient.refetchQueries({ queryKey, exact: true })
+        )),
+    );
+}
+
+async function refetchOwnedEmployeeQueries(
+    queryClient: ReturnType<typeof useQueryClient>,
+    context: EmployeeCacheMutationContext | undefined,
+): Promise<void> {
+    await Promise.all(
+        getOwnedEmployeeQueries(queryClient, context).map(({ queryKey }) => (
             queryClient.refetchQueries({ queryKey, exact: true })
         )),
     );
@@ -421,6 +440,9 @@ export function useToggleEmployeeOpenStatus() {
             if (hasOriginalListQuery) {
                 await queryClient.invalidateQueries({ queryKey: employeeQueryKeys.all });
             }
+        },
+        onError: async (_error, _variables, context) => {
+            await refetchOwnedEmployeeQueries(queryClient, context);
         },
     });
 }
