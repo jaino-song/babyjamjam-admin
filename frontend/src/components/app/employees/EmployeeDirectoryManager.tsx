@@ -56,59 +56,60 @@ function employeeWorkAreasMatch(left: string[], right: string[]): boolean {
     return left.length === right.length && left.every((area, index) => area === right[index]);
 }
 
-function isEmployeeStatus(value: unknown): value is Employee["status"] {
-    return value === "available" || value === "working" || value === "unavailable";
-}
+type EmployeeFormField = "name" | "phone" | "grade" | "workArea" | "openToNextWork" | "birthday";
 
-function formFieldsMatchLive(
-    liveEmployee: Employee,
-    formEmployee: Employee,
-    baselineEmployee: Employee,
-): boolean {
-    return (formEmployee.name === baselineEmployee.name || liveEmployee.name === formEmployee.name)
-        && (formEmployee.phone === baselineEmployee.phone || liveEmployee.phone === formEmployee.phone)
-        && (formEmployee.grade === baselineEmployee.grade || liveEmployee.grade === formEmployee.grade)
-        && (employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
-            || employeeWorkAreasMatch(liveEmployee.workArea, formEmployee.workArea))
-        && (formEmployee.openToNextWork === baselineEmployee.openToNextWork
-            || liveEmployee.openToNextWork === formEmployee.openToNextWork)
-        && (formEmployee.birthday === baselineEmployee.birthday || liveEmployee.birthday === formEmployee.birthday)
-        && (!isEmployeeStatus(formEmployee.status)
-            || formEmployee.status === baselineEmployee.status
-            || liveEmployee.status === formEmployee.status);
+const EMPLOYEE_FORM_FIELDS: readonly EmployeeFormField[] = [
+    "name",
+    "phone",
+    "grade",
+    "workArea",
+    "openToNextWork",
+    "birthday",
+];
+
+function employeeFormFieldMatches(left: Employee, right: Employee, field: EmployeeFormField): boolean {
+    if (field === "workArea") return employeeWorkAreasMatch(left.workArea, right.workArea);
+    return left[field] === right[field];
 }
 
 function mergeConfirmedFormFields(
     liveEmployee: Employee,
     formEmployee: Employee,
     baselineEmployee: Employee,
+    settledFields: readonly EmployeeFormField[],
 ): Employee {
     const mergedEmployee = { ...liveEmployee };
+    const isSettled = (field: EmployeeFormField) => settledFields.includes(field);
 
-    if (formEmployee.name !== baselineEmployee.name && liveEmployee.name === baselineEmployee.name) {
+    if (!isSettled("name")
+        && formEmployee.name !== baselineEmployee.name
+        && liveEmployee.name === baselineEmployee.name) {
         mergedEmployee.name = formEmployee.name;
     }
-    if (formEmployee.phone !== baselineEmployee.phone && liveEmployee.phone === baselineEmployee.phone) {
+    if (!isSettled("phone")
+        && formEmployee.phone !== baselineEmployee.phone
+        && liveEmployee.phone === baselineEmployee.phone) {
         mergedEmployee.phone = formEmployee.phone;
     }
-    if (formEmployee.grade !== baselineEmployee.grade && liveEmployee.grade === baselineEmployee.grade) {
+    if (!isSettled("grade")
+        && formEmployee.grade !== baselineEmployee.grade
+        && liveEmployee.grade === baselineEmployee.grade) {
         mergedEmployee.grade = formEmployee.grade;
     }
-    if (!employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
+    if (!isSettled("workArea")
+        && !employeeWorkAreasMatch(formEmployee.workArea, baselineEmployee.workArea)
         && employeeWorkAreasMatch(liveEmployee.workArea, baselineEmployee.workArea)) {
         mergedEmployee.workArea = [...formEmployee.workArea];
     }
-    if (formEmployee.openToNextWork !== baselineEmployee.openToNextWork
+    if (!isSettled("openToNextWork")
+        && formEmployee.openToNextWork !== baselineEmployee.openToNextWork
         && liveEmployee.openToNextWork === baselineEmployee.openToNextWork) {
         mergedEmployee.openToNextWork = formEmployee.openToNextWork;
     }
-    if (formEmployee.birthday !== baselineEmployee.birthday && liveEmployee.birthday === baselineEmployee.birthday) {
+    if (!isSettled("birthday")
+        && formEmployee.birthday !== baselineEmployee.birthday
+        && liveEmployee.birthday === baselineEmployee.birthday) {
         mergedEmployee.birthday = formEmployee.birthday;
-    }
-    if (isEmployeeStatus(formEmployee.status)
-        && formEmployee.status !== baselineEmployee.status
-        && liveEmployee.status === baselineEmployee.status) {
-        mergedEmployee.status = formEmployee.status;
     }
 
     return mergedEmployee;
@@ -136,7 +137,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
     const [selectedEmployeeFromForm, setSelectedEmployeeFromForm] = useState<Employee | null>(null);
     const [selectedEmployeeFormBaseline, setSelectedEmployeeFormBaseline] = useState<Employee | null>(null);
-    const [acknowledgedFormEmployee, setAcknowledgedFormEmployee] = useState<Employee | null>(null);
+    const [settledFormFields, setSettledFormFields] = useState<EmployeeFormField[]>([]);
     const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
     const [deleteTargetEmployeeId, setDeleteTargetEmployeeId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
@@ -160,37 +161,37 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         ? allEmployees.find((employee) => employee.id === selectedEmployee.id) ?? null
         : null;
     const selectedEmployeeFromList = liveSelectedEmployee ?? selectedEmployee;
-    const formResultAcknowledged = selectedEmployeeFromForm
-        && selectedEmployeeFromList
-        && (selectedEmployeeFormBaseline
-            ? formFieldsMatchLive(
-                selectedEmployeeFromList,
-                selectedEmployeeFromForm,
-                selectedEmployeeFormBaseline,
-            )
-            : Boolean(liveSelectedEmployee));
-    const formEmployeeToAcknowledge = formResultAcknowledged ? selectedEmployeeFromForm : null;
-    useEffect(() => {
-        if (!formEmployeeToAcknowledge) return;
+    const formFieldsToSettle = useMemo<EmployeeFormField[]>(() => {
+        if (!selectedEmployeeFromForm || !selectedEmployeeFromList || !liveSelectedEmployee) return [];
+        if (!selectedEmployeeFormBaseline) return [...EMPLOYEE_FORM_FIELDS];
 
-        // Retire the one-shot form overlay after the authoritative row first
-        // matches it, so a later external reversion is allowed to win.
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setAcknowledgedFormEmployee((current) => (
-            current === formEmployeeToAcknowledge ? current : formEmployeeToAcknowledge
+        return EMPLOYEE_FORM_FIELDS.filter((field) => (
+            !employeeFormFieldMatches(selectedEmployeeFromForm, selectedEmployeeFormBaseline, field)
+            && !employeeFormFieldMatches(selectedEmployeeFromList, selectedEmployeeFormBaseline, field)
         ));
-    }, [formEmployeeToAcknowledge]);
+    }, [liveSelectedEmployee, selectedEmployeeFormBaseline, selectedEmployeeFromForm, selectedEmployeeFromList]);
+    useEffect(() => {
+        if (formFieldsToSettle.length === 0) return;
 
-    const hasAcknowledgedFormResult = acknowledgedFormEmployee === selectedEmployeeFromForm;
-    const selectedEmployeeForDetail = selectedEmployeeFromForm && !hasAcknowledgedFormResult && selectedEmployeeFromList && selectedEmployeeFormBaseline
+        // Retire each form field after the live row acknowledges the saved value
+        // or advances beyond both the saved and pre-save values.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setSettledFormFields((current) => {
+            const next = Array.from(new Set([...current, ...formFieldsToSettle]));
+            return next.length === current.length ? current : next;
+        });
+    }, [formFieldsToSettle]);
+
+    const selectedEmployeeForDetail = selectedEmployeeFromForm && selectedEmployeeFromList && selectedEmployeeFormBaseline
         ? mergeConfirmedFormFields(
             selectedEmployeeFromList,
             selectedEmployeeFromForm,
             selectedEmployeeFormBaseline,
+            settledFormFields,
         )
-        : selectedEmployeeFromForm && !hasAcknowledgedFormResult && !liveSelectedEmployee
+        : selectedEmployeeFromForm && !liveSelectedEmployee
             ? selectedEmployeeFromForm
-            : selectedEmployeeFromList ?? selectedEmployeeFromForm;
+        : selectedEmployeeFromList ?? selectedEmployeeFromForm;
 
     const stats = useMemo(() => {
         return {
@@ -207,7 +208,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setSelectedEmployee(null);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
-        setAcknowledgedFormEmployee(null);
+        setSettledFormFields([]);
         setIsCreatingEmployee(true);
     };
 
@@ -215,7 +216,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
         setIsCreatingEmployee(false);
         setSelectedEmployeeFromForm(null);
         setSelectedEmployeeFormBaseline(null);
-        setAcknowledgedFormEmployee(null);
+        setSettledFormFields([]);
         setSelectedEmployee(employee);
     };
 
@@ -239,7 +240,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 setSelectedEmployee(null);
                 setSelectedEmployeeFromForm(null);
                 setSelectedEmployeeFormBaseline(null);
-                setAcknowledgedFormEmployee(null);
+                setSettledFormFields([]);
             }
 
             setDeleteTargetEmployeeId(null);
@@ -264,7 +265,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
     const handleFormPanelSuccess = (employee: Employee) => {
         setIsCreatingEmployee(false);
-        setAcknowledgedFormEmployee(null);
+        setSettledFormFields([]);
         setSelectedEmployeeFormBaseline(
             allEmployees.find((liveEmployee) => liveEmployee.id === employee.id) ?? null,
         );
