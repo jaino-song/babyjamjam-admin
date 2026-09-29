@@ -9,7 +9,7 @@ import { MessageTriggerEditor } from "@/components/app/mobile-redesign/MessageTr
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
-import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
+import { canManageBranch, canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 import "@/components/app/mobile-redesign/redesign.css";
@@ -26,6 +26,7 @@ export function MessagesTriggersPage(): ReactElement {
   const authUserQuery = useGetAuthUser();
   const canManage = canManageBranchFromAuthQuery(authUserQuery);
   const didPushDetailRef = useRef(false);
+  const lastClearedItemRef = useRef<string | null>(null);
   const rulesQuery = useMessageTriggerRules();
   const rules = useMemo(
     () => Array.isArray(rulesQuery.data) ? rulesQuery.data : [],
@@ -36,27 +37,56 @@ export function MessagesTriggersPage(): ReactElement {
     [rules, selectedItemId],
   );
   const isCreating = selectedItemId === NEW_RULE_ITEM_ID;
-  const isOpen = isCreating || selectedRule !== undefined;
+  const authoritySettled = !authUserQuery.isPending
+    && !authUserQuery.isLoading
+    && !authUserQuery.isFetching
+    && !authUserQuery.isError;
+  const canRenderAuthorizedDetail = canManage || (
+    canManageBranch(authUserQuery.data)
+    && !authUserQuery.isPending
+    && !authUserQuery.isLoading
+    && !authUserQuery.isError
+    && authUserQuery.isFetching
+  );
+  const isOpen = canRenderAuthorizedDetail
+    && (isCreating || selectedRule !== undefined);
 
   useEffect(() => {
     if (selectedItemId === null) {
       didPushDetailRef.current = false;
+      lastClearedItemRef.current = null;
     }
   }, [selectedItemId]);
 
   useEffect(() => {
+    if (canManage) {
+      lastClearedItemRef.current = null;
+    }
+  }, [canManage]);
+
+  useEffect(() => {
     if (
-      rulesQuery.isLoading ||
-      rulesQuery.isError ||
+      !authoritySettled ||
       selectedItemId === null ||
-      isCreating ||
-      selectedRule !== undefined
+      (canManage && (
+        rulesQuery.isLoading ||
+        rulesQuery.isFetching ||
+        rulesQuery.isError ||
+        isCreating ||
+        selectedRule !== undefined
+      ))
     ) {
       return;
     }
 
+    if (lastClearedItemRef.current === selectedItemId) {
+      return;
+    }
+
+    lastClearedItemRef.current = selectedItemId;
+
     router.replace("/messages/automation", { scroll: false });
-  }, [isCreating, router, rulesQuery.isError, rulesQuery.isLoading, selectedItemId, selectedRule]);
+  }, [authoritySettled, canManage, isCreating, router, rulesQuery.isError, rulesQuery.isFetching, rulesQuery.isLoading, selectedItemId, selectedRule]);
 
   const openItem = (id: string) => {
     if (id === selectedItemId) return;
@@ -74,7 +104,7 @@ export function MessagesTriggersPage(): ReactElement {
     router.replace("/messages/automation", { scroll: false });
   };
 
-  const detail = canManage && isOpen ? (
+  const detail = isOpen ? (
     <MessageTriggerEditor
       key={selectedItemId}
       data-component={`${DETAIL_BODY_BASE}_${isCreating ? "new-rule" : `rule-${selectedRule?.id}`}_editor`}
