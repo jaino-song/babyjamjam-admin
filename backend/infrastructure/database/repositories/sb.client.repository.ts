@@ -60,7 +60,10 @@ function normalizePhoneLookupKey(value: string | null | undefined): string {
     const nationalDigits = digits.startsWith("0082") ? digits.slice(2) : digits;
     if (!nationalDigits) return "";
 
-    if (nationalDigits.startsWith("82")) {
+    // Only a full international number (82 + 9-10 national digits) carries the
+    // country code. A short digit query such as "8212" is part of a local
+    // number, and rewriting it to "012" would match unrelated phones.
+    if (nationalDigits.startsWith("82") && nationalDigits.length >= 11) {
         const domesticDigits = nationalDigits.slice(2);
         if (!domesticDigits) return "";
         return domesticDigits.startsWith("0") ? domesticDigits : `0${domesticDigits}`;
