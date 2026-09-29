@@ -23,6 +23,7 @@ import { MessageAutomationIntentService } from "application/services/message-aut
 import { ServiceRecordSecurityEventService } from "application/services/service-record-security-event.service";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 
@@ -49,6 +50,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
         ServiceRecordSecurityEventService,
         RateLimitGuard,
         OwnerOrAdminGuard,
+        BranchManagerGuard,
         ServiceRecordGuard,
         { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },
     ],

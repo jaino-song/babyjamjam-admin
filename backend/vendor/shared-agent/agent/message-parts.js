@@ -4,6 +4,7 @@ exports.AgentTaskPatchPartSchema = exports.AgentEntitySelectPartSchema = exports
 const zod_1 = require("zod");
 const task_types_1 = require("./task-types");
 const client_input_policy_1 = require("./client-input-policy");
+const is_same_origin_path_1 = require("../utils/is-same-origin-path");
 exports.AgentRendererNameSchema = zod_1.z.enum([
     "text",
     "activity",
@@ -62,10 +63,14 @@ exports.AgentActionResultPartSchema = zod_1.z.object({
     summary: zod_1.z.string().min(1),
     result: zod_1.z.record(zod_1.z.string(), zod_1.z.unknown()).optional(),
     completedAt: zod_1.z.iso.datetime().optional(),
-    href: zod_1.z.string().startsWith("/").refine((value) => !value.startsWith("//"), "Only internal paths are allowed").optional(),
+    // Resolved the way a browser (and router.push) actually resolves it, not
+    // a bare prefix check: a bare `startsWith("/") && !startsWith("//")`
+    // check cannot see that "/\evil.test" resolves to the host
+    // "evil.test", exactly like "//evil.test" does. See isSameOriginPath.
+    href: zod_1.z.string().refine(is_same_origin_path_1.isSameOriginPath, "Only same-origin internal paths are allowed").optional(),
 });
 exports.AgentNavigationPartSchema = zod_1.z.object({
-    href: zod_1.z.string().startsWith("/").refine((value) => !value.startsWith("//"), "Only internal paths are allowed"),
+    href: zod_1.z.string().refine(is_same_origin_path_1.isSameOriginPath, "Only same-origin internal paths are allowed"),
     label: zod_1.z.string().min(1),
 });
 exports.AgentErrorPartSchema = zod_1.z.object({

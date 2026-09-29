@@ -7,7 +7,9 @@ import {
     ValidationPipe,
 } from "@nestjs/common";
 import request from "supertest";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import { MessageTriggerController } from "interface/controllers/message-trigger.controller";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import {
     MessageTriggerService,
     type MessageLogRecordView,
@@ -44,6 +46,7 @@ describe("MessageTriggerController (Integration)", () => {
     let triggerService: {
         listRules: jest.Mock;
         listUpcomingJobs: jest.Mock;
+        listClientUpcomingJobs: jest.Mock;
         listHistory: jest.Mock;
         listHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
@@ -57,6 +60,7 @@ describe("MessageTriggerController (Integration)", () => {
     let smsRetryService: {
         retryById: jest.Mock;
     };
+    let authRole = "admin";
 
     const branchId = "org-1";
 
@@ -155,9 +159,11 @@ describe("MessageTriggerController (Integration)", () => {
     });
 
     beforeEach(async () => {
+        authRole = "admin";
         triggerService = {
             listRules: jest.fn(),
             listUpcomingJobs: jest.fn(),
+            listClientUpcomingJobs: jest.fn(),
             listHistory: jest.fn(),
             listHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
@@ -178,14 +184,14 @@ describe("MessageTriggerController (Integration)", () => {
                 requestContext.user = {
                     userId: "user-1",
                     branchId,
-                    role: "admin",
-                    branchRole: "admin",
+                    role: authRole,
+                    branchRole: authRole,
                 };
                 requestContext.tenant = {
                     userId: "user-1",
                     branchId,
-                    globalRole: "admin",
-                    branchRole: "admin",
+                    globalRole: authRole,
+                    branchRole: authRole,
                 };
                 return true;
             },
@@ -194,6 +200,7 @@ describe("MessageTriggerController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [MessageTriggerController],
             providers: [
+                BranchManagerGuard,
                 {
                     provide: MessageTriggerService,
                     useValue: triggerService,
@@ -217,6 +224,25 @@ describe("MessageTriggerController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    it("requires branch-manager guard on every message-trigger mutation while leaving reads tenant-only", () => {
+        const mutationHandlers = [
+            "cancelJob",
+            "retryHistory",
+            "reconcileHistory",
+            "createRule",
+            "updateRule",
+            "updateBranchActivation",
+            "activateRuleWithParent",
+            "deleteRule",
+        ] as const;
+        for (const methodName of mutationHandlers) {
+            expect(Reflect.getMetadata(GUARDS_METADATA, MessageTriggerController.prototype[methodName]) ?? [])
+                .toContain(BranchManagerGuard);
+        }
+        expect(Reflect.getMetadata(GUARDS_METADATA, MessageTriggerController.prototype.listRules) ?? [])
+            .not.toContain(BranchManagerGuard);
     });
 
     describe("rule sendTime validation", () => {
@@ -270,6 +296,36 @@ describe("MessageTriggerController (Integration)", () => {
         });
     });
 
+    describe("GET /message-trigger-jobs/client/:clientId/upcoming", () => {
+        it("passes the tenant, client, default limit, and cursor to the read service", async () => {
+            triggerService.listClientUpcomingJobs.mockResolvedValue({ items: [], nextCursor: null });
+
+            const response = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/42/upcoming")
+                .query({ cursor: "opaque-cursor" });
+
+            expect(response.status).toBe(200);
+            expect(triggerService.listClientUpcomingJobs).toHaveBeenCalledWith(
+                branchId,
+                42,
+                50,
+                "opaque-cursor",
+            );
+        });
+
+        it("rejects malformed client ids and limits before calling the service", async () => {
+            const invalidClient = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/not-an-integer/upcoming");
+            const invalidLimit = await request(app.getHttpServer())
+                .get("/message-trigger-jobs/client/42/upcoming")
+                .query({ limit: 101 });
+
+            expect(invalidClient.status).toBe(400);
+            expect(invalidLimit.status).toBe(400);
+            expect(triggerService.listClientUpcomingJobs).not.toHaveBeenCalled();
+        });
+    });
+
     describe("POST /message-trigger-jobs/:id/cancel", () => {
         it("cancels a pending job for the authenticated tenant", async () => {
             triggerService.cancelJobByUser.mockResolvedValue({ id: "job-1", status: "canceled" });
@@ -292,6 +348,15 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(409);
             expect(response.body.message).toBe("이미 발송되었거나 취소할 수 없는 상태입니다");
+        });
+
+        it("allows a branch manager and denies staff before service execution", async () => {
+            triggerService.cancelJobByUser.mockResolvedValue({ id: "job-1", status: "canceled" });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(201);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(403);
+            expect(triggerService.cancelJobByUser).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -376,6 +441,15 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(400);
             expect(smsRetryService.retryById).not.toHaveBeenCalled();
+        });
+
+        it("allows a branch manager and denies staff before retry execution", async () => {
+            smsRetryService.retryById.mockResolvedValue({ id: 77, status: "pending" });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-logs/77/retry")).status).toBe(201);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-logs/77/retry")).status).toBe(403);
+            expect(smsRetryService.retryById).toHaveBeenCalledTimes(1);
         });
     });
 

@@ -16,6 +16,7 @@ interface TokenPayload {
 }
 
 type CurrentUserResponse = AuthUser & {
+  branchRole?: string | null;
   branchName?: string | null;
   branchSlug?: string | null;
   organizationName?: string | null;
@@ -31,6 +32,7 @@ const E2E_AUTH_USER: AuthUser = {
   birthDate: "1990-01-01",
   profileImage: "",
   role: "admin",
+  branchRole: "admin",
   branchName: "테스트 지점",
 };
 

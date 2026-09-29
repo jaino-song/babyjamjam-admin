@@ -5,7 +5,6 @@ import { ScheduleChangeService } from "application/services/schedule-change.serv
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 
 type MockScheduleChangeService = {
@@ -42,12 +41,12 @@ const expectRoute = (
 };
 
 describe("ScheduleChangeController (Integration)", () => {
-    it.each(["applyAdminChange", "approve", "reject"])("requires owner/admin authority for %s", (methodName) => {
+    it.each(["applyAdminChange", "approve", "reject"])("keeps %s available to tenant members", (methodName) => {
         const guards = Reflect.getMetadata(
             GUARDS_METADATA,
             ScheduleChangeController.prototype[methodName as keyof typeof ScheduleChangeController.prototype],
         ) ?? [];
-        expect(guards).toContain(OwnerOrAdminGuard);
+        expect(guards).toEqual([]);
     });
     const tenant = {
         userId: "user-1",

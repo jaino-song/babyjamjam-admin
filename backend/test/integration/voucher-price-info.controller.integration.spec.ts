@@ -98,11 +98,12 @@ describe("VoucherPriceInfoController (Integration)", () => {
             ["findByType"],
             ["getDistinctYears"],
             ["findById"],
-        ] as const)("should protect %s with owner/admin guards", (methodName) => {
+        ] as const)("should protect %s with JWT and tenant guards", (methodName) => {
             const guards = getMethodGuards(methodName);
 
             expect(guards).toContain(JwtGuard);
-            expect(guards).toContain(OwnerOrAdminGuard);
+            expect(guards).toContain(TenantGuard);
+            expect(guards).not.toContain(OwnerOrAdminGuard);
         });
 
         it("protects contract-view reads with JWT and tenant membership only", () => {

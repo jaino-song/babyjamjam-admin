@@ -48,7 +48,13 @@ import {
 } from "application/policies/service-record-write-lock.policy";
 import { ClientEntity, clientDurationOutOfRangeMessage, CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import {
+    CLIENT_REPOSITORY,
+    ClientListSummary,
+    ClientListTab,
+    getEffectiveClientServiceStatus,
+    IClientRepository,
+} from "domain/repositories/client.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeClientPricing } from "domain/services/client-pricing";
 import { addBusinessDaysKr, diffBusinessDaysKr, isoDateInKorea } from "domain/utils/business-days";
@@ -1360,14 +1366,12 @@ export class ClientService {
         branchid: string,
         page: number,
         limit: number,
-        search?: string
+        search?: string,
+        tab?: ClientListTab,
     ): Promise<PaginatedClientWithEmployees> {
-        const result = await this.listClientsPaginatedUsecase.execute(
-            branchid,
-            page,
-            limit,
-            search
-        );
+        const result = tab === undefined
+            ? await this.listClientsPaginatedUsecase.execute(branchid, page, limit, search)
+            : await this.listClientsPaginatedUsecase.execute(branchid, page, limit, search, tab);
         const clientsWithEmployees = await this.attachEmployeesToClients(result.data, branchid);
         return {
             data: clientsWithEmployees,
@@ -1376,6 +1380,13 @@ export class ClientService {
             limit: result.limit,
             totalPages: result.totalPages,
         };
+    }
+
+    async getListSummary(branchid: string, search?: string): Promise<ClientListSummary> {
+        if (!this.clientRepository.getListSummary) {
+            throw new Error("Client list summary repository capability is not configured");
+        }
+        return this.clientRepository.getListSummary(branchid, search);
     }
 
     async checkPhoneExists(branchid: string, phone: string | null | undefined): Promise<boolean> {
@@ -1486,7 +1497,7 @@ export class ClientService {
             const pendingScheduleChange = pendingScheduleChangeMap.get(client.id);
 
             // Compute current service status based on dates
-            const computedStatus = computeServiceStatus(
+            const computedStatus = getEffectiveClientServiceStatus(
                 client.serviceStatus,
                 client.startDate,
                 client.endDate,

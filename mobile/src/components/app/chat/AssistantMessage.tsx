@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CodeBlock } from "./CodeBlock";
 import { MarkdownContent } from "./MarkdownContent";
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "./agent-markdown-link-components";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
 import type { ChatMessage } from "@/hooks/useChatStream";
@@ -119,6 +120,7 @@ export function AssistantMessage({
                             <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{
+                                    ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
                                     code: ({ className, children, ref: _ref, ...props }) => {
                                         const match = /language-(\w+)/.exec(className || "");
                                         const language = match ? match[1] : "";

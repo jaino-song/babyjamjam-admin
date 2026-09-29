@@ -66,7 +66,7 @@ function renderPage(onEdit?: (rule: MessageTriggerRule) => void) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <MessageTriggerList data-component="mobile_messages_triggers_test_list" onEdit={onEdit} />
+      <MessageTriggerList data-component="mobile_messages_triggers_test_list" canManage onEdit={onEdit} />
     </QueryClientProvider>,
   );
 }

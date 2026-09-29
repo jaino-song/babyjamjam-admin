@@ -12,8 +12,11 @@ import { INestApplication, ValidationPipe } from "@nestjs/common";
 import request from "supertest";
 import { AdminFeedbackController } from "interface/controllers/admin-feedback.controller";
 import { ChatFeedbackRepository } from "infrastructure/database/repositories/chat-feedback.repository";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { TenantContext } from "infrastructure/tenant/tenant.context";
+import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 
 describe("AdminFeedbackController (Integration)", () => {
     // ============================================
@@ -29,6 +32,9 @@ describe("AdminFeedbackController (Integration)", () => {
     // branch's admin, or a session missing branchId) without re-compiling the testing module —
     // same convention as bank-account-info.controller.integration.spec.ts.
     let currentUser: { userId: string; role: string; branchId?: string };
+    let membership: { role: string; branch: { isActive: boolean } } | null;
+    let branchFindUnique: jest.Mock;
+    let membershipFindFirst: jest.Mock;
 
     type FeedbackRowOverrides = Partial<{
         id: string;
@@ -53,6 +59,9 @@ describe("AdminFeedbackController (Integration)", () => {
 
     beforeEach(async () => {
         currentUser = { userId: "owner-user-id", role: "owner", branchId: BRANCH_A };
+        membership = null;
+        branchFindUnique = jest.fn().mockResolvedValue({ id: BRANCH_A, isActive: true });
+        membershipFindFirst = jest.fn().mockResolvedValue(null);
 
         const mockFeedbackRepository = {
             create: jest.fn(),
@@ -65,6 +74,16 @@ describe("AdminFeedbackController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [AdminFeedbackController],
             providers: [
+                TenantGuard,
+                TenantContext,
+                BranchManagerGuard,
+                {
+                    provide: PrismaService,
+                    useValue: {
+                        branch: { findUnique: branchFindUnique },
+                        user_branch: { findFirst: membershipFindFirst },
+                    },
+                },
                 {
                     provide: ChatFeedbackRepository,
                     useValue: mockFeedbackRepository,
@@ -79,8 +98,6 @@ describe("AdminFeedbackController (Integration)", () => {
                     return true;
                 },
             })
-            .overrideGuard(OwnerOrAdminGuard)
-            .useValue({ canActivate: () => true })
             .compile();
 
         app = moduleFixture.createNestApplication();
@@ -92,6 +109,40 @@ describe("AdminFeedbackController (Integration)", () => {
 
     afterEach(async () => {
         await app.close();
+    });
+
+    it("allows an active branch manager while preserving the branch filter", async () => {
+        currentUser = { userId: "manager-user", role: "user", branchId: BRANCH_A };
+        membership = { role: "manager", branch: { isActive: true } };
+        membershipFindFirst.mockResolvedValue(membership);
+        feedbackRepository.getStats.mockResolvedValue({ positive: 1, negative: 0, total: 1 });
+
+        const response = await request(app.getHttpServer()).get("/admin/feedback/stats");
+
+        expect(response.status).toBe(200);
+        expect(feedbackRepository.getStats).toHaveBeenCalledWith(BRANCH_A);
+    });
+
+    it.each(["user", "staff"] as const)("denies branch %s before repository access", async (role) => {
+        currentUser = { userId: `${role}-user`, role: "user", branchId: BRANCH_A };
+        membership = { role, branch: { isActive: true } };
+        membershipFindFirst.mockResolvedValue(membership);
+
+        const response = await request(app.getHttpServer()).get("/admin/feedback/stats");
+
+        expect(response.status).toBe(403);
+        expect(feedbackRepository.getStats).not.toHaveBeenCalled();
+    });
+
+    it.each(["missing", "inactive"] as const)("denies %s membership before repository access", async (caseName) => {
+        currentUser = { userId: "manager-user", role: "user", branchId: BRANCH_A };
+        membership = caseName === "missing" ? null : { role: "manager", branch: { isActive: false } };
+        membershipFindFirst.mockResolvedValue(membership);
+
+        const response = await request(app.getHttpServer()).get("/admin/feedback/stats");
+
+        expect(response.status).toBe(403);
+        expect(feedbackRepository.getStats).not.toHaveBeenCalled();
     });
 
     // ============================================

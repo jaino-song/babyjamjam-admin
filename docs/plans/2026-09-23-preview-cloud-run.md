@@ -159,6 +159,7 @@ gcloud iam workload-identity-pools providers create-oidc babyjamjam-gh \
   `backend-ci.yml` 자체를 수정해 토큰을 받을 수 있다. 이 조건은 "새 워크플로 추가" 경로만 막으므로
   `preview` 브랜치 보호(직접 push 제한·필수 리뷰)가 나머지를 담당해야 한다.
   이미 만든 provider는 같은 `--attribute-condition`으로 `gcloud iam workload-identity-pools providers update-oidc babyjamjam-gh --location=global --workload-identity-pool=github --project="$PROJECT_ID"`를 실행해 갱신한다.
+  **완료 (2026-09-25):** `babyjamjam-preview`의 `babyjamjam-gh` provider에 위 조건을 적용하고 describe로 재확인했다.
 
 - `google.subject` 매핑은 필수다. `attribute.repository`/`attribute.ref`는 attribute condition과
   아래 바인딩에서 쓰인다.
@@ -223,6 +224,8 @@ echo "$SERVICE_URL"
       로그인이 여기로 redirect하고 CORS도 이 값을 허용하므로, 프로덕션 값이 그대로 복사돼도 preview에 적용되지 않게 함).
       예전 Secret Manager의 `PRODUCTION_MOBILE_FRONTEND_URL` 시크릿은 더 이상 참조되지 않으므로
       이 manifest가 배포된 뒤 `gcloud secrets delete PRODUCTION_MOBILE_FRONTEND_URL --project=$PROJECT_ID`로 지운다.
+      **완료 (2026-09-25):** 서비스 트래픽 100%인 revision `00006`이 평문 값을 쓰는 것을 확인한 뒤 삭제했다.
+      트래픽 없는 옛 revision `00002`·`00003`은 이 시크릿을 참조하므로 그쪽으로 롤백하면 기동에 실패한다.
 - [ ] 카카오 디벨로퍼스(Kakao Developers) → 앱 설정에 같은 URI를 Redirect URI로 등록
 - [ ] `SENTRY_DSN`과 `AUTH_EMAIL_TOKEN_HMAC_SECRET`는 **일부러 배포하지 않는다** — 프로덕션 백엔드 env에도
       둘 다 없다(프로덕션 호스트 키 목록 확인). `SENTRY_DSN` unset → 프로덕션 백엔드는 Sentry가 꺼져 있고

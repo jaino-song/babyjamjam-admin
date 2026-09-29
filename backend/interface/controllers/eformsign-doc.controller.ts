@@ -52,6 +52,7 @@ import {
     toEformsignDocumentJobResponse,
 } from "interface/dto/eformsign-document-job.dto";
 import { CurrentTenant, TenantGuard } from "infrastructure/tenant";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { parseInteger } from "interface/parse-integer";
 import {
@@ -424,6 +425,7 @@ export class EformsignDocController {
      * can use the companion reconciliation route below to unblock a retry.
      */
     @Get("dispatch-intents/:intentId")
+    @UseGuards(BranchManagerGuard)
     async getDispatchIntent(
         @CurrentTenant() tenant: {
             branchId?: string;
@@ -432,7 +434,9 @@ export class EformsignDocController {
         },
         @Param("intentId", new ParseUUIDPipe()) intentId: string,
     ): Promise<EformsignDispatchIntentResponseDto> {
-        const isOperator = tenant.globalRole === "owner" || tenant.branchRole === "admin";
+        const isOperator = tenant.globalRole === "owner"
+            || tenant.branchRole === "admin"
+            || tenant.branchRole === "manager";
         if (!isOperator || !this.dispatchBoundary) {
             throw new ForbiddenException("전자문서 작업을 확인할 권한이 없습니다.");
         }
@@ -453,6 +457,7 @@ export class EformsignDocController {
     }
 
     @Post("dispatch-intents/:intentId/reconcile")
+    @UseGuards(BranchManagerGuard)
     @HttpCode(HttpStatus.OK)
     async reconcileDispatchIntent(
         @CurrentTenant() tenant: {
@@ -465,7 +470,9 @@ export class EformsignDocController {
         @Param("intentId", new ParseUUIDPipe()) intentId: string,
         @Body() dto: ReconcileEformsignDispatchIntentDto,
     ): Promise<EformsignDispatchIntentResponseDto> {
-        const isOperator = tenant.globalRole === "owner" || tenant.branchRole === "admin";
+        const isOperator = tenant.globalRole === "owner"
+            || tenant.branchRole === "admin"
+            || tenant.branchRole === "manager";
         if (!isOperator || !this.dispatchBoundary) {
             throw new ForbiddenException("전자문서 작업을 확인할 권한이 없습니다.");
         }

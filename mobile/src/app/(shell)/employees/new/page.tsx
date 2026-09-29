@@ -1,5 +1,6 @@
 "use client";
 import { getUserErrorMessage } from "@babyjamjam/shared";
+import { isSameOriginPath } from "@babyjamjam/shared/utils";
 
 
 import { useEffect, useMemo, useState } from "react";
@@ -54,9 +55,15 @@ const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
     ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
     : "Checking for duplicate phone number. Please wait.";
 
-function sanitizeReturnTo(path: string | null): string | null {
+export function sanitizeReturnTo(path: string | null): string | null {
   if (!path) return null;
-  if (!path.startsWith("/") || path.startsWith("//")) return null;
+  // isSameOriginPath resolves the value the way a browser (and
+  // router.push) actually resolves it, not a bare prefix check: a bare
+  // `startsWith("/") && !startsWith("//")` check cannot see that
+  // "/\evil.test" resolves to the host "evil.test", exactly like
+  // "//evil.test" does — and searchParams.get() already decodes a
+  // "%5C"-encoded query value to a literal backslash before this runs.
+  if (!isSameOriginPath(path)) return null;
   return path;
 }
 

@@ -20,6 +20,15 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
     useMessageHistory: () => ({ data: [], isError: false, isLoading: false }),
+    useClientUpcomingMessageTriggerJobs: () => ({
+        items: [],
+        isError: false,
+        isLoading: false,
+        isFetchingNextPage: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        refetch: jest.fn(),
+    }),
 }));
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({

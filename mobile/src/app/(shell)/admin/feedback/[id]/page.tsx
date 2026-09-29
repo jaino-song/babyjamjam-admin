@@ -5,6 +5,7 @@ import { getFeedbackDetail, SessionMessage } from '@/lib/api/admin';
 import { useRouter, useParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from '@/components/app/chat/agent-markdown-link-components';
 
 const FEEDBACK_DETAIL_BASE = 'mobile_admin_feedback-detail';
 
@@ -166,6 +167,7 @@ export default function FeedbackDetailPage() {
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
+                            ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
                             p: ({ children }) => (
                               <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
                             ),
@@ -221,16 +223,6 @@ export default function FeedbackDetailPage() {
                               <blockquote className="border-l-4 border-border pl-4 italic my-3 text-muted-foreground">
                                 {children}
                               </blockquote>
-                            ),
-                            a: ({ href, children }) => (
-                              <a
-                                href={href}
-                                className="text-primary hover:underline"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                {children}
-                              </a>
                             ),
                           }}
                         >

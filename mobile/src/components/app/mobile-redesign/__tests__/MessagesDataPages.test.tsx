@@ -30,6 +30,19 @@ const mockToast = toast as jest.Mock;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
+  usePathname: () => "/messages/history",
+}));
+
+let mockAuthBranchRole = "manager";
+
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => ({
+    data: { role: "user", branchRole: mockAuthBranchRole },
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  }),
 }));
 
 const cancelableJob = {
@@ -542,6 +555,31 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
     await user.click(within(filterPanel).getByRole("button", { name: "필터 닫기" }));
     expect(screen.queryByPlaceholderText("고객명, 연락처, 템플릿, 내용 검색…")).not.toBeInTheDocument();
+  });
+
+  it("hides cancel and resend from a plain branch user (both need BranchManagerGuard)", async () => {
+    const user = userEvent.setup();
+    mockAuthBranchRole = "user";
+    try {
+      mockUseUpcomingMessageTriggerJobs.mockReturnValue({
+        isLoading: false,
+        isError: false,
+        data: [cancelableJob],
+      });
+      mockUseMessageHistory.mockReturnValue({
+        isLoading: false,
+        isError: false,
+        data: [{ ...sentRecord, id: 78, status: "failed" as const, errorMessage: "실패" }],
+      });
+
+      render(<MessagesHistoryPage />);
+
+      expect(screen.queryByRole("button", { name: MESSAGE_JOB_CANCEL_COPY.action })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /김문자/ }));
+      expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    } finally {
+      mockAuthBranchRole = "manager";
+    }
   });
 
   it("confirms a failed history resend through the existing approval modal", async () => {

@@ -120,4 +120,101 @@ describe("ContractDocumentJobsPopover", () => {
       Node.DOCUMENT_POSITION_PRECEDING,
     );
   });
+
+  it("shows an unavailable processing count and retries the summary after an initial failure", () => {
+    const onRetrySummary = jest.fn();
+    render(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={undefined}
+        summaryError={new Error("summary unavailable")}
+        onRetrySummary={onRetrySummary}
+      />,
+    );
+
+    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    expect(processingTile).toHaveTextContent("—");
+    expect(screen.getByRole("alert")).toHaveTextContent("전자문서 처리 현황을 불러오지 못했어요");
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
+    expect(onRetrySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a successful zero distinct from an unavailable summary", () => {
+    render(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
+      />,
+    );
+
+    const processingTile = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+    expect(processingTile).toHaveTextContent("0");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("retains a cached summary count and offers a stale retry after refresh failure", () => {
+    const onRetrySummary = jest.fn();
+    render(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={{ activeCount: 4, requiresAttentionCount: 1 }}
+        summaryError={new Error("summary refresh failed")}
+        summaryHasData
+        onRetrySummary={onRetrySummary}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
+    expect(screen.getByRole("alert")).toHaveTextContent("최근 성공한 처리 현황을 표시하고 있어요");
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리 현황 다시 시도" }));
+    expect(onRetrySummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the summary warning and renders the recovered count", () => {
+    const onRetrySummary = jest.fn();
+    const view = render(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={undefined}
+        summaryError={new Error("summary unavailable")}
+        onRetrySummary={onRetrySummary}
+      />,
+    );
+
+    view.rerender(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={{ activeCount: 0, requiresAttentionCount: 0 }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("0");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps list errors and retries independent from the summary tile", () => {
+    const onRetryJobs = jest.fn();
+    render(
+      <ContractStatsBar
+        name="contracts"
+        items={[]}
+        summary={{ activeCount: 4, requiresAttentionCount: 0 }}
+        jobsError={new Error("list unavailable")}
+        onRetryJobs={onRetryJobs}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" })).toHaveTextContent("4");
+    expect(screen.queryByText("전자문서 처리 현황을 불러오지 못했어요")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
+    expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3);
+    fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
+    expect(onRetryJobs).toHaveBeenCalledTimes(1);
+  });
 });

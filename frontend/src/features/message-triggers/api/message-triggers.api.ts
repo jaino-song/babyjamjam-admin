@@ -6,6 +6,7 @@ import type {
     TriggerEventType,
     TriggerRecipientType,
     TriggerTemplateCatalogItem,
+    ClientUpcomingMessageTriggerJobsResponse,
     UpcomingMessageTriggerJob,
     UpdateMessageTriggerRuleDto,
     UpdateMessageTriggerRuleBranchActivationDto,
@@ -37,6 +38,19 @@ export const messageTriggersApi = {
         api.get<UpcomingMessageTriggerJob[]>("/message-trigger-jobs/upcoming", {
             params: { limit },
         }),
+    listClientUpcomingJobs: (
+        clientId: number,
+        params: { limit?: number; cursor?: string | null } = {},
+    ) =>
+        api.get<ClientUpcomingMessageTriggerJobsResponse>(
+            `/message-trigger-jobs/client/${encodeURIComponent(clientId)}/upcoming`,
+            {
+                params: {
+                    limit: params.limit ?? 50,
+                    ...(params.cursor ? { cursor: params.cursor } : {}),
+                },
+            },
+        ),
     listHistory: (limit = 200) =>
         api.get<MessageLogRecord[]>("/message-logs", {
             params: { limit },

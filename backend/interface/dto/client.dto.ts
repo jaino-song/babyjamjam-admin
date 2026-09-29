@@ -5,6 +5,28 @@ import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone, trimNullablePhone } from "./canonical-phone.validator";
 
 import { IsBirthdayDate } from "./birthday.validator";
+import { CLIENT_LIST_TAB_VALUES } from "domain/repositories/client.repository.interface";
+import type { ClientListSummary, ClientListTab } from "domain/repositories/client.repository.interface";
+
+export { CLIENT_LIST_TAB_VALUES } from "domain/repositories/client.repository.interface";
+export type { ClientListSummary, ClientListTab } from "domain/repositories/client.repository.interface";
+
+export class ClientListSummaryDto {
+    total!: number;
+    byTab!: Record<ClientListTab, number>;
+    dueDate!: ClientListSummary["dueDate"];
+    serviceEnd!: ClientListSummary["serviceEnd"];
+}
+
+export class ClientListQueryDto {
+    @IsOptional()
+    @IsIn(CLIENT_LIST_TAB_VALUES)
+    tab?: ClientListTab;
+
+    @IsOptional()
+    @IsString()
+    search?: string;
+}
 
 const KOREAN_WON_VALIDATION_MESSAGE = "금액은 정수 원 단위(예: 1,000원)만 입력할 수 있습니다.";
 

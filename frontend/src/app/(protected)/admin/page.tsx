@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from '@/components/app/v3';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from '@/components/app/chat/agent-markdown-link-components';
 
 type FilterType = 'all' | 'positive' | 'negative';
 
@@ -246,6 +247,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
+                            ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
                             p: ({ children }) => <p className="mb-2 last:mb-0 leading-relaxed text-[0.8rem]">{children}</p>,
                             ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1 text-[0.8rem]">{children}</ul>,
                             ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-1 text-[0.8rem]">{children}</ol>,

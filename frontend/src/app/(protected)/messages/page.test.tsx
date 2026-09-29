@@ -48,8 +48,8 @@ describe("MessagesPage template type labels", () => {
   });
 });
 
-describe("MessagesPage unreleased section gating", () => {
-  it("keeps only trigger rules owner-only while branch users can edit templates", () => {
+describe("MessagesPage trigger section gating", () => {
+  it("uses the active branch-management role for trigger rules", () => {
     const unreleasedIds = source
       .split("const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([")[1]
       ?.split("]);")[0];
@@ -61,10 +61,10 @@ describe("MessagesPage unreleased section gating", () => {
     // owner-only.
     expect(unreleasedIds).not.toContain('"scheduled"');
     expect(unreleasedIds).not.toContain('"history"');
-    expect(unreleasedIds).not.toContain('"templates"');
     expect(unreleasedIds).toContain('"triggers"');
-    expect(source).toContain("const isOwner = user?.role === ROLES.owner");
-    expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !isOwner");
+    expect(source).toContain("const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery)");
+    expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages");
+    expect(source).not.toContain("ROLES.owner");
   });
 });
 
@@ -99,17 +99,25 @@ const mockUseMessageSenderApproval = jest.fn();
 const mockUseAllClients = jest.fn();
 const mockUseSystemTemplates = jest.fn();
 const mockUseSystemTemplate = jest.fn();
-const mockUseInitialUser = jest.fn();
+const mockUseGetAuthUser = jest.fn();
 const mockUpdateSystemTemplate = jest.fn();
+
+function mockAuthUser(data: Record<string, unknown> | null) {
+  mockUseGetAuthUser.mockReturnValue({
+    data,
+    isPending: false,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+  });
+}
 
 jest.mock("@/providers/LocaleProvider", () => ({
   useLocale: () => "ko",
 }));
 
-jest.mock("@/providers/UserProvider", () => ({
-  // Non-owner role on purpose: history must be reachable for anyone once SMS
-  // sending is approved, not just the branch owner.
-  useInitialUser: () => mockUseInitialUser(),
+jest.mock("@/hooks/useGetAuthUser", () => ({
+  useGetAuthUser: () => mockUseGetAuthUser(),
 }));
 
 jest.mock("@/components/app/messages/MessageApprovalGate", () => ({
@@ -427,7 +435,7 @@ function getDetailPanel() {
 
 beforeEach(() => {
   document.cookie = "selected_branch_id=branch-test; path=/";
-  mockUseInitialUser.mockReturnValue({ id: "user-1", role: "manager" });
+  mockAuthUser({ id: "user-1", role: "user", branchRole: "manager" });
   mockUpdateSystemTemplate.mockResolvedValue(undefined);
   mockToast.mockReset();
   mockCancelMutateAsync.mockReset();
@@ -463,7 +471,7 @@ beforeEach(() => {
 
 describe("messages page — server system-template catalog", () => {
   it("saves only the newly selected template's content and variables after switching editors", async () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
     const templates = [
       buildSystemTemplate({ templateKey: "FUTURE_TEMPLATE_A", name: "첫 서버 템플릿", content: "첫 번째 본문" }),
@@ -539,7 +547,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("keeps cached rows and the editor draft visible when the catalog refetch fails", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const template = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -571,7 +579,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("waits for fresh detail data before mounting an editable unknown template", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const listTemplate = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -609,7 +617,7 @@ describe("messages page — server system-template catalog", () => {
   });
 
   it("preserves a dirty draft when fresher detail data arrives and previews that draft", () => {
-    mockUseInitialUser.mockReturnValue({ id: "owner-1", role: "owner" });
+    mockAuthUser({ id: "owner-1", role: "owner" });
     const initialTemplate = buildSystemTemplate({
       templateKey: "FUTURE_TEMPLATE",
       name: "새 서버 템플릿",
@@ -817,6 +825,32 @@ describe("messages page — merged 발송 기록 section", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    { label: "plain branch user", user: { id: "user-2", role: "user", branchRole: "user" }, visible: false },
+    { label: "branch manager", user: { id: "manager-2", role: "user", branchRole: "manager" }, visible: true },
+  ])("shows cancel and retry only to users who can manage the branch ($label)", ({ user, visible }) => {
+    // POST /message-trigger-jobs/:id/cancel and /message-logs/:id/retry require
+    // BranchManagerGuard, so a plain branch user must not be offered them.
+    mockAuthUser(user);
+    mockData({
+      upcoming: [buildUpcomingJob()],
+      history: [buildHistoryRecord({ status: "failed" })],
+    });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    fireEvent.click(screen.getByText("김서연"));
+    const cancel = within(getDetailPanel() as HTMLElement).queryByRole("button", { name: "발송 취소" });
+    if (visible) expect(cancel).toBeInTheDocument();
+    else expect(cancel).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("이하은"));
+    const retry = document.querySelector('[data-component$="_detail-retry"]');
+    if (visible) expect(retry).toBeInTheDocument();
+    else expect(retry).not.toBeInTheDocument();
+  });
+
   it("cancels an upcoming send after confirmation, shows exactly one success notification, and the row moves zones on refetch", async () => {
     mockData({
       upcoming: [buildUpcomingJob()],
@@ -995,7 +1029,7 @@ describe("messages page — merged 발송 기록 section", () => {
   });
 
   it("keeps branch template editing available to nonowners while sending remains approval-gated", () => {
-    mockUseInitialUser.mockReturnValue({ id: "manager-1", role: "manager" });
+    mockAuthUser({ id: "manager-1", role: "user", branchRole: "manager" });
     mockUseMessageSenderApproval.mockReturnValue({
       data: {
         approvalStatus: "pending",

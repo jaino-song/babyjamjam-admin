@@ -123,6 +123,23 @@ describe("agent contracts", () => {
         expect(AgentActionResultPartSchema.safeParse({ actionId: "a-1", status: "succeeded", summary: "done", href: "javascript:alert(1)" }).success).toBe(false);
     });
 
+    it("rejects a backslash-as-separator href that a bare startsWith(\"/\") check would have let through", () => {
+        // "/\evil.example" is not "//"-prefixed, so a bare
+        // `startsWith("/") && !startsWith("//")` check accepts it, but a
+        // browser (and Next's router.push) resolves the backslash as a path
+        // separator and navigates to the host "evil.example".
+        expect(AgentNavigationPartSchema.safeParse({ href: "/\\evil.example", label: "open" }).success).toBe(false);
+        expect(AgentActionResultPartSchema.safeParse({ actionId: "a-1", status: "succeeded", summary: "done", href: "/\\evil.example" }).success).toBe(false);
+        // The already-decoded form of a "%5C"-encoded backslash query value
+        // is the same string as the literal-backslash case above.
+        const decoded = decodeURIComponent("/%5Cevil.example");
+        expect(AgentNavigationPartSchema.safeParse({ href: decoded, label: "open" }).success).toBe(false);
+    });
+
+    it("keeps a plain same-origin href with a query string", () => {
+        expect(AgentNavigationPartSchema.safeParse({ href: "/employees?x=1", label: "open" }).success).toBe(true);
+    });
+
     it("preserves safe optional form input metadata through form parsing", () => {
         const parsed = AgentFormPartSchema.parse({
             formId: "employee-create",

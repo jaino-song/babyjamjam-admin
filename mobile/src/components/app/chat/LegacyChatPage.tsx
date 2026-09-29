@@ -9,6 +9,7 @@ import remarkGfm from "remark-gfm";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { CodeBlock } from "@/components/app/chat/CodeBlock";
+import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "@/components/app/chat/agent-markdown-link-components";
 import ClientRegistrationWizard, {
   type CreatedClient,
 } from "@/components/app/chat/ClientRegistrationWizard";
@@ -125,6 +126,7 @@ function AssistantMessage({ message }: { message: ChatDisplayMessage }) {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
+                    ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
                     code: ({ className, children, ref, ...props }) => {
                       void ref;
                       const match = /language-(\w+)/.exec(className || "");

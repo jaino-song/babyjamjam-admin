@@ -58,30 +58,34 @@ export function useInfiniteEmployees({
     };
   }, []);
 
-  // Filter employees
+  // Search is intentionally independent from the availability tab. The
+  // directory summary uses this list so its counts describe every matching
+  // employee before the active/inactive predicate is applied to the rows.
+  const searchMatchedEmployees = useMemo(() => {
+    if (!search.trim()) return employees;
+
+    return employees.filter((employee) =>
+      matchesSearchQuery(search, [
+        employee.name,
+        employee.phone,
+        ...employee.workArea,
+        ...employee.workArea.map(formatWorkAreaLabel),
+      ]),
+    );
+  }, [employees, search]);
+
+  // Filter employees for the progressively visible directory rows.
   const allFilteredEmployees = useMemo(() => {
-    let list = employees;
-
     if (filter === "active") {
-      list = list.filter((e) => e.openToNextWork);
-    } else if (filter === "inactive") {
-      list = list.filter((e) => !e.openToNextWork);
+      return searchMatchedEmployees.filter((employee) => employee.openToNextWork === true);
     }
 
-    if (search.trim()) {
-      list = list.filter(
-        (employee) =>
-          matchesSearchQuery(search, [
-            employee.name,
-            employee.phone,
-            ...employee.workArea,
-            ...employee.workArea.map(formatWorkAreaLabel),
-          ])
-      );
+    if (filter === "inactive") {
+      return searchMatchedEmployees.filter((employee) => employee.openToNextWork === false);
     }
 
-    return list;
-  }, [employees, filter, search]);
+    return searchMatchedEmployees;
+  }, [filter, searchMatchedEmployees]);
 
   // Slice to visible count
   const visibleEmployees = useMemo(() => {
@@ -111,6 +115,8 @@ export function useInfiniteEmployees({
   return {
     employees: visibleEmployees,
     allEmployees: employees,
+    searchMatchedEmployees,
+    searchMatchedCount: searchMatchedEmployees.length,
     filteredCount: allFilteredEmployees.length,
     isLoading,
     isError,

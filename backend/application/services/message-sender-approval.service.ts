@@ -24,6 +24,7 @@ const MESSAGE_SENDER_APPROVAL_REQUEST_ROLES = new Set([
     "owner",
     "admin",
     "manager",
+    "user",
 ]);
 
 @Injectable()
