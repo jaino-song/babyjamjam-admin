@@ -1,6 +1,8 @@
-import { ForbiddenException } from "@nestjs/common";
+import { ExecutionContext, ForbiddenException, INestApplication, ValidationPipe } from "@nestjs/common";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
+import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
+import request from "supertest";
 import { NotificationService } from "application/services/notification.service";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -9,7 +11,9 @@ import { TenantGuard } from "infrastructure/tenant";
 import { NotificationController } from "interface/controllers/notification.controller";
 
 describe("NotificationController", () => {
-    const getMethodGuards = (methodName: "sendNotification" | "broadcastNotification" | "testBroadcast") => {
+    const getMethodGuards = (
+        methodName: "sendNotification" | "broadcastNotification" | "testBroadcast" | "listRecipients",
+    ) => {
         return Reflect.getMetadata(
             GUARDS_METADATA,
             NotificationController.prototype[methodName],
@@ -24,7 +28,7 @@ describe("NotificationController", () => {
         expect(guards).toContain(OwnerOrAdminGuard);
     });
 
-    it.each(["sendNotification", "broadcastNotification"] as const)(
+    it.each(["sendNotification", "broadcastNotification", "listRecipients"] as const)(
         "protects %s with tenant branch-manager authority",
         (methodName) => {
             const guards = getMethodGuards(methodName);
@@ -100,5 +104,98 @@ describe("NotificationController", () => {
             "auth-b",
             "test-agent",
         );
+    });
+});
+
+describe("GET /notifications/recipients (HTTP integration)", () => {
+    const branchId = "branch-a";
+    let app: INestApplication;
+    let notificationService: { listRecipients: jest.Mock };
+    let authRole: string;
+
+    beforeEach(async () => {
+        authRole = "manager";
+        notificationService = {
+            listRecipients: jest.fn(),
+        };
+
+        const mockAuthGuard = {
+            canActivate: (context: ExecutionContext) => {
+                const requestContext = context.switchToHttp().getRequest();
+                requestContext.tenant = {
+                    userId: "user-1",
+                    branchId,
+                    globalRole: authRole,
+                    branchRole: authRole,
+                };
+                return true;
+            },
+        };
+
+        const moduleFixture: TestingModule = await Test.createTestingModule({
+            controllers: [NotificationController],
+            providers: [
+                BranchManagerGuard,
+                {
+                    provide: NotificationService,
+                    useValue: notificationService,
+                },
+                {
+                    provide: ConfigService,
+                    useValue: { get: jest.fn() },
+                },
+            ],
+        })
+            .overrideGuard(JwtGuard)
+            .useValue(mockAuthGuard)
+            .overrideGuard(TenantGuard)
+            .useValue(mockAuthGuard)
+            .compile();
+
+        app = moduleFixture.createNestApplication();
+        app.useGlobalPipes(new ValidationPipe({ transform: true }));
+        await app.init();
+    });
+
+    afterEach(async () => {
+        await app.close();
+    });
+
+    it("returns 200 with the requesting branch's recipients for a branch manager", async () => {
+        notificationService.listRecipients.mockResolvedValue([
+            { id: "user-1", name: "김철수" },
+            { id: "user-2", name: "나영희" },
+        ]);
+
+        const response = await request(app.getHttpServer()).get("/notifications/recipients");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual([
+            { id: "user-1", name: "김철수" },
+            { id: "user-2", name: "나영희" },
+        ]);
+        expect(notificationService.listRecipients).toHaveBeenCalledWith(branchId);
+        for (const item of response.body as Array<Record<string, unknown>>) {
+            expect(Object.keys(item).sort()).toEqual(["id", "name"]);
+        }
+    });
+
+    it("denies a plain branch member (not manager) with 403", async () => {
+        notificationService.listRecipients.mockResolvedValue([{ id: "user-1", name: "김철수" }]);
+        authRole = "user";
+
+        const response = await request(app.getHttpServer()).get("/notifications/recipients");
+
+        expect(response.status).toBe(403);
+        expect(notificationService.listRecipients).not.toHaveBeenCalled();
+    });
+
+    it.each(["owner", "admin", "manager"] as const)("allows global role/branch role %s", async (role) => {
+        notificationService.listRecipients.mockResolvedValue([]);
+        authRole = role;
+
+        const response = await request(app.getHttpServer()).get("/notifications/recipients");
+
+        expect(response.status).toBe(200);
     });
 });
