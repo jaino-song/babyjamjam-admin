@@ -37,6 +37,8 @@
         "./utils/birthday": "./src/utils/birthday.ts",
         "./utils/service-record-input": "./src/utils/service-record-input.ts",
         "./utils/phone": "./src/utils/phone.ts",
+        "./utils/date-input": "./src/utils/date-input.ts",
+        "./utils/field-validation-message": "./src/utils/field-validation-message.ts",
         "./utils/korean-search": "./src/utils/korean-search.ts",
         "./eslint-plugin": "./eslint-plugin/index.mjs",
         "./errors/problem-details": "./src/errors/problem-details.ts"
