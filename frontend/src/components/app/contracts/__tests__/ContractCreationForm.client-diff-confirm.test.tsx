@@ -460,7 +460,7 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
     // An emptied field shows the stored value as its placeholder and no hint.
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
     // A stored value that is empty keeps the field's own placeholder and never hints.
-    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "1958-03-03");
     fireEvent.change(queryInput(container, BIRTHDAY_SELECTOR), { target: { value: "1990-01-01" } });
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
   });
@@ -495,7 +495,7 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
       "placeholder",
       t("ko", "contract-msg.address-placeholder"),
     );
-    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "1958-03-03");
     act(() => {
       useFormStore.getState().setPhone("010-1111-2222");
     });
@@ -566,8 +566,8 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
 describe("ContractCreationForm — validation messages share the label-row slot with the diff hint", () => {
   const HINT = "등록된 정보와 달라요.";
   const PHONE_ERROR = "숫자만 입력할 수 있습니다";
-  const BIRTHDAY_ERROR = "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.";
-  const END_DATE_INVALID_ERROR = "종료일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+  const BIRTHDAY_ERROR = "존재하지 않는 날짜예요";
+  const END_DATE_INVALID_ERROR = "존재하지 않는 날짜예요";
   const PHONE_SELECTOR = '[data-component="desktop_messages_form_contact-input"] input';
   const BIRTHDAY_SELECTOR = '[data-component="desktop_contracts_creation_client-birthday-input"] input';
 
@@ -650,17 +650,16 @@ describe("ContractCreationForm — validation messages share the label-row slot 
 
     fireEvent.change(endDateInput, { target: { value: "2026-02-31" } });
 
-    const error = screen.getByTestId("contract-creation-date-range-error");
-    expect(error).toHaveTextContent(END_DATE_INVALID_ERROR);
-    expect(error).toHaveClass("text-v3-burgundy", "text-right");
-    expect(error.closest("div.flex")).toContainElement(screen.getByText("계약 종료일"));
+    const error = screen.getByText(END_DATE_INVALID_ERROR);
+    expect(error).toHaveClass("text-v3-burgundy", "text-right", "truncate");
+    expect(error.closest("div.justify-between")).toContainElement(screen.getByText("계약 종료일"));
     expect(endDateInput).toHaveAttribute("aria-invalid", "true");
     expect(endDateInput).toHaveAttribute("aria-describedby", error.id);
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
 
     fireEvent.change(endDateInput, { target: { value: "2026-10-05" } });
 
-    expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
+    expect(screen.queryByText(END_DATE_INVALID_ERROR)).not.toBeInTheDocument();
     expect(screen.getByText(HINT).id).toBe("contract-creation-registered-diff-hint-endDate");
   });
 });

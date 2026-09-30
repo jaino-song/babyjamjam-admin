@@ -79,9 +79,10 @@ jest.mock("@/lib/sse/reconnecting-event-source", () => ({
 }));
 
 const CONTRACT_INFO_STEP_INDEX = 3;
-const DATE_RANGE_ERROR = "종료일은 시작일과 같거나 이후로 입력해 주세요.";
-const END_DATE_INVALID_ERROR = "종료일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
-const PAYMENT_DATE_INVALID_ERROR = "결제일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+const DATE_RANGE_ERROR = "종료일은 시작일 이후여야 해요";
+const DATE_NOT_REAL_ERROR = "존재하지 않는 날짜예요";
+const DATE_FORMAT_HINT = "YYYY-MM-DD 형식";
+const DATE_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
 
 function seedContractDates(overrides: { startDate?: string; endDate?: string } = {}): void {
   useFormStore.setState({
@@ -178,7 +179,7 @@ describe("ContractCreationForm — contract date ordering", () => {
     useFormStore.getState().resetAll();
   });
 
-  it("shows the date error, disables final submit, and makes no calls for a reversed range", async () => {
+  it("shows the range message in the end-date slot and blocks submit for a reversed range", async () => {
     seedContractDates({ startDate: "2026-09-21", endDate: "2026-09-20" });
 
     renderForm();
@@ -187,89 +188,141 @@ describe("ContractCreationForm — contract date ordering", () => {
     expect(screen.getByLabelText("계약 시작일")).toHaveAttribute("id", "contract-creation-start-date");
     expect(screen.getByLabelText("계약 종료일")).toHaveAttribute("id", "contract-creation-end-date");
     expect(screen.getByLabelText("본인부담금 결제일")).toHaveAttribute("id", "contract-creation-payment-date");
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(DATE_RANGE_ERROR);
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    const error = screen.getByText(DATE_RANGE_ERROR);
+    expect(error).toHaveAttribute("data-slot", "field-error-message");
+    // It is in the end-date label row (top right), next to the label.
+    expect(error.closest("div.justify-between")).toContainElement(screen.getByText("계약 종료일"));
+    expect(screen.getByLabelText("계약 종료일")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("계약 종료일")).toHaveAttribute("aria-describedby", error.id);
+    expect(screen.getByLabelText("계약 시작일")).not.toHaveAttribute("aria-invalid");
+    // Field problems no longer disable the button; pressing it reports them instead.
+    expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
 
     fireEvent.click(screen.getByTestId("contract-creation-submit"));
 
-    await waitFor(() => {
-      expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
-      expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
-      expect(mockDispatchHeadless).not.toHaveBeenCalled();
-      expect(mockGenerateDocument).not.toHaveBeenCalled();
-    });
+    await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
+    expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
+    expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockGenerateDocument).not.toHaveBeenCalled();
+    // Not a form-level failure, so the top alert stays empty.
+    expect(screen.queryByText(DATE_RANGE_ERROR, { selector: '[role="alert"] *' })).not.toBeInTheDocument();
   });
 
-  it("rejects a malformed end date before any mutation", async () => {
+  it("rejects a non-existent end date before any mutation", async () => {
     seedContractDates({ startDate: "2026-09-21", endDate: "2026-02-31" });
 
     renderForm();
     overrideEndDate("2026-02-31");
 
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(END_DATE_INVALID_ERROR);
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    const error = screen.getByText(DATE_NOT_REAL_ERROR);
+    expect(error.closest("div.justify-between")).toContainElement(screen.getByText("계약 종료일"));
     expect(screen.getByLabelText("계약 종료일")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("계약 종료일")).toHaveAttribute(
-      "aria-describedby",
-      "contract-creation-date-range-error",
-    );
+    expect(screen.getByLabelText("계약 종료일")).toHaveAttribute("aria-describedby", error.id);
+
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+    await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
     expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
 
-  it("rejects an incomplete visible end date instead of submitting the stale canonical value", async () => {
+  it("hints while an end date is incomplete, then turns into an error once the field is left", async () => {
     seedContractDates();
 
     renderForm();
-    fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2026-09-2" } });
+    const endDateInput = screen.getByLabelText("계약 종료일");
+    fireEvent.focus(endDateInput);
+    fireEvent.change(endDateInput, { target: { value: "2026-09-2" } });
 
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(END_DATE_INVALID_ERROR);
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    const hint = screen.getByText(DATE_FORMAT_HINT);
+    expect(hint).toHaveAttribute("data-slot", "field-message");
+    expect(endDateInput).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText(DATE_FORMAT_ERROR)).not.toBeInTheDocument();
+
+    fireEvent.blur(endDateInput);
+
+    const error = screen.getByText(DATE_FORMAT_ERROR);
+    expect(error).toHaveAttribute("data-slot", "field-error-message");
+    expect(endDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(endDateInput).toHaveAttribute("aria-describedby", error.id);
+
+    // The stale canonical value in the store must not be submitted instead.
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+    await waitFor(() => expect(endDateInput).toHaveFocus());
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
 
-  it("rejects an incomplete payment date instead of submitting the stale canonical value", async () => {
+  it("shows the format error for an incomplete payment date after submit is pressed", async () => {
     seedContractDates();
 
     renderForm();
-    fireEvent.change(screen.getByLabelText("본인부담금 결제일"), { target: { value: "2026-09-1" } });
+    const paymentDateInput = screen.getByLabelText("본인부담금 결제일");
+    fireEvent.change(paymentDateInput, { target: { value: "2026-09-1" } });
+    expect(screen.getByText(DATE_FORMAT_HINT)).toBeInTheDocument();
 
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(PAYMENT_DATE_INVALID_ERROR);
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+    await waitFor(() => expect(paymentDateInput).toHaveFocus());
+    fireEvent.blur(paymentDateInput);
+    const error = screen.getByText(DATE_FORMAT_ERROR);
+    expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(paymentDateInput).toHaveAttribute("aria-describedby", error.id);
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
 
-  it("associates a malformed payment date with the inline error", async () => {
+  it("rejects a non-existent payment date and associates it with the inline error", async () => {
     seedContractDates();
 
     renderForm();
     fireEvent.change(screen.getByLabelText("본인부담금 결제일"), { target: { value: "2026-02-31" } });
 
     const paymentDateInput = screen.getByLabelText("본인부담금 결제일");
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(PAYMENT_DATE_INVALID_ERROR);
+    const error = screen.getByText(DATE_NOT_REAL_ERROR);
     expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
-    expect(paymentDateInput).toHaveAttribute(
-      "aria-describedby",
-      "contract-creation-date-range-error",
-    );
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    expect(paymentDateInput).toHaveAttribute("aria-describedby", error.id);
+
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+    await waitFor(() => expect(paymentDateInput).toHaveFocus());
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
 
-  it("rejects an invalid start date even when the optional end date is empty", async () => {
+  it("rejects a non-existent start date even when the optional end date is empty", async () => {
     seedContractDates({ startDate: "2026-02-31", endDate: "" });
 
     renderForm();
     overrideEndDate("");
 
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(
-      "계약 시작일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.",
-    );
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    const error = screen.getByText(DATE_NOT_REAL_ERROR);
+    expect(error.closest("div.justify-between")).toContainElement(screen.getByText("계약 시작일"));
+
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+    await waitFor(() => expect(screen.getByLabelText("계약 시작일")).toHaveFocus());
+    expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+  });
+
+  it("asks for required dates only after submit is pressed, and focuses the first empty one", async () => {
+    seedContractDates({ startDate: "", endDate: "" });
+    useFormStore.setState({ paymentDate: "" });
+
+    renderForm();
+    overrideEndDate("");
+
+    // Nothing is said on first load.
+    expect(screen.queryByText(/입력해 주세요/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+    await waitFor(() => expect(screen.getByLabelText("계약 시작일")).toHaveFocus());
+    expect(screen.getByText("계약 시작일을 입력해 주세요")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByText("본인부담금 결제일을 입력해 주세요")).toHaveAttribute("data-slot", "field-error-message");
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockDispatchHeadless).not.toHaveBeenCalled();
   });
@@ -335,13 +388,13 @@ describe("ContractCreationForm — contract date ordering", () => {
     });
     fireEvent.click(screen.getByTestId("contract-creation-retry"));
 
-    await waitFor(() => expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(DATE_RANGE_ERROR));
-    expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+    await waitFor(() => expect(screen.getByText(DATE_RANGE_ERROR)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText("계약 종료일")).toHaveFocus());
+    expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
     expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2026-09-22" } });
-    await waitFor(() => expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled());
-    expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
+    expect(screen.queryByText(DATE_RANGE_ERROR)).not.toBeInTheDocument();
   });
 });
