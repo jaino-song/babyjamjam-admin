@@ -17,6 +17,7 @@ import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete"
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
 import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
+import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { Input } from "@/components/app/v3/Input";
 import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
@@ -40,6 +41,7 @@ import { useSystemTemplate, useSystemTemplates } from "@/features/system-templat
 import type { CustomVariable, TemplateVariable } from "@/features/system-templates/types";
 import { useBankAccountInfos, useVoucherPriceInfos, type BankAccountInfo } from "@/hooks";
 import { useAllClients } from "@/hooks/useClients";
+import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
@@ -57,6 +59,13 @@ import "@/components/app/mobile-redesign/redesign.css";
 import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { extractVariables, renderTemplate } from "@/lib/template-utils";
 import { cn } from "@/lib/utils";
+import {
+  fieldMessageText,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+} from "@/lib/validations/field-message";
+import { useLocale } from "@/providers/LocaleProvider";
 import type { SendMessageDeliverySmsResponse } from "@babyjamjam/shared/types/message";
 import {
   SYSTEM_TEMPLATE_KEYS,
@@ -116,7 +125,11 @@ const MAX_LMS_TITLE_BYTES = 44;
 const MAX_RECIPIENTS = 50;
 const RECIPIENT_REQUIRED_MESSAGE = "수신자를 선택하거나 전화번호를 Enter로 추가해 주세요.";
 const DUPLICATE_RECIPIENT_MESSAGE = "이미 추가된 수신자입니다.";
-const INVALID_PHONE_ENTRY_MESSAGE = "기존 고객이 없으면 올바른 전화번호를 입력한 뒤 Enter를 눌러 추가해 주세요.";
+// One-line copy for the receiver field's label-row slot.
+const DUPLICATE_RECIPIENT_SLOT_COPY = "이미 추가된 수신자예요";
+const RECIPIENT_LIMIT_SLOT_COPY = `수신자는 최대 ${MAX_RECIPIENTS}명까지예요`;
+const RECEIVER_LABEL = "휴대 전화번호";
+const RECEIVER_SPEC: FieldSpec = { kind: "phone", label: RECEIVER_LABEL };
 const CLIENT_WITHOUT_PHONE_MESSAGE = "선택한 고객에 등록된 연락처가 없습니다.";
 const DEFAULT_LMS_TITLE = "안내";
 const SMS_HISTORY_HREF = "/messages/history";
@@ -363,6 +376,14 @@ function getRecipientInitial(name: string) {
 
 function formatRecipientPhone(phone: string) {
   return formatKoreanPhoneNumber(phone);
+}
+
+/**
+ * Hyphenates a single typed number as it is keyed in. A comma list or a
+ * country-code number is left as typed; Enter validates and formats those.
+ */
+function formatReceiverInput(raw: string) {
+  return /[,+]/.test(raw) ? raw : formatKoreanPhoneNumber(raw);
 }
 
 function getTextByteLength(text: string) {
@@ -792,6 +813,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       }
     : null;
   const [receiver, setReceiver] = useState("");
+  // A problem found when a typed number is added with Enter. It belongs to the
+  // text it was found for, so it shows in the receiver field's label-row slot
+  // until the input changes.
+  const [receiverEntry, setReceiverEntry] = useState<{ message: SlotMessage; receiver: string } | null>(null);
+  const receiverEntryError = receiverEntry && receiverEntry.receiver === receiver ? receiverEntry.message : null;
+  const setReceiverEntryError = (message: SlotMessage) => setReceiverEntry({ message, receiver });
   const [recipientNameInputValue, setRecipientNameInputValue] = useState("");
   const [recipients, setRecipients] = useState<RecipientChip[]>(() => initialRecipient ? [initialRecipient] : []);
 
@@ -1109,6 +1136,20 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   // its UI option is renamed or another system-template key is introduced.
   const selectedTemplateDeliveryMode = resolveSelectedTemplateDeliveryMode(selectedTemplateId);
   const isServiceEndNoticeSelected = selectedTemplateDeliveryMode === "receipt-link";
+  const locale = useLocale();
+  // Only the plain phone input is checked as a phone while typing; the client
+  // search box also takes names, so it reports problems only when Enter adds a number.
+  const isReceiverPhoneInput = Boolean(recipientNameVariable) && !isServiceEndNoticeSelected;
+  const receiverMessages = useFieldMessages<"receiver">({
+    values: { receiver },
+    // A list ("010-…,010-…") or country-code number is checked by Enter, not as one local number.
+    specs: isReceiverPhoneInput && !/[,+]/.test(receiver) ? { receiver: RECEIVER_SPEC } : {},
+    locale,
+  });
+  const receiverSlot = isServiceEndNoticeSelected
+    ? null
+    : pickSlotMessage(receiverEntryError, receiverMessages.slot("receiver"));
+  const receiverHasError = receiverSlot?.tone === "err";
   const renderedTemplateVariables = useMemo(() => {
     if (selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID) {
       return selectedTemplateVariables.filter(
@@ -1403,7 +1444,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     },
   });
 
-  const addRecipientChips = (nextRecipients: RecipientChip[]) => {
+  const addRecipientChips = (nextRecipients: RecipientChip[], options: { reportDuplicateInSlot?: boolean } = {}) => {
     const existingPhoneSet = new Set(recipients.map((recipient) => normalizeKoreanPhoneDigits(recipient.phone)));
     const filteredRecipients = nextRecipients.filter((recipient) => {
       const normalizedPhone = normalizeKoreanPhoneDigits(recipient.phone);
@@ -1416,7 +1457,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     });
 
     if (filteredRecipients.length === 0) {
-      setErrorMessage(getUserErrorMessage(DUPLICATE_RECIPIENT_MESSAGE));
+      if (options.reportDuplicateInSlot) {
+        setReceiverEntryError({ text: DUPLICATE_RECIPIENT_SLOT_COPY, tone: "err" });
+      } else {
+        setErrorMessage(getUserErrorMessage(DUPLICATE_RECIPIENT_MESSAGE));
+      }
       return false;
     }
 
@@ -1513,17 +1558,24 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       .map((phone) => phone.trim())
       .filter(Boolean);
 
-    if (
-      rawPhones.length === 0
-      || rawPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone) || !isValidKoreanPhoneNumber(phone))
-    ) {
-      setErrorMessage(getUserErrorMessage(INVALID_PHONE_ENTRY_MESSAGE));
+    if (rawPhones.length === 0) {
+      setReceiverEntryError({
+        text: fieldMessageText(locale, { tone: "error", code: "required" }, RECEIVER_LABEL),
+        tone: "err",
+      });
+      return;
+    }
 
+    if (rawPhones.some((phone) => !SINGLE_PHONE_REGEX.test(phone) || !isValidKoreanPhoneNumber(phone))) {
+      setReceiverEntryError({
+        text: fieldMessageText(locale, { tone: "error", code: "phone-format" }, RECEIVER_LABEL),
+        tone: "err",
+      });
       return;
     }
 
     if (recipients.length + normalizedPhones.length > MAX_RECIPIENTS) {
-      setErrorMessage(getUserErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`));
+      setReceiverEntryError({ text: RECIPIENT_LIMIT_SLOT_COPY, tone: "err" });
       return;
     }
 
@@ -1536,6 +1588,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         initial: "수",
         tone: "orange",
       })),
+      { reportDuplicateInSlot: true },
     );
   };
 
@@ -1826,9 +1879,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                     data-slot="messages-recipient-row"
                     className={styles.formSection}
                   >
-                    <label htmlFor="receiver" className={styles.formLabel}>
-                      휴대 전화번호 <span className={styles.required}>*</span>
-                    </label>
+                    <FieldLabelRow
+                      data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_row_receiver"
+                      htmlFor="receiver"
+                      label={RECEIVER_LABEL}
+                      required
+                      message={receiverSlot}
+                    />
                     {isServiceEndNoticeSelected ? (
                       <Input
                         id="receiver"
@@ -1845,9 +1902,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         type="tel"
                         inputMode="numeric"
                         value={receiver}
-                        onChange={(event) => setReceiver(event.target.value)}
+                        onChange={(event) => setReceiver(formatReceiverInput(event.target.value))}
                         onKeyDown={handleReceiverKeyDown}
-                        placeholder="010-0000-0000"
+                        {...receiverMessages.bind("receiver")}
+                        placeholder="010-1234-5678"
+                        error={receiverHasError}
+                        aria-invalid={receiverHasError ? true : undefined}
+                        aria-describedby={fieldMessageId("receiver")}
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_row_input"
                       />
                     ) : (
@@ -1858,7 +1919,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         onChange={handleClientRecipientSelect}
                         inputValue={receiver}
                         onInputValueChange={setReceiver}
-                        placeholder="010-0000-0000"
+                        placeholder="010-1234-5678"
                         label=""
                         allowManualEntry
                         manualEntryLabel="입력한 번호 추가"

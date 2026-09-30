@@ -709,19 +709,19 @@
     },
     "mobile/src/app/(shell)/(auth)/register/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "385:11-390:12|rawUiElement",
-        "439:15-450:17|rawUiElement",
-        "458:13-468:15|rawUiElement",
-        "474:13-484:15|rawUiElement",
-        "498:13-508:15|rawUiElement",
-        "522:13-527:14|rawUiElement",
-        "539:13-551:15|rawUiElement",
-        "561:13-573:15|rawUiElement",
-        "582:13-582:116|rawUiElement",
-        "586:13-586:77|rawUiElement",
-        "599:15-606:16|rawUiElement",
-        "621:13-621:116|rawUiElement",
-        "625:13-631:14|rawUiElement"
+        "506:11-511:12|rawUiElement",
+        "565:15-580:17|rawUiElement",
+        "591:13-602:15|rawUiElement",
+        "612:13-623:15|rawUiElement",
+        "641:13-652:15|rawUiElement",
+        "656:13-661:14|rawUiElement",
+        "678:13-691:15|rawUiElement",
+        "701:13-714:15|rawUiElement",
+        "718:13-718:116|rawUiElement",
+        "722:13-722:77|rawUiElement",
+        "740:15-747:16|rawUiElement",
+        "760:13-760:116|rawUiElement",
+        "764:13-770:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/(auth)/reset-password/page.tsx": {
@@ -933,11 +933,11 @@
     },
     "mobile/src/app/(shell)/messages/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "782:10-782:24|pageLocalComponent"
+        "803:10-803:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1876:27-1881:28|rawUiElement",
-        "2116:23-2121:24|rawUiElement"
+        "1937:27-1942:28|rawUiElement",
+        "2177:23-2182:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {

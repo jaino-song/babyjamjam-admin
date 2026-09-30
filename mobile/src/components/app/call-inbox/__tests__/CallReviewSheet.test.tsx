@@ -468,3 +468,196 @@ describe("CallReviewSheet — role-less transcript", () => {
     expect(document.getElementById(transcriptTurnId(2))?.className).not.toMatch(/ring-2/);
   });
 });
+
+// --------------------------------------------------------------------------
+// Field messages: one slot per field in the label row
+// --------------------------------------------------------------------------
+
+describe("CallReviewSheet — field messages", () => {
+  const slotOf = (field: HTMLElement) =>
+    document.getElementById(field.getAttribute("aria-describedby") ?? "") as HTMLElement;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockConfirmMutateAsync.mockResolvedValue({ clientId: 42 });
+  });
+
+  describe("NEW_CLIENT", () => {
+    beforeEach(() => {
+      mockUseClientDraft.mockReturnValue({ data: baseDetail, isLoading: false });
+    });
+
+    it("shows nothing on first render and uses example placeholders instead of format text", () => {
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      ["산모명", "연락처", "주소", "출산예정일", "출산일", "생년월일", "시작일", "종료일"].forEach((label) => {
+        const field = screen.getByLabelText(new RegExp(`^${label}$`));
+        expect(slotOf(field)).toBeEmptyDOMElement();
+        expect(slotOf(field)).toHaveAttribute("aria-live", "polite");
+        expect(field).not.toHaveAttribute("aria-invalid", "true");
+      });
+      expect(screen.getByLabelText(/^생년월일$/)).toHaveAttribute("placeholder", "1958-03-03");
+      expect(screen.getByLabelText(/^시작일$/)).toHaveAttribute("placeholder", "2026-12-01");
+      expect(screen.getByLabelText(/^종료일$/)).toHaveAttribute("placeholder", "2026-12-19");
+      expect(screen.queryByPlaceholderText("YYYY-MM-DD")).not.toBeInTheDocument();
+    });
+
+    it("errors on a partial phone number once the field is left", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+      const phone = screen.getByLabelText(/^연락처$/);
+
+      await user.clear(phone);
+      await user.type(phone, "0101234");
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식");
+      expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
+
+      await user.tab();
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      expect(phone).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("errors on a partial date once the field is left", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+      const startDate = screen.getByLabelText(/^시작일$/);
+
+      await user.type(startDate, "202612");
+      expect(startDate).toHaveValue("2026-12");
+      expect(slotOf(startDate)).toHaveTextContent("YYYY-MM-DD 형식");
+
+      await user.tab();
+      expect(slotOf(startDate)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    });
+
+    it("says the end date must follow the start date", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      await user.type(screen.getByLabelText(/^시작일$/), "20261219");
+      await user.type(screen.getByLabelText(/^종료일$/), "20261201");
+
+      expect(slotOf(screen.getByLabelText(/^종료일$/))).toHaveTextContent("종료일은 시작일 이후여야 해요");
+    });
+
+    it("blocks registering with a cleared name, shows it in the name slot, and focuses the name field", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      await user.clear(screen.getByLabelText(/^산모명$/));
+      await user.click(screen.getByRole("button", { name: "고객 등록" }));
+
+      expect(slotOf(screen.getByLabelText(/^산모명$/))).toHaveTextContent("산모명을 입력해 주세요");
+      expect(screen.getByLabelText(/^산모명$/)).toHaveFocus();
+      expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("blocks registering with an incomplete birthday and takes the reviewer to it", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+      const birthday = screen.getByLabelText(/^생년월일$/);
+
+      await user.type(birthday, "1958");
+      await user.click(screen.getByRole("button", { name: "고객 등록" }));
+
+      // Focus is back on the field, so its slot shows the format hint for what to type.
+      expect(birthday).toHaveFocus();
+      expect(slotOf(birthday)).toHaveTextContent("YYYY-MM-DD 형식");
+      expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
+
+      await user.tab();
+      expect(slotOf(birthday)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    });
+
+    it("rejects a future birthday in the birthday slot", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      await user.type(screen.getByLabelText(/^생년월일$/), "29990101");
+
+      expect(slotOf(screen.getByLabelText(/^생년월일$/))).toHaveTextContent("미래 날짜는 입력할 수 없어요");
+    });
+
+    it("shows no messages on a reviewed (read-only) draft", () => {
+      mockUseClientDraft.mockReturnValue({
+        data: { ...baseDetail, status: "CONFIRMED" as const, reviewedBy: { name: "홍길동" }, reviewedAt: "2026-06-10T06:00:00.000Z" },
+        isLoading: false,
+      });
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      expect(slotOf(screen.getByLabelText(/^산모명$/))).toBeEmptyDOMElement();
+    });
+  });
+
+  describe("CLIENT_UPDATE", () => {
+    const updateDetail = {
+      ...baseDetail,
+      type: "CLIENT_UPDATE" as const,
+      clientId: 7,
+      client: { id: 7, name: "박지영", phone: "01099998888" },
+      proposals: [
+        { field: "phone", value: "01012345678", currentValue: "01099998888", evidence: "번호가 바뀌었어요", confidence: "high" as const },
+        { field: "startDate", value: "2026-07-20", currentValue: "2026-06-01", evidence: "7월 20일부터", confidence: "high" as const },
+        { field: "endDate", value: "2026-08-20", currentValue: null, evidence: "8월 20일까지", confidence: "high" as const },
+      ],
+    };
+
+    beforeEach(() => {
+      mockUseClientDraft.mockReturnValue({ data: updateDetail, isLoading: false });
+      mockConfirmMutateAsync.mockResolvedValue({ clientId: 7 });
+    });
+
+    it("shows nothing on first render for valid proposals", () => {
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      ["연락처", "시작일", "종료일"].forEach((label) => {
+        const field = screen.getByLabelText(new RegExp(`^${label}$`));
+        expect(slotOf(field)).toBeEmptyDOMElement();
+        expect(field).not.toHaveAttribute("aria-invalid", "true");
+      });
+    });
+
+    it("errors on a partial phone edit after leaving it and blocks applying it", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+      const phone = screen.getByLabelText(/^연락처$/);
+
+      await user.clear(phone);
+      await user.type(phone, "0101234");
+      await user.tab();
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+
+      await user.click(screen.getByRole("button", { name: /변경 적용/ }));
+      expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
+      expect(phone).toHaveFocus();
+    });
+
+    it("does not check a row that was toggled off", async () => {
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      await user.clear(screen.getByLabelText(/^연락처$/));
+      await user.type(screen.getByLabelText(/^연락처$/), "010");
+      await user.click(screen.getByRole("switch", { name: /연락처 포함/ }));
+      await user.click(screen.getByRole("button", { name: /변경 적용/ }));
+
+      expect(slotOf(screen.getByLabelText(/^연락처$/))).toBeEmptyDOMElement();
+      expect(mockConfirmMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ changes: expect.not.objectContaining({ phone: expect.anything() }) }),
+      );
+    });
+
+    it("explains an invalid birthday in its slot instead of a toast", async () => {
+      mockUseClientDraft.mockReturnValue({
+        data: { ...updateDetail, proposals: [{ field: "birthday", value: "1905-02-30", confidence: "high" as const, evidence: "생년월일" }] },
+        isLoading: false,
+      });
+      const user = userEvent.setup();
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      expect(slotOf(screen.getByLabelText(/^생년월일$/))).toHaveTextContent("존재하지 않는 날짜예요");
+      await user.click(screen.getByRole("button", { name: /변경 적용/ }));
+      expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
+    });
+  });
+});
