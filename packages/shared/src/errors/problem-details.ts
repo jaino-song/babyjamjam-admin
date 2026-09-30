@@ -58,6 +58,13 @@ export type ProblemCode =
     | "SCHEDULE_DATE_NOT_POSTPONED"
     | "REQUEST_STALE"
     | "SCHEDULE_CHANGE_UNCOMPUTABLE"
+    // Registered service-record period-lock codes (thrown by validatePeriodChange; shipped identifiers verbatim).
+    | "SERVICE_RECORD_FINALIZED"
+    | "SERVICE_RECORD_START_DATE_LOCKED"
+    | "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"
+    | "SERVICE_RECORD_END_DATE_REQUIRED"
+    | "SERVICE_RECORD_DURATION_REQUIRED"
+    | "SERVICE_RECORD_DURATION_CANNOT_DECREASE"
     // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
     | "CLIENT_ASSIGNMENT_REQUIRED"
     | "DOCUMENT_PROVIDER_MISMATCH"
@@ -263,6 +270,13 @@ const PROBLEM_CODES: readonly ProblemCode[] = [
     "SCHEDULE_DATE_NOT_POSTPONED",
     "REQUEST_STALE",
     "SCHEDULE_CHANGE_UNCOMPUTABLE",
+    // Registered service-record period-lock codes (thrown by validatePeriodChange; shipped identifiers verbatim).
+    "SERVICE_RECORD_FINALIZED",
+    "SERVICE_RECORD_START_DATE_LOCKED",
+    "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
+    "SERVICE_RECORD_END_DATE_REQUIRED",
+    "SERVICE_RECORD_DURATION_REQUIRED",
+    "SERVICE_RECORD_DURATION_CANNOT_DECREASE",
     // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
     "CLIENT_ASSIGNMENT_REQUIRED",
     "DOCUMENT_PROVIDER_MISMATCH",
@@ -867,6 +881,73 @@ const PROBLEM_DEFINITIONS: Readonly<
         detail: {
             "ko-KR": "고객 회기 정보나 배정 기간이 없어 일정을 계산할 수 없어요. 정보를 확인한 뒤 다시 시도해 주세요.",
             "en-US": "The client's session count or assignment period is missing, so the schedule could not be calculated. Check the information and try again.",
+        },
+    },
+    // Registered service-record period-lock codes (thrown by validatePeriodChange; shipped identifiers verbatim).
+    SERVICE_RECORD_FINALIZED: {
+        status: 409,
+        title: {
+            "ko-KR": "서비스 기록이 확정됐어요",
+            "en-US": "The service record is finalized",
+        },
+        detail: {
+            "ko-KR": "서비스 기록이 이미 확정되어 시작일·종료일·서비스 기간을 바꿀 수 없어요. 저장된 기간 그대로 진행해 주세요.",
+            "en-US": "The service record is already finalized, so the start date, end date, and number of sessions cannot be changed. Continue with the saved period.",
+        },
+    },
+    SERVICE_RECORD_START_DATE_LOCKED: {
+        status: 409,
+        title: {
+            "ko-KR": "시작일을 바꿀 수 없어요",
+            "en-US": "The start date cannot be changed",
+        },
+        detail: {
+            "ko-KR": "서비스가 이미 시작됐거나 회차 기록이 있어 시작일을 바꿀 수 없어요. 저장된 시작일 그대로 진행해 주세요.",
+            "en-US": "Service has already started or sessions exist, so the start date cannot be changed. Continue with the saved start date.",
+        },
+    },
+    SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION: {
+        status: 409,
+        title: {
+            "ko-KR": "종료일을 앞당길 수 없어요",
+            "en-US": "The end date cannot be moved earlier",
+        },
+        detail: {
+            "ko-KR": "이미 제출된 회차보다 종료일을 앞으로 당길 수 없어요. 마지막 제출 회차 이후 날짜로 정해 주세요.",
+            "en-US": "The end date cannot be earlier than a session that was already submitted. Choose a date after the last submitted session.",
+        },
+    },
+    SERVICE_RECORD_END_DATE_REQUIRED: {
+        status: 409,
+        title: {
+            "ko-KR": "종료일이 필요해요",
+            "en-US": "An end date is required",
+        },
+        detail: {
+            "ko-KR": "회차 기록이 있어 종료일을 비울 수 없어요. 종료일을 입력한 뒤 다시 시도해 주세요.",
+            "en-US": "Sessions exist, so the end date cannot be cleared. Enter an end date and try again.",
+        },
+    },
+    SERVICE_RECORD_DURATION_REQUIRED: {
+        status: 409,
+        title: {
+            "ko-KR": "서비스 기간이 필요해요",
+            "en-US": "A service period is required",
+        },
+        detail: {
+            "ko-KR": "회차 기록이 있어 서비스 기간을 비울 수 없어요. 서비스 기간을 입력한 뒤 다시 시도해 주세요.",
+            "en-US": "Sessions exist, so the service period cannot be cleared. Enter a service period and try again.",
+        },
+    },
+    SERVICE_RECORD_DURATION_CANNOT_DECREASE: {
+        status: 409,
+        title: {
+            "ko-KR": "서비스 기간을 줄일 수 없어요",
+            "en-US": "The service period cannot be reduced",
+        },
+        detail: {
+            "ko-KR": "이미 기록된 회차보다 서비스 기간을 줄일 수 없어요. 기록된 회차 이상으로 정해 주세요.",
+            "en-US": "The service period cannot be reduced below the sessions already recorded. Choose a period at least as long as the recorded sessions.",
         },
     },
     // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.

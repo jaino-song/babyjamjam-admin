@@ -230,6 +230,9 @@ export function useClientDetailController({
     const primaryEmployee =
       employees.find((employee) => employee.id === target.primaryEmployee?.id) ??
       employees.find((employee) => employee.name.trim() === target.primaryEmployee?.name?.trim());
+    const secondaryEmployee = target.secondaryEmployee
+      ? employees.find((employee) => employee.id === target.secondaryEmployee?.id)
+      : undefined;
 
     prefillContractCreation({
       clientId: target.id,
@@ -241,6 +244,9 @@ export function useClientDetailController({
       employeeId: primaryEmployee?.id ?? target.primaryEmployee?.id ?? null,
       employeeName: primaryEmployee?.name ?? target.primaryEmployee?.name ?? "",
       employeePhone: primaryEmployee?.phone ?? "",
+      employee2Id: secondaryEmployee?.id ?? target.secondaryEmployee?.id ?? null,
+      employee2Name: secondaryEmployee?.name ?? target.secondaryEmployee?.name ?? "",
+      employee2Phone: secondaryEmployee?.phone ?? target.secondaryEmployee?.phone ?? "",
       startDate: contractPrefillDate(target.startDate),
       endDate: contractPrefillDate(target.endDate),
       fullPrice: target.fullPrice ?? "",
