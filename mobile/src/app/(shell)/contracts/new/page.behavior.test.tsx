@@ -366,7 +366,7 @@ describe("contract creation mutation lifecycle", () => {
     formState.employeePhone = "01011112222";
     formState.startDate = "2026-09-11";
     formState.endDate = "2026-09-17";
-    fireEvent.change(getDateInput("시작일"), { target: { value: "260911" } });
+    fireEvent.change(getDateInput("시작일"), { target: { value: "20260911" } });
 
     fireEvent.click(submit);
     // The retry now differs from the stored client, so the page asks before writing it back.
@@ -486,39 +486,65 @@ describe("contract creation mutation lifecycle", () => {
 });
 
 describe("contract date validation", () => {
-  const DATE_RANGE_ERROR = "종료일은 시작일과 같거나 이후로 입력해 주세요.";
+  const DATE_RANGE_ERROR = "종료일은 시작일 이후여야 해요";
+  const DATE_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
 
-  it("shows a concrete range error, disables creation, and runs no side effects", async () => {
+  it("shows a concrete range error, blocks creation on press, focuses the field, and runs no side effects", async () => {
     installFormState({ startDate: "2026-09-21", endDate: "2026-09-20" });
 
     const submit = await renderReadyPage();
+    const endDateInput = getDateInput("종료일");
 
     expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(DATE_RANGE_ERROR);
-    expect(submit).toBeDisabled();
+    expect(endDateInput).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(submit);
+
+    expect(document.activeElement).toBe(endDateInput);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockToast).not.toHaveBeenCalled();
     expectNoContractSideEffects();
   });
 
-  it("rejects an incomplete visible date instead of using the stale canonical value", async () => {
+  it("asks for a cleared required date only after it held a value, never on first render", async () => {
+    await renderReadyPage();
+    const endDateInput = getDateInput("종료일");
+    expect(screen.queryByText("종료일을 입력해 주세요")).not.toBeInTheDocument();
+
+    fireEvent.change(endDateInput, { target: { value: "" } });
+
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("종료일을 입력해 주세요");
+    expect(endDateInput).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("keeps an incomplete visible date as a grey hint while typing and a red error after leaving it", async () => {
     const submit = await renderReadyPage();
     const endDateInput = getDateInput("종료일");
 
+    fireEvent.focus(endDateInput);
     fireEvent.change(endDateInput, { target: { value: "2609" } });
 
     expect(endDateInput).toHaveValue("2609");
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("종료일");
-    expect(submit).toBeDisabled();
+    expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
+    expect(screen.getByText("YYYY-MM-DD 형식")).toBeInTheDocument();
+
+    fireEvent.blur(endDateInput);
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent(DATE_FORMAT_ERROR);
+
+    fireEvent.click(submit);
+    expect(document.activeElement).toBe(endDateInput);
     expectNoContractSideEffects();
   });
 
-  it("rejects an impossible payment date and preserves the entered value", async () => {
+  it("rejects an impossible payment date and preserves the typed, hyphenated value", async () => {
     const submit = await renderReadyPage();
     const paymentDateInput = getDateInput("본인부담금 수령 날짜");
 
-    fireEvent.change(paymentDateInput, { target: { value: "260231" } });
+    fireEvent.change(paymentDateInput, { target: { value: "20260231" } });
 
-    expect(paymentDateInput).toHaveValue("260231");
-    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("본인부담금");
-    expect(submit).toBeDisabled();
+    expect(paymentDateInput).toHaveValue("2026-02-31");
+    expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("존재하지 않는 날짜예요");
+    fireEvent.click(submit);
+    expect(document.activeElement).toBe(paymentDateInput);
     expectNoContractSideEffects();
   });
 
@@ -528,9 +554,9 @@ describe("contract date validation", () => {
 
     const submit = await renderReadyPage();
     const endDateInput = getDateInput("종료일");
-    fireEvent.change(endDateInput, { target: { value: "260921" } });
+    fireEvent.change(endDateInput, { target: { value: "20260921" } });
 
-    expect(endDateInput).toHaveValue("260921");
+    expect(endDateInput).toHaveValue("2026-09-21");
     expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
     expect(submit).not.toBeDisabled();
 
@@ -554,6 +580,103 @@ describe("contract date validation", () => {
       7,
       expect.any(String),
     );
+  });
+
+  it("sends the same payload for a date typed as digits as for the equivalent ISO store value", async () => {
+    installFormState({ startDate: "", endDate: "", paymentDate: "2026-09-10" });
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-typed", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    const startDateInput = getDateInput("시작일");
+    const endDateInput = getDateInput("종료일");
+    expect(startDateInput).toHaveValue("");
+
+    fireEvent.change(startDateInput, { target: { value: "20261201" } });
+    fireEvent.change(endDateInput, { target: { value: "20261219" } });
+    expect(startDateInput).toHaveValue("2026-12-01");
+    expect(endDateInput).toHaveValue("2026-12-19");
+
+    fireEvent.click(submit);
+    fireEvent.click(await screen.findByRole("button", { name: "고객 정보도 수정" }));
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockDispatchHeadless.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      startDate: "2026-12-01",
+      endDate: "2026-12-19",
+      contractDuration: "2026-12-01 ~ 2026-12-19",
+      startYear: "26", startMonth: "12", startDay: "01",
+      endYear: "26", endMonth: "12", endDay: "19",
+      paymentYear: "26", paymentMonth: "09", paymentDay: "10",
+    }));
+  });
+});
+
+describe("contract field messages on the customer step", () => {
+  const FIELD_PREFIX = "mobile_contracts-new_screen_root_page_root_form-scroll_card_";
+
+  function customerInput(name: "phone-input" | "birthday-input" | "start-date-input"): HTMLInputElement {
+    const element = document.querySelector<HTMLInputElement>(`[data-component="${FIELD_PREFIX}${name}"]`);
+    if (!element) throw new Error(`missing ${name}`);
+    return element;
+  }
+
+  async function renderCustomerStep() {
+    const { default: ContractCreationPage } = await import("./page");
+    render(<ContractCreationPage />);
+  }
+
+  function labelRowMessages(): string[] {
+    return Array.from(document.querySelectorAll('[data-component$="_label-row"] [data-slot]'))
+      .map((element) => element.textContent ?? "");
+  }
+
+  it("shows no field message on first render, even for empty required fields", async () => {
+    installFormState({
+      clientId: null,
+      isManualEntry: false,
+      name: "",
+      phone: "",
+      birthday: "",
+      startDate: "",
+      endDate: "",
+      employeeId: null,
+      area: "",
+    });
+    await renderCustomerStep();
+
+    expect(customerInput("phone-input")).toHaveAttribute("placeholder", "010-1234-5678");
+    expect(customerInput("birthday-input")).toHaveAttribute("placeholder", "1958-03-03");
+    expect(customerInput("start-date-input")).toHaveAttribute("placeholder", "2026-12-01");
+    expect(labelRowMessages()).toEqual([]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows the phone format error in the label row after a partial number is left", async () => {
+    installFormState({ phone: "010-1234" });
+    await renderCustomerStep();
+    const phone = customerInput("phone-input");
+
+    fireEvent.focus(phone);
+    expect(screen.getByText("010-1234-5678 형식")).toBeInTheDocument();
+
+    fireEvent.blur(phone);
+    const error = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+    expect(error.closest('[data-component$="_label-row"]')).not.toBeNull();
+    expect(error).toHaveAttribute("aria-live", "polite");
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    expect(phone).toHaveAttribute("aria-describedby", error.id);
+  });
+
+  it("reveals the required message and focuses the phone field when next is pressed with it empty", async () => {
+    installFormState({ phone: "", clientId: null, isManualEntry: true, name: "새로운 고객" });
+    await renderCustomerStep();
+    const phone = customerInput("phone-input");
+    expect(screen.queryByText("연락처를 입력해 주세요")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    expect(screen.getByText("연락처를 입력해 주세요")).toBeInTheDocument();
+    expect(document.activeElement).toBe(phone);
+    expect(mockToast).not.toHaveBeenCalled();
   });
 });
 
