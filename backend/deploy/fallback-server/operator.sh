@@ -540,12 +540,70 @@ current_unix_time() {
     /usr/bin/date +%s
 }
 
+release_image_ids() {
+    {
+        /usr/bin/docker images --no-trunc --format '{{.ID}}' "$LOCAL_IMAGE_REPOSITORY"
+        /usr/bin/docker images --no-trunc --format '{{.ID}}' "$IMAGE_REPOSITORY"
+    } | /usr/bin/sort -u
+}
+
+image_id_for_reference() {
+    /usr/bin/docker image inspect --format '{{.Id}}' "$1" 2>/dev/null
+}
+
+container_image_ids() {
+    local container_ids
+    container_ids="$(/usr/bin/docker ps -aq)" || return 1
+    [[ -n "$container_ids" ]] || return 0
+    # shellcheck disable=SC2086
+    /usr/bin/docker inspect --format '{{.Image}}' $container_ids
+}
+
+remove_image_id() {
+    /usr/bin/docker rmi -f "$1" >/dev/null
+}
+
+# Every release leaves a ~3.5 GB image behind; with nothing removing them the
+# 50 GB host filled up and a pull failed with "no space left on device"
+# (2026-09-30). Before each pull, keep only what a rollback or a container can
+# still need: the current and previous recorded releases, the image about to be
+# deployed, and anything a container (running or stopped) uses. Best effort: a
+# failure here must never block the deployment it makes room for.
+prune_stale_release_images() {
+    local target_digest="$1"
+    local keep="" name value id in_use candidates
+
+    for name in current-image-tag previous-image-tag; do
+        value="$(read_state "$name" || true)"
+        [[ -n "$value" ]] || continue
+        id="$(image_id_for_reference "$LOCAL_IMAGE_REPOSITORY:$value" || true)"
+        [[ -n "$id" ]] && keep+=" $id"
+    done
+    for value in "$target_digest" "$(read_state current-image-digest || true)" \
+        "$(read_state previous-image-digest || true)"; do
+        [[ -n "$value" ]] || continue
+        id="$(image_id_for_reference "$IMAGE_REPOSITORY@$value" || true)"
+        [[ -n "$id" ]] && keep+=" $id"
+    done
+    # Without the container list we cannot tell what is in use: skip pruning.
+    in_use="$(container_image_ids)" || return 0
+    keep+=" $(printf '%s ' $in_use)"
+    candidates="$(release_image_ids)" || return 0
+
+    for id in $candidates; do
+        [[ " $keep " == *" $id "* ]] && continue
+        remove_image_id "$id" || true
+    done
+    return 0
+}
+
 pull_release_image() {
     local commit_sha="$1"
     local image_digest="$2"
     local immutable_reference="$IMAGE_REPOSITORY@$image_digest"
     local image_revision
 
+    prune_stale_release_images "$image_digest" || true
     /usr/bin/docker pull "$immutable_reference" >/dev/null
     image_revision="$(/usr/bin/docker image inspect \
         --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \

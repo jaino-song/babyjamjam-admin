@@ -223,6 +223,46 @@ if ( replace_temporary_active_release "$replace_target_tag" "$replace_target_dig
     fail 'temporary deployment accepted expired source approval'
 fi
 
+# Before a pull, stale release images are removed; the current and previous
+# releases, the target image and anything a container uses are kept.
+bash -c '
+    source "$1"
+    read_state(){ case "$1" in current-image-tag) echo cur;; previous-image-tag) echo prev;;
+        current-image-digest) echo sha256:curd;; previous-image-digest) echo sha256:prevd;; esac; }
+    image_id_for_reference(){ case "$1" in
+        babyjamjam-backend:cur) echo sha256:ID_CUR;; babyjamjam-backend:prev) echo sha256:ID_PREV;;
+        *@sha256:target) echo sha256:ID_TARGET;; *@sha256:curd) echo sha256:ID_CUR;;
+        *@sha256:prevd) echo sha256:ID_PREV;; *) return 1;; esac; }
+    container_image_ids(){ printf "%s\n" sha256:ID_STOPPED sha256:ID_CUR; }
+    release_image_ids(){ printf "%s\n" sha256:ID_CUR sha256:ID_PREV sha256:ID_TARGET sha256:ID_STOPPED sha256:ID_OLD1 sha256:ID_OLD2; }
+    remove_image_id(){ echo "rmi:$1"; [[ "$1" != sha256:ID_OLD1 ]]; }
+    prune_stale_release_images sha256:target
+' _ "$COPY" >"$TMP/prune.out" || fail 'prune failed when one removal failed'
+[[ "$(sort "$TMP/prune.out" | tr '\n' ' ')" == 'rmi:sha256:ID_OLD1 rmi:sha256:ID_OLD2 ' ]] \
+    || fail "prune removed the wrong images: $(tr '\n' ' ' <"$TMP/prune.out")"
+
+# Without a container list nothing is removed, and the pull still proceeds.
+bash -c '
+    source "$1"
+    read_state(){ return 1; }
+    image_id_for_reference(){ return 1; }
+    container_image_ids(){ return 1; }
+    release_image_ids(){ echo sha256:ID_OLD1; }
+    remove_image_id(){ echo "rmi:$1"; }
+    prune_stale_release_images sha256:target
+' _ "$COPY" >"$TMP/prune.out" || fail 'prune failed without a container list'
+[[ ! -s "$TMP/prune.out" ]] || fail 'prune removed images without knowing which are in use'
+
+# The prune runs before the pull, and a prune failure does not stop the pull.
+bash -c '
+    source "$1"
+    prune_stale_release_images(){ echo prune; return 1; }
+    die(){ echo "die:$*"; exit 1; }
+    /usr/bin/docker(){ :; }
+    pull_release_image aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa sha256:target
+' _ "$COPY" >"$TMP/pull.out" 2>&1 || true
+head -1 "$TMP/pull.out" | grep -Fqx prune || fail 'pull did not prune first'
+
 # Exercise the real timer functions in a fresh shell, overriding only policy
 # and mask observations: no systemd operation may be reached on this branch.
 bash -c '
