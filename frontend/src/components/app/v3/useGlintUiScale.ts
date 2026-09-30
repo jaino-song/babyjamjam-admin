@@ -3,10 +3,10 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-const GLINT_UI_BASE_VIEWPORT_WIDTH = 1440;
+const GLINT_UI_BASE_VIEWPORT_WIDTH = 1600;
 const GLINT_UI_MOBILE_BREAKPOINT = 768;
-const GLINT_UI_MIN_DESKTOP_SCALE = 0.85;
-const GLINT_UI_MAX_DESKTOP_SCALE = 1.1;
+const GLINT_UI_MIN_DESKTOP_SCALE = 0.765;
+const GLINT_UI_MAX_DESKTOP_SCALE = 0.99;
 const GLINT_UI_VIEWPORT_SCALE_CSS_VALUE = "var(--glint-ui-viewport-scale, 1)";
 // Page-zoom steps offered by Chrome/Edge and Safari. Firefox-only steps are left
 // out on purpose: every extra step makes it likelier that a docked DevTools pane
