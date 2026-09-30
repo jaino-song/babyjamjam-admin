@@ -267,7 +267,6 @@
       "section-flags": "Additional Options",
       "name": "Name",
       "birthday": "Birthday",
-      "birthday-helper": "YYYY-MM-DD format (e.g., 1958-03-03)",
       "due-date": "Expected Delivery Date",
       "phone": "Phone",
       "address": "Address",
@@ -360,7 +359,7 @@
       "registered-date-unknown": "Unknown",
       "phone-required": "연락처를 입력해 주세요",
       "work-area-required": "근무 지역을 선택해 주세요",
-      "error-phone-duplicate": "이미 등록된 연락처예요. 다른 연락처를 입력해 주세요.",
+      "error-phone-duplicate": "This number is already registered",
       "error-create-failed": "제공인력 등록에 실패했어요. 다시 시도해 주세요.",
       "error-update-failed": "제공인력 정보 수정에 실패했어요. 다시 시도해 주세요.",
       "error-save-failed": "저장하지 못했어요. 다시 시도해 주세요",
@@ -462,5 +461,15 @@
       "kakao_id": "카카오 ID",
       "year_type_duration": "연도/유형/기간"
     }
+  },
+  "validation": {
+    "required": "Enter {label}",
+    "phone-format-hint": "010-1234-5678 format",
+    "phone-format": "Use the 010-1234-5678 format",
+    "date-format-hint": "YYYY-MM-DD format",
+    "date-format": "Use the YYYY-MM-DD format",
+    "date-invalid": "That date does not exist",
+    "date-range": "End date must be on or after start date",
+    "birthday-future": "Future dates are not allowed"
   }
 }

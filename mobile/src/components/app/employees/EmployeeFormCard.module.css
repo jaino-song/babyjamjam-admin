@@ -69,8 +69,8 @@
   gap: 7px;
 }
 
-/* Fixed to one label line (1lh of the label's own type) so the inline phone
-   helper can never grow the row and shift the input below. */
+/* Fixed to one label line (1lh of the label's own type) so the field's message
+   slot can never grow the row and shift the input below. */
 .labelRow {
   display: flex;
   align-items: center;
@@ -91,7 +91,9 @@
 
 .inlineHelper {
   min-width: 0;
+  margin-left: auto;
   overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: hsl(var(--v3-text-muted));
@@ -228,12 +230,5 @@
   color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 600;
-  line-height: 1.35;
-}
-
-.errorText {
-  color: hsl(var(--v3-burgundy));
-  font-size: 0.72rem;
-  font-weight: 700;
   line-height: 1.35;
 }
