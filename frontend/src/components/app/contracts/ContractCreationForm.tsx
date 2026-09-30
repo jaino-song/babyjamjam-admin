@@ -60,46 +60,31 @@ import {
 
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
-    isValidClientBirthdayInput,
-} from "@/lib/client/client-registration-formats";
-
-function formatYymmddInput(value: string): string {
-  return value.replace(/\D/g, "").slice(0, 6);
-}
-
-function formatIsoDateToYymmdd(value: string): string {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!match) return formatYymmddInput(value);
-
-  return `${match[1].slice(2)}${match[2]}${match[3]}`;
-}
+  FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+  FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
+  FieldMessageText,
+} from "@/components/app/ui/field-message";
+import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message";
+import {
+  CONTRACT_CUSTOMER_INFO_STEP_INDEX,
+  CONTRACT_INPUT_FIELDS,
+  CONTRACT_INPUT_FIELDS_BY_STEP,
+  CONTRACT_INPUT_FIELD_CONFIG,
+  hasContractPhoneProblem,
+  resolveContractFieldMessage,
+  toRealIsoDate,
+  type ContractFocusTarget,
+  type ContractInputField,
+} from "@/components/app/contracts/contract-field-messages";
+import type { FieldMessageView } from "@/lib/forms/field-message-text";
 
 // API가 내려주는 날짜는 "2026-07-31T00:00:00.000Z" 같은 풀 ISO 타임스탬프일 수
 // 있으므로, 표시·전자문서 payload에 쓰기 전에 날짜 부분만 잘라낸다.
 function toIsoDateOnly(value: string): string {
   const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : "";
-}
-
-function parseYymmddInputToIso(value: string): string | null {
-  const digits = formatYymmddInput(value);
-  if (digits.length !== 6) return null;
-
-  const year = 2000 + Number(digits.slice(0, 2));
-  const month = Number(digits.slice(2, 4));
-  const day = Number(digits.slice(4, 6));
-  const date = new Date(Date.UTC(year, month - 1, day));
-
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) {
-    return null;
-  }
-
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 /**
@@ -135,14 +120,6 @@ const AREA_TEMPLATES_LOADING_MESSAGE = "계약서 유형을 불러오는 중입�
 const AREA_TEMPLATES_ERROR_MESSAGE = "계약서 유형을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const AREA_TEMPLATES_EMPTY_MESSAGE = "설정된 계약서 유형이 없습니다. 관리자에게 계약서 유형을 설정해 달라고 요청해 주세요.";
 const AREA_TEMPLATE_SELECTION_INVALID_MESSAGE = "계약서 선택을 다시 확인해 주세요.";
-const CLIENT_BIRTHDAY_INVALID_MESSAGE = "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.";
-const CONTRACT_START_DATE_REQUIRED_MESSAGE = "계약 시작일을 입력해 주세요.";
-const CONTRACT_START_DATE_INVALID_MESSAGE = "계약 시작일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
-const CONTRACT_END_DATE_INVALID_MESSAGE = "종료일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
-const CONTRACT_DATE_RANGE_ERROR_MESSAGE = "종료일은 시작일과 같거나 이후로 입력해 주세요.";
-const CONTRACT_PAYMENT_DATE_REQUIRED_MESSAGE = "결제일을 입력해 주세요.";
-const CONTRACT_PAYMENT_DATE_INVALID_MESSAGE = "결제일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
-const CONTRACT_DATE_RANGE_ERROR_ID = "contract-creation-date-range-error";
 
 function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
   const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
@@ -151,42 +128,6 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
   return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
 }
 
-function isValidIsoDateInput(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-  const year = Number(value.slice(0, 4));
-  const month = Number(value.slice(5, 7));
-  const day = Number(value.slice(8, 10));
-  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return false;
-
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(0, 0, 0, 0);
-
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
-}
-
-function getContractDateValidationMessage(
-  startDate: string,
-  endDate: string,
-  paymentDate: string,
-): string | null {
-  if (startDate && !isValidIsoDateInput(startDate)) return CONTRACT_START_DATE_INVALID_MESSAGE;
-  if (endDate && !isValidIsoDateInput(endDate)) return CONTRACT_END_DATE_INVALID_MESSAGE;
-  if (startDate && endDate && endDate < startDate) return CONTRACT_DATE_RANGE_ERROR_MESSAGE;
-  if (paymentDate && !isValidIsoDateInput(paymentDate)) return CONTRACT_PAYMENT_DATE_INVALID_MESSAGE;
-  return null;
-}
-
-function getContractDateRequiredValidationMessage(startDate: string, paymentDate: string): string | null {
-  if (!startDate) return CONTRACT_START_DATE_REQUIRED_MESSAGE;
-  if (!paymentDate) return CONTRACT_PAYMENT_DATE_REQUIRED_MESSAGE;
-  return null;
-}
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
@@ -616,53 +557,23 @@ function RegisteredValueDiffHint({ diffKey }: { diffKey: ClientDiffKey }) {
       id={getRegisteredValueDiffHintId(diffKey)}
       data-component={`desktop_contracts_creation_${diffKey.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}_registered-value-diff-hint`}
       data-slot="registered-value-diff-hint"
-      className="m-0 text-right text-v3-green"
+      className="m-0 truncate text-right text-v3-green"
     >
       {REGISTERED_VALUE_DIFF_HINT}
     </FormHelperText>
   );
 }
 
-// 입력 형식 오류 등 검증 메시지예요. 힌트와 같은 라벨 줄 오른쪽 자리에 빨강으로 보여주고, 있으면 힌트보다 먼저 보여줘요.
-function FieldErrorMessage({
-  id,
-  dataComponent,
-  testId,
-  children,
-}: {
-  id: string;
-  dataComponent: string;
-  testId?: string;
-  children: ReactNode;
-}) {
-  return (
-    <FormHelperText
-      id={id}
-      tone="error"
-      data-component={dataComponent}
-      data-slot="field-error-message"
-      data-testid={testId}
-      className="m-0 text-right"
-      aria-live="polite"
-    >
-      {children}
-    </FormHelperText>
-  );
-}
-
 // 힌트가 있을 때만 라벨과 힌트를 한 줄에 놓아요. 힌트가 없으면 라벨 마크업은 그대로예요.
+// 오른쪽 자리는 라벨 한 줄 높이로 고정이고, 넘치는 메시지는 말줄임표로 잘려요.
 function LabelWithHint({ hint, children }: { hint: ReactNode; children: ReactNode }) {
   if (!hint) return <>{children}</>;
   return (
-    <div className="flex min-w-0 items-center justify-between gap-2">
+    <div className={cn("flex items-center justify-between gap-2", FIELD_MESSAGE_LABEL_ROW_CLASS_NAME)}>
       {children}
-      <div className="ml-auto min-w-0 text-right">{hint}</div>
+      <div className={cn("flex items-center", FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME)}>{hint}</div>
     </div>
   );
-}
-
-function joinDescribedBy(...ids: Array<string | undefined>): string | undefined {
-  return Array.from(new Set(ids.filter(Boolean))).join(" ") || undefined;
 }
 
 function getVoucherTypeLabel(type: string): string {
@@ -755,6 +666,13 @@ export const ContractCreationForm = ({
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
+  // 필드별 입력 이력(값을 가졌었는지, 떠났는지, 포커스 중인지). 메시지는 이 이력으로 정해져요.
+  const fields = useFieldInputStates<ContractInputField>();
+  const resetFieldStates = fields.reset;
+  const onFieldInputChange = fields.onChange;
+  // 계속하기/제출을 눌러 본 단계. 이 단계의 문제 필드는 모두 메시지를 보여줘요.
+  const [attemptedSteps, setAttemptedSteps] = useState<readonly number[]>([]);
+  const pendingFocusRef = useRef<{ target: ContractFocusTarget; step: number } | null>(null);
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
@@ -820,43 +738,36 @@ export const ContractCreationForm = ({
   } = useFormStore();
 
   // Sync display inputs when external date state changes (e.g., client autofill).
-  useEffect(() => { setDueDateInput(formatIsoDateToYymmdd(dueDate)); }, [dueDate]);
-  useEffect(() => { setBirthDateInput(formatIsoDateToYymmdd(birthDate)); }, [birthDate]);
+  useEffect(() => { setDueDateInput(toIsoDateOnly(dueDate)); }, [dueDate]);
+  useEffect(() => { setBirthDateInput(toIsoDateOnly(birthDate)); }, [birthDate]);
   useEffect(() => { setStartDateInput(startDate); }, [startDate]);
   useEffect(() => { setEndDateInput(endDate); }, [endDate]);
   useEffect(() => { setPaymentDateInput(paymentDate); }, [paymentDate]);
 
+  // 출산 예정일·출산일은 YYYY-MM-DD로 입력해요. 실제 있는 날짜가 되면 같은 ISO 문자열이 저장돼요.
   const handleDueDateInputChange = useCallback((value: string) => {
-    const nextInput = formatYymmddInput(value);
-    const nextIsoDate = parseYymmddInputToIso(nextInput);
-
+    const nextInput = formatIsoDateInput(value);
+    onFieldInputChange("dueDate", dueDateInput, nextInput);
     setDueDateInput(nextInput);
 
     if (nextInput.length === 0) {
       setDueDate("");
-      return;
+    } else if (isRealIsoDate(nextInput)) {
+      setDueDate(nextInput);
     }
-
-    if (nextIsoDate) {
-      setDueDate(nextIsoDate);
-    }
-  }, [setDueDate]);
+  }, [dueDateInput, onFieldInputChange, setDueDate]);
 
   const handleBirthDateInputChange = useCallback((value: string) => {
-    const nextInput = formatYymmddInput(value);
-    const nextIsoDate = parseYymmddInputToIso(nextInput);
-
+    const nextInput = formatIsoDateInput(value);
+    onFieldInputChange("birthDate", birthDateInput, nextInput);
     setBirthDateInput(nextInput);
 
     if (nextInput.length === 0) {
       setBirthDate("");
-      return;
+    } else if (isRealIsoDate(nextInput)) {
+      setBirthDate(nextInput);
     }
-
-    if (nextIsoDate) {
-      setBirthDate(nextIsoDate);
-    }
-  }, [setBirthDate]);
+  }, [birthDateInput, onFieldInputChange, setBirthDate]);
 
   // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
@@ -954,6 +865,9 @@ export const ContractCreationForm = ({
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
+    resetFieldStates();
+    setAttemptedSteps([]);
+    pendingFocusRef.current = null;
   };
 
   const handleCancel = () => {
@@ -979,6 +893,9 @@ export const ContractCreationForm = ({
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
+    // 다른 고객의 값으로 바뀌므로 이전 입력 이력과 메시지는 비워요.
+    resetFieldStates();
+    setAttemptedSteps([]);
     const nextBaseline: LoadedClientBaseline | null = selectedClientId !== null && client
       ? {
         id: selectedClientId,
@@ -998,9 +915,9 @@ export const ContractCreationForm = ({
       setBirthday(normalizeBirthdayIsoDate(client.birthday) ?? client.birthday ?? "");
       setAddress(client.address || "");
       setDueDate(client.dueDate || "");
-      setDueDateInput(formatIsoDateToYymmdd(client.dueDate || ""));
+      setDueDateInput(toIsoDateOnly(client.dueDate || ""));
       setBirthDate(client.birthDate || "");
-      setBirthDateInput(formatIsoDateToYymmdd(client.birthDate || ""));
+      setBirthDateInput(toIsoDateOnly(client.birthDate || ""));
 
       if (client.type) {
         setVoucherType(client.type);
@@ -1155,12 +1072,9 @@ export const ContractCreationForm = ({
 
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
-    const dateValidationMessage =
-      getContractDateValidationMessage(startDateInput, endDateInput, paymentDateInput)
-      ?? getContractDateRequiredValidationMessage(startDateInput, paymentDateInput);
-    if (dateValidationMessage) {
-      setSubmitError(getUserErrorMessage(dateValidationMessage));
-      setActiveStep(CONTRACT_INFO_STEP_INDEX);
+    const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
+    if (dateProblem) {
+      requestFieldFocus(dateProblem, CONTRACT_INFO_STEP_INDEX);
       return;
     }
     if (!isAreaTemplateSelectionValid) {
@@ -1212,8 +1126,8 @@ export const ContractCreationForm = ({
         let finalClientId = reusePersistedClient
           ? persistedClientIdRef.current ?? clientId
           : clientId;
-        const normalizedDueDate = parseYymmddInputToIso(dueDateInput) ?? "";
-        const normalizedBirthDate = parseYymmddInputToIso(birthDateInput) ?? "";
+        const normalizedDueDate = toRealIsoDate(dueDateInput) ?? "";
+        const normalizedBirthDate = toRealIsoDate(birthDateInput) ?? "";
         const assignment = {
           primaryEmployeeId: employeeId,
           secondaryEmployeeId: showEmployee2 ? employee2Id : null,
@@ -1752,24 +1666,13 @@ export const ContractCreationForm = ({
   };
 
   const isStep1Valid = Boolean(name.trim() && phone.trim() && isAreaTemplateSelectionValid);
-  const isBirthdayValid = !birthday || isValidClientBirthdayInput(birthday);
   const isEmployee1Valid = employeeId !== null;
   const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
-  const contractDateValidationMessage = getContractDateValidationMessage(
-    startDateInput,
-    endDateInput,
-    paymentDateInput,
-  );
-  const contractDateRequiredValidationMessage = getContractDateRequiredValidationMessage(
-    startDateInput,
-    paymentDateInput,
-  );
-  const isPaymentDateInvalid = contractDateValidationMessage === CONTRACT_PAYMENT_DATE_INVALID_MESSAGE;
+  // 날짜·연락처 형식 문제는 다음/제출을 막는 대신 눌렀을 때 해당 필드에 메시지를 보여주고 그 필드로 이동해요.
   // endDate는 이용자 서명 후 직원이 Step 3에서 사후 입력하므로 발급 시점에는 옵셔널.
-  const isStep4Valid = !contractDateValidationMessage && !contractDateRequiredValidationMessage;
-  const isCurrentStepValid = [isStep1Valid && isBirthdayValid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
+  const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, true][activeStep] ?? true;
   const requiredFieldProgressText = `필수 항목 11개 중 ${
     [
       Boolean(name.trim()),
@@ -1800,8 +1703,8 @@ export const ContractCreationForm = ({
       phone,
       birthday,
       address,
-      dueDate: parseYymmddInputToIso(dueDateInput) ?? "",
-      birthDate: parseYymmddInputToIso(birthDateInput) ?? "",
+      dueDate: toRealIsoDate(dueDateInput) ?? "",
+      birthDate: toRealIsoDate(birthDateInput) ?? "",
       areaId: area,
       areaTemplateName: areaTemplates.find((template) => template.areaId === area)?.templateName,
       primaryEmployeeId: employeeId,
@@ -1838,43 +1741,101 @@ export const ContractCreationForm = ({
     return stored ? format(stored) : fallback;
   };
 
-  const isBirthdayInvalid = Boolean(birthday) && !isBirthdayValid;
-  // 계약 날짜 검증 메시지는 원래 아래 경고창 하나로 보였어요. 이제 메시지가 가리키는 필드의 라벨 줄 오른쪽에 빨강으로 보여줘요.
-  const dateFieldValidationMessages = {
-    startDate: contractDateValidationMessage === CONTRACT_START_DATE_INVALID_MESSAGE ? contractDateValidationMessage : null,
-    endDate: contractDateValidationMessage === CONTRACT_END_DATE_INVALID_MESSAGE
-      || contractDateValidationMessage === CONTRACT_DATE_RANGE_ERROR_MESSAGE
-      ? contractDateValidationMessage
-      : null,
-    paymentDate: contractDateValidationMessage === CONTRACT_PAYMENT_DATE_INVALID_MESSAGE ? contractDateValidationMessage : null,
+  const contractFieldValues: Record<ContractInputField, string> = {
+    birthday,
+    dueDate: dueDateInput,
+    birthDate: birthDateInput,
+    startDate: startDateInput,
+    endDate: endDateInput,
+    paymentDate: paymentDateInput,
   };
-  // 라벨 줄 자리에는 검증 오류(빨강) > 등록값 다름 힌트(초록) 중 하나만 보여줘요.
-  const getDateFieldSlot = (key: "startDate" | "endDate" | "paymentDate"): { node: ReactNode; describedBy?: string } => {
-    const kebabKey = key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
-    const validationMessage = dateFieldValidationMessages[key];
-    if (validationMessage) {
-      return {
-        node: (
-          <FieldErrorMessage
-            id={CONTRACT_DATE_RANGE_ERROR_ID}
-            dataComponent={`desktop_contracts_creation_form_${kebabKey}_error`}
-            testId="contract-creation-date-range-error"
-          >
-            {validationMessage}
-          </FieldErrorMessage>
-        ),
-        describedBy: CONTRACT_DATE_RANGE_ERROR_ID,
-      };
+  // 필드가 속한 단계에서 계속하기/제출을 눌러 봤으면 모든 문제 필드가 메시지를 보여줘요.
+  // settled는 "필드를 떠나고 제출까지 눌렀다면"의 판정이에요. 제출 시 첫 문제 필드를 찾는 데 써요.
+  const resolveContractField = (field: ContractInputField, settled = false): FieldMessageView | null => {
+    const state = fields.stateOf(field, contractFieldValues[field]);
+    return resolveContractFieldMessage({
+      locale,
+      field,
+      state: settled ? { ...state, focused: false } : state,
+      submitted: settled || attemptedSteps.includes(CONTRACT_INPUT_FIELD_CONFIG[field].step),
+      startDate: startDateInput,
+    });
+  };
+  const contractFieldMessages = Object.fromEntries(
+    CONTRACT_INPUT_FIELDS.map((field) => [field, resolveContractField(field)]),
+  ) as Record<ContractInputField, FieldMessageView | null>;
+  const getContractFieldMessageId = (field: ContractInputField) => `${CONTRACT_INPUT_FIELD_CONFIG[field].inputId}-message`;
+  // 라벨 줄 오른쪽 자리에는 검증 메시지(빨강/회색) > 등록값 다름 힌트(초록) 중 하나만 보여줘요.
+  const getContractFieldSlotProps = (field: ContractInputField, diffKey: ClientDiffKey | null, dataComponent: string) => {
+    const message = contractFieldMessages[field];
+    return {
+      slot: message ? (
+        <FieldMessageText
+          id={getContractFieldMessageId(field)}
+          tone={message.tone}
+          data-component={`${dataComponent}_helper`}
+        >
+          {message.text}
+        </FieldMessageText>
+      ) : diffKey ? registeredDiffHint(diffKey) : null,
+      inputProps: {
+        id: CONTRACT_INPUT_FIELD_CONFIG[field].inputId,
+        error: message?.tone === "error",
+        "aria-invalid": message?.tone === "error" ? true : undefined,
+        "aria-describedby": message
+          ? getContractFieldMessageId(field)
+          : diffKey ? registeredDiffDescribedBy(diffKey) : undefined,
+        ...fields.focusProps(field, contractFieldValues[field]),
+      },
+    };
+  };
+  const birthdaySlot = getContractFieldSlotProps("birthday", "birthday", "desktop_contracts_creation_client-birthday-input");
+  const dueDateSlot = getContractFieldSlotProps("dueDate", "dueDate", "desktop_contracts_creation_client-due-date-input");
+  const birthDateSlot = getContractFieldSlotProps("birthDate", "birthDate", "desktop_contracts_creation_client-birth-date-input");
+  const startDateSlot = getContractFieldSlotProps("startDate", "startDate", "desktop_contracts_creation_form_start-date-input");
+  const endDateSlot = getContractFieldSlotProps("endDate", "endDate", "desktop_contracts_creation_form_end-date-input");
+  const paymentDateSlot = getContractFieldSlotProps("paymentDate", null, "desktop_contracts_creation_form_payment-date-input");
+
+  // 단계의 첫 문제 필드. 연락처는 ContactInput 안에서 검증하므로 여기서는 같은 규칙으로 판정만 해요.
+  const getFirstProblemTarget = (step: number): ContractFocusTarget | null => {
+    if (step === CONTRACT_CUSTOMER_INFO_STEP_INDEX && hasContractPhoneProblem(phone)) return "phone";
+    return CONTRACT_INPUT_FIELDS_BY_STEP[step]?.find((field) => resolveContractField(field, true)?.tone === "error") ?? null;
+  };
+
+  const focusContractTarget = (target: ContractFocusTarget): boolean => {
+    const element = target === "phone"
+      ? document.querySelector<HTMLInputElement>('[data-component="desktop_messages_form_contact-input"] input')
+      : document.getElementById(CONTRACT_INPUT_FIELD_CONFIG[target].inputId);
+    if (!element) return false;
+    element.scrollIntoView?.({ block: "center" });
+    element.focus();
+    return true;
+  };
+
+  // 해당 단계의 모든 문제 필드가 메시지를 보여주게 하고, 첫 문제 필드로 스크롤·포커스해요. 다른 단계면 그 단계로 이동한 뒤 포커스해요.
+  const requestFieldFocus = (target: ContractFocusTarget, step: number) => {
+    setAttemptedSteps((previous) => (previous.includes(step) ? previous : [...previous, step]));
+    if (activeStep !== step) {
+      pendingFocusRef.current = { target, step };
+      setActiveStep(step);
+      return;
     }
-    if (key === "paymentDate") return { node: null };
-    return { node: registeredDiffHint(key), describedBy: registeredDiffDescribedBy(key) };
+    if (!focusContractTarget(target)) pendingFocusRef.current = { target, step };
   };
-  const startDateSlot = getDateFieldSlot("startDate");
-  const endDateSlot = getDateFieldSlot("endDate");
-  const paymentDateSlot = getDateFieldSlot("paymentDate");
+
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending || activeStep !== pending.step) return;
+    if (focusContractTarget(pending.target)) pendingFocusRef.current = null;
+  });
 
   const handleStepChange = (nextStep: number) => {
     if (nextStep > activeStep) {
+      const problemTarget = getFirstProblemTarget(activeStep);
+      if (problemTarget) {
+        requestFieldFocus(problemTarget, activeStep);
+        return;
+      }
       const validationMessage = getStepValidationMessage(activeStep);
       if (validationMessage) {
         setSubmitError(validationMessage);
@@ -1889,23 +1850,22 @@ export const ContractCreationForm = ({
     if (step === 0 && !isStep1Valid) {
       return "고객 정보와 계약서를 선택해 주세요.";
     }
-    if (step === 0 && !isBirthdayValid) {
-      return CLIENT_BIRTHDAY_INVALID_MESSAGE;
-    }
     if (step === 1 && !isStep2Valid) {
       return "제공인력 정보를 모두 입력해 주세요.";
     }
     if (step === 2 && !isStep3Valid) {
       return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
     }
-    if (step === 3 && contractDateValidationMessage) return contractDateValidationMessage;
-    if (step === 3 && contractDateRequiredValidationMessage) {
-      return contractDateRequiredValidationMessage;
-    }
+    // 계약 날짜 문제는 각 날짜 필드의 라벨 줄 메시지로 보여줘요.
     return null;
   };
 
   const handleWizardComplete = () => {
+    const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
+    if (problemTarget) {
+      requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
+      return;
+    }
     const validationMessage = getStepValidationMessage(CONTRACT_INFO_STEP_INDEX);
     if (validationMessage) {
       setSubmitError(validationMessage);
@@ -1947,27 +1907,24 @@ export const ContractCreationForm = ({
             placeholder={registeredPlaceholder("phone", t(locale, "contract-msg.phone-placeholder"), formatKoreanPhoneNumber)}
             labelTrailing={registeredDiffHint("phone")}
             labelTrailingId={getRegisteredValueDiffHintId("phone")}
-            errorPlacement="label-row"
+            required
+            submitted={attemptedSteps.includes(CONTRACT_CUSTOMER_INFO_STEP_INDEX)}
           />
           <TitleTextInputMolecule
             label={t(locale, "contract-msg.birthday-label")}
             value={birthday}
-            onValueChange={(value) => setBirthday(formatBirthdayInput(value))}
-            placeholder={registeredPlaceholder("birthday", "YYYY-MM-DD")}
+            onValueChange={(value) => {
+              const nextBirthday = formatBirthdayInput(value);
+              fields.onChange("birthday", birthday, nextBirthday);
+              setBirthday(nextBirthday);
+            }}
+            placeholder={registeredPlaceholder("birthday", CONTRACT_INPUT_FIELD_CONFIG.birthday.placeholder)}
             inputMode="numeric"
             maxLength={10}
-            error={isBirthdayInvalid}
-            aria-invalid={isBirthdayInvalid || undefined}
-            labelTrailing={isBirthdayInvalid ? (
-              <FieldErrorMessage
-                id="contract-creation-birthday-error"
-                dataComponent="desktop_contracts_creation_client-birthday_error"
-              >
-                {CLIENT_BIRTHDAY_INVALID_MESSAGE}
-              </FieldErrorMessage>
-            ) : registeredDiffHint("birthday")}
-            labelTrailingClassName="min-w-0 shrink text-right"
-            aria-describedby={isBirthdayInvalid ? "contract-creation-birthday-error" : registeredDiffDescribedBy("birthday")}
+            {...birthdaySlot.inputProps}
+            labelTrailing={birthdaySlot.slot}
+            labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
+            labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
             dataComponent="desktop_contracts_creation_client-birthday-input"
           />
           <TitleTextInputMolecule
@@ -1976,33 +1933,37 @@ export const ContractCreationForm = ({
             onValueChange={setAddress}
             placeholder={registeredPlaceholder("address", t(locale, "contract-msg.address-placeholder"))}
             labelTrailing={registeredDiffHint("address")}
+            labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
+            labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
             aria-describedby={registeredDiffDescribedBy("address")}
             dataComponent="desktop_contracts_creation_client-address-input"
           />
           <TitleTextInputMolecule
             type="text"
             inputMode="numeric"
-            pattern="\d{6}"
-            maxLength={6}
+            maxLength={10}
             label={t(locale, "clients.form.due-date")}
             value={dueDateInput}
             onValueChange={handleDueDateInputChange}
-            placeholder={registeredPlaceholder("dueDate", "예: YYMMDD", formatIsoDateToYymmdd)}
-            labelTrailing={registeredDiffHint("dueDate")}
-            aria-describedby={registeredDiffDescribedBy("dueDate")}
+            placeholder={registeredPlaceholder("dueDate", CONTRACT_INPUT_FIELD_CONFIG.dueDate.placeholder)}
+            {...dueDateSlot.inputProps}
+            labelTrailing={dueDateSlot.slot}
+            labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
+            labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
             dataComponent="desktop_contracts_creation_client-due-date-input"
           />
           <TitleTextInputMolecule
             type="text"
             inputMode="numeric"
-            pattern="\d{6}"
-            maxLength={6}
+            maxLength={10}
             label="출산일"
             value={birthDateInput}
             onValueChange={handleBirthDateInputChange}
-            placeholder={registeredPlaceholder("birthDate", "예: YYMMDD", formatIsoDateToYymmdd)}
-            labelTrailing={registeredDiffHint("birthDate")}
-            aria-describedby={registeredDiffDescribedBy("birthDate")}
+            placeholder={registeredPlaceholder("birthDate", CONTRACT_INPUT_FIELD_CONFIG.birthDate.placeholder)}
+            {...birthDateSlot.inputProps}
+            labelTrailing={birthDateSlot.slot}
+            labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
+            labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
             dataComponent="desktop_contracts_creation_client-birth-date-input"
           />
 
@@ -2337,7 +2298,7 @@ export const ContractCreationForm = ({
         <div className="grid gap-[calc(16px*var(--glint-ui-scale,1))]">
           <div className={PANEL_THREE_COLUMN_GRID_CLASS_NAME}>
             <div className="space-y-2 flex-1 min-w-0">
-              <LabelWithHint hint={startDateSlot.node}>
+              <LabelWithHint hint={startDateSlot.slot}>
                 <Label
                   htmlFor="contract-creation-start-date"
                   className={LABEL_CLS}
@@ -2346,33 +2307,27 @@ export const ContractCreationForm = ({
                 </Label>
               </LabelWithHint>
               <Input
-                id="contract-creation-start-date"
+                {...startDateSlot.inputProps}
                 variant="v3"
                 type="text"
                 inputMode="numeric"
-                pattern="\d{4}-\d{2}-\d{2}"
                 maxLength={10}
-                placeholder={registeredPlaceholder("startDate", "예: YYYY-MM-DD")}
+                placeholder={registeredPlaceholder("startDate", CONTRACT_INPUT_FIELD_CONFIG.startDate.placeholder)}
                 value={startDateInput}
                 required
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
+                  fields.onChange("startDate", startDateInput, formatted);
                   setStartDateInput(formatted);
                   if (formatted.length === 10) setStartDate(formatted);
                   else if (formatted.length === 0) setStartDate("");
                 }}
-                error={Boolean(contractDateValidationMessage)}
-                aria-invalid={contractDateValidationMessage ? "true" : undefined}
-                aria-describedby={joinDescribedBy(
-                  contractDateValidationMessage ? CONTRACT_DATE_RANGE_ERROR_ID : undefined,
-                  startDateSlot.describedBy,
-                )}
                 data-component="desktop_contracts_creation_form_start-date-input"
                 className={INPUT_CLS}
               />
             </div>
             <div className="space-y-2 flex-1 min-w-0">
-              <LabelWithHint hint={endDateSlot.node}>
+              <LabelWithHint hint={endDateSlot.slot}>
                 <Label
                   htmlFor="contract-creation-end-date"
                   className={LABEL_CLS}
@@ -2381,32 +2336,26 @@ export const ContractCreationForm = ({
                 </Label>
               </LabelWithHint>
               <Input
-                id="contract-creation-end-date"
+                {...endDateSlot.inputProps}
                 variant="v3"
                 type="text"
                 inputMode="numeric"
-                pattern="\d{4}-\d{2}-\d{2}"
                 maxLength={10}
-                placeholder={registeredPlaceholder("endDate", "예: YYYY-MM-DD")}
+                placeholder={registeredPlaceholder("endDate", CONTRACT_INPUT_FIELD_CONFIG.endDate.placeholder)}
                 value={endDateInput}
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
+                  fields.onChange("endDate", endDateInput, formatted);
                   setEndDateInput(formatted);
                   if (formatted.length === 10) setEndDate(formatted);
                   else if (formatted.length === 0) setEndDate("");
                 }}
-                error={Boolean(contractDateValidationMessage)}
-                aria-invalid={contractDateValidationMessage ? "true" : undefined}
-                aria-describedby={joinDescribedBy(
-                  contractDateValidationMessage ? CONTRACT_DATE_RANGE_ERROR_ID : undefined,
-                  endDateSlot.describedBy,
-                )}
                 data-component="desktop_contracts_creation_form_end-date-input"
                 className={INPUT_CLS}
               />
             </div>
             <div className="space-y-2 flex-1 min-w-0">
-              <LabelWithHint hint={paymentDateSlot.node}>
+              <LabelWithHint hint={paymentDateSlot.slot}>
                 <Label
                   htmlFor="contract-creation-payment-date"
                   className={LABEL_CLS}
@@ -2415,27 +2364,21 @@ export const ContractCreationForm = ({
                 </Label>
               </LabelWithHint>
               <Input
-                id="contract-creation-payment-date"
+                {...paymentDateSlot.inputProps}
                 variant="v3"
                 type="text"
                 inputMode="numeric"
-                pattern="\d{4}-\d{2}-\d{2}"
                 maxLength={10}
-                placeholder="예: YYYY-MM-DD"
+                placeholder={CONTRACT_INPUT_FIELD_CONFIG.paymentDate.placeholder}
                 value={paymentDateInput}
                 required
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
+                  fields.onChange("paymentDate", paymentDateInput, formatted);
                   setPaymentDateInput(formatted);
                   if (formatted.length === 10) setPaymentDate(formatted);
                   else if (formatted.length === 0) setPaymentDate("");
                 }}
-                error={isPaymentDateInvalid}
-                aria-invalid={isPaymentDateInvalid ? "true" : undefined}
-                aria-describedby={joinDescribedBy(
-                  isPaymentDateInvalid ? CONTRACT_DATE_RANGE_ERROR_ID : undefined,
-                  paymentDateSlot.describedBy,
-                )}
                 data-component="desktop_contracts_creation_form_payment-date-input"
                 className={INPUT_CLS}
               />
@@ -2561,7 +2504,7 @@ export const ContractCreationForm = ({
             size="sm"
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || !isStep4Valid || isSubmitting}
+            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting}
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
