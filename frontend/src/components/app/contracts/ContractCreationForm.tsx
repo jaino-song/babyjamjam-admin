@@ -38,6 +38,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -370,6 +371,235 @@ function serializeClientPersistencePayload(payload: Record<string, unknown>): st
   return JSON.stringify(payload);
 }
 
+// 저장된 고객과 계약서 입력값을 비교하기 위한 정규화 값. value는 비교용, display는 안내창 표시용이에요.
+type ClientDiffKey =
+  | "name"
+  | "phone"
+  | "birthday"
+  | "address"
+  | "dueDate"
+  | "birthDate"
+  | "areaId"
+  | "primaryEmployeeId"
+  | "secondaryEmployeeId"
+  | "type"
+  | "duration"
+  | "fullPrice"
+  | "grant"
+  | "actualPrice"
+  | "startDate"
+  | "endDate";
+
+interface ClientDiffValue {
+  value: string | null;
+  display: string | null;
+}
+
+type ClientDiffSnapshot = Record<ClientDiffKey, ClientDiffValue>;
+
+interface ClientDiffRow {
+  key: ClientDiffKey;
+  label: string;
+  oldDisplay: string;
+  newDisplay: string;
+}
+
+type ClientDiffDecision = "contract-only" | "update-client" | "cancel";
+
+interface ClientDiffPrompt {
+  rows: ClientDiffRow[];
+  showPeriodLockedNote: boolean;
+}
+
+interface LoadedClientBaseline {
+  id: number;
+  snapshot: ClientDiffSnapshot;
+  periodLocked: boolean;
+}
+
+const CLIENT_DIFF_KEYS: readonly ClientDiffKey[] = [
+  "name",
+  "phone",
+  "birthday",
+  "address",
+  "dueDate",
+  "birthDate",
+  "areaId",
+  "primaryEmployeeId",
+  "secondaryEmployeeId",
+  "type",
+  "duration",
+  "fullPrice",
+  "grant",
+  "actualPrice",
+  "startDate",
+  "endDate",
+];
+
+// 서비스 기록이 확정된 고객은 이 항목을 고객 정보에 저장할 수 없어요.
+const CLIENT_PERIOD_DIFF_KEYS: ReadonlySet<ClientDiffKey> = new Set(["duration", "startDate", "endDate"]);
+
+const CLIENT_DIFF_EMPTY_DISPLAY = "(없음)";
+const CLIENT_DIFF_PERIOD_LOCKED_NOTE = "서비스 기록이 확정된 고객이라 계약 기간은 계약서에만 반영돼요.";
+
+function getClientDiffLabel(locale: Parameters<typeof t>[0], key: ClientDiffKey): string {
+  switch (key) {
+    case "name": return "산모님 성함";
+    case "phone": return t(locale, "contract-msg.phone-label");
+    case "birthday": return t(locale, "contract-msg.birthday-label");
+    case "address": return t(locale, "contract-msg.address-label");
+    case "dueDate": return t(locale, "clients.form.due-date");
+    case "birthDate": return "출산일";
+    case "areaId": return "지역";
+    case "primaryEmployeeId": return "제공인력 1";
+    case "secondaryEmployeeId": return "제공인력 2";
+    case "type": return t(locale, "price-info-msg.voucher-type-label");
+    case "duration": return t(locale, "price-info-msg.duration-label");
+    case "fullPrice": return t(locale, "contract-msg.full-price-label");
+    case "grant": return t(locale, "contract-msg.grant-label");
+    case "actualPrice": return t(locale, "contract-msg.actual-price-label");
+    case "startDate": return t(locale, "contract-msg.start-date-label");
+    case "endDate": return t(locale, "contract-msg.end-date-label");
+  }
+}
+
+function diffText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function diffDate(value: string | null | undefined): string | null {
+  return diffText(toIsoDateOnly(value ?? ""));
+}
+
+function diffBirthday(value: string | null | undefined): string | null {
+  const trimmed = diffText(value);
+  return trimmed ? normalizeBirthdayIsoDate(trimmed) ?? trimmed : null;
+}
+
+function diffPrice(value: string | null | undefined): string | null {
+  return diffText(parsePrice(value));
+}
+
+function diffNumber(value: number | string | null | undefined): string | null {
+  return value === null || value === undefined ? null : diffText(String(value));
+}
+
+function diffValue(value: string | null, display: string | null = value): ClientDiffValue {
+  return { value, display };
+}
+
+function priceDisplay(value: string | null): string | null {
+  return value === null ? null : `${formatPrice(value)}원`;
+}
+
+function areaDisplay(areaId: string | null, templateName?: string | null): string | null {
+  return areaId === null ? null : getAreaTemplateDisplayLabel(areaId, templateName);
+}
+
+function buildClientDiffSnapshotFromClient(client: Client): ClientDiffSnapshot {
+  const duration = diffNumber(client.duration);
+  const fullPrice = diffPrice(client.fullPrice);
+  const grant = diffPrice(client.grant);
+  const actualPrice = diffPrice(client.actualPrice);
+  const areaId = diffText(client.areaId);
+  return {
+    name: diffValue(diffText(client.name)),
+    phone: diffValue(diffText(client.phone?.replace(/\D/g, "")), diffText(client.phone)),
+    birthday: diffValue(diffBirthday(client.birthday)),
+    address: diffValue(diffText(client.address)),
+    dueDate: diffValue(diffDate(client.dueDate)),
+    birthDate: diffValue(diffDate(client.birthDate)),
+    areaId: diffValue(areaId, areaDisplay(areaId)),
+    primaryEmployeeId: diffValue(
+      diffNumber(client.primaryEmployee?.id),
+      diffText(client.primaryEmployee?.name) ?? diffNumber(client.primaryEmployee?.id),
+    ),
+    secondaryEmployeeId: diffValue(
+      diffNumber(client.secondaryEmployee?.id),
+      diffText(client.secondaryEmployee?.name) ?? diffNumber(client.secondaryEmployee?.id),
+    ),
+    type: diffValue(diffText(client.type)),
+    duration: diffValue(duration, duration === null ? null : `${duration}일`),
+    fullPrice: diffValue(fullPrice, priceDisplay(fullPrice)),
+    grant: diffValue(grant, priceDisplay(grant)),
+    actualPrice: diffValue(actualPrice, priceDisplay(actualPrice)),
+    startDate: diffValue(diffDate(client.startDate)),
+    endDate: diffValue(diffDate(client.endDate)),
+  };
+}
+
+interface ClientDiffFormValues {
+  name: string;
+  phone: string;
+  birthday: string;
+  address: string;
+  dueDate: string;
+  birthDate: string;
+  areaId: string;
+  areaTemplateName?: string | null;
+  primaryEmployeeId: number | null;
+  primaryEmployeeName: string;
+  secondaryEmployeeId: number | null;
+  secondaryEmployeeName: string;
+  type: string;
+  duration: string;
+  fullPrice: string;
+  grant: string;
+  actualPrice: string;
+  startDate: string;
+  endDate: string;
+}
+
+function buildClientDiffSnapshotFromForm(form: ClientDiffFormValues): ClientDiffSnapshot {
+  const duration = diffNumber(parseOptionalInteger(form.duration));
+  const fullPrice = diffPrice(form.fullPrice);
+  const grant = diffPrice(form.grant);
+  const actualPrice = diffPrice(form.actualPrice);
+  const areaId = diffText(form.areaId);
+  return {
+    name: diffValue(diffText(form.name)),
+    phone: diffValue(diffText(form.phone.replace(/\D/g, "")), diffText(form.phone)),
+    birthday: diffValue(diffBirthday(form.birthday)),
+    address: diffValue(diffText(form.address)),
+    dueDate: diffValue(diffDate(form.dueDate)),
+    birthDate: diffValue(diffDate(form.birthDate)),
+    areaId: diffValue(areaId, areaDisplay(areaId, form.areaTemplateName)),
+    primaryEmployeeId: diffValue(
+      diffNumber(form.primaryEmployeeId),
+      diffText(form.primaryEmployeeName) ?? diffNumber(form.primaryEmployeeId),
+    ),
+    secondaryEmployeeId: diffValue(
+      diffNumber(form.secondaryEmployeeId),
+      diffText(form.secondaryEmployeeName) ?? diffNumber(form.secondaryEmployeeId),
+    ),
+    type: diffValue(diffText(form.type)),
+    duration: diffValue(duration, duration === null ? null : `${duration}일`),
+    fullPrice: diffValue(fullPrice, priceDisplay(fullPrice)),
+    grant: diffValue(grant, priceDisplay(grant)),
+    actualPrice: diffValue(actualPrice, priceDisplay(actualPrice)),
+    startDate: diffValue(diffDate(form.startDate)),
+    endDate: diffValue(diffDate(form.endDate)),
+  };
+}
+
+function diffClientSnapshots(
+  locale: Parameters<typeof t>[0],
+  stored: ClientDiffSnapshot,
+  form: ClientDiffSnapshot,
+): ClientDiffRow[] {
+  return CLIENT_DIFF_KEYS.filter((key) => stored[key].value !== form[key].value).map((key) => ({
+    key,
+    label: getClientDiffLabel(locale, key),
+    oldDisplay: stored[key].display ?? CLIENT_DIFF_EMPTY_DISPLAY,
+    newDisplay: form[key].display ?? CLIENT_DIFF_EMPTY_DISPLAY,
+  }));
+}
+
+function serializeClientDiffSnapshot(snapshot: ClientDiffSnapshot): string {
+  return JSON.stringify(CLIENT_DIFF_KEYS.map((key) => snapshot[key].value));
+}
+
 export const ContractCreationForm = ({
   onClose,
   onSuccess,
@@ -415,6 +645,24 @@ export const ContractCreationForm = ({
     confirmationResolverRef.current = null;
     setConfirmationMessage(null);
   };
+  // 기존 고객을 선택했는데 계약서 입력값이 저장된 고객 정보와 다르면, 제출 전에 고객 정보도 수정할지 물어봐요.
+  const clientDiffResolverRef = useRef<((decision: ClientDiffDecision) => void) | null>(null);
+  const [clientDiffPrompt, setClientDiffPrompt] = useState<ClientDiffPrompt | null>(null);
+  const requestClientDiffDecision = (prompt: ClientDiffPrompt): Promise<ClientDiffDecision> => {
+    setClientDiffPrompt(prompt);
+    return new Promise((resolve) => {
+      clientDiffResolverRef.current = resolve;
+    });
+  };
+  const resolveClientDiffDecision = (decision: ClientDiffDecision) => {
+    clientDiffResolverRef.current?.(decision);
+    clientDiffResolverRef.current = null;
+    setClientDiffPrompt(null);
+  };
+  // 선택된 기존 고객의 저장값. 고객 정보를 함께 수정하면 수정된 값으로 갱신해요.
+  const loadedClientBaselineRef = useRef<LoadedClientBaseline | null>(null);
+  // "계약서에만 반영"을 고른 입력값. 같은 입력으로 다시 제출하면 다시 묻지 않아요.
+  const contractOnlyChoiceRef = useRef<{ clientId: number; formKey: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isSubmittingRef = useRef(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -433,8 +681,6 @@ export const ContractCreationForm = ({
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
-  // 서비스 기록이 확정된 고객의 계약 기간은 저장된 값 그대로 써요. 고객이 바뀌거나 초기화되면 잠금도 풀려요.
-  const [periodLockedClientId, setPeriodLockedClientId] = useState<number | null>(null);
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
@@ -499,8 +745,6 @@ export const ContractCreationForm = ({
     resetAll,
   } = useFormStore();
 
-  const isPeriodLocked = periodLockedClientId !== null && clientId === periodLockedClientId;
-
   // Sync display inputs when external date state changes (e.g., client autofill).
   useEffect(() => { setDueDateInput(formatIsoDateToYymmdd(dueDate)); }, [dueDate]);
   useEffect(() => { setBirthDateInput(formatIsoDateToYymmdd(birthDate)); }, [birthDate]);
@@ -542,15 +786,13 @@ export const ContractCreationForm = ({
 
   // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
-  // 서비스 기록이 확정된 고객은 저장된 종료일을 덮어쓰지 않아요.
   useEffect(() => {
-    if (isPeriodLocked) return;
     if (!startDate || !voucherDuration) return;
     const n = parseInt(voucherDuration, 10);
     if (!Number.isFinite(n) || n <= 0) return;
     const computed = calcEndDateBusinessDays(startDate, n);
     if (computed) setEndDate(computed);
-  }, [isPeriodLocked, startDate, voucherDuration, setEndDate]);
+  }, [startDate, voucherDuration, setEndDate]);
 
   const isProcessingStep = activeStep === CONTRACT_CREATION_PROCESSING_STEP_INDEX;
   const hasCreationSession = isProcessingStep && creationProgress.step !== null;
@@ -637,6 +879,7 @@ export const ContractCreationForm = ({
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
+    contractOnlyChoiceRef.current = null;
   };
 
   const handleCancel = () => {
@@ -661,10 +904,15 @@ export const ContractCreationForm = ({
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
+    contractOnlyChoiceRef.current = null;
+    loadedClientBaselineRef.current = selectedClientId !== null && client
+      ? {
+        id: selectedClientId,
+        snapshot: buildClientDiffSnapshotFromClient(client),
+        periodLocked: client.serviceRecordPeriodLocked === true,
+      }
+      : null;
     setClientId(selectedClientId);
-    setPeriodLockedClientId(
-      selectedClientId !== null && client?.serviceRecordPeriodLocked === true ? selectedClientId : null,
-    );
     resetEmployeeFields();
     resetEmployee2Fields();
 
@@ -913,6 +1161,65 @@ export const ContractCreationForm = ({
           areaId: area || null,
         });
 
+        // 기존 고객을 골랐고 입력값이 저장된 고객 정보와 다르면 어떻게 반영할지 먼저 물어봐요.
+        // 자동 등록·새로 만든 고객은 이 확인을 거치지 않아요.
+        const loadedBaseline = clientId !== null && loadedClientBaselineRef.current?.id === clientId
+          ? loadedClientBaselineRef.current
+          : null;
+        const omitPeriodFields = loadedBaseline?.periodLocked === true;
+        let clientUpdateMode: "full" | "assignment-only" | "skip" = "full";
+        let formDiffSnapshot: ClientDiffSnapshot | null = null;
+        if (loadedBaseline && clientId !== null) {
+          const formSnapshot = buildClientDiffSnapshotFromForm({
+            name,
+            phone,
+            birthday,
+            address,
+            dueDate: normalizedDueDate,
+            birthDate: normalizedBirthDate,
+            areaId: area,
+            areaTemplateName: areaTemplates.find((template) => template.areaId === area)?.templateName,
+            primaryEmployeeId: assignment.primaryEmployeeId,
+            primaryEmployeeName: employeeName,
+            secondaryEmployeeId: assignment.secondaryEmployeeId,
+            secondaryEmployeeName: employee2Name,
+            type: voucherType,
+            duration: voucherDuration,
+            fullPrice,
+            grant,
+            actualPrice,
+            startDate,
+            endDate,
+          });
+          formDiffSnapshot = formSnapshot;
+          const diffRows = diffClientSnapshots(locale, loadedBaseline.snapshot, formSnapshot);
+          const formKey = serializeClientDiffSnapshot(formSnapshot);
+          const previousChoice = contractOnlyChoiceRef.current;
+          let decision: ClientDiffDecision = "update-client";
+          if (diffRows.length === 0) {
+            clientUpdateMode = "skip";
+          } else if (previousChoice?.clientId === clientId && previousChoice.formKey === formKey) {
+            decision = "contract-only";
+          } else {
+            decision = await requestClientDiffDecision({
+              rows: diffRows,
+              showPeriodLockedNote: omitPeriodFields && diffRows.some((row) => CLIENT_PERIOD_DIFF_KEYS.has(row.key)),
+            });
+            if (decision === "cancel") {
+              setActiveStep(CONTRACT_INFO_STEP_INDEX);
+              return;
+            }
+          }
+          if (decision === "contract-only") {
+            contractOnlyChoiceRef.current = { clientId, formKey };
+            // 저장된 고객에 주 담당 인력이 없으면 배정만은 저장해요.
+            clientUpdateMode = loadedBaseline.snapshot.primaryEmployeeId.value === null
+              && assignment.primaryEmployeeId !== null
+              ? "assignment-only"
+              : "skip";
+          }
+        }
+
         if (!reusePersistedClient && !clientId) {
           const autoRegistrationPayload = {
             name,
@@ -960,34 +1267,54 @@ export const ContractCreationForm = ({
           if (!reusedExistingClient) autoRegisteredClientId = newClient.id;
           setClientId(newClient.id);
         }
-        const shouldUpdatePersistedClient = reusePersistedClient
-          ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
-          : clientId !== null;
+        const shouldUpdatePersistedClient = clientUpdateMode === "skip"
+          ? false
+          : reusePersistedClient
+            ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+            : clientId !== null;
         if (shouldUpdatePersistedClient) {
           if (finalClientId === null) {
             throw new Error("고객 정보를 먼저 선택하거나 등록해 주세요.");
           }
           await updateClientMutation.mutateAsync({
             id: finalClientId,
-            dto: {
-              ...assignment,
-              name,
-              phone,
-              birthday: birthday || undefined,
-              address: address || null,
-              dueDate: normalizedDueDate || undefined,
-              birthDate: normalizedBirthDate || null,
-              type: voucherType || null,
-              duration: parseOptionalInteger(voucherDuration),
-              fullPrice: fullPrice || null,
-              grant: grant || null,
-              actualPrice: actualPrice || null,
-              startDate: startDate || null,
-              endDate: endDate || null,
-              voucherClient: hasPositivePrice(grant),
-              areaId: area || null,
-            },
+            dto: clientUpdateMode === "assignment-only"
+              ? { ...assignment }
+              : {
+                ...assignment,
+                name,
+                phone,
+                birthday: birthday || undefined,
+                address: address || null,
+                dueDate: normalizedDueDate || undefined,
+                birthDate: normalizedBirthDate || null,
+                type: voucherType || null,
+                fullPrice: fullPrice || null,
+                grant: grant || null,
+                actualPrice: actualPrice || null,
+                // 서비스 기록이 확정된 고객은 계약 기간을 계약서에만 반영해요. 키를 빼면 저장된 값이 그대로 남아요.
+                ...(omitPeriodFields
+                  ? {}
+                  : {
+                    duration: parseOptionalInteger(voucherDuration),
+                    startDate: startDate || null,
+                    endDate: endDate || null,
+                  }),
+                voucherClient: hasPositivePrice(grant),
+                areaId: area || null,
+              },
           });
+          // 저장된 값이 바뀌었으니 다음 비교는 방금 저장한 값을 기준으로 해요.
+          if (loadedBaseline && formDiffSnapshot) {
+            const persistedSnapshot: ClientDiffSnapshot = { ...loadedBaseline.snapshot };
+            for (const key of CLIENT_DIFF_KEYS) {
+              const isAssignmentKey = key === "primaryEmployeeId" || key === "secondaryEmployeeId";
+              if (clientUpdateMode === "assignment-only" && !isAssignmentKey) continue;
+              if (omitPeriodFields && CLIENT_PERIOD_DIFF_KEYS.has(key)) continue;
+              persistedSnapshot[key] = formDiffSnapshot[key];
+            }
+            loadedBaseline.snapshot = persistedSnapshot;
+          }
         }
         if (finalClientId === null) {
           throw new AuthoredSubmissionError("고객 정보를 먼저 선택하거나 등록해 주세요.");
@@ -1706,7 +2033,7 @@ export const ContractCreationForm = ({
                 className={SELECT_CLS}
                 value={voucherDuration}
                 onValueChange={handleDurationChange}
-                disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading || isPeriodLocked}
+                disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading}
                 placeholder={t(locale, "price-info-msg.duration-label")}
                 options={voucherPriceInfos.map((v) => ({
                   value: String(v.duration),
@@ -1810,7 +2137,6 @@ export const ContractCreationForm = ({
                 placeholder="예: YYYY-MM-DD"
                 value={startDateInput}
                 required
-                disabled={isPeriodLocked}
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   setStartDateInput(formatted);
@@ -1840,7 +2166,6 @@ export const ContractCreationForm = ({
                 maxLength={10}
                 placeholder="예: YYYY-MM-DD"
                 value={endDateInput}
-                disabled={isPeriodLocked}
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   setEndDateInput(formatted);
@@ -1885,14 +2210,6 @@ export const ContractCreationForm = ({
               />
             </div>
           </div>
-          {isPeriodLocked && (
-            <Alert
-              data-component="desktop_contracts_creation_form_period-locked-note"
-              data-testid="contract-creation-period-locked-note"
-            >
-              <AlertDescription>서비스 기록이 확정된 고객이라 계약 기간을 변경할 수 없어요.</AlertDescription>
-            </Alert>
-          )}
           {contractDateValidationMessage && (
             <Alert
               id={CONTRACT_DATE_RANGE_ERROR_ID}
@@ -2121,6 +2438,77 @@ export const ContractCreationForm = ({
         description="전자문서 생성과 전송이 완료되었습니다."
         onAcknowledge={handleCreationSuccessAcknowledged}
       />
+      <Dialog
+        open={clientDiffPrompt !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) resolveClientDiffDecision("cancel");
+        }}
+      >
+        <DialogContent
+          data-component="desktop_contracts_creation_client-diff-dialog"
+          showCloseButton
+          className="sm:max-w-[420px]"
+        >
+          <DialogHeader data-component="desktop_contracts_creation_client-diff-dialog_header">
+            <DialogTitle data-component="desktop_contracts_creation_client-diff-dialog_title">
+              고객 정보와 다른 내용이 있어요
+            </DialogTitle>
+            <DialogDescription data-component="desktop_contracts_creation_client-diff-dialog_description">
+              계약서에 입력한 내용이 저장된 고객 정보와 달라요. 고객 정보도 함께 수정할까요?
+            </DialogDescription>
+          </DialogHeader>
+          <ul
+            data-component="desktop_contracts_creation_client-diff-dialog_list"
+            className="max-h-[calc(50vh)] space-y-2 overflow-y-auto text-sm"
+          >
+            {clientDiffPrompt?.rows.map((row) => (
+              <li
+                key={row.key}
+                data-component="desktop_contracts_creation_client-diff-dialog_row"
+                className="grid grid-cols-[calc(96px*var(--glint-ui-scale,1))_1fr] gap-2"
+              >
+                <span
+                  data-component="desktop_contracts_creation_client-diff-dialog_row_label"
+                  className="font-semibold text-v3-text-muted"
+                >
+                  {row.label}
+                </span>
+                <span
+                  data-component="desktop_contracts_creation_client-diff-dialog_row_value"
+                  className="break-words"
+                >
+                  {row.oldDisplay} → {row.newDisplay}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {clientDiffPrompt?.showPeriodLockedNote ? (
+            <p
+              data-component="desktop_contracts_creation_client-diff-dialog_period-locked-note"
+              className="text-sm text-v3-text-muted"
+            >
+              {CLIENT_DIFF_PERIOD_LOCKED_NOTE}
+            </p>
+          ) : null}
+          <DialogFooter data-component="desktop_contracts_creation_client-diff-dialog_footer">
+            <Button
+              type="button"
+              variant="neutral"
+              data-component="desktop_contracts_creation_client-diff-dialog_contract-only"
+              onClick={() => resolveClientDiffDecision("contract-only")}
+            >
+              계약서에만 반영
+            </Button>
+            <Button
+              type="button"
+              data-component="desktop_contracts_creation_client-diff-dialog_update-client"
+              onClick={() => resolveClientDiffDecision("update-client")}
+            >
+              고객 정보도 수정
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <TwoButtonModal
         open={confirmationMessage !== null}
         onOpenChange={(open) => {
