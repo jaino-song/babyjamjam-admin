@@ -375,18 +375,14 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("directory.isEndOfList");
   });
 
-  it("labels summary scope, dueDate months, and the returned Korea-time service-end range", () => {
+  it("labels summary scope and dueDate months", () => {
     expect(source).toContain("이번 달 출산 예정");
     expect(source).toContain("다음 달 출산 예정");
     expect(source).toContain("서비스 종료 예정");
     expect(source).not.toContain("이번달 dueDate");
     expect(source).not.toContain("다음달 dueDate");
-    expect(source).toContain("summary.serviceEnd.from");
-    expect(source).toContain("summary.serviceEnd.to");
-    expect(source).toContain("한국시간, 양끝 포함");
     expect(source).toContain("summaryScopeLabel");
-    expect(source).toContain('data-component="desktop_clients_summary_scope"');
-    expect(source).toContain("상태 탭과 무관한 지점 전체 검색 결과 기준");
+    expect(source).not.toContain('data-component="desktop_clients_summary_scope"');
     expect(source).toContain('thisMonthCount: summary?.dueDate.thisMonth ?? "—"');
   });
 
