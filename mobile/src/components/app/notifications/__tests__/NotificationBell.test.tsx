@@ -175,7 +175,7 @@ describe('NotificationBell', () => {
   });
 
   it('renders unread notification text in the accent foreground color so it stays readable on the blue background', async () => {
-    mockNotifications = [mockNotifications[0], mockReadNotificationWithUrl];
+    mockNotifications = [mockUnreadNotificationWithUrl, mockReadNotificationWithUrl];
 
     render(<NotificationBell />);
 
