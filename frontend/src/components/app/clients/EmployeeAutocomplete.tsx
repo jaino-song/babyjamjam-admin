@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, type RefObject } from "react";
+import { useState, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { Check, ChevronsUpDown, UserPlus, X, Loader2, Play } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -41,6 +41,8 @@ interface EmployeeAutocompleteProps {
     error?: boolean;
     /** Space-separated ids describing the trigger, e.g. linked field error entries. */
     describedBy?: string;
+    /** Optional hint rendered at the right end of the label row. */
+    labelTrailing?: ReactNode;
     /** Optional parent-owned ref bound to the trigger button so callers can focus it on field errors. */
     triggerButtonRef?: RefObject<HTMLButtonElement | null>;
     helperText?: string;
@@ -66,6 +68,7 @@ export function EmployeeAutocomplete({
     required = false,
     error = false,
     describedBy,
+    labelTrailing,
     triggerButtonRef,
     helperText,
     excludeIds = [],
@@ -214,6 +217,18 @@ export function EmployeeAutocomplete({
         handleSelect(employee);
     };
 
+    const labelNode = label ? (
+        <Label
+            className={cn(
+                "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                error && "text-destructive",
+            )}
+        >
+            {label}
+            {required && <span className="text-destructive ml-1">*</span>}
+        </Label>
+    ) : null;
+
     return (
         <div
             data-component={dataComponent}
@@ -221,15 +236,22 @@ export function EmployeeAutocomplete({
             data-testid={dataTestId ?? "employee-autocomplete"}
         >
             {label && (
-                <Label
-                    className={cn(
-                        "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
-                        error && "text-destructive",
-                    )}
-                >
-                    {label}
-                    {required && <span className="text-destructive ml-1">*</span>}
-                </Label>
+                labelTrailing ? (
+                    <div
+                        data-component={`${dataComponent}_label-row`}
+                        className="flex min-w-0 items-center justify-between gap-2"
+                    >
+                        {labelNode}
+                        <div
+                            data-component={`${dataComponent}_label-trailing`}
+                            className="ml-auto min-w-0 text-right"
+                        >
+                            {labelTrailing}
+                        </div>
+                    </div>
+                ) : (
+                    labelNode
+                )
             )}
             <Popover open={isOpen} onOpenChange={handleOpenChange}>
                 <div className="relative">

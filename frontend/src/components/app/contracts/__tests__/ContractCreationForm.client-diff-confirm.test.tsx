@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import type { Client } from "@/lib/client/types";
+import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { ContractCreationForm } from "../ContractCreationForm";
 
@@ -68,9 +69,11 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({
-    data: [{ id: 7, name: "김정인", phone: "010-5787-1878" }],
+    data: [{ id: 7, name: "김정인", phone: "010-5787-1878", workArea: [] }],
     isLoading: false,
   }),
+  useCreateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useUpdateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 jest.mock("@/hooks", () => ({
@@ -127,7 +130,7 @@ const BASE_CLIENT: Client = {
   documentStatus: null,
 };
 
-function renderForm(props: { initialClient?: Client } = {}) {
+function renderForm(props: { initialClient?: Client; activeStep?: number } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -135,15 +138,15 @@ function renderForm(props: { initialClient?: Client } = {}) {
     <QueryClientProvider client={queryClient}>
       <ContractCreationForm
         initialClient={props.initialClient}
-        activeStep={CONTRACT_INFO_STEP_INDEX}
+        activeStep={props.activeStep ?? CONTRACT_INFO_STEP_INDEX}
         onActiveStepChange={jest.fn()}
       />
     </QueryClientProvider>,
   );
 }
 
-function renderExistingClient(client: Client) {
-  const view = renderForm({ initialClient: client });
+function renderExistingClient(client: Client, activeStep?: number) {
+  const view = renderForm({ initialClient: client, activeStep });
   // The wizard requires a payment date; the initial-client path clears it.
   act(() => {
     useFormStore.getState().setPaymentDate("2026-09-07");
@@ -383,5 +386,281 @@ describe("ContractCreationForm — confirm before writing form edits back to the
     expect(mockCreateClientMutateAsync).toHaveBeenCalledTimes(1);
     expect(mockUpdateClientMutateAsync).not.toHaveBeenCalled();
     expect(mockEnqueueMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ clientId: 999 }));
+  });
+});
+
+describe("ContractCreationForm — per-field registered-value hints and stored-value placeholders", () => {
+  const HINT = "등록된 정보와 달라요.";
+  const ADDRESS_SELECTOR = '[data-component="desktop_contracts_creation_client-address-input"] input';
+  const BIRTHDAY_SELECTOR = '[data-component="desktop_contracts_creation_client-birthday-input"] input';
+  const PHONE_SELECTOR = '[data-component="desktop_messages_form_contact-input"] input';
+  const CONTACT_STEP_INDEX = 0;
+  const STAFF_STEP_INDEX = 1;
+  const VOUCHER_STEP_INDEX = 2;
+
+  beforeAll(() => {
+    class ResizeObserverMock {
+      observe = jest.fn();
+      unobserve = jest.fn();
+      disconnect = jest.fn();
+    }
+    global.ResizeObserver = ResizeObserverMock;
+    Element.prototype.scrollIntoView = jest.fn();
+  });
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+    mockCreateClientMutateAsync.mockReset().mockResolvedValue({ id: 999 });
+    mockUpdateClientMutateAsync.mockReset().mockResolvedValue({});
+    mockDeleteClientMutateAsync.mockReset().mockResolvedValue({});
+    mockEnqueueMutateAsync.mockReset().mockResolvedValue({});
+    useFormStore.getState().resetAll();
+  });
+
+  function queryInput(container: HTMLElement, selector: string): HTMLInputElement {
+    const input = container.querySelector<HTMLInputElement>(selector);
+    if (!input) throw new Error(`input not found: ${selector}`);
+    return input;
+  }
+
+  it("shows the hint on the phone field only while it differs from the registered number", () => {
+    const { container } = renderExistingClient(BASE_CLIENT, CONTACT_STEP_INDEX);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    act(() => {
+      useFormStore.getState().setPhone("010-9999-8888");
+    });
+
+    const hint = screen.getByText(HINT);
+    expect(screen.getAllByText(HINT)).toHaveLength(1);
+    expect(hint).toHaveAttribute("data-slot", "registered-value-diff-hint");
+    expect(hint).toHaveClass("text-v3-green", "text-right");
+    const phoneInput = queryInput(container, PHONE_SELECTOR);
+    expect(phoneInput.getAttribute("aria-describedby")).toContain(hint.id);
+    // The hint sits in the phone field's label row, not next to any other field.
+    expect(hint.closest('[data-component="desktop_messages_form_contact-input"]')).not.toBeNull();
+
+    act(() => {
+      useFormStore.getState().setPhone("010-1111-2222");
+    });
+
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(phoneInput).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("shows the stored value as the placeholder, without a hint, when a prefilled input is cleared", () => {
+    const { container } = renderExistingClient(BASE_CLIENT, CONTACT_STEP_INDEX);
+
+    fireEvent.change(queryInput(container, ADDRESS_SELECTOR), { target: { value: "" } });
+    fireEvent.change(queryInput(container, PHONE_SELECTOR), { target: { value: "" } });
+
+    expect(queryInput(container, ADDRESS_SELECTOR)).toHaveAttribute("placeholder", "인천시 남동구");
+    expect(queryInput(container, PHONE_SELECTOR)).toHaveAttribute("placeholder", "010-1111-2222");
+    // An emptied field shows the stored value as its placeholder and no hint.
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    // A stored value that is empty keeps the field's own placeholder and never hints.
+    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    fireEvent.change(queryInput(container, BIRTHDAY_SELECTOR), { target: { value: "1990-01-01" } });
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+  });
+
+  it("does not hint on the area when the stored area is empty and one is picked", () => {
+    renderExistingClient({ ...BASE_CLIENT, areaId: null }, CONTACT_STEP_INDEX);
+    act(() => {
+      useFormStore.getState().setArea("인천");
+    });
+
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+  });
+
+  it("shows the stored area as the placeholder, without a hint, once the area is emptied", () => {
+    renderExistingClient(BASE_CLIENT, CONTACT_STEP_INDEX);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    act(() => {
+      useFormStore.getState().setArea("");
+    });
+
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: t("ko", "contract-msg.doc-type-label") })).toHaveTextContent("인천 산모");
+  });
+
+  it("shows no hints and the original placeholders when no client is selected", () => {
+    useFormStore.setState({ clientId: null, phone: "010-9999-8888", address: "" });
+    const { container } = renderForm({ activeStep: CONTACT_STEP_INDEX });
+
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(queryInput(container, ADDRESS_SELECTOR)).toHaveAttribute(
+      "placeholder",
+      t("ko", "contract-msg.address-placeholder"),
+    );
+    expect(queryInput(container, BIRTHDAY_SELECTOR)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    act(() => {
+      useFormStore.getState().setPhone("010-1111-2222");
+    });
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+  });
+
+  it("hints on staff only when the stored client had one, and never for a first assignment", () => {
+    const stored = renderExistingClient(BASE_CLIENT, STAFF_STEP_INDEX);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    act(() => {
+      useFormStore.getState().setEmployeeSelection(8, "박서준", "010-0000-0000");
+    });
+    expect(screen.getAllByText(HINT)).toHaveLength(1);
+    expect(screen.getByText(HINT).id).toBe("contract-creation-registered-diff-hint-primaryEmployeeId");
+    // An emptied selector drops the hint and shows the stored staff member as its placeholder.
+    act(() => {
+      useFormStore.getState().resetEmployeeFields();
+    });
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: t("ko", "contract-msg.employee-select-label") })).toHaveTextContent(
+      "김정인",
+    );
+    stored.unmount();
+    useFormStore.getState().resetAll();
+
+    renderExistingClient({ ...BASE_CLIENT, primaryEmployee: null }, STAFF_STEP_INDEX);
+    act(() => {
+      useFormStore.getState().setEmployeeSelection(7, "김정인", "010-5787-1878");
+    });
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+  });
+
+  it("hints on the voucher selects and prices with the stored value as placeholder", () => {
+    renderExistingClient(BASE_CLIENT, VOUCHER_STEP_INDEX);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    act(() => {
+      useFormStore.getState().setActualPrice("300000");
+    });
+    expect(screen.getAllByText(HINT)).toHaveLength(1);
+    expect(screen.getByText(HINT).id).toBe("contract-creation-registered-diff-hint-actualPrice");
+
+    fireEvent.change(screen.getAllByPlaceholderText("200,000")[0], { target: { value: "" } });
+    expect(screen.getAllByPlaceholderText("200,000")).toHaveLength(1);
+  });
+
+  it("hints on the contract dates, keeps the stored date as placeholder, and clears the hint after the client is updated", async () => {
+    renderExistingClient(BASE_CLIENT);
+    fireEvent.change(screen.getByLabelText("계약 시작일"), { target: { value: "" } });
+    expect(screen.getByLabelText("계약 시작일")).toHaveAttribute("placeholder", "2026-09-07");
+    // Re-entering the start date recomputes the end date, so edit the end date last.
+    fireEvent.change(screen.getByLabelText("계약 시작일"), { target: { value: "2026-09-07" } });
+    fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2026-10-05" } });
+    expect(screen.getAllByText(HINT)).toHaveLength(1);
+    expect(screen.getByLabelText("계약 종료일").getAttribute("aria-describedby")).toContain(
+      "contract-creation-registered-diff-hint-endDate",
+    );
+
+    submit();
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: UPDATE_CLIENT_LABEL }));
+
+    await waitFor(() => expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(HINT)).not.toBeInTheDocument());
+  });
+});
+
+describe("ContractCreationForm — validation messages share the label-row slot with the diff hint", () => {
+  const HINT = "등록된 정보와 달라요.";
+  const PHONE_ERROR = "숫자만 입력할 수 있습니다";
+  const BIRTHDAY_ERROR = "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.";
+  const END_DATE_INVALID_ERROR = "종료일은 YYYY-MM-DD 형식의 유효한 날짜를 입력해 주세요.";
+  const PHONE_SELECTOR = '[data-component="desktop_messages_form_contact-input"] input';
+  const BIRTHDAY_SELECTOR = '[data-component="desktop_contracts_creation_client-birthday-input"] input';
+
+  beforeAll(() => {
+    class ResizeObserverMock {
+      observe = jest.fn();
+      unobserve = jest.fn();
+      disconnect = jest.fn();
+    }
+    global.ResizeObserver = ResizeObserverMock;
+    Element.prototype.scrollIntoView = jest.fn();
+  });
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+    mockCreateClientMutateAsync.mockReset().mockResolvedValue({ id: 999 });
+    mockUpdateClientMutateAsync.mockReset().mockResolvedValue({});
+    mockDeleteClientMutateAsync.mockReset().mockResolvedValue({});
+    mockEnqueueMutateAsync.mockReset().mockResolvedValue({});
+    useFormStore.getState().resetAll();
+  });
+
+  it("swaps the green hint for the red phone format error in the label row, and back once fixed", () => {
+    const { container } = renderExistingClient(BASE_CLIENT, 0);
+    const phoneField = container.querySelector<HTMLElement>('[data-component="desktop_messages_form_contact-input"]');
+    const phoneInput = container.querySelector<HTMLInputElement>(PHONE_SELECTOR);
+    if (!phoneField || !phoneInput) throw new Error("phone field not rendered");
+    act(() => {
+      useFormStore.getState().setPhone("010-9999-8888");
+    });
+    expect(within(phoneField).getByText(HINT)).toHaveClass("text-v3-green");
+
+    fireEvent.change(phoneInput, { target: { value: "010-abcd" } });
+
+    const error = within(phoneField).getByText(PHONE_ERROR);
+    expect(error).toHaveAttribute("data-slot", "field-error-message");
+    expect(error).toHaveClass("text-v3-burgundy", "text-right");
+    // It sits in the label row (next to the label), not below the input, and only one message shows.
+    const labelRow = error.parentElement?.parentElement;
+    expect(labelRow).toHaveClass("justify-between");
+    expect(within(labelRow as HTMLElement).getByText("산모님 연락처")).toBeInTheDocument();
+    expect(labelRow?.compareDocumentPosition(phoneInput) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(within(phoneField).queryByText(HINT)).not.toBeInTheDocument();
+    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+    expect(phoneInput.getAttribute("aria-describedby")).toBe(error.id);
+
+    fireEvent.change(phoneInput, { target: { value: "010-8888-7777" } });
+
+    expect(within(phoneField).queryByText(PHONE_ERROR)).not.toBeInTheDocument();
+    expect(phoneInput).not.toHaveAttribute("aria-invalid");
+    const hint = within(phoneField).getByText(HINT);
+    expect(phoneInput.getAttribute("aria-describedby")).toBe(hint.id);
+  });
+
+  it("shows the birthday format error in red in the label row and the hint again once it is valid", () => {
+    const { container } = renderExistingClient({ ...BASE_CLIENT, birthday: "1990-01-01" }, 0);
+    const birthdayInput = container.querySelector<HTMLInputElement>(BIRTHDAY_SELECTOR);
+    if (!birthdayInput) throw new Error("birthday input not rendered");
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    fireEvent.change(birthdayInput, { target: { value: "1990-02-30" } });
+
+    const error = screen.getByText(BIRTHDAY_ERROR);
+    expect(error).toHaveClass("text-v3-burgundy");
+    expect(birthdayInput).toHaveAttribute("aria-invalid", "true");
+    expect(birthdayInput.getAttribute("aria-describedby")).toBe(error.id);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    fireEvent.change(birthdayInput, { target: { value: "1991-01-01" } });
+
+    expect(screen.queryByText(BIRTHDAY_ERROR)).not.toBeInTheDocument();
+    expect(birthdayInput).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByText(HINT).id).toBe("contract-creation-registered-diff-hint-birthday");
+  });
+
+  it("shows the end-date format error in red on the end date instead of the hint, and the hint after the fix", () => {
+    renderExistingClient(BASE_CLIENT);
+    const endDateInput = screen.getByLabelText("계약 종료일");
+
+    fireEvent.change(endDateInput, { target: { value: "2026-02-31" } });
+
+    const error = screen.getByTestId("contract-creation-date-range-error");
+    expect(error).toHaveTextContent(END_DATE_INVALID_ERROR);
+    expect(error).toHaveClass("text-v3-burgundy", "text-right");
+    expect(error.closest("div.flex")).toContainElement(screen.getByText("계약 종료일"));
+    expect(endDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(endDateInput).toHaveAttribute("aria-describedby", error.id);
+    expect(screen.queryByText(HINT)).not.toBeInTheDocument();
+
+    fireEvent.change(endDateInput, { target: { value: "2026-10-05" } });
+
+    expect(screen.queryByTestId("contract-creation-date-range-error")).not.toBeInTheDocument();
+    expect(screen.getByText(HINT).id).toBe("contract-creation-registered-diff-hint-endDate");
   });
 });
