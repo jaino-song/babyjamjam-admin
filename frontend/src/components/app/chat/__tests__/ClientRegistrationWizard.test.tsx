@@ -90,7 +90,8 @@ describe("ClientRegistrationWizard", () => {
         expect(screen.getByLabelText("생년월일")).toHaveValue("1958-03-03");
         expect(screen.getByLabelText("생년월일")).toHaveAttribute("maxLength", "10");
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
-        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "260201" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20260201" } });
+        expect(screen.getByLabelText("출산 예정일")).toHaveValue("2026-02-01");
         expect(nextButton).not.toBeDisabled();
         fireEvent.click(nextButton);
 
@@ -690,7 +691,7 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
         fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "1990-01-01" } });
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
-        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "260201" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20260201" } });
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
         fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));
@@ -698,5 +699,226 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.click(screen.getByRole("button", { name: "제출" }));
 
         await expect(screen.findByText(/실패/)).resolves.toBeInTheDocument();
+    });
+
+    describe("inline field messages", () => {
+        const fillBasics = (overrides: Partial<Record<"이름" | "연락처" | "생년월일" | "주소" | "출산 예정일", string>> = {}) => {
+            const values = {
+                이름: "홍길동",
+                연락처: "01012345678",
+                생년월일: "19580303",
+                주소: "인천 연수구",
+                "출산 예정일": "20261120",
+                ...overrides,
+            };
+            Object.entries(values).forEach(([label, value]) => {
+                fireEvent.change(screen.getByLabelText(label), { target: { value } });
+            });
+        };
+
+        const slotOf = (container: HTMLElement, id: string) => container.querySelector(`#${id}-message`);
+
+        test("shows no message and realistic example placeholders on first render", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+
+            expect(container.querySelector('[data-slot="field-error-message"]')).toBeNull();
+            expect(container.querySelector('[data-slot="field-message"]')).toBeNull();
+            expect(screen.getByLabelText("출산 예정일")).toHaveAttribute("placeholder", "2026-11-20");
+            expect(screen.getByLabelText("생년월일")).toHaveAttribute("placeholder", "1958-03-03");
+            expect(screen.getByLabelText("연락처")).toHaveAttribute("placeholder", "010-1234-5678");
+            expect(screen.getByLabelText("연락처")).not.toHaveAttribute("aria-invalid", "true");
+        });
+
+        test("shows a phone hint while typing and the format error after leaving the field", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+            const phoneInput = screen.getByLabelText("연락처");
+
+            fireEvent.focus(phoneInput);
+            fireEvent.change(phoneInput, { target: { value: "010123" } });
+            expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678 형식");
+            expect(slotOf(container, "phone")).not.toHaveTextContent("입력해 주세요");
+            expect(phoneInput).not.toHaveAttribute("aria-invalid", "true");
+
+            fireEvent.blur(phoneInput);
+            const slot = slotOf(container, "phone");
+            expect(slot).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(slot).toHaveAttribute("data-slot", "field-error-message");
+            expect(slot).toHaveAttribute("aria-live", "polite");
+            expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+            expect(phoneInput).toHaveAttribute("aria-describedby", "phone-message");
+            // The message lives in the label row, not below the input.
+            expect(slot?.closest('[data-component$="_phone-field"]')?.firstElementChild).toContainElement(slot as HTMLElement);
+        });
+
+        test("shows the date format error for a partial date after blur and a hint while focused", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+            const birthdayInput = screen.getByLabelText("생년월일");
+
+            fireEvent.focus(birthdayInput);
+            fireEvent.change(birthdayInput, { target: { value: "195803" } });
+            expect(birthdayInput).toHaveValue("1958-03");
+            expect(slotOf(container, "birthday")).toHaveTextContent("YYYY-MM-DD 형식");
+
+            fireEvent.blur(birthdayInput);
+            expect(slotOf(container, "birthday")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+            expect(birthdayInput).toHaveAttribute("aria-invalid", "true");
+        });
+
+        test("shows the due date format error for a partial due date after blur", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+            const dueDateInput = screen.getByLabelText("출산 예정일");
+
+            fireEvent.focus(dueDateInput);
+            fireEvent.change(dueDateInput, { target: { value: "2026112" } });
+            fireEvent.blur(dueDateInput);
+
+            expect(slotOf(container, "dueDate")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+        });
+
+        test("reports a required field only after it held a value and was cleared", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+            const nameInput = screen.getByLabelText("이름");
+
+            expect(slotOf(container, "name")).toBeNull();
+            fireEvent.change(nameInput, { target: { value: "홍" } });
+            expect(slotOf(container, "name")).toBeNull();
+            fireEvent.change(nameInput, { target: { value: "" } });
+            expect(slotOf(container, "name")).toHaveTextContent("이름을 입력해 주세요");
+            expect(nameInput).toHaveAttribute("aria-invalid", "true");
+        });
+
+        test("clearing a prefilled field reports required", () => {
+            const { container } = render(
+                <ClientRegistrationWizard
+                    initialDraft={{ name: "홍길동", phone: "01012345678", address: "인천 연수구" }}
+                />,
+            );
+
+            expect(slotOf(container, "address")).toBeNull();
+            fireEvent.change(screen.getByLabelText("주소"), { target: { value: "" } });
+            expect(slotOf(container, "address")).toHaveTextContent("주소를 입력해 주세요");
+        });
+
+        test("rejects a nonexistent date and a future birthday", () => {
+            const { container } = render(<ClientRegistrationWizard />);
+
+            fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20261345" } });
+            expect(slotOf(container, "dueDate")).toHaveTextContent("존재하지 않는 날짜예요");
+
+            fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "29990101" } });
+            expect(slotOf(container, "birthday")).toHaveTextContent("오늘 이후 날짜는 입력할 수 없어요");
+            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+        });
+
+        test("keeps the next button disabled for an incomplete phone number", () => {
+            render(<ClientRegistrationWizard />);
+
+            fillBasics({ 연락처: "010123" });
+            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+
+            fillBasics({ 연락처: "01012345678" });
+            expect(screen.getByRole("button", { name: "다음" })).not.toBeDisabled();
+        });
+
+        test("typing the due date as digits reaches the submitted payload as ISO", async () => {
+            mockCreateClientMutateAsync.mockResolvedValue({ id: 7, name: "홍길동" });
+            render(<ClientRegistrationWizard />);
+
+            fillBasics();
+            expect(screen.getByLabelText("출산 예정일")).toHaveValue("2026-11-20");
+            expect(screen.getByLabelText("생년월일")).toHaveValue("1958-03-03");
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(await screen.findByRole("checkbox", { name: "바우처 대상" }));
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(screen.getByRole("button", { name: "제출" }));
+
+            await waitFor(() => {
+                expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        phone: "010-1234-5678",
+                        birthday: "1958-03-03",
+                        dueDate: "2026-11-20",
+                    }),
+                );
+            });
+        });
+
+        test("a due date extracted from chat as YYMMDD is shown and submitted as YYYY-MM-DD", async () => {
+            mockCreateClientMutateAsync.mockResolvedValue({ id: 8, name: "홍길동" });
+            render(
+                <ClientRegistrationWizard
+                    initialDraft={{
+                        name: "홍길동",
+                        phone: "01012345678",
+                        birthday: "1990-01-01",
+                        address: "인천 연수구",
+                        dueDate: "261120",
+                    }}
+                />,
+            );
+
+            expect(screen.getByLabelText("출산 예정일")).toHaveValue("2026-11-20");
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(await screen.findByRole("checkbox", { name: "바우처 대상" }));
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(screen.getByRole("button", { name: "제출" }));
+
+            await waitFor(() => {
+                expect(mockCreateClientMutateAsync).toHaveBeenCalledWith(
+                    expect.objectContaining({ dueDate: "2026-11-20" }),
+                );
+            });
+        });
+
+        test("submits without a due date when the user declined to give one", async () => {
+            mockCreateClientMutateAsync.mockResolvedValue({ id: 9, name: "홍길동" });
+            render(
+                <ClientRegistrationWizard
+                    initialDraft={{
+                        name: "홍길동",
+                        phone: "01012345678",
+                        birthday: "1990-01-01",
+                        address: "인천 연수구",
+                        skippedFields: ["dueDate"],
+                    }}
+                />,
+            );
+
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(await screen.findByRole("checkbox", { name: "바우처 대상" }));
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            fireEvent.click(screen.getByRole("button", { name: "제출" }));
+
+            await waitFor(() => {
+                expect(mockCreateClientMutateAsync).toHaveBeenCalledTimes(1);
+            });
+            expect(mockCreateClientMutateAsync.mock.calls[0][0]).not.toHaveProperty("dueDate");
+        });
+
+        test("shows phone messages for the provider registration form", async () => {
+            const { container } = render(
+                <ClientRegistrationWizard
+                    initialDraft={{
+                        name: "홍길동",
+                        phone: "01012345678",
+                        birthday: "1990-01-01",
+                        address: "인천 연수구",
+                        dueDate: "260201",
+                        employeeName: "김제공",
+                    }}
+                />,
+            );
+
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            const employeePhone = await screen.findByLabelText("연락처");
+            expect(slotOf(container, "employee-phone")).toBeNull();
+
+            fireEvent.focus(employeePhone);
+            fireEvent.change(employeePhone, { target: { value: "0101234" } });
+            fireEvent.blur(employeePhone);
+            expect(slotOf(container, "employee-phone")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(screen.getByRole("button", { name: "제공인력 등록" })).toBeDisabled();
+        });
     });
 });

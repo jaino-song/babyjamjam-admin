@@ -4,6 +4,10 @@
 import * as React from "react";
 import { motion } from "framer-motion";
 import { Check, CheckCircle, Link2 } from "lucide-react";
+import {
+  resolveFieldMessage,
+  type FieldKind,
+} from "@babyjamjam/shared/utils/field-validation-message";
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
@@ -12,7 +16,15 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import {
+  resolveElevenDigitPhoneMessage,
+  toFieldMessageView,
+  type FieldMessageView,
+} from "@/lib/forms/field-message-text";
+import { t } from "@/lib/i18n/translations";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/providers/LocaleProvider";
 import {
   type RegisterStep,
   REGISTER_STEP_TOTAL,
@@ -24,7 +36,6 @@ const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] fon
 const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
 const REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME = "justify-center [&_li]:text-[0.78rem] [&_svg]:h-3.5 [&_svg]:w-3.5";
 const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
-const PHONE_DUPLICATE_CHECK_PENDING_MESSAGE = "연락처 중복 확인 중입니다. 잠시만 기다려주세요.";
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
 const PHONE_DUPLICATE_AVAILABLE_MESSAGE = "등록 가능한 번호입니다.";
 const PHONE_DUPLICATE_ERROR_MESSAGE = "이미 존재하는 사용자 입니다.";
@@ -36,6 +47,37 @@ const REGISTER_STEP_TRANSITION = {
 interface RegisterPageContentProps {
   variant: AuthSurfaceVariant;
 }
+
+/** Inputs that show their validation message in the label-row slot. */
+type RegisterInputField = "email" | "name" | "password" | "confirmPassword" | "phone" | "birthDate";
+
+const REGISTER_FIELD_LABELS: Record<RegisterInputField, string> = {
+  email: "이메일",
+  name: "이름",
+  password: "비밀번호",
+  confirmPassword: "비밀번호 확인",
+  phone: "전화번호",
+  birthDate: "생년월일",
+};
+
+/** Error first, then a hint, then an informational/status message. */
+function pickFieldMessage(...candidates: Array<FieldMessageView | null>): FieldMessageView | null {
+  return (
+    candidates.find((candidate) => candidate?.tone === "error")
+    ?? candidates.find((candidate) => candidate?.tone === "hint")
+    ?? candidates.find((candidate) => candidate?.tone === "ok")
+    ?? null
+  );
+}
+
+/** The same rule the register schema applies: a birth date must be in the past. */
+function isFutureBirthDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.getTime() >= Date.now();
+}
+
+type RegisterFieldTracker = ReturnType<typeof useFieldInputStates<RegisterInputField>>;
 
 function AnimatedHeight({
   children,
@@ -187,7 +229,14 @@ function RegisterStepFields({
   isPhoneCheckReady,
   isPhoneDuplicate,
   lastCheckedPhoneDigits,
-}: Pick<
+  fields,
+  submitted,
+}: {
+  /** Per-field interaction flags owned by the page so they survive step changes. */
+  fields: RegisterFieldTracker;
+  /** The user already tried to continue on this step. */
+  submitted: boolean;
+} & Pick<
   ReturnType<typeof useRegisterPageController>,
   | "currentStep"
   | "formData"
@@ -205,27 +254,73 @@ function RegisterStepFields({
   | "handlePhoneChange"
   | "handleBirthDateChange"
 >) {
+  const locale = useLocale();
   const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
-  const phoneInlineMessage =
+  const phoneStatusMessage: FieldMessageView | null =
     phoneDigits.length === 11
       ? isPhoneCheckReady
-        ? PHONE_DUPLICATE_AVAILABLE_MESSAGE
+        ? { tone: "ok", text: PHONE_DUPLICATE_AVAILABLE_MESSAGE }
         : isCheckingPhoneDuplicate
-          ? PHONE_DUPLICATE_CHECK_PENDING_MESSAGE
+          ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
           : hasPhoneDuplicateCheckFailed
-            ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
+            ? { tone: "error", text: PHONE_DUPLICATE_CHECK_FAILED_MESSAGE }
             : lastCheckedPhoneDigits !== phoneDigits
-              ? PHONE_DUPLICATE_CHECK_PENDING_MESSAGE
+              ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
               : isPhoneDuplicate
-                ? PHONE_DUPLICATE_ERROR_MESSAGE
+                ? { tone: "error", text: PHONE_DUPLICATE_ERROR_MESSAGE }
                 : null
       : null;
-  const hasPhoneStatusError =
-    phoneDigits.length === 11 &&
-    (hasPhoneDuplicateCheckFailed ||
-      (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
-  const phoneFieldError = errors.phone ??
-    (hasPhoneStatusError ? phoneInlineMessage ?? undefined : undefined);
+
+  const valueOf = (field: RegisterInputField): string => formData[field] ?? "";
+
+  /** What the field's own rules say: required, phone and date format. */
+  const resolveRuleMessage = (field: RegisterInputField, kind: FieldKind): FieldMessageView | null => {
+    const state = fields.stateOf(field, valueOf(field));
+    const opts = { required: true, submitted };
+    const message = kind === "phone"
+      ? resolveElevenDigitPhoneMessage(state, opts)
+      : resolveFieldMessage(kind, state, opts);
+    return toFieldMessageView(locale, message, REGISTER_FIELD_LABELS[field]);
+  };
+  const errorMessage = (text: string | undefined): FieldMessageView | null =>
+    text ? { tone: "error", text } : null;
+
+  // Each field shows one message: its own rules first (they are short), then
+  // what the controller reports (schema, duplicate checks), then status.
+  const messages: Record<RegisterInputField, FieldMessageView | null> = {
+    email: pickFieldMessage(
+      resolveRuleMessage("email", "text"),
+      errorMessage(errors.email),
+      emailLinkableMessage ? { tone: "ok", text: emailLinkableMessage } : null,
+    ),
+    name: pickFieldMessage(resolveRuleMessage("name", "text"), errorMessage(errors.name)),
+    password: pickFieldMessage(resolveRuleMessage("password", "text"), errorMessage(errors.password)),
+    confirmPassword: pickFieldMessage(
+      resolveRuleMessage("confirmPassword", "text"),
+      errorMessage(errors.confirmPassword),
+    ),
+    phone: pickFieldMessage(
+      resolveRuleMessage("phone", "phone"),
+      errorMessage(errors.phone),
+      phoneStatusMessage,
+    ),
+    birthDate: pickFieldMessage(
+      resolveRuleMessage("birthDate", "date"),
+      isFutureBirthDate(valueOf("birthDate"))
+        ? { tone: "error", text: t(locale, "form.validation.birthday-future") }
+        : null,
+      errorMessage(errors.birthDate),
+    ),
+  };
+
+  /** Records that the field held a value before handing the change to the controller. */
+  const trackChange = (
+    field: RegisterInputField,
+    handler: (event: React.ChangeEvent<HTMLInputElement>) => void,
+  ) => (event: React.ChangeEvent<HTMLInputElement>) => {
+    fields.onChange(field, valueOf(field), event.target.value);
+    handler(event);
+  };
 
   return (
     <div data-component="desktop_auth_register_step-fields" className="flex flex-col gap-[14px]">
@@ -235,15 +330,13 @@ function RegisterStepFields({
             label="이메일"
             type="email"
             value={formData.email}
-            onChange={handleChange("email")}
-            onBlur={handleEmailBlur}
-            error={errors.email}
-            labelTrailing={emailLinkableMessage ? (
-              <span className="inline-flex items-center text-right text-[0.68rem] font-semibold leading-none text-v3-primary">
-                {emailLinkableMessage}
-              </span>
-            ) : undefined}
-            errorDisplay="inline"
+            onChange={trackChange("email", handleChange("email"))}
+            onFocus={() => fields.onFocus("email")}
+            onBlur={() => {
+              fields.onBlur("email", valueOf("email"));
+              handleEmailBlur();
+            }}
+            message={messages.email}
             disabled={isLoading}
             autoComplete="email"
             data-component="desktop_auth_register_step-fields_email-field"
@@ -253,9 +346,9 @@ function RegisterStepFields({
             label="이름"
             type="text"
             value={formData.name}
-            onChange={handleChange("name")}
-            error={errors.name}
-            errorDisplay="inline"
+            onChange={trackChange("name", handleChange("name"))}
+            {...fields.focusProps("name", valueOf("name"))}
+            message={messages.name}
             disabled={isLoading}
             autoComplete="name"
             data-component="desktop_auth_register_step-fields_name-field"
@@ -265,9 +358,9 @@ function RegisterStepFields({
             label="비밀번호"
             type="password"
             value={formData.password}
-            onChange={handleChange("password")}
-            error={errors.password}
-            errorDisplay="inline"
+            onChange={trackChange("password", handleChange("password"))}
+            {...fields.focusProps("password", valueOf("password"))}
+            message={messages.password}
             disabled={isLoading}
             autoComplete="new-password"
             data-component="desktop_auth_register_step-fields_password-field"
@@ -293,9 +386,9 @@ function RegisterStepFields({
             label="비밀번호 확인"
             type="password"
             value={formData.confirmPassword}
-            onChange={handleChange("confirmPassword")}
-            error={errors.confirmPassword}
-            errorDisplay="inline"
+            onChange={trackChange("confirmPassword", handleChange("confirmPassword"))}
+            {...fields.focusProps("confirmPassword", valueOf("confirmPassword"))}
+            message={messages.confirmPassword}
             disabled={isLoading}
             autoComplete="new-password"
             data-component="desktop_auth_register_step-fields_confirm-field"
@@ -307,22 +400,9 @@ function RegisterStepFields({
             label="전화번호"
             type="tel"
             value={formData.phone}
-            onChange={handlePhoneChange}
-            error={phoneFieldError}
-            labelTrailing={
-              phoneInlineMessage && !phoneFieldError ? (
-                <span
-                  aria-live="polite"
-                  className={cn(
-                    "inline-flex min-h-[0.6875rem] items-center justify-end text-right text-[0.68rem] font-semibold leading-none",
-                    isPhoneCheckReady ? "text-v3-green" : "text-v3-text-muted",
-                  )}
-                >
-                  {phoneInlineMessage}
-                </span>
-              ) : undefined
-            }
-            errorDisplay="inline"
+            onChange={trackChange("phone", handlePhoneChange)}
+            {...fields.focusProps("phone", valueOf("phone"))}
+            message={messages.phone}
             disabled={isLoading}
             autoComplete="tel"
             inputMode="numeric"
@@ -335,14 +415,14 @@ function RegisterStepFields({
             label="생년월일"
             type="text"
             value={formData.birthDate}
-            onChange={handleBirthDateChange}
-            error={errors.birthDate}
-            errorDisplay="inline"
+            onChange={trackChange("birthDate", handleBirthDateChange)}
+            {...fields.focusProps("birthDate", valueOf("birthDate"))}
+            message={messages.birthDate}
             disabled={isLoading}
             autoComplete="bday"
             inputMode="numeric"
             maxLength={10}
-            placeholder="1990-01-01"
+            placeholder="1958-03-03"
             data-component="desktop_auth_register_step-fields_birthdate-field"
           />
         </>
@@ -353,6 +433,11 @@ function RegisterStepFields({
 
 export function RegisterPageContent({ variant }: RegisterPageContentProps) {
   const controller = useRegisterPageController();
+  const fields = useFieldInputStates<RegisterInputField>();
+  const formRef = React.useRef<HTMLFormElement>(null);
+  // The step the user last tried to continue from; its problem fields show their messages.
+  const [submittedStep, setSubmittedStep] = React.useState<RegisterStep | null>(null);
+  const [submitAttempt, setSubmitAttempt] = React.useState(0);
   const {
     serverError,
     isLoading,
@@ -365,6 +450,18 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
     goToLogin,
     isCurrentStepActionDisabled,
   } = controller;
+
+  // After a refused continue/submit, move focus to the first field that now shows an error.
+  React.useEffect(() => {
+    if (submitAttempt === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [submitAttempt]);
+
+  const handleFormSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    setSubmittedStep(currentStep);
+    setSubmitAttempt((attempt) => attempt + 1);
+    return handleSubmit(event);
+  };
 
   const primaryButtonClassName = cn(
     REGISTER_PRIMARY_BUTTON_CLASS_NAME,
@@ -466,7 +563,8 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
               ) : null}
 
             <form
-              onSubmit={handleSubmit}
+              ref={formRef}
+              onSubmit={handleFormSubmit}
               data-component="desktop_auth_register_body_form"
               className="flex flex-col gap-[18px] [&_label]:text-[0.82rem] [&_p]:leading-[1.45]"
             >
@@ -477,7 +575,11 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                 animate={{ opacity: 1, y: 0 }}
                 transition={REGISTER_STEP_TRANSITION}
               >
-                <RegisterStepFields {...controller} />
+                <RegisterStepFields
+                  {...controller}
+                  fields={fields}
+                  submitted={submittedStep === currentStep}
+                />
               </motion.div>
 
                 <div

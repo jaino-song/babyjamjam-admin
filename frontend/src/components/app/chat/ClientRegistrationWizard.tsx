@@ -1,9 +1,16 @@
 "use client";
-import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import {
+    isRealIsoDate,
+    resolveFieldMessage,
+    type FieldInputState,
+    type FieldKind,
+} from "@babyjamjam/shared/utils/field-validation-message";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { FieldMessageText } from "@/components/app/ui/field-message";
 import { Separator } from "@/components/ui/separator";
 import { Stepper, Step, StepLabel } from "@/components/ui/stepper";
 import {
@@ -31,14 +39,22 @@ import {
     type Employee,
 } from "@/hooks/useEmployees";
 import { useCreateClient } from "@/hooks/useClients";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import { useLocale } from "@/providers/LocaleProvider";
+import { t } from "@/lib/i18n/translations";
+import {
+    resolveElevenDigitPhoneMessage,
+    toFieldMessageView,
+    type FieldMessageView,
+} from "@/lib/forms/field-message-text";
 import type { CreateClientDto } from "@/lib/client/types";
 import type { ClientRegistrationDraft } from "@/lib/client/client-registration-extraction";
 import {
+    CLIENT_REGISTRATION_ERROR_MESSAGES,
     buildCanonicalClientRegistrationBasics,
     formatKoreanPhoneNumber,
     getCanonicalClientRegistrationError,
-    isValidCompactDateInput,
-    parseCompactDateInput,
+    normalizeCompactDateForSubmit,
 } from "@/lib/client/client-registration-formats";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { WORK_AREAS, normalizeEmployeeGrade } from "@/components/app/employees/employee-form.constants";
@@ -56,6 +72,72 @@ interface ClientRegistrationWizardProps {
 const steps = ["기본 정보", "바우처 정보", "설정"] as const;
 
 const WIZARD_MIN_HEIGHT_PX = 520;
+
+/** Text inputs that show their validation message in the label-row slot. */
+type WizardInputField =
+    | "name"
+    | "dueDate"
+    | "phone"
+    | "birthday"
+    | "address"
+    | "employeeName"
+    | "employeePhone";
+
+/** Element ids double as the focus targets for the first problem field. */
+const WIZARD_INPUT_FIELD_CONFIG: Record<WizardInputField, { kind: FieldKind; label: string; id: string }> = {
+    name: { kind: "text", label: "이름", id: "name" },
+    dueDate: { kind: "date", label: "출산 예정일", id: "dueDate" },
+    phone: { kind: "phone", label: "연락처", id: "phone" },
+    birthday: { kind: "date", label: "생년월일", id: "birthday" },
+    address: { kind: "text", label: "주소", id: "address" },
+    employeeName: { kind: "text", label: "제공인력 이름", id: "employee-name" },
+    employeePhone: { kind: "phone", label: "연락처", id: "employee-phone" },
+};
+
+/** Listed in form order: the first one with a problem receives focus on submit. */
+const WIZARD_BASIC_FIELDS: readonly WizardInputField[] = ["name", "dueDate", "phone", "birthday", "address"];
+const WIZARD_BASE = "desktop_chat_page_wizard-registration";
+
+/**
+ * The wizard keeps the due date as the typed YYYY-MM-DD string. The canonical
+ * registration helpers (shared with the contract form) still speak YYMMDD, so
+ * the value is converted right before it reaches them. Returns "" for anything
+ * that is not a real date they can round-trip.
+ */
+function isoDueDateToCompact(iso: string): string {
+    if (!isRealIsoDate(iso)) return "";
+    const compact = iso.slice(2).replace(/\D/g, "");
+    return normalizeCompactDateForSubmit(compact) === iso ? compact : "";
+}
+
+interface WizardFieldRowProps {
+    field: WizardInputField;
+    message: FieldMessageView | null;
+    children: ReactNode;
+}
+
+/** A label whose validation message sits at the right end of the same row and never changes its height. */
+function WizardFieldRow({ field, message, children }: WizardFieldRowProps) {
+    const { id, label } = WIZARD_INPUT_FIELD_CONFIG[field];
+    return (
+        <div className="space-y-2" data-component={`${WIZARD_BASE}_${id}-field`}>
+            <div className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-sm leading-[1.3]">
+                <Label htmlFor={id} className="shrink-0 leading-[1.3]">{label}</Label>
+                {message ? (
+                    <FieldMessageText
+                        id={`${id}-message`}
+                        tone={message.tone}
+                        data-component={`${WIZARD_BASE}_${id}-field_message`}
+                        className="ml-auto min-w-0"
+                    >
+                        {message.text}
+                    </FieldMessageText>
+                ) : null}
+            </div>
+            {children}
+        </div>
+    );
+}
 
 function formatPrice(price: string): string {
     const num = parseInt(price.replace(/[,원\s]/g, ""), 10);
@@ -82,7 +164,8 @@ export function ClientRegistrationWizard({
     const [phone, setPhone] = useState(initialDraft?.phone ? formatKoreanPhoneNumber(initialDraft.phone) : "");
     const [birthday, setBirthday] = useState(normalizeBirthdayIsoDate(initialDraft?.birthday) ?? initialDraft?.birthday ?? "");
     const [address, setAddress] = useState(initialDraft?.address ?? "");
-    const [dueDate, setDueDate] = useState(initialDraft?.dueDate ?? "");
+    // The extracted draft carries the due date as YYMMDD; the form holds YYYY-MM-DD.
+    const [dueDate, setDueDate] = useState(normalizeCompactDateForSubmit(initialDraft?.dueDate ?? ""));
 
     const [isRegisteringEmployee, setIsRegisteringEmployee] = useState(false);
     const [employeeName, setEmployeeName] = useState(initialDraft?.employeeName ?? "");
@@ -118,6 +201,27 @@ export function ClientRegistrationWizard({
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isEmployeeRetrying, setIsEmployeeRetrying] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
+
+    const locale = useLocale();
+    const fields = useFieldInputStates<WizardInputField>();
+    const stepsRef = useRef<HTMLDivElement>(null);
+    const pendingFocusFieldRef = useRef<WizardInputField | null>(null);
+    // Values that arrived prefilled count as "had a value", so clearing one reports "required".
+    const [prefilledFields] = useState<ReadonlySet<WizardInputField>>(
+        () => new Set<WizardInputField>(
+            (Object.entries({
+                name: initialDraft?.name ?? "",
+                dueDate,
+                phone,
+                birthday,
+                address: initialDraft?.address ?? "",
+                employeeName: initialDraft?.employeeName ?? "",
+                employeePhone: "",
+            }) as Array<[WizardInputField, string]>)
+                .filter(([, value]) => value !== "")
+                .map(([field]) => field),
+        ),
+    );
 
     const isVoucherInfoComplete =
         resolvedVoucherYear !== null &&
@@ -165,22 +269,121 @@ export function ClientRegistrationWizard({
         }
     }, [isEmployeesError, isRegisteringEmployee, matchingEmployees.length]);
 
-    const canGoNext = useMemo(() => {
+    const dueDateSkipped = Boolean(initialDraft?.skippedFields?.includes("dueDate"));
+    const dueDateCompact = isoDueDateToCompact(dueDate);
+
+    const inputValueOf = (field: WizardInputField): string => ({
+        name,
+        dueDate,
+        phone,
+        birthday,
+        address,
+        employeeName,
+        employeePhone,
+    })[field];
+
+    /**
+     * The one message an input shows in its label-row slot. `settled` evaluates
+     * only the input's own rules as if the user already left the field and
+     * pressed next, which is how the wizard decides whether a field has a problem.
+     */
+    const resolveWizardFieldMessage = (field: WizardInputField, settled = false): FieldMessageView | null => {
+        const { kind, label } = WIZARD_INPUT_FIELD_CONFIG[field];
+        const value = inputValueOf(field);
+        const tracked = fields.stateOf(field, kind === "text" ? value.trim() : value);
+        const state: FieldInputState = {
+            ...tracked,
+            hadValue: tracked.hadValue || prefilledFields.has(field),
+            focused: settled ? false : tracked.focused,
+        };
+        const opts = {
+            required: field === "dueDate" ? !dueDateSkipped : true,
+            submitted: settled || fields.submitted,
+        };
+
+        const formatMessage = toFieldMessageView(
+            locale,
+            kind === "phone" ? resolveElevenDigitPhoneMessage(state, opts) : resolveFieldMessage(kind, state, opts),
+            label,
+        );
+        if (formatMessage) return formatMessage;
+
+        if (field === "birthday" && value.length === 10 && !isValidBirthdayIsoDate(value)) {
+            return { tone: "error", text: t(locale, "form.validation.birthday-future") };
+        }
+        // A real date the registration helpers cannot represent (outside 1970-2069).
+        if (field === "dueDate" && value.length === 10 && dueDateCompact === "") {
+            return { tone: "error", text: t(locale, "form.validation.date-invalid") };
+        }
+        return null;
+    };
+
+    const fieldMessages = Object.fromEntries(
+        (Object.keys(WIZARD_INPUT_FIELD_CONFIG) as WizardInputField[]).map((field) => [
+            field,
+            resolveWizardFieldMessage(field),
+        ]),
+    ) as Record<WizardInputField, FieldMessageView | null>;
+
+    const getFirstProblemField = (): WizardInputField | undefined =>
+        WIZARD_BASIC_FIELDS.find((field) => resolveWizardFieldMessage(field, true)?.tone === "error");
+
+    const focusField = (field: WizardInputField) => {
+        stepsRef.current?.querySelector<HTMLElement>(`#${WIZARD_INPUT_FIELD_CONFIG[field].id}`)?.focus();
+    };
+
+    // A submit that bounced back to the first step focuses its first problem field once it renders.
+    useEffect(() => {
+        const field = pendingFocusFieldRef.current;
+        if (field === null || activeStep !== 0 || isRegisteringEmployee) return;
+        pendingFocusFieldRef.current = null;
+        focusField(field);
+    }, [activeStep, isRegisteringEmployee]);
+
+    const handleFieldChange = (
+        field: WizardInputField,
+        nextValue: string,
+        setValue: (value: string) => void,
+    ) => {
+        fields.onChange(field, inputValueOf(field), nextValue);
+        setValue(nextValue);
+    };
+
+    /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
+    const getInputFieldProps = (field: WizardInputField) => {
+        const message = fieldMessages[field];
+        return {
+            error: message?.tone === "error",
+            "aria-invalid": message?.tone === "error" ? true : undefined,
+            "aria-describedby": message ? `${WIZARD_INPUT_FIELD_CONFIG[field].id}-message` : undefined,
+            ...fields.focusProps(field, inputValueOf(field)),
+        };
+    };
+
+    const hasBasicsProblem = WIZARD_BASIC_FIELDS.some(
+        (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
+    );
+
+    const canGoNext = (() => {
         if (activeStep === 0) {
-            return Boolean(name.trim() && phone.trim() && isValidBirthdayIsoDate(birthday) && address.trim())
-                && (isValidCompactDateInput(dueDate) || initialDraft?.skippedFields?.includes("dueDate"))
-                && !isEmployeeLookupBlocked
-                && !hasAmbiguousEmployeeMatch;
+            return !hasBasicsProblem && !isEmployeeLookupBlocked && !hasAmbiguousEmployeeMatch;
         }
         if (activeStep === 1) {
             if (!voucherClient) return true;
             return isVoucherInfoComplete;
         }
         return true;
-    }, [activeStep, name, phone, birthday, address, dueDate, hasAmbiguousEmployeeMatch, initialDraft?.skippedFields, isEmployeeLookupBlocked, voucherClient, isVoucherInfoComplete]);
+    })();
 
     const handleNext = () => {
-        if (!canGoNext) return;
+        if (!canGoNext) {
+            const problemField = activeStep === 0 ? getFirstProblemField() : undefined;
+            if (problemField) {
+                fields.setSubmitted(true);
+                focusField(problemField);
+            }
+            return;
+        }
         setActiveStep((s) => Math.min(s + 1, steps.length - 1));
     };
 
@@ -237,9 +440,26 @@ export function ClientRegistrationWizard({
             return;
         }
 
-        const basicsError = getCanonicalClientRegistrationError({ name, phone, birthday, address, dueDate });
+        const basicsInput = { name, phone, birthday, address, dueDate: dueDateCompact };
+        const canonicalError = getCanonicalClientRegistrationError(basicsInput);
+        // The due date is the last rule checked, so this only ever drops a due-date
+        // complaint for a date the user chose to skip.
+        const basicsError = canonicalError === CLIENT_REGISTRATION_ERROR_MESSAGES.dueDate
+            && dueDateSkipped
+            && dueDate === ""
+            ? null
+            : canonicalError;
         if (basicsError) {
-            setSubmitError(basicsError);
+            const problemField = getFirstProblemField();
+            if (problemField) {
+                // The field's own message says what to fix; take the user to it.
+                fields.setSubmitted(true);
+                pendingFocusFieldRef.current = problemField;
+                setSubmitError(null);
+                setActiveStep(0);
+            } else {
+                setSubmitError(basicsError);
+            }
             return;
         }
 
@@ -259,19 +479,13 @@ export function ClientRegistrationWizard({
 
         try {
             const payload: Record<string, unknown> = {
-                ...buildCanonicalClientRegistrationBasics({
-                    name,
-                    phone,
-                    birthday,
-                    address,
-                    dueDate,
-                }),
+                ...buildCanonicalClientRegistrationBasics(basicsInput),
                 careCenter,
                 voucherClient,
                 breastPump,
             };
 
-            if (!isValidCompactDateInput(dueDate)) delete payload.dueDate;
+            if (!dueDateCompact) delete payload.dueDate;
 
             if (voucherClient) {
                 payload.type = voucherType;
@@ -347,61 +561,61 @@ export function ClientRegistrationWizard({
                 ))}
             </Stepper>
 
-            <div data-component="desktop_chat_page_wizard-registration_steps" className="flex-1 min-h-0">
+            <div ref={stepsRef} data-component="desktop_chat_page_wizard-registration_steps" className="flex-1 min-h-0">
                 {/* Step 1: Basic Info */}
                 {activeStep === 0 && !isRegisteringEmployee && (
                     <div className="grid gap-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="name">이름</Label>
+                        <WizardFieldRow field="name" message={fieldMessages.name}>
                             <Input
                                 id="name"
                                 value={name}
-                                onChange={(e) => setName(e.target.value)}
+                                onChange={(e) => handleFieldChange("name", e.target.value, setName)}
                                 autoFocus
+                                {...getInputFieldProps("name")}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="dueDate">출산 예정일</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="dueDate" message={fieldMessages.dueDate}>
                             <Input
                                 id="dueDate"
                                 type="text"
                                 inputMode="numeric"
-                                maxLength={6}
-                                placeholder="YYMMDD"
+                                maxLength={10}
+                                placeholder="2026-11-20"
                                 value={dueDate}
-                                onChange={(e) => setDueDate(parseCompactDateInput(e.target.value))}
+                                onChange={(e) => handleFieldChange("dueDate", formatIsoDateInput(e.target.value), setDueDate)}
+                                {...getInputFieldProps("dueDate")}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="phone">연락처</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="phone" message={fieldMessages.phone}>
                             <Input
                                 id="phone"
                                 value={phone}
-                                onChange={(e) => setPhone(formatKoreanPhoneNumber(e.target.value))}
+                                onChange={(e) => handleFieldChange("phone", formatKoreanPhoneNumber(e.target.value), setPhone)}
                                 placeholder="010-1234-5678"
                                 maxLength={13}
+                                {...getInputFieldProps("phone")}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="birthday">생년월일</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="birthday" message={fieldMessages.birthday}>
                             <Input
                                 id="birthday"
                                 value={birthday}
-                                onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
-                                placeholder="YYYY-MM-DD"
+                                onChange={(e) => handleFieldChange("birthday", formatIsoDateInput(e.target.value), setBirthday)}
+                                placeholder="1958-03-03"
                                 inputMode="numeric"
                                 maxLength={10}
+                                {...getInputFieldProps("birthday")}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="address">주소</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="address" message={fieldMessages.address}>
                             <Input
                                 id="address"
                                 placeholder="상세 주소"
                                 value={address}
-                                onChange={(e) => setAddress(e.target.value)}
+                                onChange={(e) => handleFieldChange("address", e.target.value, setAddress)}
+                                {...getInputFieldProps("address")}
                             />
-                        </div>
+                        </WizardFieldRow>
                         {createdEmployeeId === null && matchingEmployees.length > 0 && (matchingEmployees.length > 1 || hasInvalidEmployeeSelection) && (
                             <div className="space-y-2">
                                 <Label htmlFor="employee-selection">제공인력 선택</Label>
@@ -427,25 +641,25 @@ export function ClientRegistrationWizard({
 
                 {isRegisteringEmployee && (
                     <div className="grid gap-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="employee-name">제공인력 이름</Label>
+                        <WizardFieldRow field="employeeName" message={fieldMessages.employeeName}>
                             <Input
                                 id="employee-name"
                                 value={employeeName}
-                                onChange={(e) => setEmployeeName(e.target.value)}
+                                onChange={(e) => handleFieldChange("employeeName", e.target.value, setEmployeeName)}
                                 autoFocus
+                                {...getInputFieldProps("employeeName")}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="employee-phone">연락처</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="employeePhone" message={fieldMessages.employeePhone}>
                             <Input
                                 id="employee-phone"
                                 value={employeePhone}
-                                onChange={(e) => setEmployeePhone(formatKoreanPhoneNumber(e.target.value))}
+                                onChange={(e) => handleFieldChange("employeePhone", formatKoreanPhoneNumber(e.target.value), setEmployeePhone)}
                                 placeholder="010-1234-5678"
                                 maxLength={13}
+                                {...getInputFieldProps("employeePhone")}
                             />
-                        </div>
+                        </WizardFieldRow>
                         <div className="space-y-2">
                             <Label htmlFor="employee-grade">등급</Label>
                             <Select value={employeeGrade} onValueChange={setEmployeeGrade}>
