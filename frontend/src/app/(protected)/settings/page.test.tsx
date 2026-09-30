@@ -69,13 +69,15 @@ describe("SettingsPage send-notification tab gating", () => {
 
   it("renders the section only with a resolved branch, and explains itself without one", () => {
     expect(source).toContain('activeSection === "send-notification" && canManageBranchSettings');
-    expect(source).toContain("<SendNotificationSection branchId={branchId} />");
+    // key={branchId} forces a remount (and thus a draft reset) on branch
+    // switch — see SendNotificationSection's own key={branchId} contract.
+    expect(source).toContain("<SendNotificationSection key={branchId} branchId={branchId} />");
     expect(source).toContain("<SendNotificationBranchRequired />");
 
     // Pin which arm is which, the same way the call-ingest-tokens test above
     // guards against an inverted ternary.
     const gate = source.slice(source.indexOf('activeSection === "send-notification" && canManageBranchSettings'));
-    const truthyArm = gate.indexOf("<SendNotificationSection branchId={branchId} />");
+    const truthyArm = gate.indexOf("<SendNotificationSection key={branchId} branchId={branchId} />");
     const falsyArm = gate.indexOf("<SendNotificationBranchRequired />");
     expect(gate).toContain("branchId ? (");
     expect(truthyArm).toBeGreaterThan(-1);

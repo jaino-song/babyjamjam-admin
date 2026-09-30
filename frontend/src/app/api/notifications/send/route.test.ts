@@ -132,6 +132,49 @@ describe("POST /api/notifications/send", () => {
         consoleErrorSpy.mockRestore();
     });
 
+    it("rejects malformed JSON with a 400 and never calls the backend", async () => {
+        Object.defineProperty(process.env, "NODE_ENV", { value: "development", configurable: true });
+        process.env.NEXT_PUBLIC_API_BASE_URL = "http://backend.test";
+        const POST = await loadRoute();
+
+        const response = await POST(
+            new NextRequest("http://localhost/api/notifications/send", {
+                method: "POST",
+                headers: { cookie: "auth_token=token-1", "content-type": "application/json" },
+                body: "{not-valid-json",
+            }),
+        );
+
+        expect(response.status).toBe(400);
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it("does not forward fields outside the userId/title/body whitelist", async () => {
+        Object.defineProperty(process.env, "NODE_ENV", { value: "development", configurable: true });
+        process.env.NEXT_PUBLIC_API_BASE_URL = "http://backend.test";
+        const POST = await loadRoute();
+        (globalThis.fetch as jest.Mock).mockResolvedValue(
+            new Response(JSON.stringify({}), { status: 200 }),
+        );
+
+        await POST(
+            postRequest({
+                userId: "user-1",
+                title: "제목",
+                body: "내용",
+                data: { evil: true },
+                extra: "nope",
+            }),
+        );
+
+        expect(globalThis.fetch).toHaveBeenCalledWith(
+            "http://backend.test/notifications/send",
+            expect.objectContaining({
+                body: JSON.stringify({ userId: "user-1", title: "제목", body: "내용" }),
+            }),
+        );
+    });
+
     it("keeps a successful send passthrough", async () => {
         Object.defineProperty(process.env, "NODE_ENV", { value: "development", configurable: true });
         process.env.NEXT_PUBLIC_API_BASE_URL = "http://backend.test";
