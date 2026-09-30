@@ -162,8 +162,18 @@ export function NotificationBell({
             document.body.style.overflow = '';
         };
     }, [isOpen]);
+
     const markAsRead = useMarkAsRead();
     const markAllAsRead = useMarkAllAsRead();
+
+    // Collapse any expanded notification whenever the popover closes, so it
+    // always reopens collapsed instead of remembering the last expansion.
+    const handleOpenChange = (open: boolean) => {
+        setIsOpen(open);
+        if (!open) {
+            setExpandedNotificationId(null);
+        }
+    };
 
     const handleClick = async () => {
         if (PWA_NOTIFICATIONS_ENABLED && !isSubscribed) {
@@ -174,12 +184,12 @@ export function NotificationBell({
 
             if (!success) {
                 // Show error in popover
-                setIsOpen(true);
+                handleOpenChange(true);
             }
             // If success, state will update and next click will show notifications
         } else {
             // Subscribed - toggle popover
-            setIsOpen(!isOpen);
+            handleOpenChange(!isOpen);
         }
     };
 
@@ -189,7 +199,7 @@ export function NotificationBell({
         }
 
         if (notification.data?.url) {
-            setIsOpen(false);
+            handleOpenChange(false);
 
             const url = notification.data.url as string;
             const parsed = parseNotificationUrl(url);
@@ -397,6 +407,7 @@ export function NotificationBell({
                                 {group.notifications.map((notification) => {
                                     const isExpandable = !notification.data?.url;
                                     const isExpanded = isExpandable && expandedNotificationId === notification.id;
+                                    const bodyId = `notification-body-${notification.id}`;
 
                                     return (
                                         <div
@@ -411,6 +422,7 @@ export function NotificationBell({
                                             role={isExpandable ? 'button' : undefined}
                                             tabIndex={isExpandable ? 0 : undefined}
                                             aria-expanded={isExpandable ? isExpanded : undefined}
+                                            aria-controls={isExpandable ? bodyId : undefined}
                                             data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
                                             className={`
                                                 px-4 py-3 cursor-pointer border-b transition-colors
@@ -423,11 +435,14 @@ export function NotificationBell({
                                                 <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
                                                     {notification.title}
                                                 </p>
-                                                <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
+                                                <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground'}`}>
                                                     {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
                                                 </span>
                                             </div>
-                                            <p className={`text-xs mt-1 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'} ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
+                                            <p
+                                                id={bodyId}
+                                                className={`text-xs mt-1 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'} ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground'}`}
+                                            >
                                                 {notification.body}
                                             </p>
                                         </div>
@@ -450,11 +465,11 @@ export function NotificationBell({
             {isOpen && createPortal(
                 <div
                     className="fixed inset-0 top-16 bg-black/30 backdrop-blur-[4px] z-40 opacity-100 visible sm:hidden transition-all duration-300"
-                    onClick={() => setIsOpen(false)}
+                    onClick={() => handleOpenChange(false)}
                 />,
                 document.body
             )}
-            <Popover open={isOpen} onOpenChange={setIsOpen}>
+            <Popover open={isOpen} onOpenChange={handleOpenChange}>
                 <PopoverTrigger asChild>
                     <Button
                         variant="ghost"

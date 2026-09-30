@@ -188,6 +188,9 @@ describe('NotificationBell', () => {
     const unread = screen.getByTestId('notification-item-unread');
     expect(unread).toHaveClass('bg-accent', 'text-accent-foreground');
     expect(unread.querySelector('.text-muted-foreground')).toBeNull();
+    // Regression guard: the dimmed /85 opacity variant fell below contrast
+    // requirements against the accent background and must not reappear.
+    expect(unread.querySelector('[class*="text-accent-foreground/85"]')).toBeNull();
 
     const read = screen.getByTestId('notification-item');
     expect(read).not.toHaveClass('bg-accent');
@@ -451,6 +454,98 @@ describe('NotificationBell', () => {
 
     expect(item).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('whitespace-pre-wrap');
+  });
+
+  it('toggles the expanded state with a keyboard Space press', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item).toHaveAttribute('role', 'button');
+    expect(item).toHaveAttribute('tabIndex', '0');
+
+    fireEvent.keyDown(item, { key: ' ' });
+
+    expect(item).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('whitespace-pre-wrap');
+
+    fireEvent.keyDown(item, { key: ' ' });
+
+    expect(item).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('links an expandable row to its body text via aria-controls', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    const controlsId = item.getAttribute('aria-controls');
+    expect(controlsId).toBeTruthy();
+
+    const body = document.getElementById(controlsId as string);
+    expect(body).not.toBeNull();
+    expect(body).toHaveTextContent(mockLongBodyNotificationWithoutUrl.body);
+  });
+
+  it('does not set aria-controls on a non-expandable (url) notification row', async () => {
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item).not.toHaveAttribute('aria-controls');
+  });
+
+  it('collapses the expanded notification when the popover closes and reopens', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    fireEvent.click(item);
+    expect(item).toHaveAttribute('aria-expanded', 'true');
+
+    // Close the popover.
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('notification-popover')).not.toBeInTheDocument();
+    });
+
+    // Reopen it.
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const reopenedItem = screen.getByTestId('notification-item-unread');
+    expect(reopenedItem).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('truncate');
   });
 
   it('still closes the popover and navigates for a notification with a url (unaffected by expand behaviour)', async () => {
