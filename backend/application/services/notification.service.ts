@@ -207,6 +207,19 @@ export class NotificationService {
         return notification;
     }
 
+    /**
+     * Branch-scoped recipient picker for the manager "send a notification" UI.
+     * Reuses the same recipient set as broadcast; returns only id/name, never
+     * email/phone/role, de-duplicated and sorted by Korean name order.
+     */
+    async listRecipients(branchId: string): Promise<{ id: string; name: string }[]> {
+        const users = await this.userRepository.findNotificationRecipientsByBranchId(branchId);
+        const uniqueUsers = Array.from(new Map(users.map((user) => [user.id, user])).values());
+        return uniqueUsers
+            .map((user) => ({ id: user.id, name: user.name ?? "이름 없음" }))
+            .sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    }
+
     async broadcastNotification(
         branchId: string,
         title: string,

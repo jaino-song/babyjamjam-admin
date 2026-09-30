@@ -101,3 +101,8 @@ export class BroadcastResultResponseDto {
     sent!: number;
     failed!: number;
 }
+
+export class NotificationRecipientResponseDto {
+    id!: string;
+    name!: string;
+}
