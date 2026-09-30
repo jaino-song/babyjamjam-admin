@@ -661,7 +661,7 @@
 /* Match the shell's md breakpoint and useGlintUiScale's width-only bounds. */
 @media (min-width: 768px) {
   :root {
-    --glint-ui-viewport-scale: clamp(0.85, calc(100vw / 1440px), 1.1);
+    --glint-ui-viewport-scale: clamp(0.765, calc(100vw / 1600px), 0.99);
   }
 }
 
