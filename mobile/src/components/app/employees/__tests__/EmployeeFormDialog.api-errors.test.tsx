@@ -56,11 +56,11 @@ jest.mock("@/components/app/mobile-redesign/mobile-detail-slideup", () => ({
 jest.mock("../EmployeeFormCard", () => ({
   EmployeeFormCard: ({
     formData,
-    phoneHelperMessage,
+    messages,
     onChange,
   }: {
     formData: { name: string; phone: string };
-    phoneHelperMessage?: string | null;
+    messages: { phone?: { text: string } | null };
     onChange: (field: string, value: unknown) => void;
   }) => (
     <div>
@@ -79,7 +79,7 @@ jest.mock("../EmployeeFormCard", () => ({
       <button type="button" onClick={() => onChange("workArea", ["남동구"])}>
         근무 지역 선택
       </button>
-      {phoneHelperMessage ? <p>{phoneHelperMessage}</p> : null}
+      {messages.phone ? <p>{messages.phone.text}</p> : null}
     </div>
   ),
 }));

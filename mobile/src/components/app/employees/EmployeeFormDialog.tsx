@@ -1,5 +1,5 @@
 "use client";
-import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
     getUserErrorMessage,
     normalizeApiError,
@@ -12,6 +12,13 @@ import {
 import { useState, useEffect, useMemo } from "react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
+import { useFieldMessages } from "@/hooks/use-field-messages";
+import {
+    focusFirstInvalidField,
+    pickSlotMessage,
+    type FieldSpec,
+    type SlotMessage,
+} from "@/lib/validations/field-message";
 import { Button } from "@/components/ui/button";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import {
@@ -29,7 +36,11 @@ import { api } from "@/lib/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { MobileDetailSlideUp } from "@/components/app/mobile-redesign/mobile-detail-slideup";
 import { DEFAULT_EMPLOYEE_GRADE, normalizeEmployeeGrade } from "@/features/employees/grade";
-import { EmployeeFormCard, type EmployeeFormCardData, type EmployeeFormCardTouched } from "./EmployeeFormCard";
+import {
+    EmployeeFormCard,
+    type EmployeeFormCardData,
+    type EmployeeFormCardField,
+} from "./EmployeeFormCard";
 import styles from "./EmployeeFormDialog.module.css";
 
 interface EmployeeFormDialogProps {
@@ -121,8 +132,8 @@ const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
 
 const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
     locale === "ko"
-        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
-        : "Checking for duplicate phone number. Please wait.";
+        ? "번호를 확인하고 있습니다."
+        : "Checking the number.";
 
 const initialFormData: FormData = {
     name: "",
@@ -132,6 +143,12 @@ const initialFormData: FormData = {
     openToNextWork: true,
     birthday: "",
 };
+
+const buildEmployeeFieldSpecs = (locale: "ko" | "en"): Record<EmployeeFormCardField, FieldSpec> => ({
+    name: { kind: "text", label: t(locale, "employees.form.name"), required: true },
+    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true },
+    birthday: { kind: "birthday", label: "생년월일" },
+});
 
 export function EmployeeFormDialog({
     open,
@@ -145,11 +162,8 @@ export function EmployeeFormDialog({
     const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
 
-    // Track which fields have been touched for validation display
-    const [touched, setTouched] = useState<EmployeeFormCardTouched>({
-        phone: false,
-        workArea: false,
-    });
+    // The work-area chips are not a text field, so their blur is tracked here.
+    const [workAreaTouched, setWorkAreaTouched] = useState(false);
 
     // Error state for displaying API errors
     const [error, setError] = useState<EmployeeFormErrorState | null>(null);
@@ -171,8 +185,14 @@ export function EmployeeFormDialog({
     const employeePhoneDigits = useMemo(() => normalizePhoneNumber(employee?.phone ?? ""), [employee?.phone]);
     const isUnchangedEmployeePhone = isEditMode && phoneDigits.length === 11 && phoneDigits === employeePhoneDigits;
 
+    const fieldMessages = useFieldMessages<EmployeeFormCardField>({
+        values: { name: formData.name, phone: formData.phone, birthday: formData.birthday },
+        specs: buildEmployeeFieldSpecs(locale),
+        locale,
+    });
+    const { reset: resetFieldMessages } = fieldMessages;
+
     // Validation helpers
-    const isPhoneValid = phoneDigits.length === 11;
     const isWorkAreaValid = formData.workArea.length > 0;
     const isPhoneDuplicateCheckReady =
         isUnchangedEmployeePhone ||
@@ -183,33 +203,27 @@ export function EmployeeFormDialog({
             !hasPhoneDuplicateCheckFailed
         );
     const shouldShowPhoneDuplicateStatus = !isUnchangedEmployeePhone && phoneDigits.length === 11;
-    const hasPhoneError = shouldShowPhoneDuplicateStatus && (hasPhoneDuplicateCheckFailed || isPhoneDuplicate);
-    const isFormValid =
-        Boolean(formData.name.trim()) &&
-        isPhoneValid &&
-        isWorkAreaValid &&
-        isPhoneDuplicateCheckReady &&
-        !hasPhoneError;
-    const phoneHelperTone = !shouldShowPhoneDuplicateStatus
+    const phoneStatusMessage: SlotMessage | null = !shouldShowPhoneDuplicateStatus
         ? null
-        : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
-        ? "err"
-        : isCheckingPhoneDuplicate
-            ? "pending"
-            : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
-                ? "ok"
-                : null;
-    const phoneHelperMessage = !shouldShowPhoneDuplicateStatus
-        ? null
-        : isCheckingPhoneDuplicate
-        ? getPhoneDuplicateCheckPendingMessage(locale)
         : hasPhoneDuplicateCheckFailed
-            ? getPhoneDuplicateCheckFailedMessage(locale)
+            ? { text: getPhoneDuplicateCheckFailedMessage(locale), tone: "err" }
             : isPhoneDuplicate
-                ? t(locale, "employees.form.error-phone-duplicate")
-                : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
-                    ? "등록 가능한 번호입니다."
-                    : null;
+                ? { text: t(locale, "employees.form.error-phone-duplicate"), tone: "err" }
+                : isCheckingPhoneDuplicate
+                    ? { text: getPhoneDuplicateCheckPendingMessage(locale), tone: "pending" }
+                    : lastCheckedPhoneDigits === phoneDigits
+                        ? { text: "등록 가능한 번호입니다.", tone: "ok" }
+                        : null;
+    const workAreaMessage: SlotMessage | null =
+        (workAreaTouched || fieldMessages.submitted) && !isWorkAreaValid
+            ? { text: t(locale, "employees.form.work-area-required"), tone: "err" }
+            : null;
+    const cardMessages = {
+        name: fieldMessages.slot("name"),
+        phone: pickSlotMessage(fieldMessages.slot("phone"), phoneStatusMessage),
+        birthday: fieldMessages.slot("birthday"),
+        workArea: workAreaMessage,
+    };
 
     useEffect(() => {
         if (!open) {
@@ -237,7 +251,8 @@ export function EmployeeFormDialog({
             }
 
             setFormData(nextFormData);
-            setTouched({ phone: false, workArea: false });
+            setWorkAreaTouched(false);
+            resetFieldMessages();
             setError(null);
             setIsCheckingPhoneDuplicate(false);
             setIsPhoneDuplicate(false);
@@ -248,7 +263,7 @@ export function EmployeeFormDialog({
         return () => {
             cancelled = true;
         };
-    }, [employee, open, prefillName]);
+    }, [employee, open, prefillName, resetFieldMessages]);
 
     useEffect(() => {
         if (!open || phoneDigits.length !== 11 || isUnchangedEmployeePhone) {
@@ -351,29 +366,30 @@ export function EmployeeFormDialog({
     };
 
     const handleSubmit = async () => {
-        // Mark all fields as touched to show any validation errors
-        setTouched({ phone: true, workArea: true });
+        // Show every field's message, then take the user to the first problem.
+        fieldMessages.markSubmitted();
+        setWorkAreaTouched(true);
         setError(null); // Clear any previous error
 
-        // Validate all required fields
-        if (!formData.name.trim() || !isPhoneValid || !isWorkAreaValid) {
+        const invalidFieldIds: string[] = fieldMessages
+            .invalidFields(["name", "phone", "birthday"])
+            .map((field) => `employee-form-${field}`);
+        if (!isWorkAreaValid) {
+            invalidFieldIds.push("employee-form-work-area");
+        }
+        if (invalidFieldIds.length > 0) {
+            focusFirstInvalidField(invalidFieldIds);
             return;
         }
+
+        // Only the failed duplicate-check request is a form-level error; a duplicate
+        // number or a check still running is already shown in the phone field's slot.
         if (hasPhoneDuplicateCheckFailed) {
             setError({ message: getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)), fieldErrors: [] });
             return;
         }
-        if (isPhoneDuplicate) {
-            setError({ message: getUserErrorMessage(t(locale, "employees.form.error-phone-duplicate")), fieldErrors: [] });
-            return;
-        }
-        if (!isPhoneDuplicateCheckReady) {
-            setError({ message: getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)), fieldErrors: [] });
-            return;
-        }
-
-        if (formData.birthday && !isValidBirthdayIsoDate(formData.birthday)) {
-            setError({ message: t(locale, "clients.form.error-birthday-required"), fieldErrors: [] });
+        if (isPhoneDuplicate || !isPhoneDuplicateCheckReady) {
+            focusFirstInvalidField(["employee-form-phone"]);
             return;
         }
 
@@ -486,7 +502,7 @@ export function EmployeeFormDialog({
             primaryAction={{
                 label: submitLabel,
                 onClick: handleSubmit,
-                disabled: isLoading || !isFormValid,
+                disabled: isLoading,
                 busy: isLoading,
                 dataComponent: "employees-form-dialog-submit",
             }}
@@ -547,18 +563,14 @@ export function EmployeeFormDialog({
             <EmployeeFormCard
                 data-component={`${EMPLOYEE_FORM_DIALOG_BASE}_card`}
                 formData={formData}
-                touched={touched}
-                isPhoneValid={isPhoneValid}
-                hasPhoneError={hasPhoneError}
-                phoneHelperMessage={phoneHelperMessage}
-                phoneHelperTone={phoneHelperTone}
-                isWorkAreaValid={isWorkAreaValid}
+                messages={cardMessages}
                 disabled={isLoading}
                 assignmentLabel={!isEditMode ? assignmentLabel : undefined}
                 assignmentDescription={assignmentDescription}
                 onChange={handleChange}
-                onPhoneBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                onWorkAreaTouched={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                onFieldFocus={(field) => fieldMessages.bind(field).onFocus()}
+                onFieldBlur={(field) => fieldMessages.bind(field).onBlur()}
+                onWorkAreaTouched={() => setWorkAreaTouched(true)}
             />
         </MobileDetailSlideUp>
     );

@@ -1,5 +1,6 @@
 "use client";
-import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import {
   getUserErrorMessage,
   normalizeApiError,
@@ -46,7 +47,6 @@ import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
-  formatIsoDateInput,
   isStrictIsoDate,
   normalizeIsoDate,
   toIsoDate,
@@ -55,6 +55,14 @@ import { parsePositiveIntQueryParam } from "@/lib/query-params";
 import { buildClientEditPrefillFromEformsignDocument } from "@/lib/eformsign/client-prefill";
 import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
+import { useFieldMessages } from "@/hooks/use-field-messages";
+import {
+  focusFirstInvalidField,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+  type SlotTone,
+} from "@/lib/validations/field-message";
 import { resolveVoucherLookupYear } from "./voucher-year";
 import { getServiceDateDurationCheck } from "./duration-mismatch";
 import {
@@ -87,38 +95,42 @@ const VOUCHER_TYPE_OPTIONS = VOUCHER_TYPE_SELECT_OPTIONS.flatMap((group) => grou
 
 type HelperTone = "muted" | "ok" | "err" | "pending";
 
+type WizardValidatedField = "name" | "phone" | "birthday" | "dueDate" | "birthDate" | "address" | "startDate" | "endDate";
+
+// DOM order of the validated fields per wizard step; the first invalid one is focused.
+const STEP_VALIDATED_FIELDS: Readonly<Record<number, readonly WizardValidatedField[]>> = {
+  0: ["name", "phone", "birthday", "dueDate", "birthDate"],
+  2: ["startDate", "endDate"],
+};
+
+const SLOT_TONE_CLASS_NAMES: Readonly<Record<SlotTone, string>> = {
+  muted: styles.slot_muted,
+  ok: styles.slot_ok,
+  err: styles.slot_err,
+  pending: styles.slot_pending,
+};
+
 function Field({
   "data-component": dataComponent,
   label,
   htmlFor,
   required,
   children,
+  slot,
   helper,
   helperTone = "muted",
-  helperPlacement = "below",
 }: {
   "data-component": string;
   label: ReactNode;
   htmlFor?: string;
   required?: boolean;
   children: ReactNode;
+  /** The field's one validation message, shown top-right in the label row. `null` = nothing to show yet. */
+  slot?: SlotMessage | null;
+  /** Explanatory note below a non-validated field (e.g. a select). */
   helper?: ReactNode;
   helperTone?: HelperTone;
-  helperPlacement?: "label" | "below";
 }) {
-  const helperNode = helper ? (
-    <div
-      className={cn(
-        styles.formHelper,
-        helperPlacement === "label" ? styles.formHelperInline : null,
-        styles[`helper_${helperTone}`],
-      )}
-      data-component={`${dataComponent}_helper`}
-    >
-      {helper}
-    </div>
-  ) : null;
-
   return (
     <div className={styles.formRow} data-component={dataComponent}>
       <div className={styles.formFieldHeader} data-component={`${dataComponent}_header`}>
@@ -126,10 +138,27 @@ function Field({
           {label}
           {required ? <span className={styles.requiredMark}>*</span> : null}
         </label>
-        {helperPlacement === "label" ? helperNode : null}
+        {slot !== undefined ? (
+          <span
+            id={htmlFor ? `${htmlFor}-message` : undefined}
+            className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[slot?.tone ?? "muted"])}
+            aria-live="polite"
+            data-component={`${dataComponent}_helper`}
+          >
+            {slot?.tone === "ok" ? "✓ " : null}
+            {slot?.text}
+          </span>
+        ) : null}
       </div>
       {children}
-      {helperPlacement === "below" ? helperNode : null}
+      {helper ? (
+        <div
+          className={cn(styles.formHelper, styles[`helper_${helperTone}`])}
+          data-component={`${dataComponent}_helper`}
+        >
+          {helper}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -225,6 +254,31 @@ export default function NewClientPage() {
     setVoucherYear,
     reset,
   } = store;
+  const fieldSpecs: Record<WizardValidatedField, FieldSpec> = {
+    name: { kind: "text", label: "이름", required: true },
+    phone: { kind: "phone", label: "연락처", required: true },
+    birthday: { kind: "birthday", label: "생년월일", required: true },
+    dueDate: { kind: "date", label: "출산 예정일" },
+    birthDate: { kind: "date", label: "출산일" },
+    address: { kind: "text", label: "주소" },
+    startDate: { kind: "date", label: "시작일" },
+    endDate: { kind: "date", label: "종료일", dateRange: { notBefore: store.startDate } },
+  };
+  const fieldMessages = useFieldMessages<WizardValidatedField>({
+    values: {
+      name: store.name,
+      phone: store.phone,
+      birthday: store.birthday,
+      dueDate: store.dueDate,
+      birthDate: store.birthDate,
+      address: store.address,
+      startDate: store.startDate,
+      endDate: store.endDate,
+    },
+    specs: fieldSpecs,
+    locale,
+  });
+  const { reset: resetFieldMessages } = fieldMessages;
   const { data: voucherYears = [] } = useVoucherYears();
   const resolvedVoucherYear = useMemo(
     () => voucherYear ?? resolveVoucherLookupYear(store.endDate, voucherYears),
@@ -296,28 +350,20 @@ export default function NewClientPage() {
         !hasPhoneDuplicateCheckFailed &&
         !isPhoneDuplicate &&
         lastCheckedPhoneDigits === phoneDigits));
-  const phoneInlineMessage = phoneDigits.length === 11
+  const phoneStatusMessage: SlotMessage | null = phoneDigits.length === 11
     ? isUsingOriginalPhone
-      ? "✓ 등록 가능한 번호입니다."
+      ? { text: "등록 가능한 번호입니다.", tone: "ok" }
       : isCheckingPhoneDuplicate
-      ? "번호를 확인하고 있습니다."
-      : hasPhoneDuplicateCheckFailed
-        ? PHONE_DUPLICATE_CHECK_FAILED_MESSAGE
-        : isPhoneDuplicate
-          ? t(locale, "clients.form.error-phone-duplicate")
-          : isPhoneAvailable
-            ? "✓ 등록 가능한 번호입니다."
-            : null
+        ? { text: "번호를 확인하고 있습니다.", tone: "pending" }
+        : hasPhoneDuplicateCheckFailed
+          ? { text: PHONE_DUPLICATE_CHECK_FAILED_MESSAGE, tone: "err" }
+          : isPhoneDuplicate
+            ? { text: t(locale, "clients.form.error-phone-duplicate"), tone: "err" }
+            : isPhoneAvailable
+              ? { text: "등록 가능한 번호입니다.", tone: "ok" }
+              : null
     : null;
-  const phoneHelperTone: HelperTone = isUsingOriginalPhone
-    ? "ok"
-    : isCheckingPhoneDuplicate
-      ? "pending"
-      : hasPhoneDuplicateCheckFailed || isPhoneDuplicate
-        ? "err"
-        : isPhoneAvailable
-          ? "ok"
-          : "muted";
+  const phoneMessage = pickSlotMessage(fieldMessages.slot("phone"), phoneStatusMessage);
 
   const showErrorToast = (message: string) => {
     toast({ variant: "destructive", description: getUserErrorMessage(message) });
@@ -338,7 +384,8 @@ export default function NewClientPage() {
     setErrorState(null);
     setHasUnknownMutationOutcome(false);
     reset();
-  }, [formSessionKey, reset]);
+    resetFieldMessages();
+  }, [formSessionKey, reset, resetFieldMessages]);
 
   useEffect(() => {
     if (!prefillName) return;
@@ -364,6 +411,7 @@ export default function NewClientPage() {
     previousServicePeriodRef.current = null;
     setPendingDurationConfirmation(null);
     reset();
+    resetFieldMessages();
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
     if (prefillClient.birthday !== undefined) setField("birthday", normalizeBirthdayIsoDate(prefillClient.birthday) ?? prefillClient.birthday);
@@ -398,7 +446,7 @@ export default function NewClientPage() {
     }
 
     clearPrefillClient();
-  }, [prefillClient, clearPrefillClient, isEditMode, reset, setField, setPricesManuallyEdited]);
+  }, [prefillClient, clearPrefillClient, isEditMode, reset, resetFieldMessages, setField, setPricesManuallyEdited]);
 
   // 편집 모드: 기존 client 데이터를 wizard store에 1회 하이드레이트 (editingClient.id 변경 시 재실행).
   // pricesManuallyEdited=true 로 두어 voucherPriceInfos 자동 입력 effect가 저장된 요금을 덮어쓰지 못하게 한다.
@@ -781,8 +829,7 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (!store.name.trim()) return false;
-        if (!isValidBirthdayIsoDate(store.birthday)) return false;
-        if (phoneDigits.length !== 11) return false;
+        if (fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[0]).length > 0) return false;
         if (isUsingOriginalPhone) return true;
 
         if (isCheckingPhoneDuplicate) {
@@ -803,7 +850,7 @@ export default function NewClientPage() {
       case 1:
         return true;
       case 2:
-        return true;
+        return fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[2]).length === 0;
       case 3:
         return true;
       default:
@@ -814,18 +861,18 @@ export default function NewClientPage() {
   const validateStep = (step: number): boolean => {
     if (isStepSatisfied(step)) return true;
 
-    if (step === 0) {
-      if (!store.name.trim()) {
-        showErrorToast(t(locale, "clients.form.error-name-required"));
-      } else if (!isValidBirthdayIsoDate(store.birthday)) {
-        showErrorToast(t(locale, "clients.form.error-birthday-required"));
-      } else if (phoneDigits.length !== 11) {
-        showErrorToast(t(locale, "clients.form.error-phone-required"));
-      } else if (hasPhoneDuplicateCheckFailed) {
+    // Each problem is already shown in its own field's message slot; reveal them
+    // all and take the user to the first one. Only the failed duplicate-check
+    // request (which belongs to no single field) is reported as a toast.
+    fieldMessages.markSubmitted();
+    const invalidFields = fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[step] ?? []);
+    if (invalidFields.length > 0) {
+      focusFirstInvalidField(invalidFields);
+    } else if (step === 0) {
+      if (hasPhoneDuplicateCheckFailed) {
         showErrorToast(PHONE_DUPLICATE_CHECK_FAILED_MESSAGE);
-      } else if (isPhoneDuplicate) {
-        showErrorToast(t(locale, "clients.form.error-phone-duplicate"));
       }
+      focusFirstInvalidField(["phone"]);
     }
 
     return false;
@@ -983,6 +1030,13 @@ export default function NewClientPage() {
     });
     return ids;
   }, [structuredErrors]);
+  // The slot's own error plus any server-reported error on the same field.
+  const fieldHasError = (
+    field: WizardValidatedField,
+    slot: SlotMessage | null = fieldMessages.slot(field),
+  ): boolean => slot?.tone === "err" || fieldErrorMessageIds[field].length > 0;
+  const describedBy = (field: WizardValidatedField): string =>
+    [`${field}-message`, ...fieldErrorMessageIds[field]].join(" ");
 
   useEffect(() => {
     if (!errorState) return;
@@ -1032,7 +1086,7 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome || !isStepSatisfied(activeStep);
+  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome;
 
   return (
     <>
@@ -1147,88 +1201,94 @@ export default function NewClientPage() {
               {activeStep === 0 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field" label="이름" htmlFor="name" required>
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field" label="이름" htmlFor="name" required slot={fieldMessages.slot("name")}>
                       <Input
                         id="name"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_name-field_name-input"
                         value={store.name}
                         onChange={(e) => setField("name", e.target.value)}
+                        {...fieldMessages.bind("name")}
                         placeholder="홍길동"
-                        error={fieldErrorMessageIds.name.length > 0}
-                        aria-invalid={fieldErrorMessageIds.name.length > 0}
-                        aria-describedby={fieldErrorMessageIds.name.join(" ") || undefined}
+                        error={fieldHasError("name")}
+                        aria-invalid={fieldHasError("name")}
+                        aria-describedby={describedBy("name")}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field" label="연락처" htmlFor="phone" required helper={phoneInlineMessage} helperTone={phoneHelperTone} helperPlacement="label">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field" label="연락처" htmlFor="phone" required slot={phoneMessage}>
                       <Input
                         id="phone"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-contact-card_phone-field_phone-input"
                         value={store.phone}
                         onChange={(e) => setField("phone", formatKoreanPhoneNumber(e.target.value))}
+                        {...fieldMessages.bind("phone")}
                         type="tel"
                         inputMode="numeric"
                         maxLength={20}
                         placeholder="010-1234-5678"
-                        error={fieldErrorMessageIds.phone.length > 0}
-                        aria-invalid={fieldErrorMessageIds.phone.length > 0}
-                        aria-describedby={fieldErrorMessageIds.phone.join(" ") || undefined}
+                        error={fieldHasError("phone", phoneMessage)}
+                        aria-invalid={fieldHasError("phone", phoneMessage)}
+                        aria-describedby={describedBy("phone")}
                       />
                     </Field>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday" required>
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field" label="생년월일" htmlFor="birthday" required slot={fieldMessages.slot("birthday")}>
                       <Input
                         id="birthday"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birthday-field_birthday-input"
                         value={store.birthday}
-                        onChange={(e) => setField("birthday", formatBirthdayInput(e.target.value))}
+                        onChange={(e) => setField("birthday", formatIsoDateInput(e.target.value))}
+                        {...fieldMessages.bind("birthday")}
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
-                        error={fieldErrorMessageIds.birthday.length > 0}
-                        aria-invalid={fieldErrorMessageIds.birthday.length > 0}
-                        aria-describedby={fieldErrorMessageIds.birthday.join(" ") || undefined}
+                        placeholder="1958-03-03"
+                        error={fieldHasError("birthday")}
+                        aria-invalid={fieldHasError("birthday")}
+                        aria-describedby={describedBy("birthday")}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field" label="출산 예정일" htmlFor="dueDate">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field" label="출산 예정일" htmlFor="dueDate" slot={fieldMessages.slot("dueDate")}>
                       <Input
                         id="dueDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_due-date-field_due-date-input"
                         value={store.dueDate}
                         onChange={(e) => setField("dueDate", formatIsoDateInput(e.target.value))}
+                        {...fieldMessages.bind("dueDate")}
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
-                        error={fieldErrorMessageIds.dueDate.length > 0}
-                        aria-invalid={fieldErrorMessageIds.dueDate.length > 0}
-                        aria-describedby={fieldErrorMessageIds.dueDate.join(" ") || undefined}
+                        placeholder="2026-11-20"
+                        error={fieldHasError("dueDate")}
+                        aria-invalid={fieldHasError("dueDate")}
+                        aria-describedby={describedBy("dueDate")}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field" label="출산일" htmlFor="birthDate">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field" label="출산일" htmlFor="birthDate" slot={fieldMessages.slot("birthDate")}>
                       <Input
                         id="birthDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_birth-date-field_birth-date-input"
                         value={store.birthDate}
                         onChange={(e) => setField("birthDate", formatIsoDateInput(e.target.value))}
+                        {...fieldMessages.bind("birthDate")}
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
-                        error={fieldErrorMessageIds.birthDate.length > 0}
-                        aria-invalid={fieldErrorMessageIds.birthDate.length > 0}
-                        aria-describedby={fieldErrorMessageIds.birthDate.join(" ") || undefined}
+                        placeholder="2026-11-20"
+                        error={fieldHasError("birthDate")}
+                        aria-invalid={fieldHasError("birthDate")}
+                        aria-describedby={describedBy("birthDate")}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field" label="주소" htmlFor="address">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field" label="주소" htmlFor="address" slot={fieldMessages.slot("address")}>
                       <Input
                         id="address"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_basic-details-card_address-field_address-input"
                         value={store.address}
                         onChange={(e) => setField("address", e.target.value)}
+                        {...fieldMessages.bind("address")}
                         placeholder="서울시 강남구..."
-                        error={fieldErrorMessageIds.address.length > 0}
-                        aria-invalid={fieldErrorMessageIds.address.length > 0}
-                        aria-describedby={fieldErrorMessageIds.address.join(" ") || undefined}
+                        error={fieldHasError("address")}
+                        aria-invalid={fieldHasError("address")}
+                        aria-describedby={describedBy("address")}
                       />
                     </Field>
                   </div>
@@ -1471,7 +1531,7 @@ export default function NewClientPage() {
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field" label="시작일" htmlFor="startDate">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field" label="시작일" htmlFor="startDate" slot={fieldMessages.slot("startDate")}>
                       <Input
                         id="startDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field_start-date-input"
@@ -1480,15 +1540,16 @@ export default function NewClientPage() {
                           hasUserEditedServicePeriodRef.current = true;
                           setField("startDate", formatIsoDateInput(e.target.value));
                         }}
+                        {...fieldMessages.bind("startDate")}
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
-                        error={fieldErrorMessageIds.startDate.length > 0}
-                        aria-invalid={fieldErrorMessageIds.startDate.length > 0}
-                        aria-describedby={fieldErrorMessageIds.startDate.join(" ") || undefined}
+                        placeholder="2026-12-01"
+                        error={fieldHasError("startDate")}
+                        aria-invalid={fieldHasError("startDate")}
+                        aria-describedby={describedBy("startDate")}
                       />
                     </Field>
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field" label="종료일" htmlFor="endDate">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field" label="종료일" htmlFor="endDate" slot={fieldMessages.slot("endDate")}>
                       <Input
                         id="endDate"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_end-date-field_end-date-input"
@@ -1497,12 +1558,13 @@ export default function NewClientPage() {
                           hasUserEditedServicePeriodRef.current = true;
                           setField("endDate", formatIsoDateInput(e.target.value));
                         }}
+                        {...fieldMessages.bind("endDate")}
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
-                        error={fieldErrorMessageIds.endDate.length > 0}
-                        aria-invalid={fieldErrorMessageIds.endDate.length > 0}
-                        aria-describedby={fieldErrorMessageIds.endDate.join(" ") || undefined}
+                        placeholder="2026-12-19"
+                        error={fieldHasError("endDate")}
+                        aria-invalid={fieldHasError("endDate")}
+                        aria-describedby={describedBy("endDate")}
                       />
                     </Field>
                   </div>

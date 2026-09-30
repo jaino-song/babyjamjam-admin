@@ -62,7 +62,7 @@ test.describe("Client registration date inputs", () => {
     await expect(dueDate(page)).toBeVisible();
 
     await expect(dueDate(page)).toHaveAttribute("maxlength", "10");
-    await expect(dueDate(page)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    await expect(dueDate(page)).toHaveAttribute("placeholder", "2026-11-20");
 
     await dueDate(page).pressSequentially("20260915");
     await expect(dueDate(page)).toHaveValue("2026-09-15");
@@ -74,7 +74,7 @@ test.describe("Client registration date inputs", () => {
     await expect(birthday(page)).toBeVisible();
 
     await expect(birthday(page)).toHaveAttribute("maxlength", "10");
-    await expect(birthday(page)).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    await expect(birthday(page)).toHaveAttribute("placeholder", "1958-03-03");
 
     await birthday(page).pressSequentially("19990315");
     await expect(birthday(page)).toHaveValue("1999-03-15");
