@@ -43,12 +43,13 @@ function getServiceRecordHeaderFieldError(key, rawValue, now = new Date(), { req
             ? null : "0보다 큰 숫자로 (예: 3.2)";
     }
     if (rawValue.length !== 10 || !BIRTH_PATTERN.test(rawValue)) {
-        return "YYYY-MM-DD 형식으로 입력해 주세요";
+        return "YYYY-MM-DD로 입력해 주세요";
     }
     if ((0, birthday_1.isValidBirthdayIsoDate)(rawValue, now))
         return null;
-    // A real calendar date from 1900 that still fails is a date after today.
-    return (0, field_validation_message_1.isRealIsoDate)(rawValue) ? "오늘 이후 날짜는 안 돼요" : "존재하지 않는 날짜예요";
+    // isRealIsoDate already rejects years before the 1900 floor (-> "not a real date"),
+    // so a real date that still fails the birthday check can only lie in the future.
+    return (0, field_validation_message_1.isRealIsoDate)(rawValue) ? "미래 날짜는 입력할 수 없어요" : "존재하지 않는 날짜예요";
 }
 function getServiceRecordHeaderErrors(header, now = new Date(), options = {}) {
     const errors = {};
