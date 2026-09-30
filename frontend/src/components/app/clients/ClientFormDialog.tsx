@@ -12,8 +12,14 @@ import {
     type ProblemOutcome,
 } from "@babyjamjam/shared";
 import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import {
+    isRealIsoDate,
+    resolveFieldMessage,
+    type FieldKind,
+} from "@babyjamjam/shared/utils/field-validation-message";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
     useAvailableClientAreas,
     useOutOfPocketPriceInfos,
@@ -38,6 +44,11 @@ import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
 import { calcEndDateBusinessDays, countBusinessDaysKr } from "@/lib/date/business-days";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
+import {
+    resolveElevenDigitPhoneMessage,
+    toFieldMessageView,
+    type FieldMessageView,
+} from "@/lib/forms/field-message-text";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
 import {
@@ -47,6 +58,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { FieldMessageText } from "@/components/app/ui/field-message";
 import {
     FormField,
     FormGrid,
@@ -104,6 +116,47 @@ export const CLIENT_FORM_STEPPER_STEPS = [
 const CLIENT_FORM_LAST_STEP_INDEX = CLIENT_FORM_STEPPER_STEPS.length - 1;
 
 type ClientFormField = "name" | "phone" | "primaryEmployeeId" | "secondaryEmployeeId";
+
+/** Text inputs that show their validation message in the label-row slot. */
+type ClientInputField =
+    | "name"
+    | "birthday"
+    | "dueDate"
+    | "birthDate"
+    | "phone"
+    | "address"
+    | "startDate"
+    | "endDate";
+
+/** Fields the form can move focus to (server-error targets and inline-validated inputs). */
+type ClientFocusField = ClientFormField | ClientInputField;
+
+/** Listed in form order: the first one with a problem receives focus on submit. */
+const CLIENT_INPUT_FIELDS: readonly ClientInputField[] = [
+    "name",
+    "birthday",
+    "dueDate",
+    "birthDate",
+    "phone",
+    "address",
+    "startDate",
+    "endDate",
+];
+
+const CLIENT_INPUT_FIELD_CONFIG: Record<ClientInputField, {
+    kind: FieldKind;
+    required: boolean;
+    labelKey: string;
+}> = {
+    name: { kind: "text", required: true, labelKey: "clients.form.name" },
+    birthday: { kind: "date", required: true, labelKey: "clients.form.birthday" },
+    dueDate: { kind: "date", required: false, labelKey: "clients.form.due-date" },
+    birthDate: { kind: "date", required: false, labelKey: "clients.form.birth-date" },
+    phone: { kind: "phone", required: true, labelKey: "clients.form.phone" },
+    address: { kind: "text", required: true, labelKey: "clients.form.address" },
+    startDate: { kind: "date", required: false, labelKey: "clients.form.start-date" },
+    endDate: { kind: "date", required: false, labelKey: "clients.form.end-date" },
+};
 
 interface ClientFormErrorState {
     message: string;
@@ -177,12 +230,18 @@ const fieldForProblemError = (problemError: ProblemError): ClientFormField | und
     }
 };
 
-/** Panel step that renders each error-mapped field (basic info, then employee assignment). */
-const PANEL_STEP_OF_FIELD: Record<ClientFormField, number> = {
+/** Panel step that renders each focusable field (basic info, employee assignment, contract dates). */
+const PANEL_STEP_OF_FIELD: Record<ClientFocusField, number> = {
     name: 0,
+    birthday: 0,
+    dueDate: 0,
+    birthDate: 0,
     phone: 0,
+    address: 0,
     primaryEmployeeId: 1,
     secondaryEmployeeId: 1,
+    startDate: 3,
+    endDate: 3,
 };
 
 const combineAriaDescribedBy = (...ids: Array<string | undefined>): string | undefined => {
@@ -239,6 +298,9 @@ const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
         ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
         : "Checking for duplicate phone number. Please wait.";
 
+const getPhoneCheckingSlotMessage = (locale: "ko" | "en"): string =>
+    t(locale, "form.validation.phone-checking");
+
 const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
     locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
 
@@ -251,68 +313,13 @@ const formatDateForInput = (dateString: string | null | undefined): string => {
     return date.toISOString().split("T")[0];
 };
 
-const formatDateForCompactInput = (dateString: string | null | undefined): string => {
-    const formattedDate = formatDateForInput(dateString);
-    if (!formattedDate) return "";
-    return `${formattedDate.slice(2, 4)}${formattedDate.slice(5, 7)}${formattedDate.slice(8, 10)}`;
-};
-
-const parseCompactDateInput = (value: string): string => {
-    return value.replace(/\D/g, "").slice(0, 6);
-};
-
-const normalizeCompactDateForSubmit = (value: string): string => {
-    const compactDate = parseCompactDateInput(value);
-    if (compactDate.length !== 6) return value;
-
-    const yearPrefix = Number(compactDate.slice(0, 2)) >= 70 ? "19" : "20";
-    return `${yearPrefix}${compactDate.slice(0, 2)}-${compactDate.slice(2, 4)}-${compactDate.slice(4, 6)}`;
-};
-
-const normalizeDateForCompactState = (value: string | null | undefined): string => {
-    if (value && /^\d{6}$/.test(value)) return value;
-    const compactDate = formatDateForCompactInput(value);
-    if (compactDate) return compactDate;
-    return parseCompactDateInput(value ?? "");
-};
-
-const isValidCompactDateInput = (value: string): boolean => {
-    const compactDate = parseCompactDateInput(value);
-    if (compactDate.length !== 6) return false;
-
-    const normalizedDate = normalizeCompactDateForSubmit(compactDate);
-    const date = new Date(`${normalizedDate}T00:00:00`);
-    return (
-        !Number.isNaN(date.getTime()) &&
-        date.getFullYear() === Number(normalizedDate.slice(0, 4)) &&
-        date.getMonth() + 1 === Number(normalizedDate.slice(5, 7)) &&
-        date.getDate() === Number(normalizedDate.slice(8, 10))
-    );
-};
-
-const isValidIsoDateInput = (value: string): boolean => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-    const date = new Date(`${value}T00:00:00`);
-    return (
-        !Number.isNaN(date.getTime()) &&
-        date.getFullYear() === Number(value.slice(0, 4)) &&
-        date.getMonth() + 1 === Number(value.slice(5, 7)) &&
-        date.getDate() === Number(value.slice(8, 10))
-    );
-};
-
-const formatCompactDateForIsoInput = (value: string | null | undefined): string => {
+/**
+ * Form state for a date field: the YYYY-MM-DD display string. Accepts stored
+ * ISO values and timestamps; anything else is reduced to a partial ISO shape.
+ */
+const normalizeDateForDisplayState = (value: string | null | undefined): string => {
     if (!value) return "";
-    if (/^\d{6}$/.test(value)) return normalizeCompactDateForSubmit(value);
-    return value;
-};
-
-const parseIsoDateInputToCompactState = (value: string): string => {
-    const formattedValue = formatIsoDateInput(value);
-    return formattedValue.length === 10 && isValidIsoDateInput(formattedValue)
-        ? normalizeDateForCompactState(formattedValue)
-        : formattedValue;
+    return formatDateForInput(value) || formatIsoDateInput(value);
 };
 
 export function ClientFormPanel({
@@ -447,11 +454,11 @@ function ClientFormContent({
         ? isUsingOriginalPhone || isPhoneCheckReady
             ? getPhoneAvailableMessage(locale)
             : isCheckingPhoneDuplicate
-                ? getPhoneDuplicateCheckPendingMessage(locale)
+                ? getPhoneCheckingSlotMessage(locale)
                 : hasPhoneDuplicateCheckFailed
                     ? getPhoneDuplicateCheckFailedMessage(locale)
                     : lastCheckedPhoneDigits !== phoneDigits
-                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        ? getPhoneCheckingSlotMessage(locale)
                         : isPhoneDuplicate
                             ? t(locale, "clients.form.error-phone-duplicate")
                             : null
@@ -463,15 +470,23 @@ function ClientFormContent({
             (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
     const isPhoneCheckBlockingSubmit = phoneDigits.length === 11 && !isPhoneCheckReady;
 
+    const fields = useFieldInputStates<ClientInputField>();
+    const resetFieldStates = fields.reset;
     const [error, setError] = useState<ClientFormErrorState | null>(null);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
     const submissionInFlightRef = useRef(false);
     const summaryRef = useRef<HTMLDivElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
     const phoneInputRef = useRef<HTMLInputElement>(null);
+    const birthdayInputRef = useRef<HTMLInputElement>(null);
+    const dueDateInputRef = useRef<HTMLInputElement>(null);
+    const birthDateInputRef = useRef<HTMLInputElement>(null);
+    const addressInputRef = useRef<HTMLInputElement>(null);
+    const startDateInputRef = useRef<HTMLInputElement>(null);
+    const endDateInputRef = useRef<HTMLInputElement>(null);
     const primaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
     const secondaryEmployeeTriggerRef = useRef<HTMLButtonElement>(null);
-    const pendingFieldFocusRef = useRef<ClientFormField | null>(null);
+    const pendingFieldFocusRef = useRef<ClientFocusField | null>(null);
     const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
     const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
     const contentRef = useRef<HTMLDivElement>(null);
@@ -492,12 +507,24 @@ function ClientFormContent({
         [controlledActiveStep, onActiveStepChange]
     );
 
-    const fieldFocusTargetRef = useCallback((field: ClientFormField) => {
+    const fieldFocusTargetRef = useCallback((field: ClientFocusField) => {
         switch (field) {
             case "name":
                 return nameInputRef;
             case "phone":
                 return phoneInputRef;
+            case "birthday":
+                return birthdayInputRef;
+            case "dueDate":
+                return dueDateInputRef;
+            case "birthDate":
+                return birthDateInputRef;
+            case "address":
+                return addressInputRef;
+            case "startDate":
+                return startDateInputRef;
+            case "endDate":
+                return endDateInputRef;
             case "primaryEmployeeId":
                 return primaryEmployeeTriggerRef;
             case "secondaryEmployeeId":
@@ -505,7 +532,7 @@ function ClientFormContent({
         }
     }, []);
 
-    const focusField = useCallback((field: ClientFormField) => {
+    const focusField = useCallback((field: ClientFocusField) => {
         const fieldStep = PANEL_STEP_OF_FIELD[field];
         if (surface === "panel" && activeStep !== fieldStep) {
             pendingFieldFocusRef.current = field;
@@ -540,8 +567,8 @@ function ClientFormContent({
     const [voucherYear, setVoucherYear] = useState<number | null>(null);
     const resolvedVoucherYear = useMemo(() => {
         if (voucherYear !== null) return voucherYear;
-        const endDateYear = isValidCompactDateInput(formData.endDate ?? "")
-            ? Number.parseInt(normalizeCompactDateForSubmit(formData.endDate ?? "").slice(0, 4), 10)
+        const endDateYear = isRealIsoDate(formData.endDate ?? "")
+            ? Number.parseInt((formData.endDate ?? "").slice(0, 4), 10)
             : NaN;
         if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
             return endDateYear;
@@ -671,13 +698,11 @@ function ClientFormContent({
                 const duration = prev.duration;
                 const startDate = prev.startDate ?? "";
 
-                if (!duration || !isValidCompactDateInput(startDate)) {
+                if (!duration || !isRealIsoDate(startDate)) {
                     return prev.endDate ? { ...prev, endDate: "" } : prev;
                 }
 
-                const startDateIso = normalizeCompactDateForSubmit(startDate);
-                const computedEndDateIso = calcEndDateBusinessDays(startDateIso, duration);
-                const computedEndDate = normalizeDateForCompactState(computedEndDateIso);
+                const computedEndDate = normalizeDateForDisplayState(calcEndDateBusinessDays(startDate, duration));
 
                 return prev.endDate === computedEndDate ? prev : {
                     ...prev,
@@ -763,8 +788,8 @@ function ClientFormContent({
                     fullPrice: client.fullPrice || "",
                     grant: client.grant || "",
                     actualPrice: client.actualPrice || "",
-                    startDate: normalizeDateForCompactState(client.startDate),
-                    endDate: normalizeDateForCompactState(client.endDate),
+                    startDate: normalizeDateForDisplayState(client.startDate),
+                    endDate: normalizeDateForDisplayState(client.endDate),
                     careCenter: client.careCenter,
                     voucherClient: client.voucherClient,
                     breastPump: client.breastPump,
@@ -811,8 +836,8 @@ function ClientFormContent({
             nextFormData = {
                 ...nextFormData,
                 birthday: normalizeBirthdayIsoDate(nextFormData.birthday) ?? nextFormData.birthday,
-                startDate: normalizeDateForCompactState(nextFormData.startDate),
-                endDate: normalizeDateForCompactState(nextFormData.endDate),
+                startDate: normalizeDateForDisplayState(nextFormData.startDate),
+                endDate: normalizeDateForDisplayState(nextFormData.endDate),
             };
             if (!client && !nextFormData.endDate && nextFormData.startDate && nextFormData.duration) {
                 skipNextEndDateRecalculationRef.current = false;
@@ -825,11 +850,12 @@ function ClientFormContent({
                 setPricesManuallyEdited(nextPricesManuallyEdited);
                 setVoucherYear(null); // Reset to default (current year, falling back to latest available)
                 setError(null);
+                resetFieldStates();
                 pendingFieldFocusRef.current = null;
                 setPendingDurationConfirmation(null);
             });
         }
-    }, [clearPrefillName, client, open, prefillName]);
+    }, [clearPrefillName, client, open, prefillName, resetFieldStates]);
 
     // The contract candidate request can finish after the dialog has opened.
     // Apply that first late result while the create form is still untouched.
@@ -855,8 +881,8 @@ function ClientFormContent({
                 const nextFormData = {
                     ...current,
                     ...latePrefill,
-                    startDate: normalizeDateForCompactState(latePrefill.startDate ?? current.startDate),
-                    endDate: normalizeDateForCompactState(latePrefill.endDate ?? current.endDate),
+                    startDate: normalizeDateForDisplayState(latePrefill.startDate ?? current.startDate),
+                    endDate: normalizeDateForDisplayState(latePrefill.endDate ?? current.endDate),
                 };
                 formDataBaselineRef.current = nextFormData;
                 return nextFormData;
@@ -884,6 +910,88 @@ function ClientFormContent({
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
         setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
+    const inputValueOf = (field: ClientInputField): string => String(formData[field] ?? "");
+
+    const handleInputChange = (field: ClientInputField, value: string) => {
+        fields.onChange(field, inputValueOf(field), value);
+        handleChange(field, value);
+    };
+
+    /**
+     * The one message a text input shows in its label-row slot. `settled`
+     * evaluates only the input's own rules as if the user already left the
+     * field and pressed submit, which is how submit decides whether the field
+     * has a problem. Duplicate-check status is not a rule of the input; submit
+     * handles it separately.
+     */
+    const resolveInputFieldMessage = (field: ClientInputField, settled = false): FieldMessageView | null => {
+        const { kind, required, labelKey } = CLIENT_INPUT_FIELD_CONFIG[field];
+        const value = inputValueOf(field);
+        // Whitespace alone does not count as a value for free text.
+        const baseState = fields.stateOf(field, kind === "text" ? value.trim() : value);
+        const state = settled ? { ...baseState, focused: false } : baseState;
+        const opts = {
+            required,
+            submitted: settled || fields.submitted,
+            ...(field === "endDate" ? { dateRange: { notBefore: formData.startDate ?? "" } } : {}),
+        };
+        const label = t(locale, labelKey);
+
+        const formatMessage = toFieldMessageView(
+            locale,
+            field === "phone" ? resolveElevenDigitPhoneMessage(state, opts) : resolveFieldMessage(kind, state, opts),
+            label,
+        );
+        if (formatMessage) return formatMessage;
+
+        if (field === "birthday" && value.length === 10 && !isValidBirthdayIsoDate(value)) {
+            return { tone: "error", text: t(locale, "form.validation.birthday-future") };
+        }
+        if (!settled && field === "phone" && phoneInlineMessage) {
+            return {
+                tone: hasPhoneStatusError ? "error" : isPhoneCheckReady ? "ok" : "hint",
+                text: phoneInlineMessage,
+            };
+        }
+        return null;
+    };
+
+    const inputFieldMessages = Object.fromEntries(
+        CLIENT_INPUT_FIELDS.map((field) => [field, resolveInputFieldMessage(field)]),
+    ) as Record<ClientInputField, FieldMessageView | null>;
+
+    const getFirstProblemField = (candidates: readonly ClientInputField[]): ClientInputField | undefined =>
+        candidates.find((field) => resolveInputFieldMessage(field, true)?.tone === "error");
+
+    const fieldMessageId = (field: ClientInputField) => `clients-form-${surface}-${field}-helper`;
+
+    /** The label-row slot content for a field, or null while it has nothing to say. */
+    const renderFieldMessage = (field: ClientInputField, dataComponent: string) => {
+        const message = inputFieldMessages[field];
+        return message ? (
+            <FieldMessageText
+                id={fieldMessageId(field)}
+                data-component={dataComponent}
+                tone={message.tone}
+            >
+                {message.text}
+            </FieldMessageText>
+        ) : null;
+    };
+
+    /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
+    const getInputFieldProps = (field: ClientInputField, serverErrorIds: readonly string[] = []) => {
+        const message = inputFieldMessages[field];
+        return {
+            error: message?.tone === "error" || serverErrorIds.length > 0,
+            "aria-describedby": combineAriaDescribedBy(
+                message ? fieldMessageId(field) : undefined,
+                ...serverErrorIds,
+            ),
+            ...fields.focusProps(field, inputValueOf(field)),
+        };
     };
 
     const openEmployeeDialog = (target: "primary" | "secondary") => {
@@ -1007,28 +1115,11 @@ function ClientFormContent({
         }
 
         // 고객 기본 정보만 필수이며 서비스 정보는 상담 단계에서 비워둘 수 있다.
-        if (!formData.name.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-name-required"));
-            return;
-        }
-        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
-            setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
-            return;
-        }
-        if (formData.dueDate?.trim() && !isValidIsoDateInput(formData.dueDate)) {
-            setErrorAndScroll(t(locale, "clients.form.error-due-date-invalid"));
-            return;
-        }
-        if (formData.birthDate?.trim() && !isValidIsoDateInput(formData.birthDate)) {
-            setErrorAndScroll(t(locale, "clients.form.error-birth-date-invalid"));
-            return;
-        }
-        if (!formData.address?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-address-required"));
-            return;
-        }
-        if (phoneDigits.length !== 11) {
-            setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
+        // 필드 문제는 해당 필드의 라벨 행 메시지로 보여 주고 첫 문제 필드로 이동한다.
+        fields.setSubmitted(true);
+        const firstProblemField = getFirstProblemField(CLIENT_INPUT_FIELDS);
+        if (firstProblemField) {
+            focusField(firstProblemField);
             return;
         }
         if (!isUsingOriginalPhone) {
@@ -1045,15 +1136,15 @@ function ClientFormContent({
                 return;
             }
             if (isPhoneDuplicate) {
-                setErrorAndScroll(t(locale, "clients.form.error-phone-duplicate"));
+                focusField("phone");
                 return;
             }
         }
         try {
             const normalizedDueDate = formData.dueDate ?? "";
             const normalizedBirthDate = formData.birthDate ?? "";
-            const normalizedStartDate = normalizeCompactDateForSubmit(formData.startDate ?? "");
-            const normalizedEndDate = normalizeCompactDateForSubmit(formData.endDate ?? "");
+            const normalizedStartDate = formData.startDate ?? "";
+            const normalizedEndDate = formData.endDate ?? "";
             const businessDays = normalizedStartDate && normalizedEndDate
                 ? countBusinessDaysKr(normalizedStartDate, normalizedEndDate)
                 : null;
@@ -1142,24 +1233,6 @@ function ClientFormContent({
 
     const isSubmitting = createClient.isPending || updateClient.isPending;
 
-    const isBasicStepValid = isLegacyNoopEdit || Boolean(
-        formData.name.trim()
-        && isValidBirthdayIsoDate(formData.birthday ?? "")
-        && (!formData.dueDate?.trim() || isValidIsoDateInput(formData.dueDate))
-        && formData.address?.trim()
-        && isPhoneCheckReady
-    );
-    const isEmployeeStepValid = true;
-    const isVoucherStepValid = true;
-    const isContractStepValid = true;
-    const stepValidation = [
-        isBasicStepValid,
-        isEmployeeStepValid,
-        isVoucherStepValid,
-        isContractStepValid,
-    ] as const;
-    const isCurrentStepValid = stepValidation[activeStep] ?? true;
-    const isFormComplete = isBasicStepValid;
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
             Boolean(formData.name.trim()),
@@ -1182,6 +1255,27 @@ function ClientFormContent({
     const primaryEmployeeErrorIds = getFieldErrorIds("primaryEmployeeId");
     const secondaryEmployeeErrorIds = getFieldErrorIds("secondaryEmployeeId");
     const isUnknownOutcome = error?.outcome === "UNKNOWN";
+    // A field problem never disables the panel buttons: pressing one reveals the
+    // message on every problem field. Only work in flight, an unknown outcome, a
+    // stale edit form or a phone check that has not finished block them.
+    const isAwaitingEditInit = Boolean(isEditMode && client && initializedEditClientId !== client.id);
+    const isPanelActionBlocked = isSubmitting
+        || isUnknownOutcome
+        || isAwaitingEditInit
+        || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
+
+    const handleNextStep = () => {
+        if (!isLegacyNoopEdit) {
+            const stepFields = CLIENT_INPUT_FIELDS.filter((field) => PANEL_STEP_OF_FIELD[field] === activeStep);
+            const firstProblemField = getFirstProblemField(stepFields);
+            if (firstProblemField) {
+                fields.setSubmitted(true);
+                focusField(firstProblemField);
+                return;
+            }
+        }
+        handleStepChange(activeStep + 1);
+    };
 
     const handleDialogClose = () => {
         if (onBeforeClose && !onBeforeClose()) {
@@ -1262,8 +1356,8 @@ function ClientFormContent({
                     <Button
                         type="button"
                         size="sm"
-                        onClick={() => handleStepChange(activeStep + 1)}
-                        disabled={!isCurrentStepValid || isSubmitting}
+                        onClick={handleNextStep}
+                        disabled={isPanelActionBlocked}
                         data-component={`${base}_next`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
@@ -1274,7 +1368,7 @@ function ClientFormContent({
                         type="button"
                         size="sm"
                         onClick={() => void handleSubmit()}
-                        disabled={isSubmitting || isUnknownOutcome || !isFormComplete}
+                        disabled={isPanelActionBlocked}
                         data-component={`${base}_submit`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
@@ -1303,15 +1397,15 @@ function ClientFormContent({
                     htmlFor="name"
                     label={t(locale, "clients.form.name")}
                     required
+                    labelAccessory={renderFieldMessage("name", `${base}_basic-grid_field-name_helper`)}
                 >
                     <FormTextInput
                         ref={nameInputRef}
                         id="name"
                         placeholder="홍길동"
                         value={formData.name}
-                        onChange={(e) => handleChange("name", e.target.value)}
-                        error={nameErrorIds.length > 0}
-                        aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
+                        onChange={(e) => handleInputChange("name", e.target.value)}
+                        {...getInputFieldProps("name", nameErrorIds)}
                     />
                 </FormField>
 
@@ -1320,33 +1414,36 @@ function ClientFormContent({
                     htmlFor="birthday"
                     label={t(locale, "clients.form.birthday")}
                     required
+                    labelAccessory={renderFieldMessage("birthday", `${base}_basic-grid_field-birthday_helper`)}
                 >
                     <FormTextInput
+                        ref={birthdayInputRef}
                         id="birthday"
-                        placeholder="YYYY-MM-DD"
+                        placeholder="1958-03-03"
                         inputMode="numeric"
                         value={formData.birthday ?? ""}
-                        onChange={(e) => handleChange("birthday", formatIsoDateInput(e.target.value))}
+                        onChange={(e) => handleInputChange("birthday", formatIsoDateInput(e.target.value))}
                         maxLength={10}
+                        {...getInputFieldProps("birthday")}
                     />
-                    <FormHelperText data-component={`${base}_basic-grid_field-birthday_helper`}>
-                        {t(locale, "clients.form.birthday-helper")}
-                    </FormHelperText>
                 </FormField>
 
                 <FormField
                     data-component={`${base}_basic-grid_field-due-date`}
                     htmlFor="dueDate"
                     label={t(locale, "clients.form.due-date")}
+                    labelAccessory={renderFieldMessage("dueDate", `${base}_basic-grid_field-due-date_helper`)}
                 >
                     <FormTextInput
+                        ref={dueDateInputRef}
                         id="dueDate"
                         type="text"
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
+                        placeholder="2026-11-20"
                         value={formData.dueDate || ""}
-                        onChange={(e) => handleChange("dueDate", formatIsoDateInput(e.target.value))}
+                        onChange={(e) => handleInputChange("dueDate", formatIsoDateInput(e.target.value))}
+                        {...getInputFieldProps("dueDate")}
                     />
                 </FormField>
 
@@ -1354,15 +1451,18 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-birth-date`}
                     htmlFor="birthDate"
                     label={t(locale, "clients.form.birth-date")}
+                    labelAccessory={renderFieldMessage("birthDate", `${base}_basic-grid_field-birth-date_helper`)}
                 >
                     <FormTextInput
+                        ref={birthDateInputRef}
                         id="birthDate"
                         type="text"
                         inputMode="numeric"
                         maxLength={10}
-                        placeholder="YYYY-MM-DD"
+                        placeholder="2026-11-20"
                         value={formData.birthDate || ""}
-                        onChange={(e) => handleChange("birthDate", formatIsoDateInput(e.target.value))}
+                        onChange={(e) => handleInputChange("birthDate", formatIsoDateInput(e.target.value))}
+                        {...getInputFieldProps("birthDate")}
                     />
                 </FormField>
 
@@ -1371,17 +1471,7 @@ function ClientFormContent({
                     htmlFor="phone"
                     label={t(locale, "clients.form.phone")}
                     required
-                    labelAccessory={phoneInlineMessage ? (
-                        <FormHelperText
-                            id="clients-form-dialog-phone-helper"
-                            data-component={`${base}_basic-grid_field-phone_helper`}
-                            tone={hasPhoneStatusError ? "error" : "default"}
-                            className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
-                            aria-live="polite"
-                        >
-                            {phoneInlineMessage}
-                        </FormHelperText>
-                    ) : null}
+                    labelAccessory={renderFieldMessage("phone", `${base}_basic-grid_field-phone_helper`)}
                 >
                     <FormTextInput
                         ref={phoneInputRef}
@@ -1391,15 +1481,11 @@ function ClientFormContent({
                         placeholder="010-1234-5678"
                         value={formData.phone ?? ""}
                         onChange={(e) => {
-                            handleChange("phone", formatKoreanPhoneNumber(e.target.value));
+                            handleInputChange("phone", formatKoreanPhoneNumber(e.target.value));
                             clearFormError();
                         }}
                         maxLength={20}
-                        error={hasPhoneStatusError || phoneErrorIds.length > 0}
-                        aria-describedby={combineAriaDescribedBy(
-                            phoneInlineMessage ? "clients-form-dialog-phone-helper" : undefined,
-                            ...phoneErrorIds,
-                        )}
+                        {...getInputFieldProps("phone", phoneErrorIds)}
                     />
                 </FormField>
 
@@ -1430,12 +1516,15 @@ function ClientFormContent({
                     label={t(locale, "clients.form.address")}
                     required
                     className="sm:col-span-2"
+                    labelAccessory={renderFieldMessage("address", `${base}_basic-grid_field-address_helper`)}
                 >
                     <FormTextInput
+                        ref={addressInputRef}
                         id="address"
                         placeholder="예: 인천광역시 서구"
                         value={formData.address ?? ""}
-                        onChange={(e) => handleChange("address", e.target.value)}
+                        onChange={(e) => handleInputChange("address", e.target.value)}
+                        {...getInputFieldProps("address")}
                     />
                 </FormField>
             </FormGrid>
@@ -1676,15 +1765,18 @@ function ClientFormContent({
                         data-component={`${base}_contract-grid_field-start-date`}
                         htmlFor="startDate"
                         label={t(locale, "clients.form.start-date")}
+                        labelAccessory={renderFieldMessage("startDate", `${base}_contract-grid_field-start-date_helper`)}
                     >
                         <FormTextInput
+                            ref={startDateInputRef}
                             id="startDate"
                             type="text"
                             inputMode="numeric"
-                            maxLength={6}
-                            placeholder="YYMMDD"
+                            maxLength={10}
+                            placeholder="2026-12-01"
                             value={formData.startDate || ""}
-                            onChange={(e) => handleChange("startDate", parseCompactDateInput(e.target.value))}
+                            onChange={(e) => handleInputChange("startDate", formatIsoDateInput(e.target.value))}
+                            {...getInputFieldProps("startDate")}
                         />
                     </FormField>
 
@@ -1692,15 +1784,18 @@ function ClientFormContent({
                         data-component={`${base}_contract-grid_field-end-date`}
                         htmlFor="endDate"
                         label={t(locale, "clients.form.end-date")}
+                        labelAccessory={renderFieldMessage("endDate", `${base}_contract-grid_field-end-date_helper`)}
                     >
                         <FormTextInput
+                            ref={endDateInputRef}
                             id="endDate"
                             type="text"
                             inputMode="numeric"
-                            maxLength={6}
-                            placeholder="YYMMDD"
+                            maxLength={10}
+                            placeholder="2026-12-19"
                             value={formData.endDate || ""}
-                            onChange={(e) => handleChange("endDate", parseCompactDateInput(e.target.value))}
+                            onChange={(e) => handleInputChange("endDate", formatIsoDateInput(e.target.value))}
+                            {...getInputFieldProps("endDate")}
                         />
                     </FormField>
                 </FormGrid>
@@ -1750,15 +1845,15 @@ function ClientFormContent({
                 htmlFor="name"
                 label={t(locale, "clients.form.name")}
                 required
+                labelAccessory={renderFieldMessage("name", `${base}_name-input_helper`)}
             >
                 <FormTextInput
                     ref={nameInputRef}
                     id="name"
                     placeholder="홍길동"
                     value={formData.name}
-                    onChange={(event) => handleChange("name", event.target.value)}
-                    error={nameErrorIds.length > 0}
-                    aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
+                    onChange={(event) => handleInputChange("name", event.target.value)}
+                    {...getInputFieldProps("name", nameErrorIds)}
                 />
             </FormField>
 
@@ -1767,14 +1862,17 @@ function ClientFormContent({
                 htmlFor="birthday"
                 label={t(locale, "clients.form.birthday")}
                 required
+                labelAccessory={renderFieldMessage("birthday", `${base}_birthday-input_helper`)}
             >
                 <FormTextInput
+                    ref={birthdayInputRef}
                     id="birthday"
-                    placeholder="YYYY-MM-DD"
+                    placeholder="1958-03-03"
                     inputMode="numeric"
                     value={formData.birthday ?? ""}
-                    onChange={(event) => handleChange("birthday", formatIsoDateInput(event.target.value))}
+                    onChange={(event) => handleInputChange("birthday", formatIsoDateInput(event.target.value))}
                     maxLength={10}
+                    {...getInputFieldProps("birthday")}
                 />
             </FormField>
 
@@ -1782,14 +1880,17 @@ function ClientFormContent({
                 data-component={`${base}_due-date-input`}
                 htmlFor="dueDate"
                 label={t(locale, "clients.form.due-date")}
+                labelAccessory={renderFieldMessage("dueDate", `${base}_due-date-input_helper`)}
             >
                 <FormTextInput
+                    ref={dueDateInputRef}
                     id="dueDate"
-                    placeholder="YYYY-MM-DD"
+                    placeholder="2026-11-20"
                     inputMode="numeric"
                     value={formData.dueDate || ""}
-                    onChange={(event) => handleChange("dueDate", formatIsoDateInput(event.target.value))}
+                    onChange={(event) => handleInputChange("dueDate", formatIsoDateInput(event.target.value))}
                     maxLength={10}
+                    {...getInputFieldProps("dueDate")}
                 />
             </FormField>
 
@@ -1797,14 +1898,17 @@ function ClientFormContent({
                 data-component={`${base}_birth-date-input`}
                 htmlFor="birthDate"
                 label={t(locale, "clients.form.birth-date")}
+                labelAccessory={renderFieldMessage("birthDate", `${base}_birth-date-input_helper`)}
             >
                 <FormTextInput
+                    ref={birthDateInputRef}
                     id="birthDate"
-                    placeholder="YYYY-MM-DD"
+                    placeholder="2026-11-20"
                     inputMode="numeric"
                     value={formData.birthDate || ""}
-                    onChange={(event) => handleChange("birthDate", formatIsoDateInput(event.target.value))}
+                    onChange={(event) => handleInputChange("birthDate", formatIsoDateInput(event.target.value))}
                     maxLength={10}
+                    {...getInputFieldProps("birthDate")}
                 />
             </FormField>
 
@@ -1813,17 +1917,7 @@ function ClientFormContent({
                 htmlFor="phone"
                 label={t(locale, "clients.form.phone")}
                 required
-                labelAccessory={phoneInlineMessage ? (
-                    <FormHelperText
-                        id="clients-form-panel-phone-helper"
-                        data-component={`${base}_phone-input_helper`}
-                        tone={hasPhoneStatusError ? "error" : "default"}
-                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
-                        aria-live="polite"
-                    >
-                        {phoneInlineMessage}
-                    </FormHelperText>
-                ) : null}
+                labelAccessory={renderFieldMessage("phone", `${base}_phone-input_helper`)}
             >
                 <FormTextInput
                     ref={phoneInputRef}
@@ -1833,15 +1927,11 @@ function ClientFormContent({
                     placeholder="010-1234-5678"
                     value={formData.phone ?? ""}
                     onChange={(event) => {
-                        handleChange("phone", formatKoreanPhoneNumber(event.target.value));
+                        handleInputChange("phone", formatKoreanPhoneNumber(event.target.value));
                         clearFormError();
                     }}
                     maxLength={20}
-                    error={hasPhoneStatusError || phoneErrorIds.length > 0}
-                    aria-describedby={combineAriaDescribedBy(
-                        phoneInlineMessage ? "clients-form-panel-phone-helper" : undefined,
-                        ...phoneErrorIds,
-                    )}
+                    {...getInputFieldProps("phone", phoneErrorIds)}
                 />
             </FormField>
 
@@ -1872,12 +1962,15 @@ function ClientFormContent({
                 label={t(locale, "clients.form.address")}
                 required
                 className={PANEL_FULL_FIELD_CLASS_NAME}
+                labelAccessory={renderFieldMessage("address", `${base}_address-input_helper`)}
             >
                 <FormTextInput
+                    ref={addressInputRef}
                     id="address"
                     placeholder="예: 인천광역시 서구"
                     value={formData.address ?? ""}
-                    onChange={(event) => handleChange("address", event.target.value)}
+                    onChange={(event) => handleInputChange("address", event.target.value)}
+                    {...getInputFieldProps("address")}
                 />
             </FormField>
         </>
@@ -2071,14 +2164,17 @@ function ClientFormContent({
                 data-component={`${base}_start-date-input`}
                 htmlFor="startDate"
                 label={t(locale, "clients.form.start-date")}
+                labelAccessory={renderFieldMessage("startDate", `${base}_start-date-input_helper`)}
             >
                 <FormTextInput
+                    ref={startDateInputRef}
                     id="startDate"
-                    placeholder="YYYY-MM-DD"
+                    placeholder="2026-12-01"
                     inputMode="numeric"
-                    value={formatCompactDateForIsoInput(formData.startDate)}
-                    onChange={(event) => handleChange("startDate", parseIsoDateInputToCompactState(event.target.value))}
+                    value={formData.startDate || ""}
+                    onChange={(event) => handleInputChange("startDate", formatIsoDateInput(event.target.value))}
                     maxLength={10}
+                    {...getInputFieldProps("startDate")}
                 />
             </FormField>
 
@@ -2086,14 +2182,17 @@ function ClientFormContent({
                 data-component={`${base}_end-date-input`}
                 htmlFor="endDate"
                 label={t(locale, "clients.form.end-date")}
+                labelAccessory={renderFieldMessage("endDate", `${base}_end-date-input_helper`)}
             >
                 <FormTextInput
+                    ref={endDateInputRef}
                     id="endDate"
-                    placeholder="YYYY-MM-DD"
+                    placeholder="2026-12-19"
                     inputMode="numeric"
-                    value={formatCompactDateForIsoInput(formData.endDate)}
-                    onChange={(event) => handleChange("endDate", parseIsoDateInputToCompactState(event.target.value))}
+                    value={formData.endDate || ""}
+                    onChange={(event) => handleInputChange("endDate", formatIsoDateInput(event.target.value))}
                     maxLength={10}
+                    {...getInputFieldProps("endDate")}
                 />
             </FormField>
 

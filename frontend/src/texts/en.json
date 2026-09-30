@@ -344,7 +344,6 @@
       "section-flags": "Additional Options",
       "name": "Name",
       "birthday": "Birthday",
-      "birthday-helper": "YYYY-MM-DD format (e.g., 1958-03-03)",
       "phone": "Phone",
       "address": "Address",
       "primary-employee": "Primary Provider",
@@ -371,7 +370,7 @@
       "error-birthday-required": "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
       "error-address-required": "주소를 입력해 주세요.",
       "error-phone-required": "연락처를 입력해 주세요.",
-      "error-phone-duplicate": "이미 등록된 연락처 이에요.",
+      "error-phone-duplicate": "이미 등록된 연락처예요",
       "error-employee-required": "주 담당 인력을 선택해 주세요.",
       "error-type-required": "바우처 유형을 선택해 주세요.",
       "error-duration-required": "서비스 기간을 선택해 주세요.",
@@ -435,9 +434,8 @@
       "open-to-next-work": "Available for Next Work",
       "registered-date": "Registered Date",
       "registered-date-unknown": "Unknown",
-      "phone-required": "연락처를 입력해 주세요",
       "work-area-required": "근무 지역을 선택해 주세요",
-      "error-phone-duplicate": "이미 등록된 연락처예요. 제공인력 목록에서 연락처로 검색해 주세요.",
+      "error-phone-duplicate": "이미 등록된 연락처예요",
       "error-create-failed": "제공인력 등록에 실패했어요. 다시 시도해 주세요.",
       "error-update-failed": "제공인력 정보 수정에 실패했어요. 다시 시도해 주세요.",
       "error-save-failed": "저장에 실패했어요. 다시 시도해 주세요.",
@@ -538,6 +536,19 @@
       "endpoint": "알림 엔드포인트",
       "kakao_id": "카카오 ID",
       "year_type_duration": "연도/유형/기간"
+    }
+  },
+  "form": {
+    "validation": {
+      "required": "Enter {label}",
+      "phone-format-hint": "Format: 010-1234-5678",
+      "phone-format": "Use the format 010-1234-5678",
+      "date-format-hint": "Format: YYYY-MM-DD",
+      "date-format": "Use the format YYYY-MM-DD",
+      "date-invalid": "That date does not exist",
+      "date-range": "End date must not be before start date",
+      "birthday-future": "Future dates are not allowed",
+      "phone-checking": "Checking for duplicates"
     }
   }
 }

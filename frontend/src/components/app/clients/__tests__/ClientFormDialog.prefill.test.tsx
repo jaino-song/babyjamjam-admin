@@ -171,7 +171,7 @@ describe("ClientFormDialog prefill", () => {
             />,
         );
 
-        await waitFor(() => expect(screen.getByLabelText("시작일")).toHaveValue("260810"));
+        await waitFor(() => expect(screen.getByLabelText("시작일")).toHaveValue("2026-08-10"));
 
         fireEvent.change(screen.getByLabelText("서비스 기간"), { target: { value: "10" } });
 
@@ -194,10 +194,10 @@ describe("ClientFormDialog prefill", () => {
         );
 
         await waitFor(() => {
-            expect(screen.getByLabelText("시작일")).toHaveValue("260801");
+            expect(screen.getByLabelText("시작일")).toHaveValue("2026-08-01");
             expect(screen.getByLabelText("총 서비스 금액")).toHaveValue("1,500,000");
         });
-        expect(screen.getByLabelText("시작일")).not.toHaveValue("260810");
+        expect(screen.getByLabelText("시작일")).not.toHaveValue("2026-08-10");
         expect(screen.getByLabelText("총 서비스 금액")).not.toHaveValue("1,000,000");
     });
 

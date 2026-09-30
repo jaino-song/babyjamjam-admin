@@ -1,6 +1,12 @@
 "use client";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 import { formatBirthdayInput, isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import {
+  isRealIsoDate,
+  resolveFieldMessage,
+  type FieldKind,
+} from "@babyjamjam/shared/utils/field-validation-message";
 
 
 import { useState, useMemo, useEffect } from "react";
@@ -22,6 +28,12 @@ import type { Employee } from "@/hooks/useEmployees";
 import { SteppedWizard } from "@/components/app/v3";
 import type { WizardStep } from "@/components/app/v3";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import {
+  resolveElevenDigitPhoneMessage,
+  toFieldMessageView,
+  type FieldMessageView,
+} from "@/lib/forms/field-message-text";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -45,6 +57,37 @@ const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
 
 const COMPLETED_PILL =
   "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+
+type ClientInputField =
+  | "name"
+  | "birthday"
+  | "dueDate"
+  | "birthDate"
+  | "phone"
+  | "address"
+  | "startDate"
+  | "endDate";
+
+const CLIENT_INPUT_FIELD_CONFIG: Record<ClientInputField, {
+  kind: FieldKind;
+  required: boolean;
+  labelKey: string;
+  step: number;
+}> = {
+  name: { kind: "text", required: true, labelKey: "clients.form.name", step: 0 },
+  birthday: { kind: "date", required: false, labelKey: "clients.form.birthday", step: 0 },
+  dueDate: { kind: "date", required: false, labelKey: "clients.form.due-date", step: 0 },
+  birthDate: { kind: "date", required: false, labelKey: "clients.form.birth-date", step: 0 },
+  phone: { kind: "phone", required: true, labelKey: "clients.form.phone", step: 0 },
+  address: { kind: "text", required: false, labelKey: "clients.form.address", step: 0 },
+  startDate: { kind: "date", required: false, labelKey: "clients.form.start-date", step: 2 },
+  endDate: { kind: "date", required: false, labelKey: "clients.form.end-date", step: 2 },
+};
+
+/** Listed in form order: the first one with a problem receives focus on submit. */
+const CLIENT_INPUT_FIELDS = Object.keys(CLIENT_INPUT_FIELD_CONFIG) as ClientInputField[];
+
+const clientInputElementId = (field: ClientInputField) => `clients-new-${field}`;
 
 const PHONE_DUPLICATE_CHECK_MAX_RETRIES = 3;
 const PHONE_DUPLICATE_CHECK_RETRY_DELAY_MS = 1000;
@@ -84,6 +127,7 @@ export default function NewClientPage() {
   const { currentStep, pricesManuallyEdited, voucherYear, setField, setCurrentStep, setPricesManuallyEdited, setVoucherYear, reset } = store;
 
   const [error, setError] = useState<string | null>(null);
+  const fields = useFieldInputStates<ClientInputField>();
   const [isEmployeeDialogOpen, setIsEmployeeDialogOpen] = useState(false);
   const [employeeDialogTarget, setEmployeeDialogTarget] = useState<"primary" | "secondary" | null>(null);
   const [isCheckingPhoneDuplicate, setIsCheckingPhoneDuplicate] = useState(false);
@@ -114,7 +158,7 @@ export default function NewClientPage() {
   const { data: voucherYears = [] } = useVoucherYears();
   const resolvedVoucherYear = useMemo(() => {
     if (voucherYear !== null) return voucherYear;
-    const endDateYear = Number.parseInt(store.endDate.slice(0, 4), 10);
+    const endDateYear = isRealIsoDate(store.endDate) ? Number.parseInt(store.endDate.slice(0, 4), 10) : NaN;
     if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
       return endDateYear;
     }
@@ -293,21 +337,67 @@ export default function NewClientPage() {
     setField("actualPrice", "");
   };
 
+  const inputValueOf = (field: ClientInputField): string => store[field];
+
+  const handleInputChange = (field: ClientInputField, value: string) => {
+    fields.onChange(field, inputValueOf(field), value);
+    setField(field, value);
+    setError(null);
+  };
+
+  /**
+   * The one message a text input shows in its label-row slot. `settled`
+   * evaluates only the input's own rules as if the user already left the
+   * field and pressed next, which is how a step decides whether the field has
+   * a problem. Duplicate-check status is not a rule of the input.
+   */
+  const resolveInputMessage = (field: ClientInputField, settled = false): FieldMessageView | null => {
+    const { kind, required, labelKey } = CLIENT_INPUT_FIELD_CONFIG[field];
+    const value = inputValueOf(field);
+    // Whitespace alone does not count as a value for free text.
+    const baseState = fields.stateOf(field, kind === "text" ? value.trim() : value);
+    const state = settled ? { ...baseState, focused: false } : baseState;
+    const opts = {
+      required,
+      submitted: settled || fields.submitted,
+      ...(field === "endDate" ? { dateRange: { notBefore: store.startDate } } : {}),
+    };
+
+    const formatMessage = toFieldMessageView(
+      locale,
+      field === "phone" ? resolveElevenDigitPhoneMessage(state, opts) : resolveFieldMessage(kind, state, opts),
+      t(locale, labelKey),
+    );
+    if (formatMessage) return formatMessage;
+
+    if (field === "birthday" && value.length === 10 && !isValidBirthdayIsoDate(value)) {
+      return { tone: "error", text: t(locale, "form.validation.birthday-future") };
+    }
+    if (!settled && field === "phone" && phoneInlineMessage) {
+      return { tone: "error", text: phoneInlineMessage };
+    }
+    return null;
+  };
+
+  /** Message slot, focus tracking and element id shared by every inline-validated input. */
+  const getInputFieldProps = (field: ClientInputField) => ({
+    id: clientInputElementId(field),
+    message: resolveInputMessage(field),
+    ...fields.focusProps(field, inputValueOf(field)),
+  });
+
   const validateStep = (step: number): boolean => {
-    if (store.birthday && !isValidBirthdayIsoDate(store.birthday)) {
-      setError(t(locale, "clients.form.error-birthday-required"));
+    fields.setSubmitted(true);
+    const firstProblemField = CLIENT_INPUT_FIELDS.find(
+      (field) => CLIENT_INPUT_FIELD_CONFIG[field].step === step
+        && resolveInputMessage(field, true)?.tone === "error",
+    );
+    if (firstProblemField) {
+      document.getElementById(clientInputElementId(firstProblemField))?.focus();
       return false;
     }
     switch (step) {
       case 0:
-        if (!store.name.trim()) {
-          setError(t(locale, "clients.form.error-name-required"));
-          return false;
-        }
-        if (phoneDigits.length !== 11) {
-          setError(t(locale, "clients.form.error-phone-required"));
-          return false;
-        }
         if (phoneDigits.length === 11) {
           if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
             setError(getPhoneDuplicateCheckPendingMessage(locale));
@@ -318,7 +408,7 @@ export default function NewClientPage() {
             return false;
           }
           if (isPhoneDuplicate) {
-            setError(t(locale, "clients.form.error-phone-duplicate"));
+            document.getElementById(clientInputElementId("phone"))?.focus();
             return false;
           }
         }
@@ -394,11 +484,9 @@ export default function NewClientPage() {
               required
               type="text"
               value={store.name}
-              onChange={(e) => {
-                setField("name", e.target.value);
-                setError(null);
-              }}
+              onChange={(e) => handleInputChange("name", e.target.value)}
               placeholder="홍길동"
+              {...getInputFieldProps("name")}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_birthday-field">
@@ -406,26 +494,35 @@ export default function NewClientPage() {
               label={t(locale, "clients.form.birthday")}
               type="text"
               value={store.birthday}
-              onChange={(e) => setField("birthday", formatBirthdayInput(e.target.value))}
+              onChange={(e) => handleInputChange("birthday", formatBirthdayInput(e.target.value))}
               inputMode="numeric"
-              placeholder="YYYY-MM-DD"
+              placeholder="1958-03-03"
               maxLength={10}
+              {...getInputFieldProps("birthday")}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_due-date-field">
             <FormField
               label={t(locale, "clients.form.due-date")}
-              type="date"
+              type="text"
               value={store.dueDate}
-              onChange={(e) => setField("dueDate", e.target.value)}
+              onChange={(e) => handleInputChange("dueDate", formatIsoDateInput(e.target.value))}
+              inputMode="numeric"
+              placeholder="2026-11-20"
+              maxLength={10}
+              {...getInputFieldProps("dueDate")}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_birth-date-field">
             <FormField
               label={t(locale, "clients.form.birth-date")}
-              type="date"
+              type="text"
               value={store.birthDate}
-              onChange={(e) => setField("birthDate", e.target.value)}
+              onChange={(e) => handleInputChange("birthDate", formatIsoDateInput(e.target.value))}
+              inputMode="numeric"
+              placeholder="2026-11-20"
+              maxLength={10}
+              {...getInputFieldProps("birthDate")}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_phone-field">
@@ -434,15 +531,11 @@ export default function NewClientPage() {
               required
               type="tel"
               value={store.phone}
-              onChange={(e) => {
-                setField("phone", formatKoreanPhoneNumber(e.target.value));
-                setError(null);
-              }}
+              onChange={(e) => handleInputChange("phone", formatKoreanPhoneNumber(e.target.value))}
               inputMode="numeric"
               placeholder="010-1234-5678"
               maxLength={20}
-              error={phoneInlineMessage ?? undefined}
-              errorDisplay="inline"
+              {...getInputFieldProps("phone")}
             />
           </div>
           <div data-component="desktop_clients-new_basic_step_address-field" className="md:col-span-2">
@@ -450,8 +543,9 @@ export default function NewClientPage() {
               label={t(locale, "clients.form.address")}
               type="text"
               value={store.address}
-              onChange={(e) => setField("address", e.target.value)}
+              onChange={(e) => handleInputChange("address", e.target.value)}
               placeholder="서울시 강남구..."
+              {...getInputFieldProps("address")}
             />
           </div>
           {error && (
@@ -692,22 +786,28 @@ export default function NewClientPage() {
               />
             </div>
             <div data-component="desktop_clients-new_contract_step_grid_spacer" />
-            <div data-component="desktop_clients-new_contract_step_grid_start-date-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.start-date")}</label>
-              <input
-                type="date"
-                className={INPUT_CLS}
+            <div data-component="desktop_clients-new_contract_step_grid_start-date-field">
+              <FormField
+                label={t(locale, "clients.form.start-date")}
+                type="text"
                 value={store.startDate}
-                onChange={(e) => setField("startDate", e.target.value)}
+                onChange={(e) => handleInputChange("startDate", formatIsoDateInput(e.target.value))}
+                inputMode="numeric"
+                placeholder="2026-12-01"
+                maxLength={10}
+                {...getInputFieldProps("startDate")}
               />
             </div>
-            <div data-component="desktop_clients-new_contract_step_grid_end-date-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.end-date")}</label>
-              <input
-                type="date"
-                className={INPUT_CLS}
+            <div data-component="desktop_clients-new_contract_step_grid_end-date-field">
+              <FormField
+                label={t(locale, "clients.form.end-date")}
+                type="text"
                 value={store.endDate}
-                onChange={(e) => setField("endDate", e.target.value)}
+                onChange={(e) => handleInputChange("endDate", formatIsoDateInput(e.target.value))}
+                inputMode="numeric"
+                placeholder="2026-12-19"
+                maxLength={10}
+                {...getInputFieldProps("endDate")}
               />
             </div>
           </div>
@@ -748,8 +848,8 @@ export default function NewClientPage() {
               isSubmitting={isSubmitting}
               isNextDisabled={
                 currentStep === 0 &&
+                phoneDigits.length === 11 &&
                 (
-                  phoneDigits.length !== 11 ||
                   isCheckingPhoneDuplicate ||
                   hasPhoneDuplicateCheckFailed ||
                   isPhoneDuplicate ||
