@@ -3,5 +3,6 @@ export * from "./auth";
 export * from "./eformsign";
 export * from "./settings";
 export * from "./call-ingest-tokens";
+export * from "./notification-send";
 export * from "./consultation-inquiries";
 export * from "./message-delivery";
