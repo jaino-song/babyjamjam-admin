@@ -1,4 +1,5 @@
 import { isValidBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { normalizeKoreanPhoneDigits } from "@babyjamjam/shared/utils/phone";
 import {
   resolveFieldMessage,
   withObjectParticle,
@@ -31,7 +32,17 @@ export interface FieldSpec {
   label: string;
   required?: boolean;
   dateRange?: { notBefore?: string };
+  /**
+   * Phone only: the form needs a mobile number (11 digits, 01X...), so a
+   * landline the shared resolver accepts still counts as incomplete here.
+   */
+  mobileOnly?: boolean;
 }
+
+const MOBILE_PHONE_DIGITS = /^01\d{9}$/;
+
+/** A value the shared resolver can never accept, used to force its "incomplete" branch. */
+const ALWAYS_INCOMPLETE_PHONE = "0";
 
 export interface FieldMessageContext {
   submitted: boolean;
@@ -60,11 +71,19 @@ export function resolveSlotMessage(
   state: FieldInputState,
   ctx: FieldMessageContext,
 ): SlotMessage | null {
-  const message = resolveFieldMessage(spec.kind === "birthday" ? "date" : spec.kind, state, {
+  const resolverOptions = {
     required: spec.required,
     submitted: ctx.submitted,
     dateRange: spec.dateRange,
-  });
+  };
+  const message =
+    spec.kind === "phone"
+    && spec.mobileOnly
+    && state.value !== ""
+    && !MOBILE_PHONE_DIGITS.test(normalizeKoreanPhoneDigits(state.value))
+      // Reuse the resolver's hint/error timing instead of duplicating it.
+      ? resolveFieldMessage("phone", { ...state, value: ALWAYS_INCOMPLETE_PHONE }, resolverOptions)
+      : resolveFieldMessage(spec.kind === "birthday" ? "date" : spec.kind, state, resolverOptions);
   if (message) return toSlotMessage(locale, message, spec.label);
 
   // The shared resolver accepts any real date; a birthday may not be in the future.

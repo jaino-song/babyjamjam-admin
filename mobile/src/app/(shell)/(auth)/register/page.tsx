@@ -111,6 +111,8 @@ export default function RegisterPage() {
     role: "",
   });
   const [currentStep, setCurrentStep] = useState(1);
+  // A field to focus once its step is on screen (the step switch renders after the handler).
+  const [pendingFocus, setPendingFocus] = useState<ProfileField | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -293,6 +295,12 @@ export default function RegisterPage() {
       updateProfileField(field, e.target.value);
     };
 
+  useEffect(() => {
+    if (pendingFocus === null || currentStep !== 2) return;
+    focusFirstInvalidField([FIELD_INPUT_IDS[pendingFocus]]);
+    setPendingFocus(null);
+  }, [pendingFocus, currentStep]);
+
   // The field is on screen only after its step renders, so focus on the next tick.
   const focusFirstField = (fields: ReadonlyArray<AccountField | ProfileField>) => {
     window.setTimeout(() => focusFirstInvalidField(fields.map((field) => FIELD_INPUT_IDS[field])), 0);
@@ -438,7 +446,9 @@ export default function RegisterPage() {
         // Registered-code discrimination only — the register flow cannot
         // produce another P2002, so no raw-message content check is needed.
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
-        setCurrentStep(1);
+        // The phone field lives on the profile step, not the account step.
+        setCurrentStep(2);
+        setPendingFocus("phone");
       } else {
         // The upstream `message` field is never rendered; locally authored
         // copy covers the unverified outcome.
@@ -454,7 +464,9 @@ export default function RegisterPage() {
 
       if (isPhoneDuplicateFailure(errorData, normalized)) {
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
-        setCurrentStep(1);
+        // The phone field lives on the profile step, not the account step.
+        setCurrentStep(2);
+        setPendingFocus("phone");
       } else {
         // Registered problem message (verified) or locally authored copy —
         // upstream body messages/arrays are never rendered.

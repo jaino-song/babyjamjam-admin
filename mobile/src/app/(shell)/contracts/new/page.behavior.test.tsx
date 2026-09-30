@@ -487,7 +487,7 @@ describe("contract creation mutation lifecycle", () => {
 
 describe("contract date validation", () => {
   const DATE_RANGE_ERROR = "종료일은 시작일 이후여야 해요";
-  const DATE_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
+  const DATE_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
 
   it("shows a concrete range error, blocks creation on press, focuses the field, and runs no side effects", async () => {
     installFormState({ startDate: "2026-09-21", endDate: "2026-09-20" });

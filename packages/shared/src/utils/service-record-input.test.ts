@@ -21,10 +21,10 @@ describe("service record header fields", () => {
 describe("service record header messages", () => {
     it.each([
         ["momName", "이 예지", "띄어쓰기 없이 입력해 주세요"],
-        ["momBirth", "1999", "YYYY-MM-DD 형식으로 입력해 주세요"],
+        ["momBirth", "1999", "YYYY-MM-DD로 입력해 주세요"],
         ["momBirth", "1990-02-30", "존재하지 않는 날짜예요"],
         ["momBirth", "1899-12-31", "존재하지 않는 날짜예요"],
-        ["momBirth", "2026-10-01", "오늘 이후 날짜는 안 돼요"],
+        ["momBirth", "2026-10-01", "미래 날짜는 입력할 수 없어요"],
         ["babyWeight", "0", "0보다 큰 숫자로 (예: 3.2)"],
         ["deliveryType", "기타", "분만형태를 선택해 주세요"],
         ["momName", 3, "입력 형식을 확인해 주세요"],

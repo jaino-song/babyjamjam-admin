@@ -69,7 +69,7 @@ describe("OnboardingForm field messages", () => {
     await user.clear(birth);
     await user.type(birth, "1990");
     await user.tab();
-    expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
   });
 
   it("shows every problem in its slot when submitted empty, focuses the first, and does not submit", async () => {

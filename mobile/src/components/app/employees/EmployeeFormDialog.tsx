@@ -146,7 +146,7 @@ const initialFormData: FormData = {
 
 const buildEmployeeFieldSpecs = (locale: "ko" | "en"): Record<EmployeeFormCardField, FieldSpec> => ({
     name: { kind: "text", label: t(locale, "employees.form.name"), required: true },
-    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true },
+    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true, mobileOnly: true },
     birthday: { kind: "birthday", label: "생년월일" },
 });
 

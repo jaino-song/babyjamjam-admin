@@ -16,6 +16,7 @@ const state = (value: string, overrides: Partial<{ hadValue: boolean; touched: b
 
 const name: FieldSpec = { kind: "text", label: "이름", required: true };
 const phone: FieldSpec = { kind: "phone", label: "연락처", required: true };
+const mobilePhone: FieldSpec = { ...phone, mobileOnly: true };
 const birthday: FieldSpec = { kind: "birthday", label: "생년월일" };
 const endDate: FieldSpec = { kind: "date", label: "종료일", dateRange: { notBefore: "2026-12-01" } };
 
@@ -36,6 +37,17 @@ describe("resolveSlotMessage", () => {
       .toEqual({ text: "010-1234-5678 형식", tone: "muted" });
     expect(resolveSlotMessage("ko", phone, state("0101", { touched: true }), { submitted: false }))
       .toEqual({ text: "010-1234-5678 형식으로 입력해 주세요", tone: "err" });
+  });
+
+  it("treats a landline as incomplete only when the form needs a mobile number", () => {
+    const untouched = state("031-123-4567", { touched: true });
+    expect(resolveSlotMessage("ko", phone, untouched, { submitted: false })).toBeNull();
+    expect(resolveSlotMessage("ko", mobilePhone, untouched, { submitted: false }))
+      .toEqual({ text: "010-1234-5678 형식으로 입력해 주세요", tone: "err" });
+    expect(resolveSlotMessage("ko", mobilePhone, state("031-123-4567", { focused: true }), { submitted: false }))
+      .toEqual({ text: "010-1234-5678 형식", tone: "muted" });
+    expect(resolveSlotMessage("ko", mobilePhone, state("010-1234-5678", { touched: true }), { submitted: false }))
+      .toBeNull();
   });
 
   it("rejects a future birthday on top of the shared date rules", () => {
@@ -62,6 +74,8 @@ describe("isFieldValueInvalid", () => {
   it("counts an incomplete value as invalid even before the field was left", () => {
     expect(isFieldValueInvalid("ko", phone, "0101")).toBe(true);
     expect(isFieldValueInvalid("ko", phone, "010-1234-5678")).toBe(false);
+    expect(isFieldValueInvalid("ko", phone, "031-123-4567")).toBe(false);
+    expect(isFieldValueInvalid("ko", mobilePhone, "031-123-4567")).toBe(true);
     expect(isFieldValueInvalid("ko", name, "")).toBe(true);
     expect(isFieldValueInvalid("ko", birthday, "")).toBe(false);
   });

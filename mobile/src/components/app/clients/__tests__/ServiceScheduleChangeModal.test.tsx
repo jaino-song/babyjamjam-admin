@@ -52,7 +52,7 @@ describe("ServiceScheduleChangeModal", () => {
         expect(slotOf(input)).not.toHaveTextContent("입력해 주세요");
 
         fireEvent.blur(input);
-        expect(slotOf(input)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+        expect(slotOf(input)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
         expect(input).toHaveAttribute("aria-invalid", "true");
     });
 

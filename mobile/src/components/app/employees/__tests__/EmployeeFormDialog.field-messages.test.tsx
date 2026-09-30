@@ -106,6 +106,15 @@ describe("EmployeeFormDialog field messages", () => {
     expect(phoneInput()).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("does not accept a landline: the employee needs a mobile number", async () => {
+    await renderDialog();
+
+    fireEvent.change(phoneInput(), { target: { value: "0311234567" } });
+    fireEvent.blur(phoneInput());
+    expect(slotOf(phoneInput())).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(phoneInput()).toHaveAttribute("aria-invalid", "true");
+  });
+
   it("types a birthday as digits with auto-inserted hyphens and a realistic placeholder", async () => {
     await renderDialog();
 

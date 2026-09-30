@@ -35,8 +35,13 @@ describe("service record validation scope", () => {
         fireEvent.click(next);
         expect(props.onSaveHeader).not.toHaveBeenCalled();
         const birth = screen.getByLabelText("산모 생년월일");
-        expect(birth).toHaveAttribute("aria-invalid", "true");
         expect(birth).toHaveFocus();
+        // Focused and incomplete: the grey format hint, like every other form.
+        expect(birth).not.toHaveAttribute("aria-invalid", "true");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식");
+        // Once the user leaves the field it turns into the red error.
+        fireEvent.blur(birth);
+        expect(birth).toHaveAttribute("aria-invalid", "true");
         expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveClass("error");
     });
     it("validates the full header when an administrator supplies no scoped error map", () => {

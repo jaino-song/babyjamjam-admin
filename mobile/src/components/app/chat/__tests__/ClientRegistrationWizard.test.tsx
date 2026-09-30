@@ -157,7 +157,7 @@ describe("ClientRegistrationWizard field messages", () => {
         expect(slotOf(dueDate)).toHaveTextContent("YYYY-MM-DD 형식");
 
         fireEvent.blur(dueDate);
-        expect(slotOf(dueDate)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+        expect(slotOf(dueDate)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     });
 
     test("does not call a cleared field required until it held a value", () => {

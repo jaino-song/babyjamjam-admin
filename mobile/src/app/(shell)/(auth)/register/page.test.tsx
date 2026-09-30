@@ -150,7 +150,7 @@ describe("RegisterPage", () => {
       await user.clear(birth);
       await user.type(birth, "199001");
       await user.tab();
-      expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+      expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     });
 
     it("stays on the profile step and shows both messages when 다음 is pressed with nothing filled in", async () => {
@@ -166,6 +166,26 @@ describe("RegisterPage", () => {
         expect(phone).toHaveFocus();
       });
       expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
+    });
+
+    it("sends a duplicate phone back to the profile step and focuses the phone field", async () => {
+      const user = userEvent.setup();
+      jest.mocked(authApi.register).mockRejectedValue({
+        response: { status: 409, data: { code: "P2002", field: "phone" } },
+      });
+      render(<RegisterPage />);
+      const phone = await fillAccountStep(user);
+
+      await user.type(phone, "01012345678");
+      await user.type(screen.getByLabelText("생년월일"), "19900101");
+      await user.click(screen.getByRole("button", { name: "다음" }));
+      await user.selectOptions(await screen.findByLabelText("요청 권한"), screen.getAllByRole("option")[1]);
+      await user.click(screen.getByRole("button", { name: "회원가입" }));
+
+      const phoneAgain = await screen.findByLabelText("전화번호");
+      expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
+      expect(slotOf(phoneAgain)).toHaveTextContent("이미 등록된 전화번호");
+      await waitFor(() => expect(phoneAgain).toHaveFocus());
     });
   });
 });

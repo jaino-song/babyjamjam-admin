@@ -13,7 +13,7 @@ import {
 export const PHONE_FORMAT_HINT = "010-1234-5678 형식";
 export const PHONE_FORMAT_ERROR = "010-1234-5678 형식으로 입력해 주세요";
 export const DATE_FORMAT_HINT = "YYYY-MM-DD 형식";
-export const DATE_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
+export const DATE_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
 export const DATE_INVALID_ERROR = "존재하지 않는 날짜예요";
 export const DATE_RANGE_ERROR = "종료일은 시작일 이후여야 해요";
 export const BIRTHDAY_FUTURE_ERROR = "미래 날짜는 입력할 수 없어요";
