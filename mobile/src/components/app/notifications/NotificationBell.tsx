@@ -394,19 +394,20 @@ export function NotificationBell({
                                         data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
                                         className={`
                                             px-4 py-3 cursor-pointer border-b transition-colors
-                                            ${notification.isRead ? 'bg-transparent' : 'bg-accent'}
-                                            hover:bg-accent/80
+                                            ${notification.isRead
+                                                ? 'bg-transparent hover:bg-muted'
+                                                : 'bg-accent text-accent-foreground hover:bg-accent/90'}
                                         `}
                                     >
                                         <div className="flex justify-between items-center">
                                             <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
                                                 {notification.title}
                                             </p>
-                                            <span className="text-xs text-muted-foreground ml-2 shrink-0">
+                                            <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
                                                 {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
                                             </span>
                                         </div>
-                                        <p className="text-xs text-muted-foreground truncate mt-1">
+                                        <p className={`text-xs truncate mt-1 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
                                             {notification.body}
                                         </p>
                                     </div>

@@ -164,6 +164,26 @@ describe('NotificationBell', () => {
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
+  it('renders unread notification text in the accent foreground color so it stays readable on the blue background', async () => {
+    mockNotifications = [mockNotifications[0], mockReadNotificationWithUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const unread = screen.getByTestId('notification-item-unread');
+    expect(unread).toHaveClass('bg-accent', 'text-accent-foreground');
+    expect(unread.querySelector('.text-muted-foreground')).toBeNull();
+
+    const read = screen.getByTestId('notification-item');
+    expect(read).not.toHaveClass('bg-accent');
+    expect(read).not.toHaveClass('hover:bg-accent/90');
+  });
+
   it('should NOT call markAsRead.mutate when clicking already-read notification', async () => {
     mockNotifications = [mockReadNotificationWithUrl];
 
