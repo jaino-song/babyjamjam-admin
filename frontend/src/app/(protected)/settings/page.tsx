@@ -439,7 +439,10 @@ export default function SettingsPage() {
 
           {activeSection === "send-notification" && canManageBranchSettings && (
             branchId ? (
-              <SendNotificationSection branchId={branchId} />
+              // key={branchId} forces a remount on branch switch so this
+              // section's draft state (title/body/recipient) never leaks
+              // across branches.
+              <SendNotificationSection key={branchId} branchId={branchId} />
             ) : (
               <SendNotificationBranchRequired />
             )

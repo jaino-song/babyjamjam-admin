@@ -3,7 +3,9 @@ import {
     authRequiredResponse,
     getAuthHeaders,
     getAuthToken,
+    invalidJsonResponse,
     logUpstreamError,
+    readJsonObjectBody,
     upstreamFetchErrorResponse,
     upstreamStatusProblemResponse,
 } from "@/lib/api/route-utils";
@@ -21,11 +23,31 @@ export async function POST(request: NextRequest) {
         return upstreamStatusProblemResponse(500, "send notification", "UNKNOWN");
     }
 
+    let body: Record<string, unknown>;
+    try {
+        body = await readJsonObjectBody(request);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+        logUpstreamError("send notification", error);
+        return upstreamStatusProblemResponse(500, "send notification", "UNKNOWN");
+    }
+
+    // Forward only the fields the backend's SendNotificationDto accepts —
+    // never pass the raw client body through untouched.
+    const payload = {
+        userId: body.userId,
+        title: body.title,
+        body: body.body,
+    };
+
     try {
         const response = await fetch(`${BACKEND_URL}/notifications/send`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAuthHeaders(token) },
-            body: JSON.stringify(await request.json()),
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {

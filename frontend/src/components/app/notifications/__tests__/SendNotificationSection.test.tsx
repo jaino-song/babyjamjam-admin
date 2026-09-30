@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { notificationSendApi } from "@/services/api";
 
@@ -18,6 +18,14 @@ jest.mock("@/services/api", () => ({
     send: jest.fn(),
     broadcast: jest.fn(),
   },
+  // Real implementation (not a mock): it only inspects the error shape, so
+  // exercising the actual axios-code check is more honest than stubbing it.
+  isNotificationSendTimeout: (error: unknown) =>
+    Boolean(error)
+    && typeof error === "object"
+    && (error as { isAxiosError?: boolean }).isAxiosError === true
+    && ((error as { code?: string }).code === "ECONNABORTED"
+      || (error as { code?: string }).code === "ETIMEDOUT"),
 }));
 
 // The recipient picker is a Radix Select; no existing test in this repo drives
@@ -69,12 +77,17 @@ const RECIPIENTS = [
 
 function renderSection() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <SendNotificationSection branchId="branch-1" />
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <SendNotificationSection branchId="branch-1" />
+      </QueryClientProvider>,
+    ),
+    queryClient,
+  };
 }
+
+const RECIPIENTS_QUERY_KEY = ["settings", "notification-recipients", "branch-1"] as const;
 
 async function fillTitleAndBody(title: string, body: string) {
   fireEvent.change(screen.getByLabelText("제목"), { target: { value: title } });
@@ -340,6 +353,237 @@ describe("SendNotificationSection", () => {
       });
       expect(screen.getByLabelText("제목")).toHaveValue("공지");
       expect(screen.getByLabelText("내용")).toHaveValue("본문");
+    });
+
+    it("guards against a double-click on approve firing two sends", async () => {
+      // Never resolves: the assertion only needs the guard's synchronous
+      // ref check, not a completed mutation.
+      mockedSend.mockImplementation(() => new Promise<void>(() => {}));
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(await screen.findByText("박서연"));
+      await fillTitleAndBody("제목", "내용");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      const approveButton = within(dialog).getByRole("button", { name: "보내기" });
+      // Two synchronous clicks, with no await between them: react-query's
+      // isPending flip is notified asynchronously, so it isn't necessarily
+      // visible to a second click fired in the same tick. Only the ref
+      // guard in the approve handler — set synchronously before mutate() —
+      // can stop this from sending twice.
+      fireEvent.click(approveButton);
+      fireEvent.click(approveButton);
+
+      await waitFor(() => expect(mockedSend).toHaveBeenCalled());
+      expect(mockedSend).toHaveBeenCalledTimes(1);
+    });
+
+    it("closes the confirm modal and blocks approval if the chosen recipient drops out of a refetch", async () => {
+      const { queryClient } = renderSection();
+      await screen.findByLabelText("제목");
+
+      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(await screen.findByText("박서연"));
+      await fillTitleAndBody("제목", "내용");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByRole("button", { name: "보내기" })).toBeEnabled();
+
+      // Simulate a background refetch whose result no longer includes the
+      // selected recipient (e.g. they were removed from the branch).
+      act(() => {
+        queryClient.setQueryData(RECIPIENTS_QUERY_KEY, [{ id: "user-2", name: "김민준" }]);
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+      expect(mockedSend).not.toHaveBeenCalled();
+    });
+
+    it("uses the recipient name captured at submit time for the success toast, even if the list changes before the send resolves", async () => {
+      let resolveSend: () => void = () => {};
+      mockedSend.mockImplementation(
+        () => new Promise<void>((resolve) => { resolveSend = resolve; }),
+      );
+      const { queryClient } = renderSection();
+      await screen.findByLabelText("제목");
+
+      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(await screen.findByText("박서연"));
+      await fillTitleAndBody("제목", "내용");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      // Wait for the in-flight send() call before mutating the cache and
+      // resolving: react-query invokes the mutationFn a tick after mutate(),
+      // so resolveSend() must not race ahead of the mock actually being
+      // called (it would still be the pre-call no-op stub otherwise).
+      await waitFor(() => expect(mockedSend).toHaveBeenCalledTimes(1));
+
+      // The recipient list changes while the send is still in flight — live
+      // state can no longer resolve "user-1" to a name.
+      act(() => {
+        queryClient.setQueryData(RECIPIENTS_QUERY_KEY, [{ id: "user-2", name: "김민준" }]);
+      });
+
+      resolveSend();
+
+      await waitFor(() => {
+        expect(mockToast).toHaveBeenCalledWith({
+          variant: "success",
+          description: "박서연님에게 알림을 보냈어요",
+        });
+      });
+    });
+
+    it("shows a destructive toast and keeps the draft when a broadcast reaches nobody", async () => {
+      mockedBroadcast.mockResolvedValue({ sent: 0, failed: 0 });
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      await waitFor(() => {
+        expect(mockToast).toHaveBeenCalledWith({
+          variant: "destructive",
+          description: "알림을 보내지 못했어요",
+        });
+      });
+      expect(screen.getByLabelText("제목")).toHaveValue("공지");
+      expect(screen.getByLabelText("내용")).toHaveValue("본문");
+    });
+
+    it("shows the timeout-specific message and keeps the draft when the send times out", async () => {
+      const timeoutError = Object.assign(new Error("timeout of 120000ms exceeded"), {
+        isAxiosError: true,
+        code: "ECONNABORTED",
+      });
+      mockedBroadcast.mockRejectedValue(timeoutError);
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      await waitFor(() => {
+        expect(mockToast).toHaveBeenCalledWith({
+          variant: "destructive",
+          description:
+            "전송 결과를 확인하지 못했어요. 직원 알림함에서 확인한 뒤 필요할 때만 다시 보내 주세요",
+        });
+      });
+      expect(screen.getByLabelText("제목")).toHaveValue("공지");
+      expect(screen.getByLabelText("내용")).toHaveValue("본문");
+    });
+
+    it("closes the confirm modal after a failed send", async () => {
+      mockedBroadcast.mockRejectedValue(new Error("network error"));
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+    });
+
+    it("resets the recipient selection (not just title/body) after a successful one-person send", async () => {
+      mockedSend.mockResolvedValue(undefined);
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      fireEvent.click(screen.getByRole("radio", { name: /직원 1명/ }));
+      fireEvent.click(await screen.findByText("박서연"));
+      await fillTitleAndBody("제목", "내용");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+
+      // Still in one-person mode: refilling title/body without reselecting a
+      // recipient must stay blocked, proving clearDraft() reset recipientId.
+      await fillTitleAndBody("다음 공지", "다음 내용");
+      expect(screen.getByRole("button", { name: "보내기" })).toBeDisabled();
+    });
+
+    it("disables the confirm approve button while a send is pending", async () => {
+      let resolveBroadcast: (value: { sent: number; failed: number }) => void = () => {};
+      mockedBroadcast.mockImplementation(
+        () => new Promise((resolve) => { resolveBroadcast = resolve; }),
+      );
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
+
+      await waitFor(() => {
+        expect(within(dialog).getByRole("button", { name: "보내는 중..." })).toBeDisabled();
+      });
+
+      resolveBroadcast({ sent: 2, failed: 0 });
+    });
+
+    it("associates the recipient radio group with its label and the counters with their inputs", async () => {
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      expect(screen.getByText("받는 사람")).toHaveAttribute(
+        "id",
+        "send-notification-recipient-label",
+      );
+      expect(screen.getByRole("radiogroup")).toHaveAttribute(
+        "aria-labelledby",
+        "send-notification-recipient-label",
+      );
+      expect(screen.getByLabelText("제목")).toHaveAttribute(
+        "aria-describedby",
+        "send-notification-title-counter",
+      );
+      expect(screen.getByLabelText("내용")).toHaveAttribute(
+        "aria-describedby",
+        "send-notification-body-counter",
+      );
+    });
+
+    it("passes the confirm modal's name via the canonical data-component prop", async () => {
+      renderSection();
+      await screen.findByLabelText("제목");
+
+      await fillTitleAndBody("공지", "본문");
+      submitForm();
+
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveAttribute(
+        "data-component",
+        "desktop_settings_sections_send-notification_confirm",
+      );
     });
   });
 });

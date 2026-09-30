@@ -3,7 +3,9 @@ import {
     authRequiredResponse,
     getAuthHeaders,
     getAuthToken,
+    invalidJsonResponse,
     logUpstreamError,
+    readJsonObjectBody,
     upstreamFetchErrorResponse,
     upstreamStatusProblemResponse,
 } from "@/lib/api/route-utils";
@@ -21,11 +23,30 @@ export async function POST(request: NextRequest) {
         return upstreamStatusProblemResponse(500, "broadcast notification", "UNKNOWN");
     }
 
+    let body: Record<string, unknown>;
+    try {
+        body = await readJsonObjectBody(request);
+    } catch (error) {
+        const invalidJson = invalidJsonResponse(error);
+        if (invalidJson) {
+            return invalidJson;
+        }
+        logUpstreamError("broadcast notification", error);
+        return upstreamStatusProblemResponse(500, "broadcast notification", "UNKNOWN");
+    }
+
+    // Forward only the fields the backend's BroadcastNotificationDto accepts —
+    // never pass the raw client body through untouched.
+    const payload = {
+        title: body.title,
+        body: body.body,
+    };
+
     try {
         const response = await fetch(`${BACKEND_URL}/notifications/broadcast`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAuthHeaders(token) },
-            body: JSON.stringify(await request.json()),
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
