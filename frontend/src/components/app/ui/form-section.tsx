@@ -163,7 +163,7 @@ function FormField({
           {labelNode}
           <div
             data-component={sub("label-accessory")}
-            className="ml-auto min-w-0 text-right"
+            className="ml-auto flex h-[calc(15.6px*var(--glint-ui-scale,1))] min-w-0 items-center justify-end text-right"
           >
             {labelAccessory}
           </div>
