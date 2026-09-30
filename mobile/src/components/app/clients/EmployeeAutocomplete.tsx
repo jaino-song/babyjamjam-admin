@@ -32,6 +32,8 @@ interface EmployeeAutocompleteProps {
     manualEntryLabel?: string;
     manualEntryDescription?: string;
     onManualEntry?: (inputValue?: string) => void;
+    /** Overrides the default search placeholder, e.g. to show a stored value. */
+    placeholder?: string;
     /** Refresh the shared employee list when the owning form mounts. */
     refreshOnMount?: boolean;
 }
@@ -51,6 +53,7 @@ export function EmployeeAutocomplete({
     manualEntryLabel,
     manualEntryDescription,
     onManualEntry,
+    placeholder,
     refreshOnMount = false,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
@@ -128,7 +131,7 @@ export function EmployeeAutocomplete({
                         ...e.workArea,
                     ])
                 }
-                placeholder={t(locale, "clients.form.employee-search-placeholder")}
+                placeholder={placeholder ?? t(locale, "clients.form.employee-search-placeholder")}
                 label={label}
                 required={required}
                 error={error}

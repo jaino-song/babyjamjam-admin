@@ -248,6 +248,30 @@ EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 
 
 `SCHEDULE_CHANGE_UNCOMPUTABLE`
 
+### service-record-finalized
+
+`SERVICE_RECORD_FINALIZED`
+
+### service-record-start-date-locked
+
+`SERVICE_RECORD_START_DATE_LOCKED`
+
+### service-record-end-date-before-locked-session
+
+`SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION`
+
+### service-record-end-date-required
+
+`SERVICE_RECORD_END_DATE_REQUIRED`
+
+### service-record-duration-required
+
+`SERVICE_RECORD_DURATION_REQUIRED`
+
+### service-record-duration-cannot-decrease
+
+`SERVICE_RECORD_DURATION_CANNOT_DECREASE`
+
 ### client-assignment-required
 
 `CLIENT_ASSIGNMENT_REQUIRED`

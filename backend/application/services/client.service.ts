@@ -72,7 +72,7 @@ import {
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
-import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { SystemSettingService } from "./system-setting.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
@@ -168,6 +168,8 @@ export interface ClientWithEmployees {
     documentStatus: DocumentStatusType;
     badges: ClientBadge[];
     actionRequired: ClientActionRequired | null;
+    /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
+    serviceRecordPeriodLocked?: boolean;
     primaryEmployee: { id: number; name: string; phone: string | null } | null;
     secondaryEmployee: { id: number; name: string; phone: string | null } | null;
     pendingScheduleChange?: PendingScheduleChange | null;
@@ -1482,6 +1484,13 @@ export class ClientService {
         });
         const pendingScheduleChangeMap = new Map(pendingScheduleChanges.map(change => [change.clientId, change]));
 
+        // 확정 단계 서비스 기록은 계약 기간을 바꿀 수 없으니 고객 목록과 같은 조회 범위에서 한 번에 확인해요.
+        const finalizedServiceRecordCases = await this.prismaService.service_record_case.findMany({
+            where: { clientId: { in: clientIds }, status: { in: [...IMMUTABLE_FINALIZATION_STATUSES] } },
+            select: { clientId: true },
+        });
+        const periodLockedClientIds = new Set(finalizedServiceRecordCases.map(record => record.clientId));
+
         // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
         const latestContractMap = await this.findLatestContractByClientId(clientIds);
 
@@ -1555,6 +1564,7 @@ export class ClientService {
                     documentStatus,
                     badges,
                     actionRequired,
+                    serviceRecordPeriodLocked: periodLockedClientIds.has(client.id),
                     primaryEmployee: schedule?.primaryEmployee
                         ? {
                             id: schedule.primaryEmployee.id,

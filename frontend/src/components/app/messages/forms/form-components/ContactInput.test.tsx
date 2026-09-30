@@ -38,4 +38,40 @@ describe("ContactInput", () => {
       expect(screen.getByTestId("phone-state")).toHaveTextContent("010-9641-1878");
     });
   });
+
+  it("keeps the format error below the input by default", () => {
+    render(<ControlledContactInput />);
+    const input = screen.getByLabelText("전화번호");
+
+    fireEvent.change(input, { target: { value: "abc" } });
+
+    const error = screen.getByText("숫자만 입력할 수 있습니다");
+    expect(error.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(input).toHaveAttribute("aria-describedby", error.id);
+  });
+
+  it("can show the format error in the label row in place of the trailing hint", () => {
+    render(
+      <ContactInput
+        phone=""
+        setPhone={jest.fn()}
+        label="전화번호"
+        placeholder="010-1234-5678"
+        labelTrailing={<span id="hint">hint</span>}
+        labelTrailingId="hint"
+        errorPlacement="label-row"
+      />,
+    );
+    const input = screen.getByLabelText("전화번호");
+    expect(input).toHaveAttribute("aria-describedby", "hint");
+
+    fireEvent.change(input, { target: { value: "abc" } });
+
+    const error = screen.getByText("숫자만 입력할 수 있습니다");
+    expect(error.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(screen.queryByText("hint")).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAttribute("aria-describedby", error.id);
+  });
 });
