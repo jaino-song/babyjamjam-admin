@@ -16,6 +16,27 @@ const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 const mockToast = jest.fn();
 const mockUseFormStore = jest.fn();
+// The stored record of the client already selected in the form store (id 7). It matches the
+// default form state below, so a submit without edits has nothing to ask about; the page builds
+// its diff baseline from this record, not from the store's form values.
+const mockClients = [{
+  id: 7,
+  name: "테스트 고객",
+  phone: "01012345678",
+  birthday: "1958-03-03",
+  address: "인천시",
+  areaId: "Namdonggu",
+  primaryEmployee: { id: 11, name: "테스트 제공인력" },
+  secondaryEmployee: null,
+  type: "A가1형",
+  duration: 5,
+  fullPrice: "100000",
+  grant: "50000",
+  actualPrice: "50000",
+  startDate: "2026-09-10",
+  endDate: "2026-09-16",
+  eDocId: null,
+} as Client];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -37,12 +58,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
-  useAllClients: () => ({ data: [{
-    id: 7,
-    name: "테스트 고객",
-    phone: "01012345678",
-    eDocId: null,
-  } as Client], isError: false, error: null, refetch: jest.fn(), isFetching: false }),
+  useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
 }));
@@ -320,13 +336,13 @@ describe("contract creation mutation lifecycle", () => {
     expect(submit).not.toBeDisabled();
     expect(mockOpenDocument).not.toHaveBeenCalled();
     expect(mockCreateClient).not.toHaveBeenCalled();
-    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(mockUpdateClient).not.toHaveBeenCalled();
 
     fireEvent.click(submit);
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
     expect(mockDispatchHeadless.mock.calls[1]?.[1]).toBe(7);
     expect(mockCreateClient).not.toHaveBeenCalled();
-    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(mockUpdateClient).not.toHaveBeenCalled();
     expect(mockOpenDocument).not.toHaveBeenCalled();
   });
 
@@ -353,11 +369,13 @@ describe("contract creation mutation lifecycle", () => {
     fireEvent.change(getDateInput("시작일"), { target: { value: "260911" } });
 
     fireEvent.click(submit);
+    // The retry now differs from the stored client, so the page asks before writing it back.
+    fireEvent.click(await screen.findByRole("button", { name: "고객 정보도 수정" }));
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(2));
 
     expect(mockCreateClient).not.toHaveBeenCalled();
-    expect(mockUpdateClient).toHaveBeenCalledTimes(2);
-    expect(mockUpdateClient.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(mockUpdateClient.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
       id: 7,
       dto: expect.objectContaining({
         primaryEmployeeId: 12,
@@ -517,6 +535,7 @@ describe("contract date validation", () => {
     expect(submit).not.toBeDisabled();
 
     fireEvent.click(submit);
+    fireEvent.click(await screen.findByRole("button", { name: "고객 정보도 수정" }));
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient).toHaveBeenCalledWith(expect.objectContaining({
       id: 7,

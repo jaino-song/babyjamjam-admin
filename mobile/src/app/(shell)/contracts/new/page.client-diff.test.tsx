@@ -11,7 +11,7 @@ const mockDispatchHeadless = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 const mockToast = jest.fn();
-let mockClients: Client[] = [];
+let mockClients: Client[] | undefined = [];
 // react-query hands back a stable reference; a fresh array per render would loop the price auto-fill effect.
 const mockPriceInfos = [{ duration: 5, fullPrice: "100000", grant: "50000", actualPrice: "50000" }];
 const mockAreaTemplates = [
@@ -114,7 +114,7 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
       }),
       React.createElement(
         "button",
-        { type: "button", onClick: () => onChange(mockClients[0]?.id ?? null, mockClients[0] ?? null) },
+        { type: "button", onClick: () => onChange(mockClients?.[0]?.id ?? null, mockClients?.[0] ?? null) },
         "기존 고객 선택",
       ),
       React.createElement("button", { type: "button", onClick: () => onChange(null, null) }, "고객 선택 해제"),
@@ -572,5 +572,118 @@ describe("mobile contract form - confirm before writing form edits back to the c
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockCreateClient).toHaveBeenCalledTimes(1);
     expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+});
+
+// 고객 상세의 "계약서 생성"은 client-detail-controller가 prefillFromContract로 스토어를 채운 뒤 이 페이지로 와요.
+// 고객 선택 핸들러를 거치지 않으니 저장값은 /clients 목록의 고객 레코드에서 읽어야 해요.
+describe("mobile contract form - entering with a prefilled store (client detail)", () => {
+  function prefillLikeClientDetail(client: Client) {
+    useFormStore.getState().prefillFromContract({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      address: client.address ?? "",
+      employeeId: EMPLOYEE.id,
+      employeeName: EMPLOYEE.name,
+      employeePhone: EMPLOYEE.phone,
+      startDate: (client.startDate ?? "").slice(0, 10),
+      endDate: (client.endDate ?? "").slice(0, 10),
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      voucherType: client.type ?? "",
+      voucherDuration: client.duration != null ? String(client.duration) : "",
+      area: "",
+    });
+  }
+
+  it("shows no hint until a value really differs, even though the prefill reset the area and reformatted the dates", async () => {
+    // 저장값은 타임스탬프 형식이고, 프리필은 날짜만 남기고 area는 비워요.
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    prefillLikeClientDetail(mockClients[0] as Client);
+    await renderPage();
+
+    expect(phoneInput()).toHaveValue("010-5555-6666");
+    expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
+    expect(areaSelect()).toHaveValue("");
+    expect(within(areaSelect()).getAllByRole("option")[0]).toHaveTextContent("남동구");
+
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
+    next(); next(); next();
+    expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
+
+    submit();
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("hints on a changed phone, asks on submit, and 계약서에만 반영 skips the client update", async () => {
+    prefillLikeClientDetail(makeClient());
+    await renderPage();
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    expect(hintIn(PHONE_FIELD)).toHaveTextContent(DIFF_HINT);
+    next(); next(); next();
+    submit();
+
+    const dialog = await screen.findByRole("dialog", { name: DIFF_TITLE });
+    expect(within(dialog).getByText("연락처")).toBeInTheDocument();
+    expect(within(dialog).queryByText("제공인력 1")).toBeNull();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: CONTRACT_ONLY }));
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ customerContact: "010-9999-0000" }));
+  });
+
+  it("takes the finalized flag from the client record, not from the prefilled form values", async () => {
+    mockClients = [makeClient({ serviceRecordPeriodLocked: true })];
+    prefillLikeClientDetail(mockClients[0] as Client);
+    await renderPage();
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "260911" } });
+    submit();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    const dto = getUpdateDto();
+    expect(dto).toEqual(expect.objectContaining({ phone: "010-9999-0000" }));
+    expect(dto).not.toHaveProperty("startDate");
+    expect(dto).not.toHaveProperty("duration");
+  });
+
+  it("waits for the client list, then hints once the record arrives", async () => {
+    mockClients = undefined;
+    prefillLikeClientDetail(makeClient());
+    const { default: ContractCreationPage } = await import("./page");
+    const view = render(<ContractCreationPage />);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    expect(hintIn(PHONE_FIELD)).toBeNull();
+
+    mockClients = [makeClient()];
+    view.rerender(<ContractCreationPage />);
+    expect(hintIn(PHONE_FIELD)).toHaveTextContent(DIFF_HINT);
+  });
+
+  it("falls back to the plain update when the client is not in the list at all", async () => {
+    mockClients = [];
+    prefillLikeClientDetail(makeClient());
+    await renderPage();
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    expect(hintIn(PHONE_FIELD)).toBeNull();
+    next(); next(); next();
+    submit();
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
   });
 });

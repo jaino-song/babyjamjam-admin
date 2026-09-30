@@ -622,20 +622,36 @@ export default function ContractCreationPage() {
     setRegisteredBaseline(baseline);
   };
 
+  const buildLoadedBaseline = (client: Client): LoadedClientBaseline => ({
+    id: client.id,
+    snapshot: buildClientDiffSnapshotFromClient(
+      { ...client, birthday: normalizeBirthdayInput(clientBirthdayValue(client)) },
+      formatAreaLabel,
+    ),
+    periodLocked: client.serviceRecordPeriodLocked === true,
+  });
+
+  // 고객 상세의 "계약서 생성"처럼 스토어에 clientId가 미리 채워진 채로 들어오면 고객 선택 핸들러를 거치지 않아요.
+  // 스토어 값은 이미 폼 값으로 가공돼 있으니, 저장값은 같은 /clients 목록의 고객 레코드에서 직접 읽어요.
+  // 목록에 아직 없으면 기다리고, 끝내 없으면 기존 동작(비교 없이 저장) 그대로예요. 이번 제출에서 등록·재사용한 고객은 제외해요.
+  useEffect(() => {
+    if (clientId === null || !allClients) return;
+    if (loadedClientBaselineRef.current?.id === clientId) return;
+    if (persistedClientIdRef.current === clientId) return;
+    const storedClient = allClients.find((candidate) => candidate.id === clientId);
+    if (!storedClient) return;
+    loadedClientBaselineRef.current = buildLoadedBaseline(storedClient);
+    setRegisteredBaseline(loadedClientBaselineRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 고객이 바뀌거나 목록이 도착했을 때만 저장값을 만들어요.
+  }, [allClients, clientId]);
+
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
     setLoadedClientBaseline(selectedClientId !== null && client
-      ? {
-        id: selectedClientId,
-        snapshot: buildClientDiffSnapshotFromClient(
-          { ...client, birthday: normalizeBirthdayInput(clientBirthdayValue(client)) },
-          formatAreaLabel,
-        ),
-        periodLocked: client.serviceRecordPeriodLocked === true,
-      }
+      ? { ...buildLoadedBaseline(client), id: selectedClientId }
       : null);
     setClientId(selectedClientId);
     selectedClientRef.current = client;
