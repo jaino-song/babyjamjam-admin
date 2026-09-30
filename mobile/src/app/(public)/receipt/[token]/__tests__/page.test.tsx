@@ -55,7 +55,7 @@ describe("ReceiptLinkPage", () => {
     // verified session on any transient image hiccup, e.g. a flaky connection or a 5xx).
     async function verifyAndReachImageScreen(): Promise<HTMLImageElement> {
         const input = await screen.findByLabelText("산모님 생년월일");
-        fireEvent.change(input, { target: { value: "940315" } });
+        fireEvent.change(input, { target: { value: "19940315" } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
         return (await screen.findByRole("img", {
             name: "김산모 산모님 본인부담금 영수증",
@@ -106,8 +106,11 @@ describe("ReceiptLinkPage", () => {
         const { container } = render(<ReceiptLinkPage />);
 
         const birthdayInput = await screen.findByLabelText("산모님 생년월일");
-        expect(birthdayInput).toHaveAttribute("maxlength", "6");
-        expect(birthdayInput).toHaveAttribute("placeholder", "예) 940315");
+        expect(birthdayInput).toHaveAttribute("maxlength", "10");
+        expect(birthdayInput).toHaveAttribute("placeholder", "1994-03-15");
+        expect(birthdayInput).not.toHaveAttribute("aria-invalid", "true");
+        expect(document.getElementById(birthdayInput.getAttribute("aria-describedby")!)).toBeEmptyDOMElement();
+        expect(container.querySelector(".rcpt-helper")).toBeNull();
         expect(container.querySelector('[data-slot="srec"].srec')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="top"].top')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="body"].body')).toBeInTheDocument();
@@ -279,7 +282,7 @@ describe("ReceiptLinkPage", () => {
         const { container } = render(<ReceiptLinkPage />);
 
         const input = await screen.findByLabelText("산모님 생년월일");
-        fireEvent.change(input, { target: { value: "940315" } });
+        fireEvent.change(input, { target: { value: "19940315" } });
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
 
         const saveLink = await screen.findByRole("link", { name: "이미지 저장" });
@@ -551,7 +554,7 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("940315");
+        await reachVerifyScreenAndSubmit("19940315");
 
         await screen.findByText(/까지 확인이 잠겼습니다/);
         expect(screen.getByRole("button", { name: "확인하기" })).toBeDisabled();
@@ -566,7 +569,7 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("940315");
+        await reachVerifyScreenAndSubmit("19940315");
 
         await screen.findByRole("heading", { name: "링크 유효기간이 지났습니다" });
     });
@@ -600,9 +603,15 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("940315");
+        await reachVerifyScreenAndSubmit("19940315");
 
-        await screen.findByText("생년월일 6자리(YYMMDD)를 입력해 주세요.");
+        const input = screen.getByLabelText("산모님 생년월일");
+        const slot = document.getElementById(input.getAttribute("aria-describedby")!)!;
+        await waitFor(() => expect(slot).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요"));
+        expect(slot).toHaveClass("error");
+        expect(slot.parentElement).toHaveClass("lab-row");
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByText(/YYMMDD/)).not.toBeInTheDocument();
     });
 
     it("shows the generic error message when verify answers an unrecognised status (F2)", async () => {
@@ -614,7 +623,7 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("940315");
+        await reachVerifyScreenAndSubmit("19940315");
 
         await screen.findByText("확인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.");
     });
@@ -628,12 +637,12 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("940315");
+        await reachVerifyScreenAndSubmit("19940315");
 
         await screen.findByText("네트워크 연결을 확인해 주세요.");
     });
 
-    it("shows the format message without calling verify when the birthday is not 6 digits (F2)", async () => {
+    it("shows the format message without calling verify when the birthday is not a full date (F2)", async () => {
         let verifyCalled = false;
         global.fetch = jest.fn(async (url: unknown) => {
             const href = String(url);
@@ -646,9 +655,71 @@ describe("ReceiptLinkPage", () => {
         }) as unknown as typeof fetch;
 
         render(<ReceiptLinkPage />);
-        await reachVerifyScreenAndSubmit("19900101");
+        await reachVerifyScreenAndSubmit("940315");
 
-        await screen.findByText("생년월일 6자리(YYMMDD)를 입력해 주세요.");
+        const input = screen.getByLabelText("산모님 생년월일");
+        expect(input).toHaveValue("9403-15");
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+        expect(input).toHaveFocus();
         expect(verifyCalled).toBe(false);
+    });
+
+    it("asks for the birthday only after the submit was pressed empty", async () => {
+        global.fetch = jest.fn(async () => jsonResponse(200, STATUS_VERIFY)) as unknown as typeof fetch;
+
+        render(<ReceiptLinkPage />);
+        const input = await screen.findByLabelText("산모님 생년월일");
+        const slot = document.getElementById(input.getAttribute("aria-describedby")!)!;
+        expect(slot).toBeEmptyDOMElement();
+        fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
+        expect(slot).toHaveTextContent("산모님 생년월일을 입력해 주세요");
+    });
+
+    it("types the birthday as YYYY-MM-DD and sends a value the backend accepts", async () => {
+        const verifyBodies: unknown[] = [];
+        global.fetch = jest.fn(async (url: unknown, init?: RequestInit) => {
+            const href = String(url);
+            if (href.endsWith("/status")) return jsonResponse(200, STATUS_VERIFY);
+            if (href.endsWith("/verify")) {
+                verifyBodies.push(JSON.parse(String(init?.body)));
+                return jsonResponse(200, { ok: true, clientName: "김산모" });
+            }
+            throw new Error(`unexpected fetch: ${href}`);
+        }) as unknown as typeof fetch;
+
+        render(<ReceiptLinkPage />);
+        const input = await screen.findByLabelText("산모님 생년월일");
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: "199403" } });
+        expect(input).toHaveValue("1994-03");
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식");
+        fireEvent.change(input, { target: { value: "19940315" } });
+        expect(input).toHaveValue("1994-03-15");
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toBeEmptyDOMElement();
+        fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
+
+        await screen.findByRole("img", { name: "김산모 산모님 본인부담금 영수증" });
+        expect(verifyBodies).toEqual([{ birthday: "1994-03-15" }]);
+        // backend normalizeBirthdayInput strips non-digits and keeps the trailing six of eight digits.
+        const digits = (verifyBodies[0] as { birthday: string }).birthday.replace(/\D/g, "");
+        expect(digits.length === 8 ? digits.slice(2) : digits).toBe("940315");
+    });
+
+    it("shows the attempts left in the birthday slot when the birthday does not match", async () => {
+        global.fetch = jest.fn(async (url: unknown) => {
+            const href = String(url);
+            if (href.endsWith("/status")) return jsonResponse(200, STATUS_VERIFY);
+            if (href.endsWith("/verify")) return jsonResponse(401, { reason: "mismatch", remainingAttempts: 3 });
+            throw new Error(`unexpected fetch: ${href}`);
+        }) as unknown as typeof fetch;
+
+        render(<ReceiptLinkPage />);
+        await reachVerifyScreenAndSubmit("19940315");
+
+        const input = screen.getByLabelText("산모님 생년월일");
+        await waitFor(() => expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("일치하지 않아요 · 남은 3회"));
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        fireEvent.change(input, { target: { value: "19940316" } });
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toBeEmptyDOMElement();
     });
 });

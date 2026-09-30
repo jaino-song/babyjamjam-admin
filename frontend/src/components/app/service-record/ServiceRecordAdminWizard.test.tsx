@@ -560,6 +560,22 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { header: { momName: "이예지" } }, undefined);
     });
 
+    it("shows no message in the basic-information editor until a field is edited", () => {
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+
+        const slots = Array.from(container.querySelectorAll('[data-slot="lab-msg"]'));
+        expect(slots).toHaveLength(6);
+        for (const slot of slots) expect(slot).toBeEmptyDOMElement();
+        expect(container.querySelector(".field-helper")).toBeNull();
+
+        const birth = screen.getByLabelText(/^산모 생년월일/);
+        fireEvent.focus(birth);
+        fireEvent.change(birth, { target: { value: "1999" } });
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveClass("hint");
+    });
+
     it("shows the date reason inline, preserves the formatted invalid value, and blocks confirmation", () => {
         render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
@@ -572,7 +588,7 @@ describe("per-session administrator editing", () => {
         expect(input).toHaveAttribute("aria-describedby");
         const errorId = input.getAttribute("aria-describedby");
         expect(errorId).toBeTruthy();
-        expect(document.getElementById(errorId!)).toHaveTextContent("달력에 있는 날짜 중 1900년 1월 1일부터 오늘까지의 날짜를 입력해 주세요.");
+        expect(document.getElementById(errorId!)).toHaveTextContent("존재하지 않는 날짜예요");
         expect(document.getElementById(errorId!)).toHaveAttribute("data-component", expect.stringContaining("baby-birth"));
 
         const confirm = screen.getByRole("button", { name: "수정 확인" });
@@ -655,8 +671,8 @@ describe("per-session administrator editing", () => {
         render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
         const birth = screen.getByLabelText(/^산모 생년월일/);
-        expect(birth).toHaveAttribute("placeholder", "1999-01-01");
-        expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveAttribute("placeholder", "1999-01-01");
+        expect(birth).toHaveAttribute("placeholder", "1994-03-15");
+        expect(screen.getByLabelText(/^신생아 출생일자/)).toHaveAttribute("placeholder", "2026-09-20");
         fireEvent.change(birth, { target: { value: "19990101" } });
         expect(birth).toHaveValue("1999-01-01");
         expect(birth).not.toHaveAttribute("aria-invalid", "true");
