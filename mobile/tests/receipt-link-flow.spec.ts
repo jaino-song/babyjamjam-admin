@@ -47,14 +47,17 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.getByText("김산모")).toHaveCount(0);
     await expect(page.getByText(/010-\d{4}-\d{4}/)).toHaveCount(0);
 
-    await page.getByLabel("산모님 생년월일").fill("000000");
+    await page.getByLabel("산모님 생년월일").fill("19900101");
     await page.getByRole("button", { name: "확인하기" }).click();
-    // Next.js's built-in route announcer also carries role="alert" (always present,
-    // empty text), so scope to the page's own error element rather than the role alone.
-    await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveText("생년월일이 일치하지 않습니다. 남은 횟수 4회");
+    // The mismatch message lives in the birthday field's label-row slot (top-right), not in a
+    // step-level alert. The input auto-formats the typed digits to YYYY-MM-DD.
+    await expect(page.getByLabel("산모님 생년월일")).toHaveValue("1990-01-01");
+    await expect(page.locator('[data-slot="lab-msg"]')).toHaveText("일치하지 않아요 · 남은 4회");
+    await expect(page.getByLabel("산모님 생년월일")).toHaveAttribute("aria-invalid", "true");
+    await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveCount(0);
     await expect(page.getByText("5회 연속 틀리면 30분 동안 확인이 잠깁니다", { exact: false })).toBeVisible();
 
-    await page.getByLabel("산모님 생년월일").fill("940315");
+    await page.getByLabel("산모님 생년월일").fill("19940315");
     await page.getByRole("button", { name: "다시 확인하기" }).click();
     await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
     await expect(page.getByRole("link", { name: "이미지 저장" })).toHaveAttribute(
@@ -64,10 +67,10 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.getByText("이 링크는 발송일로부터 30일간 유효합니다.")).toBeVisible();
 });
 
-test("a six-digit birthday entry is sent to the verify BFF exactly as typed", async ({ page }) => {
-    // The public page accepts the supported YYMMDD shape and sends those six digits to the
-    // verify BFF unchanged. This pins the client request contract to the production form
-    // validation instead of relying on the backend's separate 8-digit normalization path.
+test("a typed birthday is auto-formatted and sent to the verify BFF as an ISO date", async ({ page }) => {
+    // The public page takes digits, auto-inserts the hyphens (19940315 -> 1994-03-15) and sends
+    // that ISO date to the verify BFF. This pins the client request contract to the production
+    // form validation.
     let capturedBody: unknown = null;
     await page.route(`**/api/receipt/${TOKEN}/status`, (route) => route.fulfill({ json: STATUS }));
     await page.route(`**/api/receipt/${TOKEN}/verify`, (route) => {
@@ -86,10 +89,11 @@ test("a six-digit birthday entry is sent to the verify BFF exactly as typed", as
     );
 
     await page.goto(`/receipt/${TOKEN}`);
-    await page.getByLabel("산모님 생년월일").fill("940315");
+    await page.getByLabel("산모님 생년월일").fill("19940315");
+    await expect(page.getByLabel("산모님 생년월일")).toHaveValue("1994-03-15");
     await page.getByRole("button", { name: "확인하기" }).click();
     await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
-    expect(capturedBody).toEqual({ birthday: "940315" });
+    expect(capturedBody).toEqual({ birthday: "1994-03-15" });
 });
 
 test("expired links show the expiry screen without a phone number", async ({ page }) => {

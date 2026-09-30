@@ -140,12 +140,12 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   }));
 
   await page.goto(`/service-record/${token}`);
-  const momBirth = page.getByLabel("산모 생년월일 (YYYY-MM-DD)");
-  const babyBirth = page.getByLabel("신생아 출생일자 (YYYY-MM-DD)");
-  // Both birthday placeholders are identical, so the distinct accessible
-  // labels are the only unambiguous way to target each field.
-  await expect(momBirth).toHaveAttribute("placeholder", "1999-01-01");
-  await expect(babyBirth).toHaveAttribute("placeholder", "1999-01-01");
+  const momBirth = page.getByLabel("산모 생년월일", { exact: true });
+  const babyBirth = page.getByLabel("신생아 출생일자", { exact: true });
+  // The format hint lives in the label-row slot now, so the labels carry no "(YYYY-MM-DD)"
+  // suffix and the placeholders are realistic example dates.
+  await expect(momBirth).toHaveAttribute("placeholder", "1994-03-15");
+  await expect(babyBirth).toHaveAttribute("placeholder", "2026-09-20");
   await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
   await momBirth.fill("19900101");
   await page.getByLabel("신생아 성명", { exact: true }).fill(header.babyName);
@@ -157,7 +157,12 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await page.getByRole("button", { name: "기록 시작" }).click();
-  await expect(page.getByRole("button", { name: "다음", exact: true })).toBeDisabled();
+  // 다음 stays pressable; pressing it with unanswered items shows the messages in their
+  // label-row slots instead of advancing.
+  await expect(page.locator('[data-slot="lab-msg"].error')).toHaveCount(0);
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(page.locator('[data-slot="lab-msg"].error').first()).toBeVisible();
+  await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toHaveText("신생아 기록");
   await page.getByLabel("식사").fill("3");
   await page.getByLabel("간식").fill("2");
   await page.getByRole("button", { name: "다음", exact: true }).click();
@@ -170,7 +175,8 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await formulaFeedingField.getByLabel("회당").fill("80");
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
-  await expect(page.getByRole("button", { name: "다음", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(page.locator('[data-slot="lab-msg"].error').filter({ hasText: "결제 확인을 눌러 주세요" })).toBeVisible();
   await page.getByRole("button", { name: "결제 확인 완료" }).click();
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
@@ -225,10 +231,19 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   }));
 
   await page.goto(`/service-record/${token}`);
-  const momBirth = page.getByLabel("산모 생년월일 (YYYY-MM-DD)");
-  const babyBirth = page.getByLabel("신생아 출생일자 (YYYY-MM-DD)");
-  await expect(momBirth).toHaveAttribute("placeholder", "1999-01-01");
-  await expect(babyBirth).toHaveAttribute("placeholder", "1999-01-01");
+  const momBirth = page.getByLabel("산모 생년월일", { exact: true });
+  const babyBirth = page.getByLabel("신생아 출생일자", { exact: true });
+  await expect(momBirth).toHaveAttribute("placeholder", "1994-03-15");
+  await expect(babyBirth).toHaveAttribute("placeholder", "2026-09-20");
+  // Nothing is flagged on first load; an unfinished date shows a hint while focused
+  // and a red error in the same label-row slot once the field is left.
+  const momBirthSlot = page.locator("#service-record-header-momBirth-error");
+  await expect(momBirthSlot).toHaveText("");
+  await momBirth.fill("1990");
+  await expect(momBirthSlot).toHaveText("YYYY-MM-DD 형식");
+  await momBirth.blur();
+  await expect(momBirthSlot).toHaveText("YYYY-MM-DD 형식으로 입력해 주세요");
+  await expect(momBirth).toHaveAttribute("aria-invalid", "true");
   await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
   await momBirth.fill("19900101");
   await page.getByLabel("신생아 성명", { exact: true }).fill(header.babyName);
@@ -236,6 +251,7 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   await page.getByLabel("신생아 몸무게 (kg)").fill(header.babyWeight);
   await expect(momBirth).toHaveValue(header.momBirth);
   await expect(babyBirth).toHaveValue(header.babyBirth);
+  await expect(momBirthSlot).toHaveText("");
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await expect(page.getByText("기본정보 저장에 실패했어요.", { exact: true })).toBeVisible();
