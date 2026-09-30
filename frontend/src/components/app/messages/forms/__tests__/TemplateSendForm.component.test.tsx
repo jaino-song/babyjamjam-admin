@@ -71,16 +71,20 @@ jest.mock(
       label,
       phone,
       setPhone,
+      submitted,
     }: {
       label: string;
       phone: string;
       setPhone: (v: string) => void;
+      submitted?: boolean;
     }) => (
       <input
         aria-label={label}
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
         data-testid="contact-input-phone"
+        data-submitted={String(Boolean(submitted))}
+        aria-invalid={submitted && phone === "" ? true : undefined}
       />
     ),
   }),
@@ -1000,6 +1004,35 @@ describe("B: editing name for already-queued phone updates the pill in place", (
       expect(pills[0].textContent).toContain("김영희");
       expect(pills[0].textContent).not.toContain("김철수");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A refused send hands the phone field's problem to its own label-row message.
+// ---------------------------------------------------------------------------
+describe("recipient phone message on a refused send", () => {
+  it("passes submitted to the phone field, focuses it and keeps the top alert empty", async () => {
+    const { container } = renderNameRequiredForm();
+    await queueRecipient("", "김철수");
+
+    const phoneInput = screen.getByTestId("contact-input-phone");
+    expect(phoneInput).toHaveAttribute("data-submitted", "false");
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    await waitFor(() => expect(phoneInput).toHaveAttribute("data-submitted", "true"));
+    expect(phoneInput).toHaveFocus();
+    expect(screen.queryByText("휴대 전화번호를 입력해 주세요")).not.toBeInTheDocument();
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("keeps the top alert for a problem that belongs to no single field", async () => {
+    const { container } = renderNameRequiredForm();
+    await queueRecipient("01011112222", "");
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(await screen.findByText("산모님 성함을 입력하거나 기존 고객을 선택해 주세요")).toBeInTheDocument();
   });
 });
 

@@ -576,6 +576,7 @@
       "date-format": "YYYY-MM-DD 형식으로 입력해 주세요",
       "date-invalid": "존재하지 않는 날짜예요",
       "date-range": "종료일은 시작일 이후여야 해요",
+      "date-not-before": "{date} 이후로 입력해 주세요",
       "birthday-future": "오늘 이후 날짜는 입력할 수 없어요",
       "phone-checking": "중복 확인 중이에요"
     }

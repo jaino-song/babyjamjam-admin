@@ -275,6 +275,8 @@ export function TemplateSendForm({
   const [isDraftScopeReady, setIsDraftScopeReady] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [isSmsSending, setIsSmsSending] = useState(false);
+  // Counts send attempts the form refused; a non-zero count makes every problem field show its message.
+  const [rejectedSubmitCount, setRejectedSubmitCount] = useState(0);
   const [isServiceRecordLinkSending, setIsServiceRecordLinkSending] = useState(false);
   const [isReceiptLinkSending, setIsReceiptLinkSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -1016,6 +1018,15 @@ export function TemplateSendForm({
     }
   };
 
+  // After a refused send, move focus to the first field that now shows an error.
+  useEffect(() => {
+    if (rejectedSubmitCount === 0) return;
+    document
+      .getElementById(resolvedFormId)
+      ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+      ?.focus();
+  }, [rejectedSubmitCount, resolvedFormId]);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -1029,7 +1040,13 @@ export function TemplateSendForm({
     }
 
     if (validationMessage) {
-      setFeedback({ tone: "error", message: validationMessage });
+      setRejectedSubmitCount((count) => count + 1);
+      // A recipient phone problem is explained by the phone field's own message;
+      // the top alert stays for problems that belong to no single field.
+      const isPhoneFieldProblem = requiresRecipientName
+        && Boolean(recipientName)
+        && validationMessage === recipientValidationMessage;
+      setFeedback(isPhoneFieldProblem ? null : { tone: "error", message: validationMessage });
       if (isPreparedLinkDelivery) {
         toast({ variant: "destructive", description: validationMessage });
       }
@@ -1189,8 +1206,9 @@ export function TemplateSendForm({
                     phone={phone}
                     setPhone={handlePhoneChange}
                     label="휴대 전화번호"
-                    placeholder="010-0000-0000"
+                    placeholder="010-1234-5678"
                     required
+                    submitted={rejectedSubmitCount > 0}
                   />
                 </TemplateFieldGridItem>
               </>

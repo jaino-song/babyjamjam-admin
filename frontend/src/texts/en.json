@@ -547,6 +547,7 @@
       "date-format": "Use the format YYYY-MM-DD",
       "date-invalid": "That date does not exist",
       "date-range": "End date must not be before start date",
+      "date-not-before": "Use {date} or later",
       "birthday-future": "Future dates are not allowed",
       "phone-checking": "Checking for duplicates"
     }
