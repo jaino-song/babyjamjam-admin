@@ -137,11 +137,22 @@ export function resolveContractFieldMessage({
 /**
  * Whether the customer phone would show an error once the user left the field
  * and pressed continue: empty (it is required) or not a complete number.
+ *
+ * A number the registered client already has stored is never a problem while it
+ * is unchanged (compared by digits), even when it is a legacy 10-digit mobile
+ * number the 11-digit rule would reject for a newly typed phone.
  */
-export function hasContractPhoneProblem(phone: string): boolean {
+export function hasContractPhoneProblem(phone: string, registeredPhone?: string | null): boolean {
+    if (isUnchangedRegisteredPhone(phone, registeredPhone)) return false;
     return resolveFieldMessage(
         "phone",
         { value: phone, hadValue: true, touched: true, focused: false },
         { required: true, submitted: true },
     )?.tone === "error";
+}
+
+/** The phone equals the registered client's stored phone, ignoring hyphens and spaces. */
+export function isUnchangedRegisteredPhone(phone: string, registeredPhone?: string | null): boolean {
+    const digits = phone.replace(/\D/g, "");
+    return digits !== "" && digits === (registeredPhone ?? "").replace(/\D/g, "");
 }

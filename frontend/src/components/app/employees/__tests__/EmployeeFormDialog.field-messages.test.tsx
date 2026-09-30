@@ -112,7 +112,7 @@ describe("EmployeeFormDialog inline field messages", () => {
 
     expect(screen.getByText("이름을 입력해 주세요")).toBeInTheDocument();
     expect(screen.getByText("연락처를 입력해 주세요")).toBeInTheDocument();
-    expect(screen.getByText("YYYY-MM-DD 형식으로 입력해 주세요")).toBeInTheDocument();
+    expect(screen.getByText("YYYY-MM-DD로 입력해 주세요")).toBeInTheDocument();
     expect(screen.getByText("근무 지역을 선택해 주세요")).toBeInTheDocument();
     expect(document.activeElement).toBe(screen.getByLabelText(/이름/));
     expect(mockCreateEmployeeMutateAsync).not.toHaveBeenCalled();

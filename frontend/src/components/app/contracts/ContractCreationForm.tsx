@@ -1798,7 +1798,7 @@ export const ContractCreationForm = ({
 
   // 단계의 첫 문제 필드. 연락처는 ContactInput 안에서 검증하므로 여기서는 같은 규칙으로 판정만 해요.
   const getFirstProblemTarget = (step: number): ContractFocusTarget | null => {
-    if (step === CONTRACT_CUSTOMER_INFO_STEP_INDEX && hasContractPhoneProblem(phone)) return "phone";
+    if (step === CONTRACT_CUSTOMER_INFO_STEP_INDEX && hasContractPhoneProblem(phone, registeredSnapshot?.phone.value)) return "phone";
     return CONTRACT_INPUT_FIELDS_BY_STEP[step]?.find((field) => resolveContractField(field, true)?.tone === "error") ?? null;
   };
 
@@ -1908,6 +1908,7 @@ export const ContractCreationForm = ({
             labelTrailing={registeredDiffHint("phone")}
             labelTrailingId={getRegisteredValueDiffHintId("phone")}
             required
+            acceptedPhone={registeredSnapshot?.phone.value}
             submitted={attemptedSteps.includes(CONTRACT_CUSTOMER_INFO_STEP_INDEX)}
           />
           <TitleTextInputMolecule

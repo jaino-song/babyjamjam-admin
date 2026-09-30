@@ -9,6 +9,7 @@ import {
   FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
   FieldMessageText,
 } from "@/components/app/ui/field-message";
+import { isUnchangedRegisteredPhone } from "@/components/app/contracts/contract-field-messages";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import { toFieldMessageView, type FieldMessageView } from "@/lib/forms/field-message-text";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -49,6 +50,11 @@ interface ContactInputProps {
    */
   submitted?: boolean;
   /**
+   * A stored number the form accepts as it is (a registered client's legacy
+   * phone). While the field equals it (by digits) no format hint or error shows.
+   */
+  acceptedPhone?: string | null;
+  /**
    * A message the parent wants in the same slot. It competes with the field's
    * own messages by priority: error, then hint, then `labelTrailing`.
    */
@@ -69,6 +75,7 @@ export const ContactInput = ({
   labelTrailing,
   labelTrailingId,
   submitted = false,
+  acceptedPhone = null,
   externalMessage = null,
 }: ContactInputProps) => {
   const locale = useLocale();
@@ -76,6 +83,17 @@ export const ContactInput = ({
   const fields = useFieldInputStates<"phone">();
   const messageId = useId();
   const formattedPhone = formatKoreanPhoneNumber(phone);
+  // Whether the field currently holds a value it knows about (typed or passed
+  // in). An empty `phone` while this is set means the parent cleared it, not the
+  // user, so the field starts over instead of reporting "required".
+  const [hasKnownValue, setHasKnownValue] = useState(phone !== "");
+  if (phone !== "" && !hasKnownValue) {
+    setHasKnownValue(true);
+  } else if (phone === "" && hasKnownValue) {
+    setHasKnownValue(false);
+    fields.reset();
+    setHasRejectedInput(false);
+  }
 
   useEffect(() => {
     if (phone && formattedPhone !== phone) {
@@ -89,6 +107,7 @@ export const ContactInput = ({
     if (PHONE_REGEX.test(value)) {
       const nextPhone = formatKoreanPhoneNumber(value);
       fields.onChange("phone", formattedPhone, nextPhone);
+      setHasKnownValue(nextPhone !== "");
       setPhone(nextPhone);
       setHasRejectedInput(false);
     } else {
@@ -96,11 +115,14 @@ export const ContactInput = ({
     }
   };
 
-  const fieldMessage = toFieldMessageView(
-    locale,
-    resolveFieldMessage("phone", fields.stateOf("phone", formattedPhone), { required, submitted }),
-    label,
-  );
+  const isAcceptedPhone = isUnchangedRegisteredPhone(formattedPhone, acceptedPhone);
+  const fieldMessage = isAcceptedPhone
+    ? null
+    : toFieldMessageView(
+        locale,
+        resolveFieldMessage("phone", fields.stateOf("phone", formattedPhone), { required, submitted }),
+        label,
+      );
   const candidates: Array<FieldMessageView | null> = [
     hasRejectedInput ? { tone: "error", text: PHONE_FORMAT_ERROR_MESSAGE } : null,
     fieldMessage?.tone === "error" ? fieldMessage : null,

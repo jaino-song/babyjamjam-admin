@@ -122,6 +122,38 @@ describe("ContactInput", () => {
       expect(screen.getByText("전화번호를 입력해 주세요")).toBeInTheDocument();
     });
 
+    it("forgets the old value when the parent clears the phone, but still reports a user-typed clear", () => {
+      function ClearableContactInput() {
+        const [phone, setPhone] = useState("");
+        return (
+          <>
+            <ContactInput phone={phone} setPhone={setPhone} label="전화번호" placeholder="010-1234-5678" required />
+            <button type="button" onClick={() => setPhone("")}>
+              parent clear
+            </button>
+          </>
+        );
+      }
+      render(<ClearableContactInput />);
+      const input = screen.getByLabelText(/전화번호/);
+
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: "01012345678" } });
+      fireEvent.blur(input);
+      expect(input).toHaveValue("010-1234-5678");
+
+      fireEvent.click(screen.getByRole("button", { name: "parent clear" }));
+
+      expect(input).toHaveValue("");
+      expect(screen.queryByText("전화번호를 입력해 주세요")).not.toBeInTheDocument();
+      expect(input).not.toHaveAttribute("aria-invalid");
+
+      fireEvent.change(input, { target: { value: "010" } });
+      fireEvent.change(input, { target: { value: "" } });
+
+      expect(screen.getByText("전화번호를 입력해 주세요")).toBeInTheDocument();
+    });
+
     it("reports a required empty field once the form was submitted", () => {
       const { rerender } = render(
         <ContactInput phone="" setPhone={jest.fn()} label="전화번호" placeholder="010-1234-5678" required />,

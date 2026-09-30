@@ -96,6 +96,8 @@ const WIZARD_INPUT_FIELD_CONFIG: Record<WizardInputField, { kind: FieldKind; lab
 
 /** Listed in form order: the first one with a problem receives focus on submit. */
 const WIZARD_BASIC_FIELDS: readonly WizardInputField[] = ["name", "dueDate", "phone", "birthday", "address"];
+/** The employee registration form's inputs, in form order. */
+const EMPLOYEE_REGISTRATION_FIELDS: readonly WizardInputField[] = ["employeeName", "employeePhone"];
 const WIZARD_BASE = "desktop_chat_page_wizard-registration";
 
 /**
@@ -263,6 +265,12 @@ export function ClientRegistrationWizard({
         && !isEmployeesFetching
         && !isEmployeeRetrying;
 
+    // A one-character name has no inline message, so it (like work in flight) keeps the button disabled.
+    const isEmployeeRegistrationBlocked = employeeName.trim().length < 2
+        || !employeeWorkArea
+        || isEmployeesFetching
+        || isEmployeeRetrying;
+
     useEffect(() => {
         if (isRegisteringEmployee && (matchingEmployees.length > 0 || isEmployeesError)) {
             setIsRegisteringEmployee(false);
@@ -364,20 +372,20 @@ export function ClientRegistrationWizard({
         (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
     );
 
-    const canGoNext = (() => {
-        if (activeStep === 0) {
-            return !hasBasicsProblem && !isEmployeeLookupBlocked && !hasAmbiguousEmployeeMatch;
-        }
-        if (activeStep === 1) {
-            if (!voucherClient) return true;
-            return isVoucherInfoComplete;
-        }
-        return true;
+    // Field problems never disable the button: pressing it shows every problem
+    // field's message and focuses the first one. Only lookup work in flight (or an
+    // employee choice the user still has to make) and the voucher step's selects,
+    // which have no inline message, keep it disabled.
+    const isNextBlocked = (() => {
+        if (activeStep === 0) return isEmployeeLookupBlocked || hasAmbiguousEmployeeMatch;
+        if (activeStep === 1) return voucherClient && !isVoucherInfoComplete;
+        return false;
     })();
 
     const handleNext = () => {
-        if (!canGoNext) {
-            const problemField = activeStep === 0 ? getFirstProblemField() : undefined;
+        if (isNextBlocked) return;
+        if (activeStep === 0 && hasBasicsProblem) {
+            const problemField = getFirstProblemField();
             if (problemField) {
                 fields.setSubmitted(true);
                 focusField(problemField);
@@ -516,7 +524,16 @@ export function ClientRegistrationWizard({
     };
 
     const handleEmployeeSubmit = async () => {
-        if (!canRegisterEmployee) return;
+        if (!canRegisterEmployee) {
+            const problemField = EMPLOYEE_REGISTRATION_FIELDS.find(
+                (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
+            );
+            if (problemField) {
+                fields.setSubmitted(true);
+                focusField(problemField);
+            }
+            return;
+        }
 
         setIsSubmitting(true);
         try {
@@ -875,6 +892,10 @@ export function ClientRegistrationWizard({
                 {activeStep < steps.length - 1 ? (
                     <Button
                         onClick={() => {
+                            if (!isRegisteringEmployee && activeStep === 0 && hasBasicsProblem) {
+                                handleNext();
+                                return;
+                            }
                             if (!isRegisteringEmployee && needsEmployeeRegistration) {
                                 setIsRegisteringEmployee(true);
                                 return;
@@ -886,8 +907,8 @@ export function ClientRegistrationWizard({
                             handleNext();
                         }}
                         disabled={isRegisteringEmployee
-                            ? !canRegisterEmployee || isSubmitting
-                            : !canGoNext || isSubmitting}
+                            ? isEmployeeRegistrationBlocked || isSubmitting
+                            : isNextBlocked || isSubmitting}
                     >
                         {isRegisteringEmployee ? "제공인력 등록" : "다음"}
                     </Button>
@@ -895,7 +916,6 @@ export function ClientRegistrationWizard({
                     <Button
                         onClick={handleSubmit}
                         disabled={isSubmitting
-                            || !name.trim()
                             || Boolean(employeeName.trim()
                                 && createdEmployeeId === null
                                 && (isEmployeesFetching || isEmployeesError || isEmployeeRetrying || hasInvalidEmployeeSelection))
