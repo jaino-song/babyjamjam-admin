@@ -153,7 +153,7 @@ function FormField({
       {...props}
       data-component={dataComponent}
       data-source-component={FORM_FIELD_SOURCE_COMPONENT}
-      className={cn("grid gap-[calc(7px*var(--glint-ui-scale,1))]", className)}
+      className={cn("grid content-start gap-[calc(7px*var(--glint-ui-scale,1))]", className)}
     >
       {labelAccessory ? (
         <div
