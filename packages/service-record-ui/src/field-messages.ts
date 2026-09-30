@@ -9,7 +9,7 @@ export type SlotMessage = { tone: "hint" | "error"; text: string };
 
 export const FIELD_COPY = {
     phoneHint: "010-1234-5678 형식",
-    phoneError: "010-1234-5678 형식으로 입력해 주세요",
+    phoneError: "010-1234-5678로 입력해 주세요",
     dateHint: "YYYY-MM-DD 형식",
     dateError: "YYYY-MM-DD로 입력해 주세요",
     dateInvalid: "존재하지 않는 날짜예요",

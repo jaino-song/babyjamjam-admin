@@ -11,7 +11,7 @@ import {
 // 여기서는 그 코드에 이 화면의 짧은 문구를 붙여요. 문구는 라벨 줄 한 줄(360px)에 들어가야 해요.
 
 export const PHONE_FORMAT_HINT = "010-1234-5678 형식";
-export const PHONE_FORMAT_ERROR = "010-1234-5678 형식으로 입력해 주세요";
+export const PHONE_FORMAT_ERROR = "010-1234-5678로 입력해 주세요";
 export const DATE_FORMAT_HINT = "YYYY-MM-DD 형식";
 export const DATE_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
 export const DATE_INVALID_ERROR = "존재하지 않는 날짜예요";

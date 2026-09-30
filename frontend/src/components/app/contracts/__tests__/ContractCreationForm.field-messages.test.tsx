@@ -279,7 +279,7 @@ describe("ContractCreationForm — inline field messages", () => {
     expect(onActiveStepChange).not.toHaveBeenCalled();
     expect(phoneInput).toHaveFocus();
     fireEvent.blur(phoneInput);
-    const error = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+    const error = screen.getByText("010-1234-5678로 입력해 주세요");
     expect(error).toHaveAttribute("data-slot", "field-error-message");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
   });

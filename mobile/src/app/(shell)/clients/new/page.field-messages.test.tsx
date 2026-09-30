@@ -120,7 +120,7 @@ describe("mobile client wizard field messages", () => {
     fireEvent.change(field("phone"), { target: { value: "0101234" } });
     expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식");
     fireEvent.blur(field("phone"));
-    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(field("phone")).toHaveAttribute("aria-invalid", "true");
   });
 
@@ -137,7 +137,7 @@ describe("mobile client wizard field messages", () => {
     expect(field("phone")).toHaveFocus();
     expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식");
     fireEvent.blur(field("phone"));
-    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(field("phone")).toHaveAttribute("aria-invalid", "true");
     expect(useClientWizardStore.getState().currentStep).toBe(0);
     expect(api.get).not.toHaveBeenCalled();

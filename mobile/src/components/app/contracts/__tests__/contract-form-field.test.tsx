@@ -21,13 +21,13 @@ describe("ContractFormField", () => {
         dataComponent="test_field"
         label="연락처"
         htmlFor="phone"
-        message={{ slot: "field-error-message", id: "phone-message", text: "010-1234-5678 형식으로 입력해 주세요" }}
+        message={{ slot: "field-error-message", id: "phone-message", text: "010-1234-5678로 입력해 주세요" }}
       >
         <input id="phone" aria-describedby="phone-message" />
       </ContractFormField>,
     );
 
-    const message = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+    const message = screen.getByText("010-1234-5678로 입력해 주세요");
     expect(message.closest('[data-component="test_field_label-row"]')).not.toBeNull();
     expect(message).toHaveAttribute("id", "phone-message");
     expect(message).toHaveAttribute("aria-live", "polite");

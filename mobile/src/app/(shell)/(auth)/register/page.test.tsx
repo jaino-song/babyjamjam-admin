@@ -132,7 +132,7 @@ describe("RegisterPage", () => {
       expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
 
       await user.tab();
-      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
       expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 

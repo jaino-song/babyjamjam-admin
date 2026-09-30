@@ -143,7 +143,7 @@ describe("ClientRegistrationWizard field messages", () => {
         expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
 
         fireEvent.blur(phone);
-        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
         expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 
@@ -181,7 +181,7 @@ describe("ClientRegistrationWizard field messages", () => {
 
         expect(slotOf(screen.getByLabelText("이름"))).toHaveTextContent("이름을 입력해 주세요");
         expect(slotOf(screen.getByLabelText("출산 예정일"))).toHaveTextContent("출산 예정일을 입력해 주세요");
-        expect(slotOf(screen.getByLabelText("연락처"))).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(slotOf(screen.getByLabelText("연락처"))).toHaveTextContent("010-1234-5678로 입력해 주세요");
         expect(slotOf(screen.getByLabelText("생년월일"))).toHaveTextContent("생년월일을 입력해 주세요");
         expect(slotOf(screen.getByLabelText("주소"))).toHaveTextContent("주소를 입력해 주세요");
         expect(screen.getByLabelText("이름")).toHaveFocus();

@@ -748,7 +748,7 @@ describe("ClientRegistrationWizard", () => {
 
             fireEvent.blur(phoneInput);
             const slot = slotOf(container, "phone");
-            expect(slot).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(slot).toHaveTextContent("010-1234-5678로 입력해 주세요");
             expect(slot).toHaveAttribute("data-slot", "field-error-message");
             expect(slot).toHaveAttribute("aria-live", "polite");
             expect(phoneInput).toHaveAttribute("aria-invalid", "true");
@@ -831,7 +831,7 @@ describe("ClientRegistrationWizard", () => {
             expect(screen.getByLabelText("연락처")).toHaveFocus();
             expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678 형식");
             fireEvent.blur(screen.getByLabelText("연락처"));
-            expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678로 입력해 주세요");
             expect(slotOf(container, "address")).toHaveTextContent("주소를 입력해 주세요");
             expect(screen.queryByRole("checkbox", { name: "바우처 대상" })).not.toBeInTheDocument();
 
@@ -936,7 +936,7 @@ describe("ClientRegistrationWizard", () => {
             fireEvent.focus(employeePhone);
             fireEvent.change(employeePhone, { target: { value: "0101234" } });
             fireEvent.blur(employeePhone);
-            expect(slotOf(container, "employee-phone")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(slotOf(container, "employee-phone")).toHaveTextContent("010-1234-5678로 입력해 주세요");
             const registerButton = screen.getByRole("button", { name: "제공인력 등록" });
             expect(registerButton).toBeEnabled();
             fireEvent.click(registerButton);

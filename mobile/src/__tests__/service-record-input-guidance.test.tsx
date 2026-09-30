@@ -237,7 +237,7 @@ describe("employee service record phone step", () => {
         expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식");
         expect(slotOf(phone)).toHaveClass("hint");
         fireEvent.blur(phone);
-        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
         expect(phone).toHaveAttribute("aria-invalid", "true");
         rerender(<ServiceRecordWizard {...phoneProps({ phone: "010-123-4567" })} />);
         expect(slotOf(phone)).toBeEmptyDOMElement();
@@ -274,7 +274,7 @@ describe("employee service record phone step", () => {
         expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식");
         expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
         fireEvent.blur(phone);
-        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
         expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 });

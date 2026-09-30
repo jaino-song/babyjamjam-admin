@@ -105,7 +105,7 @@ describe("RegisterPageContent field messages", () => {
     expect(slotOf(container, "전화번호")).toHaveTextContent("010-1234-5678 형식");
     expect(slotOf(container, "전화번호")).not.toHaveTextContent("입력해 주세요");
     fireEvent.blur(phoneInput);
-    expect(slotOf(container, "전화번호")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(container, "전화번호")).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
 
     fireEvent.focus(birthDateInput);

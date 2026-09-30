@@ -63,7 +63,7 @@ describe("mobile employee wizard field messages", () => {
     fireEvent.change(field("employee-phone"), { target: { value: "0101234" } });
     expect(slotOf(field("employee-phone"))).toHaveTextContent("010-1234-5678 형식");
     fireEvent.blur(field("employee-phone"));
-    expect(slotOf(field("employee-phone"))).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(field("employee-phone"))).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(field("employee-phone")).toHaveAttribute("aria-invalid", "true");
   });
 

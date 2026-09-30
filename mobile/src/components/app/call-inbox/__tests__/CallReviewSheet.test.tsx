@@ -513,7 +513,7 @@ describe("CallReviewSheet — field messages", () => {
       expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
 
       await user.tab();
-      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
       expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 
@@ -625,7 +625,7 @@ describe("CallReviewSheet — field messages", () => {
       await user.clear(phone);
       await user.type(phone, "0101234");
       await user.tab();
-      expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      expect(slotOf(phone)).toHaveTextContent("010-1234-5678로 입력해 주세요");
 
       await user.click(screen.getByRole("button", { name: /변경 적용/ }));
       expect(mockConfirmMutateAsync).not.toHaveBeenCalled();

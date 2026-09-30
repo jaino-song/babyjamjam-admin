@@ -242,7 +242,7 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   await momBirth.fill("1990");
   await expect(momBirthSlot).toHaveText("YYYY-MM-DD 형식");
   await momBirth.blur();
-  await expect(momBirthSlot).toHaveText("YYYY-MM-DD 형식으로 입력해 주세요");
+  await expect(momBirthSlot).toHaveText("YYYY-MM-DD로 입력해 주세요");
   await expect(momBirth).toHaveAttribute("aria-invalid", "true");
   await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
   await momBirth.fill("19900101");

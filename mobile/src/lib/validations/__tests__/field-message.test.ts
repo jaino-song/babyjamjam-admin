@@ -36,14 +36,14 @@ describe("resolveSlotMessage", () => {
     expect(resolveSlotMessage("ko", phone, state("0101", { focused: true }), { submitted: false }))
       .toEqual({ text: "010-1234-5678 형식", tone: "muted" });
     expect(resolveSlotMessage("ko", phone, state("0101", { touched: true }), { submitted: false }))
-      .toEqual({ text: "010-1234-5678 형식으로 입력해 주세요", tone: "err" });
+      .toEqual({ text: "010-1234-5678로 입력해 주세요", tone: "err" });
   });
 
   it("treats a landline as incomplete only when the form needs a mobile number", () => {
     const untouched = state("031-123-4567", { touched: true });
     expect(resolveSlotMessage("ko", phone, untouched, { submitted: false })).toBeNull();
     expect(resolveSlotMessage("ko", mobilePhone, untouched, { submitted: false }))
-      .toEqual({ text: "010-1234-5678 형식으로 입력해 주세요", tone: "err" });
+      .toEqual({ text: "010-1234-5678로 입력해 주세요", tone: "err" });
     expect(resolveSlotMessage("ko", mobilePhone, state("031-123-4567", { focused: true }), { submitted: false }))
       .toEqual({ text: "010-1234-5678 형식", tone: "muted" });
     expect(resolveSlotMessage("ko", mobilePhone, state("010-1234-5678", { touched: true }), { submitted: false }))

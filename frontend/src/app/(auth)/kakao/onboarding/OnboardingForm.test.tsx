@@ -46,7 +46,7 @@ describe("OnboardingForm field messages", () => {
 
     fireEvent.blur(phoneInput);
     const slot = slotOf(container, "전화번호");
-    expect(slot).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slot).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(slot).toHaveAttribute("data-slot", "field-error-message");
     expect(slot).toHaveAttribute("aria-live", "polite");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");

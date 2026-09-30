@@ -446,7 +446,7 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
 
     expect(onActiveStepChange).toHaveBeenCalledWith(1);
     expect(phoneInput).not.toHaveAttribute("aria-invalid");
-    expect(screen.queryByText("010-1234-5678 형식으로 입력해 주세요")).not.toBeInTheDocument();
+    expect(screen.queryByText("010-1234-5678로 입력해 주세요")).not.toBeInTheDocument();
 
     onActiveStepChange.mockClear();
     fireEvent.change(phoneInput, { target: { value: "011-123-456" } });

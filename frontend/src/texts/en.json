@@ -542,7 +542,7 @@
     "validation": {
       "required": "Enter {label}",
       "phone-format-hint": "Format: 010-1234-5678",
-      "phone-format": "Use the format 010-1234-5678",
+      "phone-format": "Use 010-1234-5678",
       "date-format-hint": "Format: YYYY-MM-DD",
       "date-format": "Use YYYY-MM-DD",
       "date-invalid": "That date does not exist",

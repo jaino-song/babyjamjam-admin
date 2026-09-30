@@ -102,7 +102,7 @@ describe("EmployeeFormDialog field messages", () => {
     expect(phoneInput()).not.toHaveAttribute("aria-invalid", "true");
 
     fireEvent.blur(phoneInput());
-    expect(slotOf(phoneInput())).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(phoneInput())).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(phoneInput()).toHaveAttribute("aria-invalid", "true");
   });
 
@@ -111,7 +111,7 @@ describe("EmployeeFormDialog field messages", () => {
 
     fireEvent.change(phoneInput(), { target: { value: "0311234567" } });
     fireEvent.blur(phoneInput());
-    expect(slotOf(phoneInput())).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(slotOf(phoneInput())).toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(phoneInput()).toHaveAttribute("aria-invalid", "true");
   });
 

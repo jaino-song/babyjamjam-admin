@@ -659,7 +659,7 @@ describe("contract field messages on the customer step", () => {
     expect(screen.getByText("010-1234-5678 형식")).toBeInTheDocument();
 
     fireEvent.blur(phone);
-    const error = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+    const error = screen.getByText("010-1234-5678로 입력해 주세요");
     expect(error.closest('[data-component$="_label-row"]')).not.toBeNull();
     expect(error).toHaveAttribute("aria-live", "polite");
     expect(phone).toHaveAttribute("aria-invalid", "true");

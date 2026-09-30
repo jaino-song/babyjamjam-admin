@@ -95,7 +95,7 @@ describe("EmployeeFormDialog inline field messages", () => {
 
     fireEvent.blur(phone);
 
-    const message = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+    const message = screen.getByText("010-1234-5678로 입력해 주세요");
     expect(screen.queryByText("연락처를 입력해 주세요")).not.toBeInTheDocument();
     expect(phone).toHaveAttribute("aria-invalid", "true");
     expect(phone).toHaveAttribute("aria-describedby", message.id);

@@ -1054,7 +1054,7 @@ describe("recipient phone message on a refused send", () => {
     fireEvent.submit(container.querySelector("form") as HTMLFormElement);
 
     expect(await screen.findByTestId("autocomplete-message-휴대 전화번호"))
-      .toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      .toHaveTextContent("010-1234-5678로 입력해 주세요");
     expect(screen.queryByText("휴대 전화번호 형식이 올바르지 않아요")).not.toBeInTheDocument();
   });
 

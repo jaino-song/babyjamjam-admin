@@ -102,7 +102,7 @@ describe("ContactInput", () => {
 
       fireEvent.blur(input);
 
-      const error = screen.getByText("010-1234-5678 형식으로 입력해 주세요");
+      const error = screen.getByText("010-1234-5678로 입력해 주세요");
       expect(error.compareDocumentPosition(input)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(input).toHaveAttribute("aria-invalid", "true");
       expect(input).toHaveAttribute("aria-describedby", error.id);

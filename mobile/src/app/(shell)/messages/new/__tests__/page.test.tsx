@@ -844,7 +844,7 @@ describe("NewMessagePage", () => {
       fireEvent.keyDown(receiverInput, { key: "Enter" });
 
       await waitFor(() => {
-        expect(receiverSlot()).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(receiverSlot()).toHaveTextContent("010-1234-5678로 입력해 주세요");
       });
       expect(screen.queryByText(/기존 고객이 없으면/)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /수신자 제거/ })).not.toBeInTheDocument();
@@ -1581,7 +1581,7 @@ describe("NewMessagePage", () => {
       expect(receiverInput).not.toHaveAttribute("aria-invalid", "true");
 
       fireEvent.blur(receiverInput);
-      expect(receiverSlot()).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+      expect(receiverSlot()).toHaveTextContent("010-1234-5678로 입력해 주세요");
       expect(receiverInput).toHaveAttribute("aria-invalid", "true");
     });
 
