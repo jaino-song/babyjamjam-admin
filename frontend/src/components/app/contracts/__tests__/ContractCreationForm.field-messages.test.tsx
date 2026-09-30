@@ -213,7 +213,7 @@ describe("ContractCreationForm — inline field messages", () => {
     expect(dueDateInput).not.toHaveAttribute("aria-invalid");
 
     fireEvent.blur(dueDateInput);
-    const error = screen.getByText("YYYY-MM-DD 형식으로 입력해 주세요");
+    const error = screen.getByText("YYYY-MM-DD로 입력해 주세요");
     expect(error).toHaveAttribute("data-slot", "field-error-message");
     expect(error).toHaveClass("truncate");
     // The message sits in the label row, above the input.
@@ -240,7 +240,7 @@ describe("ContractCreationForm — inline field messages", () => {
     expect(screen.getByLabelText("출산일")).toHaveAttribute("aria-invalid", "true");
     fireEvent.blur(screen.getByLabelText("생년월일"));
     expect(screen.getByLabelText("생년월일")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByText("YYYY-MM-DD 형식으로 입력해 주세요")).toBeInTheDocument();
+    expect(screen.getByText("YYYY-MM-DD로 입력해 주세요")).toBeInTheDocument();
   });
 
   it("advances once every field on the step is fine", () => {
@@ -260,7 +260,7 @@ describe("ContractCreationForm — inline field messages", () => {
 
     fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "29990101" } });
 
-    const error = screen.getByText("오늘 이후 날짜는 입력할 수 없어요");
+    const error = screen.getByText("미래 날짜는 입력할 수 없어요");
     expect(error).toHaveAttribute("data-slot", "field-error-message");
     expect(screen.getByLabelText("생년월일")).toHaveAttribute("aria-invalid", "true");
   });

@@ -53,7 +53,20 @@ describe("OnboardingForm field messages", () => {
     expect(phoneInput).toHaveAttribute("aria-describedby", "전화번호-error");
     // The message shares the label row; nothing renders below the input.
     expect(slot?.closest('[data-component="desktop_auth_form-field_label-row"]')).not.toBeNull();
-    expect(screen.getByRole("button", { name: /가입 완료/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /가입 완료/ })).toBeEnabled();
+  });
+
+  it("keeps the submit button enabled for field problems and shows them all on press", () => {
+    const { container } = renderForm();
+    const submit = screen.getByRole("button", { name: /가입 완료/ });
+    expect(submit).toBeEnabled();
+
+    fireEvent.click(submit);
+
+    expect(mockCompleteKakaoOnboarding).not.toHaveBeenCalled();
+    expect(slotOf(container, "전화번호")).toHaveTextContent("전화번호를 입력해 주세요");
+    expect(slotOf(container, "생년월일")).toHaveTextContent("생년월일을 입력해 주세요");
+    expect(screen.getByLabelText("전화번호")).toHaveFocus();
   });
 
   it("types a birth date as digits and shows the date format error for a partial date after blur", () => {
@@ -66,7 +79,7 @@ describe("OnboardingForm field messages", () => {
     expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD 형식");
 
     fireEvent.blur(birthDateInput);
-    expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     expect(birthDateInput).toHaveAttribute("aria-invalid", "true");
 
     fireEvent.change(birthDateInput, { target: { value: "19580303" } });
@@ -82,7 +95,7 @@ describe("OnboardingForm field messages", () => {
     expect(slotOf(container, "전화번호")).toHaveTextContent("전화번호를 입력해 주세요");
 
     fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "29990101" } });
-    expect(slotOf(container, "생년월일")).toHaveTextContent("오늘 이후 날짜는 입력할 수 없어요");
+    expect(slotOf(container, "생년월일")).toHaveTextContent("미래 날짜는 입력할 수 없어요");
   });
 
   it("submits a complete form without any message", async () => {

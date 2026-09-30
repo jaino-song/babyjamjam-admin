@@ -544,11 +544,11 @@
       "phone-format-hint": "Format: 010-1234-5678",
       "phone-format": "Use the format 010-1234-5678",
       "date-format-hint": "Format: YYYY-MM-DD",
-      "date-format": "Use the format YYYY-MM-DD",
+      "date-format": "Use YYYY-MM-DD",
       "date-invalid": "That date does not exist",
       "date-range": "End date must not be before start date",
       "date-not-before": "Use {date} or later",
-      "birthday-future": "Future dates are not allowed",
+      "birthday-future": "No future dates allowed",
       "phone-checking": "Checking for duplicates"
     }
   }

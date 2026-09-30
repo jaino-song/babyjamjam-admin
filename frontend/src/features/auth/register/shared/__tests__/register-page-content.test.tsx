@@ -113,7 +113,7 @@ describe("RegisterPageContent field messages", () => {
     expect(birthDateInput).toHaveValue("1958-03");
     expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD 형식");
     fireEvent.blur(birthDateInput);
-    expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(slotOf(container, "생년월일")).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     expect(screen.getByRole("button", { name: "회원가입" })).toBeDisabled();
   });
 

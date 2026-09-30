@@ -424,6 +424,40 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
     return input;
   }
 
+  it("lets a registered client's legacy 10-digit phone through step 1 until the number is edited", () => {
+    const onActiveStepChange = jest.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <ContractCreationForm
+          initialClient={{ ...BASE_CLIENT, phone: "011-123-4567" }}
+          activeStep={CONTACT_STEP_INDEX}
+          onActiveStepChange={onActiveStepChange}
+        />
+      </QueryClientProvider>,
+    );
+    const phoneInput = queryInput(container, PHONE_SELECTOR);
+
+    fireEvent.focus(phoneInput);
+    fireEvent.blur(phoneInput);
+    fireEvent.click(screen.getByTestId("contract-creation-next"));
+
+    expect(onActiveStepChange).toHaveBeenCalledWith(1);
+    expect(phoneInput).not.toHaveAttribute("aria-invalid");
+    expect(screen.queryByText("010-1234-5678 형식으로 입력해 주세요")).not.toBeInTheDocument();
+
+    onActiveStepChange.mockClear();
+    fireEvent.change(phoneInput, { target: { value: "011-123-456" } });
+    fireEvent.click(screen.getByTestId("contract-creation-next"));
+
+    expect(onActiveStepChange).not.toHaveBeenCalled();
+    expect(phoneInput).toHaveFocus();
+    fireEvent.blur(phoneInput);
+    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+  });
+
   it("shows the hint on the phone field only while it differs from the registered number", () => {
     const { container } = renderExistingClient(BASE_CLIENT, CONTACT_STEP_INDEX);
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();

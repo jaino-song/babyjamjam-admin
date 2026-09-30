@@ -11,7 +11,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
-import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
+import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
+import { ClientAutocomplete, type ClientAutocompleteLabelMessage } from "@/components/app/clients/ClientAutocomplete";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,9 @@ import {
   SMS_BYTE_LIMIT,
 } from "@/lib/message/byte-length";
 import { cn } from "@/lib/utils";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import { toFieldMessageView } from "@/lib/forms/field-message-text";
+import { useLocale } from "@/providers/LocaleProvider";
 import { useFormStore } from "@/stores/form-store";
 import { syncMessageDraftScope } from "@/stores/message-draft-scope";
 import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
@@ -277,6 +281,10 @@ export function TemplateSendForm({
   const [isSmsSending, setIsSmsSending] = useState(false);
   // Counts send attempts the form refused; a non-zero count makes every problem field show its message.
   const [rejectedSubmitCount, setRejectedSubmitCount] = useState(0);
+  const locale = useLocale();
+  // Interaction flags for the phone field of the autocomplete layouts.
+  const phoneFields = useFieldInputStates<"phone">();
+  const resetPhoneFields = phoneFields.reset;
   const [isServiceRecordLinkSending, setIsServiceRecordLinkSending] = useState(false);
   const [isReceiptLinkSending, setIsReceiptLinkSending] = useState(false);
   const [isCheckingDuplicate, setIsCheckingDuplicate] = useState(false);
@@ -600,6 +608,7 @@ export function TemplateSendForm({
   };
 
   const handlePhoneChange = (value: string) => {
+    phoneFields.onChange("phone", phone, value);
     acceptedCurrentPhoneRef.current = null;
     setSelectedClientId(null);
     setClientId(null);
@@ -616,6 +625,9 @@ export function TemplateSendForm({
     setClientId(null);
     setName("");
     setPhone("");
+    // The recipient was cleared by the form, not by the user: start the field over.
+    resetPhoneFields();
+    setRejectedSubmitCount(0);
     if (clearFeedback) {
       clearFeedbackUnlessSmsLocked();
     }
@@ -660,6 +672,24 @@ export function TemplateSendForm({
     </div>
   ) : null;
 
+  // The phone field of the autocomplete layouts shows its own problems in its
+  // label row instead of the top alert (recipients already queued make it optional).
+  const phoneSlotMessage: ClientAutocompleteLabelMessage | null = (() => {
+    const submitted = rejectedSubmitCount > 0 && !hasQueuedRecipients;
+    const resolved = toFieldMessageView(
+      locale,
+      resolveFieldMessage("phone", phoneFields.stateOf("phone", formattedRecipientPhone), {
+        required: !hasQueuedRecipients,
+        submitted,
+      }),
+      "휴대 전화번호",
+    );
+    if (resolved && resolved.tone !== "ok") return { tone: resolved.tone, text: resolved.text };
+    return submitted && recipientValidationMessage
+      ? { tone: "error", text: recipientValidationMessage }
+      : null;
+  })();
+
   const phoneAutocompleteField = (
     <ClientAutocomplete
       data-component="desktop_messages_sections_template-send-form_phone-autocomplete"
@@ -672,6 +702,11 @@ export function TemplateSendForm({
       onManualValueChange={handlePhoneChange}
       displayValueMode="phone"
       searchMode="phone"
+      labelMessage={phoneSlotMessage}
+      onOpenChange={(open) => {
+        if (open) phoneFields.onFocus("phone");
+        else phoneFields.onBlur("phone", formattedRecipientPhone);
+      }}
     />
   );
 
@@ -1043,8 +1078,7 @@ export function TemplateSendForm({
       setRejectedSubmitCount((count) => count + 1);
       // A recipient phone problem is explained by the phone field's own message;
       // the top alert stays for problems that belong to no single field.
-      const isPhoneFieldProblem = requiresRecipientName
-        && Boolean(recipientName)
+      const isPhoneFieldProblem = (!requiresRecipientName || Boolean(recipientName))
         && validationMessage === recipientValidationMessage;
       setFeedback(isPhoneFieldProblem ? null : { tone: "error", message: validationMessage });
       if (isPreparedLinkDelivery) {

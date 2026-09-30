@@ -82,7 +82,11 @@ describe("ClientRegistrationWizard", () => {
         render(<ClientRegistrationWizard onCreated={onCreated} />);
 
         const nextButton = screen.getByRole("button", { name: "다음" });
-        expect(nextButton).toBeDisabled();
+        // Field problems never disable the button; pressing it shows them instead.
+        expect(nextButton).toBeEnabled();
+        fireEvent.click(nextButton);
+        expect(screen.getByLabelText("이름")).toHaveFocus();
+        expect(screen.queryByRole("checkbox", { name: "바우처 대상" })).not.toBeInTheDocument();
 
         fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
         fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
@@ -92,7 +96,7 @@ describe("ClientRegistrationWizard", () => {
         fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
         fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20260201" } });
         expect(screen.getByLabelText("출산 예정일")).toHaveValue("2026-02-01");
-        expect(nextButton).not.toBeDisabled();
+        expect(nextButton).toBeEnabled();
         fireEvent.click(nextButton);
 
         // Voucher step: minimal path without voucher info
@@ -192,12 +196,15 @@ describe("ClientRegistrationWizard", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
         const registerButton = await screen.findByRole("button", { name: "제공인력 등록" });
-        expect(registerButton).toBeDisabled();
+        expect(registerButton).toBeEnabled();
+        fireEvent.click(registerButton);
+        expect(mockCreateEmployeeMutateAsync).not.toHaveBeenCalled();
+        expect(screen.getByLabelText("연락처")).toHaveFocus();
+        expect(screen.getByText("연락처를 입력해 주세요")).toBeInTheDocument();
 
         fireEvent.change(screen.getByLabelText("연락처"), {
             target: { value: "01012345678" },
         });
-        expect(registerButton).not.toBeDisabled();
         fireEvent.click(registerButton);
 
         await waitFor(() => {
@@ -760,7 +767,7 @@ describe("ClientRegistrationWizard", () => {
             expect(slotOf(container, "birthday")).toHaveTextContent("YYYY-MM-DD 형식");
 
             fireEvent.blur(birthdayInput);
-            expect(slotOf(container, "birthday")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+            expect(slotOf(container, "birthday")).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
             expect(birthdayInput).toHaveAttribute("aria-invalid", "true");
         });
 
@@ -772,8 +779,8 @@ describe("ClientRegistrationWizard", () => {
             fireEvent.change(dueDateInput, { target: { value: "2026112" } });
             fireEvent.blur(dueDateInput);
 
-            expect(slotOf(container, "dueDate")).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
-            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+            expect(slotOf(container, "dueDate")).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
+            expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
         });
 
         test("reports a required field only after it held a value and was cleared", () => {
@@ -807,18 +814,30 @@ describe("ClientRegistrationWizard", () => {
             expect(slotOf(container, "dueDate")).toHaveTextContent("존재하지 않는 날짜예요");
 
             fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "29990101" } });
-            expect(slotOf(container, "birthday")).toHaveTextContent("오늘 이후 날짜는 입력할 수 없어요");
-            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+            expect(slotOf(container, "birthday")).toHaveTextContent("미래 날짜는 입력할 수 없어요");
+            expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
         });
 
-        test("keeps the next button disabled for an incomplete phone number", () => {
-            render(<ClientRegistrationWizard />);
+        test("pressing next with an incomplete phone shows every problem, focuses the first and does not advance", () => {
+            const { container } = render(<ClientRegistrationWizard />);
 
-            fillBasics({ 연락처: "010123" });
-            expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+            fillBasics({ 연락처: "010123", 주소: "" });
+            const nextButton = screen.getByRole("button", { name: "다음" });
+            expect(nextButton).toBeEnabled();
 
-            fillBasics({ 연락처: "01012345678" });
-            expect(screen.getByRole("button", { name: "다음" })).not.toBeDisabled();
+            fireEvent.click(nextButton);
+
+            // The focused field keeps the grey format hint; it turns red once the user leaves it.
+            expect(screen.getByLabelText("연락처")).toHaveFocus();
+            expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678 형식");
+            fireEvent.blur(screen.getByLabelText("연락처"));
+            expect(slotOf(container, "phone")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+            expect(slotOf(container, "address")).toHaveTextContent("주소를 입력해 주세요");
+            expect(screen.queryByRole("checkbox", { name: "바우처 대상" })).not.toBeInTheDocument();
+
+            fillBasics({ 연락처: "01012345678", 주소: "" });
+            fireEvent.click(nextButton);
+            expect(screen.getByLabelText("주소")).toHaveFocus();
         });
 
         test("typing the due date as digits reaches the submitted payload as ISO", async () => {
@@ -918,7 +937,11 @@ describe("ClientRegistrationWizard", () => {
             fireEvent.change(employeePhone, { target: { value: "0101234" } });
             fireEvent.blur(employeePhone);
             expect(slotOf(container, "employee-phone")).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
-            expect(screen.getByRole("button", { name: "제공인력 등록" })).toBeDisabled();
+            const registerButton = screen.getByRole("button", { name: "제공인력 등록" });
+            expect(registerButton).toBeEnabled();
+            fireEvent.click(registerButton);
+            expect(mockCreateEmployeeMutateAsync).not.toHaveBeenCalled();
+            expect(employeePhone).toHaveFocus();
         });
     });
 });

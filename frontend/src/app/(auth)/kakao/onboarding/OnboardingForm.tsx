@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
@@ -146,11 +146,6 @@ export function OnboardingForm({
         if (rejectedSubmitCount === 0) return;
         formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
     }, [rejectedSubmitCount]);
-
-    const isDisabled = useMemo(() => {
-        const result = kakaoOnboardingSchema.safeParse(formData);
-        return !result.success || isPending;
-    }, [formData, isPending]);
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -299,7 +294,7 @@ export function OnboardingForm({
                     variant="positive"
                     size="md"
                     className={PRIMARY_BUTTON_CLASS_NAME}
-                    disabled={isDisabled}
+                    disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_submit-btn"
                 >
                     {isPending ? <Spinner size="sm" /> : (

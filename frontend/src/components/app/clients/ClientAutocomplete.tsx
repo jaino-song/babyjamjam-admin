@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useId, useState, useMemo, useRef } from "react";
 import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Loader2, Play } from "lucide-react";
 import { useAllClients } from "@/hooks/useClients";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -27,10 +27,16 @@ import {
     CommandSeparator,
 } from "@/components/ui/command";
 import { Label } from "@/components/ui/label";
+import { FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME, FieldMessageText } from "@/components/app/ui/field-message";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { getGlintUiScaleForWindow } from "@/components/app/v3/useGlintUiScale";
 import { ClientFormDialog } from "./ClientFormDialog";
+
+export interface ClientAutocompleteLabelMessage {
+    tone: "hint" | "error";
+    text: string;
+}
 
 interface ClientAutocompleteProps {
     /** Caller-context canonical data-component base for this autocomplete instance. */
@@ -51,6 +57,14 @@ interface ClientAutocompleteProps {
     displayValueMode?: "name" | "phone";
     searchMode?: "all" | "phone";
     disabled?: boolean;
+    /**
+     * Opt-in field message shown at the right end of the label row. Passing the
+     * prop (even `null`) reserves a one-line slot that never changes the layout;
+     * an error also marks the combobox invalid. Omit it for the classic layout.
+     */
+    labelMessage?: ClientAutocompleteLabelMessage | null;
+    /** Called when the dropdown opens or closes, so callers can track "left the field". */
+    onOpenChange?: (open: boolean) => void;
 }
 
 export function ClientAutocomplete({
@@ -71,17 +85,26 @@ export function ClientAutocomplete({
     displayValueMode = "name",
     searchMode = "all",
     disabled = false,
+    labelMessage,
+    onOpenChange,
 }: ClientAutocompleteProps) {
     const locale = useLocale();
     const { data: clients, isLoading } = useAllClients();
     const setPrefillName = useClientDialogStore((state) => state.setPrefillName);
     const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
     const allowsInlineManualValue = typeof onManualValueChange === "function";
+    const labelMessageId = useId();
+    const hasLabelMessageSlot = labelMessage !== undefined;
+    const hasLabelMessageError = labelMessage?.tone === "error";
 
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
     // Track open state for controlled dropdown behavior
-    const [isOpen, setIsOpen] = useState(false);
+    const [isOpen, setIsOpenState] = useState(false);
+    const setIsOpen = (open: boolean) => {
+        setIsOpenState(open);
+        onOpenChange?.(open);
+    };
     const [isRegistrationDialogOpen, setIsRegistrationDialogOpen] = useState(false);
     // Ref for focusing input after clear
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -225,20 +248,44 @@ export function ClientAutocomplete({
             : "고객 이름 입력 지우기";
     const searchPlaceholder = placeholder ?? t(locale, "contract-msg.client-search-placeholder");
 
+    const labelElement = (
+        <Label
+            className={cn(
+                "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                hasLabelMessageSlot && "shrink-0",
+                error && "text-destructive",
+            )}
+        >
+            {label}
+            {required && <span className="text-destructive ml-1">*</span>}
+        </Label>
+    );
+
     return (
         <div
             data-component={dataComponent}
             className={cn("space-y-2", containerClassName)}
         >
-            <Label
-                className={cn(
-                    "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
-                    error && "text-destructive",
-                )}
-            >
-                {label}
-                {required && <span className="text-destructive ml-1">*</span>}
-            </Label>
+            {hasLabelMessageSlot ? (
+                <div
+                    data-component={`${dataComponent}_label-row`}
+                    className="flex h-[1lh] min-w-0 items-center gap-2 text-[calc(12px*var(--glint-ui-scale,1))] leading-[1.3]"
+                >
+                    {labelElement}
+                    {labelMessage ? (
+                        <FieldMessageText
+                            id={labelMessageId}
+                            tone={labelMessage.tone}
+                            data-component={`${dataComponent}_label-row_message`}
+                            className={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
+                        >
+                            {labelMessage.text}
+                        </FieldMessageText>
+                    ) : null}
+                </div>
+            ) : (
+                labelElement
+            )}
             <Popover
                 open={disabled ? false : isOpen}
                 onOpenChange={(open) => {
@@ -255,6 +302,8 @@ export function ClientAutocomplete({
                             aria-label={label}
                             aria-expanded={disabled ? false : isOpen}
                             disabled={disabled}
+                            aria-invalid={hasLabelMessageError ? true : undefined}
+                            aria-describedby={labelMessage ? labelMessageId : undefined}
                             data-component={`${dataComponent}_input`}
                             className={cn(
                                 V3_INPUT_CONTROL_CLASS_NAME,
@@ -262,7 +311,7 @@ export function ClientAutocomplete({
                                 hasDisplayValue
                                     ? "text-v3-dark hover:text-v3-dark"
                                     : "text-muted-foreground hover:text-muted-foreground",
-                                error && "border-destructive focus:ring-destructive"
+                                (error || hasLabelMessageError) && "border-destructive focus:ring-destructive"
                             )}
                         >
                             <span className="min-w-0 flex-1 truncate text-left">

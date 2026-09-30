@@ -32,12 +32,20 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
     manualValue,
     onManualValueChange,
     onChange,
+    labelMessage,
   }: ComponentProps<typeof import("@/components/app/clients/ClientAutocomplete").ClientAutocomplete>) => (
     <>
+      {labelMessage ? (
+        <span id={`autocomplete-message-${label}`} data-testid={`autocomplete-message-${label}`} data-tone={labelMessage.tone}>
+          {labelMessage.text}
+        </span>
+      ) : null}
       <input
         aria-label={label}
         value={manualValue ?? ""}
         onChange={(e) => onManualValueChange?.(e.target.value)}
+        aria-invalid={labelMessage?.tone === "error" ? true : undefined}
+        aria-describedby={labelMessage ? `autocomplete-message-${label}` : undefined}
         data-testid={`autocomplete-${label}`}
       />
       <button
@@ -1024,6 +1032,46 @@ describe("recipient phone message on a refused send", () => {
     expect(phoneInput).toHaveFocus();
     expect(screen.queryByText("휴대 전화번호를 입력해 주세요")).not.toBeInTheDocument();
     expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("shows the phone problem of an autocomplete layout in its own label row, not the top alert", async () => {
+    const { container } = renderGreetingPhoneOnlyForm();
+    const phoneInput = screen.getByRole("textbox", { name: "휴대 전화번호" });
+    expect(screen.queryByTestId("autocomplete-message-휴대 전화번호")).not.toBeInTheDocument();
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    const required = await screen.findByTestId("autocomplete-message-휴대 전화번호");
+    expect(required).toHaveTextContent("휴대 전화번호를 입력해 주세요");
+    expect(required).toHaveAttribute("data-tone", "error");
+    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+    expect(phoneInput).toHaveFocus();
+    // Shown once, in the slot: nothing else on the page repeats it.
+    expect(screen.getAllByText("휴대 전화번호를 입력해 주세요")).toHaveLength(1);
+    expect(mockedSendSms).not.toHaveBeenCalled();
+
+    fireEvent.change(phoneInput, { target: { value: "0101234" } });
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(await screen.findByTestId("autocomplete-message-휴대 전화번호"))
+      .toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(screen.queryByText("휴대 전화번호 형식이 올바르지 않아요")).not.toBeInTheDocument();
+  });
+
+  it("does not report the phone as required after a successful send cleared it", async () => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    const { container } = renderGreetingPhoneOnlyForm();
+    const phoneInput = screen.getByRole("textbox", { name: "휴대 전화번호" });
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+    await screen.findByTestId("autocomplete-message-휴대 전화번호");
+    fireEvent.change(phoneInput, { target: { value: "01033334444" } });
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(phoneInput).toHaveValue(""));
+    expect(screen.queryByTestId("autocomplete-message-휴대 전화번호")).not.toBeInTheDocument();
+    expect(phoneInput).not.toHaveAttribute("aria-invalid");
   });
 
   it("keeps the top alert for a problem that belongs to no single field", async () => {

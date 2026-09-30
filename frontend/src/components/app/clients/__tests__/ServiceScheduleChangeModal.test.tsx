@@ -100,7 +100,7 @@ describe("ServiceScheduleChangeModal", () => {
             expect(slot()).not.toHaveTextContent("입력해 주세요");
 
             fireEvent.blur(input);
-            expect(slot()).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+            expect(slot()).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
             expect(slot()).toHaveAttribute("data-slot", "field-error-message");
             expect(input).toHaveAttribute("aria-invalid", "true");
             expect(input).toHaveAttribute("aria-describedby", "service-schedule-change-date-message");

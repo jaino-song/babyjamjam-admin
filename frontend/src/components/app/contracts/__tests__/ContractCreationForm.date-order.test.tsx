@@ -82,7 +82,7 @@ const CONTRACT_INFO_STEP_INDEX = 3;
 const DATE_RANGE_ERROR = "종료일은 시작일 이후여야 해요";
 const DATE_NOT_REAL_ERROR = "존재하지 않는 날짜예요";
 const DATE_FORMAT_HINT = "YYYY-MM-DD 형식";
-const DATE_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
+const DATE_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
 
 function seedContractDates(overrides: { startDate?: string; endDate?: string } = {}): void {
   useFormStore.setState({
