@@ -588,6 +588,9 @@ describe("mobile contract form - entering with a prefilled store (client detail)
       employeeId: EMPLOYEE.id,
       employeeName: EMPLOYEE.name,
       employeePhone: EMPLOYEE.phone,
+      employee2Id: client.secondaryEmployee?.id ?? null,
+      employee2Name: client.secondaryEmployee?.name ?? "",
+      employee2Phone: client.secondaryEmployee?.phone ?? "",
       startDate: (client.startDate ?? "").slice(0, 10),
       endDate: (client.endDate ?? "").slice(0, 10),
       fullPrice: client.fullPrice ?? "",
@@ -619,6 +622,29 @@ describe("mobile contract form - entering with a prefilled store (client detail)
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("keeps the stored secondary staff, so an unchanged client is neither asked about nor updated", async () => {
+    const secondEmployee = { id: 12, name: "두번째 제공인력", phone: "01077776666", workArea: [] };
+    mockEmployees.push(secondEmployee);
+    try {
+      mockClients = [makeClient({ secondaryEmployee: { id: secondEmployee.id, name: secondEmployee.name, phone: secondEmployee.phone } })];
+      prefillLikeClientDetail(mockClients[0] as Client);
+      await renderPage();
+
+      expect(useFormStore.getState().employee2Id).toBe(secondEmployee.id);
+      expect(useFormStore.getState().showEmployee2).toBe(true);
+      fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+      next(); next(); next();
+      expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
+
+      submit();
+      await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+    } finally {
+      mockEmployees.pop();
+    }
   });
 
   it("hints on a changed phone, asks on submit, and 계약서에만 반영 skips the client update", async () => {

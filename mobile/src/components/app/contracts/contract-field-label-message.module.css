@@ -1,0 +1,13 @@
+.message {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.helper_ok {
+  color: hsl(var(--v3-green));
+}
+
+.helper_err {
+  color: hsl(var(--v3-burgundy));
+}

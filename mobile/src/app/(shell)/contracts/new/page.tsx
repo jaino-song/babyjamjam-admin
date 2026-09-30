@@ -51,6 +51,7 @@ import {
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { ContractFieldLabelMessage, type FieldLabelMessage } from "@/components/app/contracts/contract-field-label-message";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -138,30 +139,6 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
   return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
 }
 
-// 라벨 줄 오른쪽에 한 번에 하나만 보여주는 필드 메시지예요. 검증 오류(빨강)가 있으면 등록값 다름 힌트(초록)보다 먼저 보여줘요.
-interface FieldLabelMessage {
-  slot: "field-error-message" | "registered-value-diff-hint";
-  id: string;
-  text: ReactNode;
-  testId?: string;
-}
-
-function LabelMessage({ dataComponent, message }: { dataComponent: string; message: FieldLabelMessage }) {
-  const isError = message.slot === "field-error-message";
-  return (
-    <span
-      id={message.id}
-      className={cn(styles.formHelper, isError ? styles.helper_err : styles.helper_ok)}
-      data-component={`${dataComponent}_${message.slot}`}
-      data-slot={message.slot}
-      data-testid={message.testId}
-      aria-live={isError ? "polite" : undefined}
-    >
-      {message.text}
-    </span>
-  );
-}
-
 function Field({
   dataComponent,
   label,
@@ -190,7 +167,7 @@ function Field({
             <span className={styles.requiredMark} data-component={`${dataComponent}_required`}>*</span>
           ) : null}
         </label>
-        {labelMessage ? <LabelMessage dataComponent={dataComponent} message={labelMessage} /> : null}
+        {labelMessage ? <ContractFieldLabelMessage dataComponent={dataComponent} message={labelMessage} /> : null}
       </div>
       {children}
       {helper ? (
@@ -1646,7 +1623,7 @@ export default function ContractCreationPage() {
                       제공인력 1<span className={styles.requiredMark}>*</span>
                       {primaryEmployeeMessage ? (
                         <span className={styles.formCardTitleMessage}>
-                          <LabelMessage dataComponent="mobile_contracts-new_employee_primary" message={primaryEmployeeMessage} />
+                          <ContractFieldLabelMessage dataComponent="mobile_contracts-new_employee_primary" message={primaryEmployeeMessage} />
                         </span>
                       ) : null}
                     </div>
@@ -1702,7 +1679,7 @@ export default function ContractCreationPage() {
                           제공인력 2<span className={styles.requiredMark}>*</span>
                           {secondaryEmployeeMessage ? (
                             <span className={styles.formCardTitleMessage}>
-                              <LabelMessage dataComponent="mobile_contracts-new_employee_secondary" message={secondaryEmployeeMessage} />
+                              <ContractFieldLabelMessage dataComponent="mobile_contracts-new_employee_secondary" message={secondaryEmployeeMessage} />
                             </span>
                           ) : null}
                         </div>
