@@ -30,9 +30,14 @@ describe("service record validation scope", () => {
         const props = makeProps({ headerErrors: {} });
         render(<ServiceRecordWizard {...props} />);
         const next = screen.getByRole("button", { name: "다음" });
-        expect(next).toBeDisabled();
+        // Enabled, but a press cannot save: it surfaces every problem instead.
+        expect(next).toBeEnabled();
         fireEvent.click(next);
         expect(props.onSaveHeader).not.toHaveBeenCalled();
+        const birth = screen.getByLabelText("산모 생년월일");
+        expect(birth).toHaveAttribute("aria-invalid", "true");
+        expect(birth).toHaveFocus();
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveClass("error");
     });
     it("validates the full header when an administrator supplies no scoped error map", () => {
         const props = makeProps({ adminMode: true });
@@ -57,7 +62,9 @@ describe("service record validation scope", () => {
         render(<ServiceRecordWizard {...makeProps({ adminMode: true, headerErrors: { momName: "띄어쓰기 없이 입력해 주세요." } })} />);
         expect(screen.getByRole("button", { name: "초안 저장" })).toBeDisabled();
         expect(screen.getByLabelText("산모 성명")).toHaveAttribute("aria-invalid", "true");
-        expect(screen.getByRole("alert")).toHaveTextContent("띄어쓰기 없이 입력해 주세요.");
+        const slot = document.getElementById(screen.getByLabelText("산모 성명").getAttribute("aria-describedby")!);
+        expect(slot).toHaveTextContent("띄어쓰기 없이 입력해 주세요.");
+        expect(slot).toHaveClass("error");
     });
     it("keeps strict completeness distinct from presence for legacy records", () => {
         expect(hasServiceRecordHeaderValues(legacyHeader)).toBe(true);

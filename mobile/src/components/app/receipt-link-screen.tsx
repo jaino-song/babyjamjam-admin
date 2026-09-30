@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import {
+    isRealIsoDate,
+    resolveFieldMessage,
+    withObjectParticle,
+    type FieldMessage,
+} from "@babyjamjam/shared/utils/field-validation-message";
 
 import { Button } from "@/components/ui/button";
 
@@ -21,6 +28,26 @@ type Screen =
     | { kind: "expired" }
     | { kind: "invalid" }
     | { kind: "image"; branchName: string; clientName: string | null };
+
+type BirthdayRejection = { kind: "mismatch"; remaining: number } | { kind: "format" };
+type BirthdaySlotMessage = { tone: "hint" | "error"; text: string };
+
+const BIRTHDAY_LABEL = "산모님 생년월일";
+const BIRTHDAY_INPUT_ID = "receipt-birthday";
+const BIRTHDAY_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
+
+function birthdayMessageText(message: FieldMessage): string {
+    switch (message.code) {
+        case "required":
+            return `${withObjectParticle(BIRTHDAY_LABEL)} 입력해 주세요`;
+        case "date-format-hint":
+            return "YYYY-MM-DD 형식";
+        case "date-invalid":
+            return "존재하지 않는 날짜예요";
+        default:
+            return BIRTHDAY_FORMAT_ERROR;
+    }
+}
 
 const BRANCH_FALLBACK = "인천 아이미래로";
 const FOOTER = "이 링크는 발송일로부터 30일간 유효합니다.";
@@ -60,6 +87,11 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
 
     const [screen, setScreen] = useState<Screen>({ kind: "loading" });
     const [birthday, setBirthday] = useState("");
+    const [birthdayFocused, setBirthdayFocused] = useState(false);
+    const [birthdayTouched, setBirthdayTouched] = useState(false);
+    const [birthdaySubmitted, setBirthdaySubmitted] = useState(false);
+    const [rejection, setRejection] = useState<BirthdayRejection | null>(null);
+    const hadBirthdayValue = useRef(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isImageLoaded, setIsImageLoaded] = useState(false);
     const [isImageError, setIsImageError] = useState(false);
@@ -214,17 +246,20 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
 
     const submit = async () => {
         if (screen.kind !== "verify" || isSubmitting) return;
-        const digits = birthday.replace(/\D/g, "");
-        if (digits.length !== 6) {
-            setScreen({ ...screen, error: "생년월일 6자리(YYMMDD)를 입력해 주세요." });
+        setBirthdaySubmitted(true);
+        if (!isRealIsoDate(birthday)) {
+            // The birthday slot shows what is wrong; drop any stale server message.
+            setScreen({ ...screen, error: null });
+            document.getElementById(BIRTHDAY_INPUT_ID)?.focus();
             return;
         }
+        setRejection(null);
         setIsSubmitting(true);
         try {
             const response = await fetch(api("/verify"), {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ birthday: digits }),
+                body: JSON.stringify({ birthday }),
             });
             if (!mountedRef.current) return;
             const body = (await response.json().catch(() => ({}))) as {
@@ -249,18 +284,20 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
             if (response.status === 410) return setScreen({ kind: "expired" });
             if (response.status === 401) {
                 const remaining = body.remainingAttempts ?? Math.max(0, screen.remainingAttempts - 1);
+                setRejection({ kind: "mismatch", remaining });
                 setScreen({
                     kind: "verify",
                     branchName: screen.branchName,
                     remainingAttempts: remaining,
-                    error: `생년월일이 일치하지 않습니다. 남은 횟수 ${remaining}회`,
+                    error: null,
                 });
                 return;
             }
             // A 400 always carries { reason: "invalid_format" } here — the BFF
             // normalizes a bare validation-pipe 400 to that shape too.
             if (response.status === 400) {
-                setScreen({ ...screen, error: "생년월일 6자리(YYMMDD)를 입력해 주세요." });
+                setRejection({ kind: "format" });
+                setScreen({ ...screen, error: null });
                 return;
             }
             setScreen({ ...screen, error: verifyFailureCopy(response.status, body, "확인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.") });
@@ -271,6 +308,24 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
             if (mountedRef.current) setIsSubmitting(false);
         }
     };
+
+    if (birthday !== "") hadBirthdayValue.current = true;
+    const birthdayResolved = resolveFieldMessage(
+        "date",
+        { value: birthday, hadValue: hadBirthdayValue.current, touched: birthdayTouched, focused: birthdayFocused && !birthdaySubmitted },
+        { required: true, submitted: birthdaySubmitted },
+    );
+    // A local format problem wins; otherwise show what the server answered for the typed value.
+    let birthdayMessage: BirthdaySlotMessage | null = birthdayResolved
+        ? { tone: birthdayResolved.tone === "hint" ? "hint" : "error", text: birthdayMessageText(birthdayResolved) }
+        : null;
+    if (!birthdayMessage && rejection) {
+        birthdayMessage = {
+            tone: "error",
+            text: rejection.kind === "mismatch" ? `일치하지 않아요 · 남은 ${rejection.remaining}회` : BIRTHDAY_FORMAT_ERROR,
+        };
+    }
+    const birthdaySlotId = "receipt-birthday-helper";
 
     const stepNumber = screen.kind === "image" ? "2단계" : "1단계";
     const stepTitle = screen.kind === "image" ? "영수증 저장" : "본인 확인";
@@ -337,33 +392,6 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                         >
                             산모님 본인 확인
                         </h2>
-                        <label
-                            className="lab"
-                            data-component="mobile_receipt_public-page_body_verify_birthday-label"
-                            data-slot="lab"
-                            htmlFor="receipt-birthday"
-                        >
-                            산모님 생년월일
-                        </label>
-                        <input
-                            id="receipt-birthday"
-                            className="in"
-                            data-component="mobile_receipt_public-page_body_verify_birthday-input"
-                            data-slot="in"
-                            inputMode="numeric"
-                            autoComplete="off"
-                            placeholder="예) 940315"
-                            maxLength={6}
-                            value={birthday}
-                            disabled={screen.kind === "locked" || isSubmitting}
-                            onChange={(event) => setBirthday(event.target.value.replace(/\D/g, ""))}
-                            onKeyDown={(event) => {
-                                if (event.key === "Enter") void submit();
-                            }}
-                        />
-                        <p className="rcpt-helper" data-slot="helper">
-                            주민등록번호 앞 6자리
-                        </p>
                         {screen.kind === "verify" && screen.error ? (
                             <p className="err" data-slot="err" role="alert">
                                 {screen.error}
@@ -374,6 +402,56 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                                 5회 연속 틀려 {formatLockedUntil(screen.lockedUntil)}까지 확인이 잠겼습니다.
                             </p>
                         ) : null}
+                        <div
+                            className="lab-row"
+                            data-component="mobile_receipt_public-page_body_verify_birthday-label-row"
+                            data-slot="lab-row"
+                        >
+                            <label
+                                className="lab"
+                                data-component="mobile_receipt_public-page_body_verify_birthday-label"
+                                data-slot="lab"
+                                htmlFor={BIRTHDAY_INPUT_ID}
+                            >
+                                {BIRTHDAY_LABEL}
+                            </label>
+                            <span
+                                id={birthdaySlotId}
+                                className={`lab-msg${birthdayMessage ? ` ${birthdayMessage.tone}` : ""}`}
+                                data-component="mobile_receipt_public-page_body_verify_birthday-input_helper"
+                                data-slot="lab-msg"
+                                aria-live="polite"
+                                title={birthdayMessage?.text}
+                            >
+                                {birthdayMessage?.text}
+                            </span>
+                        </div>
+                        <input
+                            id={BIRTHDAY_INPUT_ID}
+                            className="in"
+                            data-component="mobile_receipt_public-page_body_verify_birthday-input"
+                            data-slot="in"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            placeholder="1994-03-15"
+                            maxLength={10}
+                            value={birthday}
+                            aria-invalid={birthdayMessage?.tone === "error" ? "true" : undefined}
+                            aria-describedby={birthdaySlotId}
+                            disabled={screen.kind === "locked" || isSubmitting}
+                            onFocus={() => setBirthdayFocused(true)}
+                            onBlur={() => {
+                                setBirthdayFocused(false);
+                                if (birthday !== "") setBirthdayTouched(true);
+                            }}
+                            onChange={(event) => {
+                                setBirthday(formatIsoDateInput(event.target.value));
+                                setRejection(null);
+                            }}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter") void submit();
+                            }}
+                        />
                         <button
                             type="button"
                             className="btn primary"
@@ -516,7 +594,7 @@ function Styles() {
 .srec .rcpt-card h2{margin:0 0 8px;font-size:18px;font-weight:800}
 .srec .rcpt-desc{margin:0 0 16px;color:var(--muted)}
 .srec .rcpt-card .rcpt-btn{display:block;width:100%;margin-top:16px;border:0;border-radius:12px;padding:14px 16px;background:var(--primary);color:#fff;font-size:15px;font-weight:700;text-align:center;text-decoration:none}
-.srec .rcpt-helper{margin:6px 0 0;color:var(--muted);font-size:13px}
+.srec .in[aria-invalid="true"]{border-color:#9f234c}
 .srec .rcpt-btn-icon{display:flex;align-items:center;justify-content:center;gap:6px}
 .srec .rcpt-icon{width:18px;height:18px;flex-shrink:0}
 .srec .rcpt-icon-clock{width:28px;height:28px;color:var(--muted);margin-bottom:8px}
