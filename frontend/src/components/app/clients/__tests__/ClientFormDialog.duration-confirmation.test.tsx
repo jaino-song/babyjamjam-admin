@@ -94,8 +94,8 @@ describe("client duration confirmation", () => {
     fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
     expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("시작일")).toHaveValue("260826");
-    expect(screen.getByLabelText("종료일")).toHaveValue("260914");
+    expect(screen.getByLabelText("시작일")).toHaveValue("2026-08-26");
+    expect(screen.getByLabelText("종료일")).toHaveValue("2026-09-14");
     fireEvent.click(screen.getByRole("button", { name: "생성" }));
     fireEvent.click(within(await screen.findByRole("dialog", { name: "서비스 기간 확인" })).getByRole("button", { name: "확인" }));
     await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
