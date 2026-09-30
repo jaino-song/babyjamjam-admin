@@ -71,6 +71,16 @@ const mockNotificationWithDataButNoUrl: Notification = {
   isRead: false,
 };
 
+const mockLongBodyNotificationWithoutUrl: Notification = {
+  id: 7,
+  title: '긴 메시지 알림',
+  body: '이것은 매우 긴 메시지입니다. '.repeat(20).trim(),
+  data: null,
+  sentAt: new Date().toISOString(),
+  readAt: null,
+  isRead: false,
+};
+
 const mockFilteredNotification: Notification = {
   id: 5,
   title: '서비스 시작 예정',
@@ -384,5 +394,83 @@ describe('NotificationBell', () => {
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
 
     expect(mockUnreadCountRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('expands a urlless notification in place on tap, without closing the popover', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(item);
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByTestId('notification-popover')).toBeVisible();
+
+    const bodyText = screen.getByText(mockLongBodyNotificationWithoutUrl.body);
+    expect(bodyText).not.toHaveClass('truncate');
+    expect(bodyText).toHaveClass('whitespace-pre-wrap', 'break-words');
+    expect(item).toHaveAttribute('aria-expanded', 'true');
+
+    // Tapping again collapses it back to truncated. (The mock notification
+    // list never flips isRead, so markAsRead keeps firing on each tap here —
+    // that matches existing, unchanged behaviour for already-viewed items.)
+    fireEvent.click(item);
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(2);
+    expect(item).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('truncate');
+  });
+
+  it('toggles the expanded state with a keyboard Enter press', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item).toHaveAttribute('role', 'button');
+    expect(item).toHaveAttribute('tabIndex', '0');
+
+    fireEvent.keyDown(item, { key: 'Enter' });
+
+    expect(item).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('whitespace-pre-wrap');
+  });
+
+  it('still closes the popover and navigates for a notification with a url (unaffected by expand behaviour)', async () => {
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item).not.toHaveAttribute('aria-expanded');
+
+    fireEvent.click(item);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('notification-popover')).not.toBeInTheDocument();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith('/clients/123');
   });
 });

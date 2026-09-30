@@ -111,6 +111,7 @@ export function NotificationBell({
     const [dialogOpen, setDialogOpen] = useState(false);
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
     const [dialogClientId, setDialogClientId] = useState<number | undefined>(undefined);
+    const [expandedNotificationId, setExpandedNotificationId] = useState<number | null>(null);
 
     // Subscription state
     const {
@@ -186,9 +187,10 @@ export function NotificationBell({
         if (!notification.isRead) {
             markAsRead.mutate(notification.id);
         }
-        setIsOpen(false);
 
         if (notification.data?.url) {
+            setIsOpen(false);
+
             const url = notification.data.url as string;
             const parsed = parseNotificationUrl(url);
 
@@ -204,7 +206,12 @@ export function NotificationBell({
             } else {
                 router.push(url);
             }
+            return;
         }
+
+        // No destination to navigate to — expand in place so staff can read
+        // the full message instead of closing the popover.
+        setExpandedNotificationId((prev) => (prev === notification.id ? null : notification.id));
     };
 
     const handleDialogClose = () => {
@@ -387,31 +394,45 @@ export function NotificationBell({
                                         {group.label}
                                     </span>
                                 </div>
-                                {group.notifications.map((notification) => (
-                                    <div
-                                        key={notification.id}
-                                        onClick={() => handleNotificationClick(notification)}
-                                        data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
-                                        className={`
-                                            px-4 py-3 cursor-pointer border-b transition-colors
-                                            ${notification.isRead
-                                                ? 'bg-transparent hover:bg-muted'
-                                                : 'bg-accent text-accent-foreground hover:bg-accent/90'}
-                                        `}
-                                    >
-                                        <div className="flex justify-between items-center">
-                                            <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
-                                                {notification.title}
+                                {group.notifications.map((notification) => {
+                                    const isExpandable = !notification.data?.url;
+                                    const isExpanded = isExpandable && expandedNotificationId === notification.id;
+
+                                    return (
+                                        <div
+                                            key={notification.id}
+                                            onClick={() => handleNotificationClick(notification)}
+                                            onKeyDown={isExpandable ? (event) => {
+                                                if (event.key === 'Enter' || event.key === ' ') {
+                                                    event.preventDefault();
+                                                    handleNotificationClick(notification);
+                                                }
+                                            } : undefined}
+                                            role={isExpandable ? 'button' : undefined}
+                                            tabIndex={isExpandable ? 0 : undefined}
+                                            aria-expanded={isExpandable ? isExpanded : undefined}
+                                            data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
+                                            className={`
+                                                px-4 py-3 cursor-pointer border-b transition-colors
+                                                ${notification.isRead
+                                                    ? 'bg-transparent hover:bg-muted'
+                                                    : 'bg-accent text-accent-foreground hover:bg-accent/90'}
+                                            `}
+                                        >
+                                            <div className="flex justify-between items-center">
+                                                <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
+                                                    {notification.title}
+                                                </p>
+                                                <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
+                                                    {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
+                                                </span>
+                                            </div>
+                                            <p className={`text-xs mt-1 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'} ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
+                                                {notification.body}
                                             </p>
-                                            <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
-                                                {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
-                                            </span>
                                         </div>
-                                        <p className={`text-xs truncate mt-1 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground/85'}`}>
-                                            {notification.body}
-                                        </p>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ))}
                     </div>
