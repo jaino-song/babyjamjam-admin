@@ -170,7 +170,7 @@
         "147:10-147:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1077:69-1077:97|visualTailwindInPage",
+        "1078:69-1078:97|visualTailwindInPage",
         "876:39-880:30|visualTailwindInPage",
         "938:193-938:355|visualTailwindInPage",
         "939:78-939:180|visualTailwindInPage",

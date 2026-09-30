@@ -1073,6 +1073,7 @@ export default function ClientsPage() {
                                             variant="ghost"
                                             size="icon"
                                             aria-label="고객 작업 메뉴 열기"
+                                            className="focus-visible:ring-0 focus-visible:ring-offset-0"
                                         >
                                             <MoreVertical className="h-5 w-5 text-v3-text-muted" />
                                         </Button>
