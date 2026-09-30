@@ -811,13 +811,6 @@ export default function ClientsPage() {
                     </AlertDescription>
                 </Alert>
             ) : null}
-            {summary && isSearchSettled ? (
-                <Alert variant="info" data-component="desktop_clients_summary_scope">
-                    <AlertDescription>
-                        {summaryScopeLabel} · 상태 탭과 무관한 지점 전체 검색 결과 기준 · 서비스 종료 예정 범위 {summary.serviceEnd.from}~{summary.serviceEnd.to} (한국시간, 양끝 포함)
-                    </AlertDescription>
-                </Alert>
-            ) : null}
             <StatsBar
                 name="clients" density="responsive-square"
                 isLoading={isSummaryInitialLoading}
