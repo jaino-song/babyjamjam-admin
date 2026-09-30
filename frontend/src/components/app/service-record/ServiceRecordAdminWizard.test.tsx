@@ -2,7 +2,12 @@ import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-
 import { AdminServiceRecordEditApiError } from "@/features/service-records/types";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-import { getServiceRecordHeaderFieldError } from "@babyjamjam/service-record-ui";
+import {
+    DEFAULT_DAILY_ANSWERS,
+    ServiceRecordWizard,
+    getServiceRecordHeaderFieldError,
+    type ServiceRecordWizardProps,
+} from "@babyjamjam/service-record-ui";
 import {
     buildAdminServiceRecordContext,
     buildAdminServiceRecordView,
@@ -791,5 +796,61 @@ describe("per-session administrator editing", () => {
         await waitFor(() => expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument());
         expect(container).toHaveTextContent("수정된 서비스");
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+    });
+});
+
+describe("administrator mode never flags a cleared answer", () => {
+    const wizardHeader = {
+        momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15",
+        deliveryType: "자연분만", babyWeight: "3.2",
+    };
+    const wizardProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRecordWizardProps => ({
+        "data-component": "admin_service-record_wizard", screen: "service", phone: "", phoneError: null,
+        context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
+        header: wizardHeader, day: 1, pageIdx: 0, draft: {}, editing: true, clientSignature: null,
+        busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
+        scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+        onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
+        onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
+        onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+        onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
+        onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
+    });
+    const messageSlots = (container: HTMLElement) => Array.from(container.querySelectorAll('[data-slot="lab-msg"]'));
+
+    it("leaves the message slot empty when a prefilled header field is cleared", () => {
+        const props = wizardProps({ adminMode: true });
+        const { container, rerender, unmount } = render(<ServiceRecordWizard {...props} />);
+        rerender(<ServiceRecordWizard {...props} header={{ ...wizardHeader, momName: "", babyWeight: "" }} />);
+
+        const momName = screen.getByLabelText(/^산모 성명/);
+        expect(momName).toHaveValue("");
+        expect(messageSlots(container).length).toBeGreaterThan(0);
+        for (const slot of messageSlots(container)) expect(slot).toBeEmptyDOMElement();
+        expect(momName).not.toHaveAttribute("aria-invalid", "true");
+
+        // Control: the same clearing is flagged for the public employee form.
+        unmount();
+        const employee = render(<ServiceRecordWizard {...wizardProps()} />);
+        employee.rerender(<ServiceRecordWizard {...wizardProps({ header: { ...wizardHeader, momName: "" } })} />);
+        expect(screen.getByLabelText(/^산모 성명/)).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("leaves the message slot empty when a radio answer is cleared", () => {
+        const answered = { ...DEFAULT_DAILY_ANSWERS, sitzBath: "실시" };
+        const cleared = { ...DEFAULT_DAILY_ANSWERS, sitzBath: "" };
+        const dayProps = wizardProps({ adminMode: true, screen: "day", pageIdx: 0, draft: answered });
+        const { container, rerender, unmount } = render(<ServiceRecordWizard {...dayProps} />);
+        rerender(<ServiceRecordWizard {...dayProps} draft={cleared} />);
+
+        expect(messageSlots(container).length).toBeGreaterThan(0);
+        for (const slot of messageSlots(container)) expect(slot).toBeEmptyDOMElement();
+
+        // Control: the same clearing is flagged for the public employee form.
+        unmount();
+        const employeeProps = wizardProps({ screen: "day", pageIdx: 0, draft: answered });
+        const employee = render(<ServiceRecordWizard {...employeeProps} />);
+        employee.rerender(<ServiceRecordWizard {...employeeProps} draft={cleared} />);
+        expect(employee.container.textContent).toContain("좌욕을 선택해 주세요");
     });
 });

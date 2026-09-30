@@ -175,6 +175,7 @@ export default function ServiceRecordPage() {
     const [screen, setScreen] = useState<Screen>("loading");
     const [phone, setPhone] = useState("");
     const [phoneError, setPhoneError] = useState<string | null>(null);
+    const [phoneFieldError, setPhoneFieldError] = useState<string | null>(null);
     const [ctx, setCtx] = useState<ServiceRecordContext | null>(null);
     const [header, setHeader] = useState<Record<string, string>>({ deliveryType: "자연분만" });
     const [day, setDay] = useState(1);
@@ -397,7 +398,7 @@ export default function ServiceRecordPage() {
     );
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
-        setBusy(true); setPhoneError(null);
+        setBusy(true); setPhoneError(null); setPhoneFieldError(null);
         try {
             const res = await api("/verify", {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ phone }),
@@ -406,13 +407,15 @@ export default function ServiceRecordPage() {
             if (data?.ok) {
                 await loadContext("push");
             } else {
-                setPhoneError("휴대폰 번호가 일치하지 않아요.");
+                // The mismatch belongs to the phone field, so it shows in that field's message slot.
+                setPhoneFieldError("휴대폰 번호가 일치하지 않아요");
             }
         } catch {
             setPhoneError("확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
         } finally { setBusy(false); }
     }
     function handlePhoneChange(value: string) {
+        setPhoneFieldError(null);
         const digits = value.replace(/\D/g, "").slice(0, 11);
         if (digits.length <= 3) setPhone(digits);
         else if (digits.length <= 7) setPhone(`${digits.slice(0, 3)}-${digits.slice(3)}`);
@@ -612,6 +615,7 @@ export default function ServiceRecordPage() {
             screen={screen}
             phone={phone}
             phoneError={phoneError}
+            phoneFieldError={phoneFieldError}
             context={ctx}
             header={header}
             day={day}

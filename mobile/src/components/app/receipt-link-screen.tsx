@@ -34,7 +34,7 @@ type BirthdaySlotMessage = { tone: "hint" | "error"; text: string };
 
 const BIRTHDAY_LABEL = "산모님 생년월일";
 const BIRTHDAY_INPUT_ID = "receipt-birthday";
-const BIRTHDAY_FORMAT_ERROR = "YYYY-MM-DD 형식으로 입력해 주세요";
+const BIRTHDAY_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
 
 function birthdayMessageText(message: FieldMessage): string {
     switch (message.code) {
@@ -312,7 +312,7 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     if (birthday !== "") hadBirthdayValue.current = true;
     const birthdayResolved = resolveFieldMessage(
         "date",
-        { value: birthday, hadValue: hadBirthdayValue.current, touched: birthdayTouched, focused: birthdayFocused && !birthdaySubmitted },
+        { value: birthday, hadValue: hadBirthdayValue.current, touched: birthdayTouched, focused: birthdayFocused },
         { required: true, submitted: birthdaySubmitted },
     );
     // A local format problem wins; otherwise show what the server answered for the typed value.

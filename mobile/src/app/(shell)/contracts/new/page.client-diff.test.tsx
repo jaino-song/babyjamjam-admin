@@ -362,7 +362,7 @@ describe("mobile contract form - validation messages share the label-row slot", 
 
     fireEvent.blur(endInput);
     const error = errorIn(END_FIELD);
-    expect(error).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(error).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     expect(error).toHaveClass("tone_error");
     expect(error).toHaveAttribute("data-testid", "contract-creation-date-range-error");
     expect(error).not.toHaveAttribute("role");
@@ -395,7 +395,7 @@ describe("mobile contract form - validation messages share the label-row slot", 
 
     fireEvent.blur(birthday);
     const error = errorIn(BIRTHDAY_FIELD);
-    expect(error).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(error).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     expect(hintIn(BIRTHDAY_FIELD)).toBeNull();
     expect(birthday).toHaveAttribute("aria-invalid", "true");
     expect(birthday).toHaveAttribute("aria-describedby", error?.id);

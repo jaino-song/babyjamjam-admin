@@ -107,7 +107,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     const basicsSpecs: Record<BasicsField, FieldSpec> = {
         name: { kind: "text", label: "이름", required: true },
         dueDate: { kind: "date", label: "출산 예정일", required: true },
-        phone: { kind: "phone", label: "연락처", required: true },
+        phone: { kind: "phone", label: "연락처", required: true, mobileOnly: true },
         birthday: { kind: "birthday", label: "생년월일", required: true },
         address: { kind: "text", label: "주소", required: true },
     };

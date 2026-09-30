@@ -105,6 +105,14 @@ describe("ClientFormDialog field messages", () => {
         expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 
+    it("does not accept a landline: the client needs a mobile number", () => {
+        const phone = input(/연락처/);
+        fireEvent.change(phone, { target: { value: "0311234567" } });
+        fireEvent.blur(phone);
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(phone).toHaveAttribute("aria-invalid", "true");
+    });
+
     it("requires the end date not to precede the start date", () => {
         fireEvent.change(input(/시작일/), { target: { value: "20261201" } });
         fireEvent.change(input(/종료일/), { target: { value: "20261115" } });

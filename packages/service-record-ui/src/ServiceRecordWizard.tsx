@@ -522,6 +522,7 @@ export function ServiceRecordWizard({
     screen,
     phone,
     phoneError,
+    phoneFieldError,
     context,
     header,
     day,
@@ -591,8 +592,7 @@ export function ServiceRecordWizard({
             value,
             hadValue: Boolean(hadHeaderValue.current[key]),
             touched: Boolean(touchedHeader[key]),
-            // After a blocked submit the format problem shows as an error even while the field is focused.
-            focused: focusedHeader === key && !headerSubmitted,
+            focused: focusedHeader === key,
         };
         const isDate = HEADER_DATE_KEYS.includes(key);
         const label = HEADER_REQUIRED_LABEL[key];
@@ -613,15 +613,19 @@ export function ServiceRecordWizard({
     const phoneDigits = phone.replace(/\D/g, "");
     const phoneComplete = phoneDigits.length >= PHONE_DIGITS_REQUIRED;
     if (phone !== "") hadPhoneValue.current = true;
-    const phoneMessage = fieldMessageToSlot(
+    const phoneFormatMessage = fieldMessageToSlot(
         resolveFieldMessage("phone", {
             value: phone === "" ? "" : phoneComplete ? PHONE_COMPLETE_PROBE : PHONE_INCOMPLETE_PROBE,
             hadValue: hadPhoneValue.current,
             touched: phoneTouched,
-            focused: phoneFocused && !phoneSubmitted,
+            focused: phoneFocused,
         }, { required: true, submitted: phoneSubmitted }),
         { label: "휴대폰 번호" },
     );
+    // One slot, one message: a format error beats the caller's field error, which beats a hint.
+    const phoneMessage: SlotMessage | null = phoneFormatMessage?.tone === "error"
+        ? phoneFormatMessage
+        : phoneFieldError ? errorMessage(phoneFieldError) : phoneFormatMessage;
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const adminEditing = adminMode && !readOnly;
     const currentSession = context?.sessions.find((session) => session.sessionIndex === day);
@@ -682,7 +686,7 @@ export function ServiceRecordWizard({
             value: serviceDateText,
             hadValue: hadServiceDateValue.current,
             touched: serviceDateTouched,
-            focused: serviceDateFocused && !daySubmitted,
+            focused: serviceDateFocused,
         }, {
             required: true,
             submitted: daySubmitted,

@@ -110,6 +110,8 @@ export interface ServiceRecordWizardProps {
     screen: ServiceRecordScreen;
     phone: string;
     phoneError: string | null;
+    /** A failure that belongs to the phone field itself (e.g. no match): shown in its message slot, not as a page alert. */
+    phoneFieldError?: string | null;
     context: ServiceRecordContext | null;
     header: Record<string, string>;
     /** Optional administrator-only validation messages for editable header fields. */

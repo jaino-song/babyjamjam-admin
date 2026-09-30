@@ -11,7 +11,7 @@ export const FIELD_COPY = {
     phoneHint: "010-1234-5678 형식",
     phoneError: "010-1234-5678 형식으로 입력해 주세요",
     dateHint: "YYYY-MM-DD 형식",
-    dateError: "YYYY-MM-DD 형식으로 입력해 주세요",
+    dateError: "YYYY-MM-DD로 입력해 주세요",
     dateInvalid: "존재하지 않는 날짜예요",
     serviceDateBefore: "이전 날짜는 선택할 수 없어요",
     multiHint: "여러 개 선택 가능",

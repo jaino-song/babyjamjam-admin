@@ -527,7 +527,7 @@ describe("CallReviewSheet — field messages", () => {
       expect(slotOf(startDate)).toHaveTextContent("YYYY-MM-DD 형식");
 
       await user.tab();
-      expect(slotOf(startDate)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+      expect(slotOf(startDate)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     });
 
     it("says the end date must follow the start date", async () => {
@@ -566,7 +566,7 @@ describe("CallReviewSheet — field messages", () => {
       expect(mockConfirmMutateAsync).not.toHaveBeenCalled();
 
       await user.tab();
-      expect(slotOf(birthday)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+      expect(slotOf(birthday)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     });
 
     it("rejects a future birthday in the birthday slot", async () => {

@@ -125,7 +125,7 @@ export default function NewEmployeePage() {
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
   const fieldSpecs: Record<EmployeeWizardValidatedField, FieldSpec> = {
     name: { kind: "text", label: t(locale, "employees.form.name"), required: true },
-    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true },
+    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true, mobileOnly: true },
     // Only tracks "had a selection" / "submitted"; its text is the work-area copy below.
     workArea: { kind: "text", label: t(locale, "employees.form.work-area"), required: true },
   };

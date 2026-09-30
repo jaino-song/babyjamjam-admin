@@ -88,8 +88,8 @@ describe("service record input policy", () => {
             expect(message).not.toBeNull();
             expect(message!.length).toBeLessThanOrEqual(23);
         }
-        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("YYYY-MM-DD 형식으로 입력해 주세요");
-        expect(getServiceRecordHeaderFieldError("momBirth", "2026-10-01", NOW)).toBe("오늘 이후 날짜는 안 돼요");
+        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("YYYY-MM-DD로 입력해 주세요");
+        expect(getServiceRecordHeaderFieldError("momBirth", "2026-10-01", NOW)).toBe("미래 날짜는 입력할 수 없어요");
         expect(getServiceRecordHeaderFieldError("momBirth", "1990-02-30", NOW)).toBe("존재하지 않는 날짜예요");
         expect(getServiceRecordHeaderFieldError("babyBirth", "", NOW, { required: true })).toBe("신생아 출생일자를 입력해 주세요");
         expect(getServiceRecordHeaderFieldError("deliveryType", "", NOW, { required: true })).toBe("분만형태를 선택해 주세요");

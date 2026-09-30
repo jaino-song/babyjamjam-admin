@@ -227,7 +227,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         name: { kind: "text", label: t(locale, "clients.form.name"), required: true },
         birthday: { kind: "birthday", label: t(locale, "clients.form.birthday"), required: true },
         dueDate: { kind: "date", label: t(locale, "clients.form.due-date"), required: true },
-        phone: { kind: "phone", label: t(locale, "clients.form.phone"), required: true },
+        phone: { kind: "phone", label: t(locale, "clients.form.phone"), required: true, mobileOnly: true },
         address: { kind: "text", label: t(locale, "clients.form.address"), required: true },
         startDate: { kind: "date", label: t(locale, "clients.form.start-date") },
         endDate: {

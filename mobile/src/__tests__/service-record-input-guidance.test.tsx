@@ -121,7 +121,7 @@ describe("employee service record inline guidance", () => {
         fireEvent.blur(birth);
         expect(birth).toHaveValue("1999-01-0");
         expect(birth).toHaveAttribute("aria-invalid", "true");
-        expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+        expect(slotOf(birth)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
         expect(slotOf(birth)).toHaveClass("error");
         fireEvent.change(birth, { target: { value: "" } });
         expect(birth).toHaveValue("");
@@ -160,8 +160,8 @@ describe("employee service record inline guidance", () => {
     });
     it.each([
         ["19990229", "존재하지 않는 날짜예요"],
-        ["20260922", "오늘 이후 날짜는 안 돼요"],
-        ["990101", "YYYY-MM-DD 형식으로 입력해 주세요"],
+        ["20260922", "미래 날짜는 입력할 수 없어요"],
+        ["990101", "YYYY-MM-DD로 입력해 주세요"],
     ])("does not accept an invalid or incomplete formatted birthday: %s", (value, message) => {
         render(<Harness />);
         const birth = screen.getByLabelText("산모 생년월일");
@@ -254,10 +254,28 @@ describe("employee service record phone step", () => {
         fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
         expect(submit).toHaveBeenCalledTimes(1);
     });
-    it("keeps a caller-supplied server failure out of the field slot", () => {
-        render(<ServiceRecordWizard {...phoneProps({ phone: "010-1234-5678", phoneError: "휴대폰 번호가 일치하지 않아요." })} />);
-        expect(screen.getByRole("alert")).toHaveTextContent("휴대폰 번호가 일치하지 않아요.");
+    it("keeps a page-level failure out of the field slot", () => {
+        render(<ServiceRecordWizard {...phoneProps({ phone: "010-1234-5678", phoneError: "확인 중 오류가 발생했습니다." })} />);
+        expect(screen.getByRole("alert")).toHaveTextContent("확인 중 오류가 발생했습니다.");
         expect(slotOf(screen.getByLabelText("휴대폰 번호"))).toBeEmptyDOMElement();
+    });
+    it("shows a failure that belongs to the phone field in its slot, not as a page alert", () => {
+        render(<ServiceRecordWizard {...phoneProps({ phone: "010-1234-5678", phoneFieldError: "휴대폰 번호가 일치하지 않아요" })} />);
+        const phone = screen.getByLabelText("휴대폰 번호");
+        expect(screen.queryByRole("alert")).toBeNull();
+        expect(slotOf(phone)).toHaveTextContent("휴대폰 번호가 일치하지 않아요");
+        expect(phone).toHaveAttribute("aria-invalid", "true");
+    });
+    it("hints while the pressed-through phone is focused and incomplete, then errors once left", () => {
+        render(<ServiceRecordWizard {...phoneProps({ phone: "010-12" })} />);
+        const phone = screen.getByLabelText("휴대폰 번호");
+        fireEvent.click(screen.getByRole("button", { name: "확인하기" }));
+        expect(phone).toHaveFocus();
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식");
+        expect(slotOf(phone)).not.toHaveTextContent("입력해 주세요");
+        fireEvent.blur(phone);
+        expect(slotOf(phone)).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+        expect(phone).toHaveAttribute("aria-invalid", "true");
     });
 });
 
@@ -324,7 +342,7 @@ describe("employee service record service date", () => {
         expect(onServiceDateChange).not.toHaveBeenCalled();
         expect(slotOf(date)).toHaveTextContent("YYYY-MM-DD 형식");
         fireEvent.blur(date);
-        expect(slotOf(date)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
+        expect(slotOf(date)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
         expect(next).not.toHaveBeenCalled();
         expect(date).toHaveFocus();

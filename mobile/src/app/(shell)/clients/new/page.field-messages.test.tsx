@@ -124,6 +124,25 @@ describe("mobile client wizard field messages", () => {
     expect(field("phone")).toHaveAttribute("aria-invalid", "true");
   });
 
+  it("reports a landline as a phone-format error on next instead of staying silent", async () => {
+    await renderPage();
+
+    fireEvent.change(field("name"), { target: { value: "김" } });
+    fireEvent.change(field("birthday"), { target: { value: "19580303" } });
+    fireEvent.change(field("phone"), { target: { value: "0311234567" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    // The phone is focused for the user, so the slot shows the format hint until
+    // they leave the field; it then turns into the error.
+    expect(field("phone")).toHaveFocus();
+    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식");
+    fireEvent.blur(field("phone"));
+    expect(slotOf(field("phone"))).toHaveTextContent("010-1234-5678 형식으로 입력해 주세요");
+    expect(field("phone")).toHaveAttribute("aria-invalid", "true");
+    expect(useClientWizardStore.getState().currentStep).toBe(0);
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
   it("on next shows every problem, focuses the first one and does not advance", async () => {
     await renderPage();
 

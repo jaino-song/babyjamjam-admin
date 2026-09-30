@@ -256,7 +256,7 @@ export default function NewClientPage() {
   } = store;
   const fieldSpecs: Record<WizardValidatedField, FieldSpec> = {
     name: { kind: "text", label: "이름", required: true },
-    phone: { kind: "phone", label: "연락처", required: true },
+    phone: { kind: "phone", label: "연락처", required: true, mobileOnly: true },
     birthday: { kind: "birthday", label: "생년월일", required: true },
     dueDate: { kind: "date", label: "출산 예정일" },
     birthDate: { kind: "date", label: "출산일" },

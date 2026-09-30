@@ -607,7 +607,7 @@ describe("ReceiptLinkPage", () => {
 
         const input = screen.getByLabelText("산모님 생년월일");
         const slot = document.getElementById(input.getAttribute("aria-describedby")!)!;
-        await waitFor(() => expect(slot).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요"));
+        await waitFor(() => expect(slot).toHaveTextContent("YYYY-MM-DD로 입력해 주세요"));
         expect(slot).toHaveClass("error");
         expect(slot.parentElement).toHaveClass("lab-row");
         expect(input).toHaveAttribute("aria-invalid", "true");
@@ -659,8 +659,15 @@ describe("ReceiptLinkPage", () => {
 
         const input = screen.getByLabelText("산모님 생년월일");
         expect(input).toHaveValue("9403-15");
-        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식으로 입력해 주세요");
         expect(input).toHaveFocus();
+        // Focused and incomplete: the grey hint; the red error appears once the field is left.
+        const slot = document.getElementById(input.getAttribute("aria-describedby")!)!;
+        expect(slot).toHaveTextContent("YYYY-MM-DD 형식");
+        expect(slot).not.toHaveTextContent("입력해 주세요");
+        expect(input).not.toHaveAttribute("aria-invalid", "true");
+        fireEvent.blur(input);
+        expect(slot).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
+        expect(input).toHaveAttribute("aria-invalid", "true");
         expect(verifyCalled).toBe(false);
     });
 
