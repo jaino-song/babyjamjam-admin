@@ -33,7 +33,7 @@ export const SERVICE_RECORD_CASE_STATUS = {
 
 export type ServiceRecordCaseStatus = typeof SERVICE_RECORD_CASE_STATUS[keyof typeof SERVICE_RECORD_CASE_STATUS];
 
-const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
+export const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
     SERVICE_RECORD_CASE_STATUS.FINALIZING,
     SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
     SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
@@ -480,7 +480,7 @@ export class ServiceRecordLifecycleService {
                 params.duration !== undefined && params.duration !== record.requiredSessionCount
             );
             if (dateChanged) {
-                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_FINALIZED"));
             }
         }
 
@@ -489,11 +489,11 @@ export class ServiceRecordLifecycleService {
             && isoDate(params.startDate) !== isoDate(record.startDate)
             && (record.days.length > 0 || (record.startDate && todayKst(now) >= isoDate(record.startDate)!))
         ) {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_START_DATE_LOCKED"));
         }
 
         if (params.endDate === null && record.days.length > 0) {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_REQUIRED"));
         }
         if (
             params.endDate !== undefined
@@ -501,10 +501,10 @@ export class ServiceRecordLifecycleService {
             && record.days.some((day) =>
                 day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!)
         ) {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"));
         }
         if (params.duration === null && record.days.length > 0) {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_DURATION_REQUIRED"));
         }
         if (
             params.duration !== undefined
@@ -513,7 +513,7 @@ export class ServiceRecordLifecycleService {
             && params.duration < record.requiredSessionCount
             && record.days.length > 0
         ) {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_DURATION_CANNOT_DECREASE"));
         }
     }
 

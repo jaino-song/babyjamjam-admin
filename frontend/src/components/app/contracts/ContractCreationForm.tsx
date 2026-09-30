@@ -433,6 +433,8 @@ export const ContractCreationForm = ({
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
+  // 서비스 기록이 확정된 고객의 계약 기간은 저장된 값 그대로 써요. 고객이 바뀌거나 초기화되면 잠금도 풀려요.
+  const [periodLockedClientId, setPeriodLockedClientId] = useState<number | null>(null);
 
   const { isLoaded: isEformsignLoaded, isLoading: isEformsignLoading, error: eformsignError, openDocument } =
     useEformsign();
@@ -497,6 +499,8 @@ export const ContractCreationForm = ({
     resetAll,
   } = useFormStore();
 
+  const isPeriodLocked = periodLockedClientId !== null && clientId === periodLockedClientId;
+
   // Sync display inputs when external date state changes (e.g., client autofill).
   useEffect(() => { setDueDateInput(formatIsoDateToYymmdd(dueDate)); }, [dueDate]);
   useEffect(() => { setBirthDateInput(formatIsoDateToYymmdd(birthDate)); }, [birthDate]);
@@ -538,13 +542,15 @@ export const ContractCreationForm = ({
 
   // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
+  // 서비스 기록이 확정된 고객은 저장된 종료일을 덮어쓰지 않아요.
   useEffect(() => {
+    if (isPeriodLocked) return;
     if (!startDate || !voucherDuration) return;
     const n = parseInt(voucherDuration, 10);
     if (!Number.isFinite(n) || n <= 0) return;
     const computed = calcEndDateBusinessDays(startDate, n);
     if (computed) setEndDate(computed);
-  }, [startDate, voucherDuration, setEndDate]);
+  }, [isPeriodLocked, startDate, voucherDuration, setEndDate]);
 
   const isProcessingStep = activeStep === CONTRACT_CREATION_PROCESSING_STEP_INDEX;
   const hasCreationSession = isProcessingStep && creationProgress.step !== null;
@@ -656,6 +662,9 @@ export const ContractCreationForm = ({
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     setClientId(selectedClientId);
+    setPeriodLockedClientId(
+      selectedClientId !== null && client?.serviceRecordPeriodLocked === true ? selectedClientId : null,
+    );
     resetEmployeeFields();
     resetEmployee2Fields();
 
@@ -1697,7 +1706,7 @@ export const ContractCreationForm = ({
                 className={SELECT_CLS}
                 value={voucherDuration}
                 onValueChange={handleDurationChange}
-                disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading}
+                disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading || isPeriodLocked}
                 placeholder={t(locale, "price-info-msg.duration-label")}
                 options={voucherPriceInfos.map((v) => ({
                   value: String(v.duration),
@@ -1801,6 +1810,7 @@ export const ContractCreationForm = ({
                 placeholder="예: YYYY-MM-DD"
                 value={startDateInput}
                 required
+                disabled={isPeriodLocked}
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   setStartDateInput(formatted);
@@ -1830,6 +1840,7 @@ export const ContractCreationForm = ({
                 maxLength={10}
                 placeholder="예: YYYY-MM-DD"
                 value={endDateInput}
+                disabled={isPeriodLocked}
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   setEndDateInput(formatted);
@@ -1874,6 +1885,14 @@ export const ContractCreationForm = ({
               />
             </div>
           </div>
+          {isPeriodLocked && (
+            <Alert
+              data-component="desktop_contracts_creation_form_period-locked-note"
+              data-testid="contract-creation-period-locked-note"
+            >
+              <AlertDescription>서비스 기록이 확정된 고객이라 계약 기간을 변경할 수 없어요.</AlertDescription>
+            </Alert>
+          )}
           {contractDateValidationMessage && (
             <Alert
               id={CONTRACT_DATE_RANGE_ERROR_ID}

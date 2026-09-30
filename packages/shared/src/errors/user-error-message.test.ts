@@ -1,3 +1,4 @@
+import { createProblemDetails } from './problem-details';
 import { getUserErrorMessage } from './user-error-message';
 
 const response = (status: number, data: unknown) => ({ response: { status, data } });
@@ -6,6 +7,12 @@ describe('getUserErrorMessage', () => {
   it('explains the actual duplicate field without exposing internal field names', () => {
     expect(getUserErrorMessage(response(409, { code: 'P2002', field: 'phone' }))).toBe('연락처 정보가 이미 등록돼 있어요.');
     expect(getUserErrorMessage(response(409, { code: 'P2002', field: 'constructor' }))).toBe('같은 정보가 이미 등록돼 있어요.');
+  });
+  it('shows the registered reason for a finalized service record period 409 instead of the generic 409 text', () => {
+    const problem = createProblemDetails({ code: 'SERVICE_RECORD_FINALIZED', requestId: 'req-1' });
+    const message = getUserErrorMessage(response(409, problem));
+    expect(message).toBe('서비스 기록이 이미 확정되어 시작일·종료일·서비스 기간을 바꿀 수 없어요. 저장된 기간 그대로 진행해 주세요.');
+    expect(message).not.toBe('현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.');
   });
   it('prefers the actual business reason over a bare HTTP label', () => {
     expect(getUserErrorMessage(response(400, { message: '주담당과 부담당은 같은 직원일 수 없습니다.', error: 'Bad Request' }))).toBe('주담당과 부담당은 같은 직원일 수 없어요.');
