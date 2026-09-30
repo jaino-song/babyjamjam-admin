@@ -846,31 +846,28 @@
       ]
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
-      "ui-architecture/no-page-local-components": [
-        "142:10-142:15|pageLocalComponent"
-      ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1389:13-1395:14|rawUiElement",
-        "1399:13-1405:14|rawUiElement",
-        "1528:23-1538:25|rawUiElement",
-        "1546:25-1556:27|rawUiElement",
-        "1563:25-1572:27|rawUiElement",
-        "1580:23-1587:25|rawUiElement",
-        "1599:25-1605:26|rawUiElement",
-        "1641:23-1650:25|rawUiElement",
-        "1697:27-1706:29|rawUiElement",
-        "1723:27-1728:28|rawUiElement",
-        "1743:27-1749:28|rawUiElement",
-        "1771:25-1778:26|rawUiElement",
-        "1802:25-1810:27|rawUiElement",
-        "1821:25-1829:27|rawUiElement",
-        "1840:25-1848:27|rawUiElement",
-        "1870:25-1881:27|rawUiElement",
-        "1890:25-1901:27|rawUiElement",
-        "1920:23-1931:25|rawUiElement",
-        "1974:15-1980:16|rawUiElement",
-        "1983:15-1989:16|rawUiElement",
-        "2090:13-2096:14|rawUiElement"
+        "1432:13-1438:14|rawUiElement",
+        "1442:13-1448:14|rawUiElement",
+        "1571:23-1588:25|rawUiElement",
+        "1595:23-1611:25|rawUiElement",
+        "1618:23-1633:25|rawUiElement",
+        "1640:23-1647:25|rawUiElement",
+        "1659:25-1665:26|rawUiElement",
+        "1701:23-1710:25|rawUiElement",
+        "1757:27-1766:29|rawUiElement",
+        "1783:27-1788:28|rawUiElement",
+        "1803:27-1809:28|rawUiElement",
+        "1831:25-1838:26|rawUiElement",
+        "1862:25-1870:27|rawUiElement",
+        "1881:25-1889:27|rawUiElement",
+        "1900:25-1908:27|rawUiElement",
+        "1929:23-1945:25|rawUiElement",
+        "1954:23-1970:25|rawUiElement",
+        "1985:23-2001:25|rawUiElement",
+        "2044:15-2050:16|rawUiElement",
+        "2053:15-2059:16|rawUiElement",
+        "2160:13-2166:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {
