@@ -1,3 +1,5 @@
+import { formatIsoDateInput } from "./date-input";
+
 function isValidCalendarDate(year: number, month: number, day: number): boolean {
     if (month < 1 || month > 12 || day < 1 || day > 31) return false;
     const date = new Date(Date.UTC(year, month - 1, day));
@@ -85,9 +87,4 @@ export function isValidBirthdayIsoDate(raw: string, now: Date = new Date()): boo
 }
 
 /** 입력 중에는 일부 값도 유지하고, 여덟 자리 숫자에 날짜 구분자를 붙인다. */
-export function formatBirthdayInput(value: string): string {
-    const digits = value.replace(/\D/g, "").slice(0, 8);
-    if (digits.length <= 4) return digits;
-    if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
-}
+export const formatBirthdayInput = formatIsoDateInput;
