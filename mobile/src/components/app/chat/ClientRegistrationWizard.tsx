@@ -126,9 +126,14 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     const voucherTypeMessage: SlotMessage | null = voucherAttempted && !voucherType
         ? { text: "유형을 선택해 주세요", tone: "err" }
         : null;
+    // A period is picked but its price row has no amounts: say so instead of leaving 다음 a silent no-op.
+    const isVoucherPriceMissing =
+        Boolean(voucherType) && Boolean(voucherDuration) && (!fullPrice.trim() || !grant.trim() || !actualPrice.trim());
     const voucherDurationMessage: SlotMessage | null = voucherAttempted && voucherType && !voucherDuration
         ? { text: "기간을 선택해 주세요", tone: "err" }
-        : null;
+        : isVoucherPriceMissing
+            ? { text: "요금 정보가 없어요", tone: "err" }
+            : null;
 
     const handleNext = () => {
         if (activeStep === 1 && voucherClient && !isVoucherInfoComplete) {
@@ -340,13 +345,19 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 {/* Step 2: Voucher Info */}
                 {activeStep === 1 && (
                     <div className="grid gap-4">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="voucherClient"
-                                checked={voucherClient}
-                                onCheckedChange={(checked) => setVoucherClient(checked === true)}
-                            />
-                            <Label htmlFor="voucherClient">바우처 대상</Label>
+                        <div className="space-y-2" data-component={`${WIZARD_BASE}_steps_customer-type-field`}>
+                            <FieldLabelRow data-component={`${WIZARD_BASE}_steps_customer-type-field`} htmlFor="customerType" label="고객 유형" message={null} />
+                            <div id="customerType" role="group" aria-describedby={fieldMessageId("customerType")} className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="voucherClient"
+                                    checked={voucherClient}
+                                    onCheckedChange={(checked) => {
+                                        setVoucherClient(checked === true);
+                                        setVoucherAttempted(false);
+                                    }}
+                                />
+                                <Label htmlFor="voucherClient">바우처 대상</Label>
+                            </div>
                         </div>
 
                         {voucherClient && (
@@ -449,22 +460,25 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
                 {/* Step 3: Settings */}
                 {activeStep === 2 && (
-                    <div className="grid gap-3">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="careCenter"
-                                checked={careCenter}
-                                onCheckedChange={(checked) => setCareCenter(checked === true)}
-                            />
-                            <Label htmlFor="careCenter">조리원 여부</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="breastPump"
-                                checked={breastPump}
-                                onCheckedChange={(checked) => setBreastPump(checked === true)}
-                            />
-                            <Label htmlFor="breastPump">유축기</Label>
+                    <div className="space-y-2" data-component={`${WIZARD_BASE}_steps_options-field`}>
+                        <FieldLabelRow data-component={`${WIZARD_BASE}_steps_options-field`} htmlFor="options" label="추가 옵션" message={null} />
+                        <div id="options" role="group" aria-describedby={fieldMessageId("options")} className="grid gap-3">
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="careCenter"
+                                    checked={careCenter}
+                                    onCheckedChange={(checked) => setCareCenter(checked === true)}
+                                />
+                                <Label htmlFor="careCenter">조리원 여부</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="breastPump"
+                                    checked={breastPump}
+                                    onCheckedChange={(checked) => setBreastPump(checked === true)}
+                                />
+                                <Label htmlFor="breastPump">유축기</Label>
+                            </div>
                         </div>
                     </div>
                 )}

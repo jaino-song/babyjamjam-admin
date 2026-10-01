@@ -72,7 +72,7 @@ const FIELD_INPUT_IDS: Record<AccountField | ProfileField, string> = {
   birthDate: "register-birth",
 };
 
-const ROLE_HELPER_COPY = "오너가 지점과 최종 권한을 배정합니다.";
+const ROLE_HELPER_COPY = "오너가 권한을 배정해요";
 const PASSWORD_RULES_GUIDANCE = "8자 이상 대소문자·숫자·특수문자";
 
 /** Registered-code discriminator for the duplicate-phone failure. */

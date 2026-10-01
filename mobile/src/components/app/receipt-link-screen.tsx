@@ -330,8 +330,13 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
     // on hand in the same slot; any hint or error replaces it and it returns after.
     const lockRuleVisible = screen.kind === "locked"
         || (screen.kind === "verify" && screen.remainingAttempts < MAX_ATTEMPTS);
+    // After a failed attempt the guidance keeps both facts in view: how many tries
+    // are left and what happens when they run out.
+    const lockGuidance = screen.kind === "verify"
+        ? `남은 ${screen.remainingAttempts}회 · 틀리면 30분 잠겨요`
+        : BIRTHDAY_LOCK_GUIDANCE;
     const birthdaySlot: BirthdaySlotMessage | null = birthdayMessage
-        ?? (lockRuleVisible ? { tone: "hint", text: BIRTHDAY_LOCK_GUIDANCE } : null);
+        ?? (lockRuleVisible ? { tone: "hint", text: lockGuidance } : null);
     const birthdaySlotId = "receipt-birthday-helper";
 
     const stepNumber = screen.kind === "image" ? "2단계" : "1단계";

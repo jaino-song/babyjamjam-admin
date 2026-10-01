@@ -176,10 +176,10 @@ async function addManualRecipient() {
   });
 }
 
+// Presses the real send button: it is always pressable, and a blocked send
+// shows its reason in the field's slot instead of leaving a dead button.
 function submitForm() {
-  const form = screen.getByLabelText("메시지 본문").closest("form");
-  if (!form) throw new Error("message form not found");
-  fireEvent.submit(form);
+  fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 }
 
 beforeEach(() => {
@@ -196,13 +196,13 @@ beforeEach(() => {
 });
 
 describe("messages/new branch template readiness", () => {
-  it("keeps sending disabled until the current branch template query resolves", async () => {
+  it("blocks sending until the current branch template query resolves", async () => {
     templateQueries.GREETING = pendingTemplate();
     const view = renderPage();
 
     await addManualRecipient();
 
-    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
     submitForm();
 
     expect(api.post).not.toHaveBeenCalled();
@@ -218,7 +218,7 @@ describe("messages/new branch template readiness", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("메시지 본문")).toHaveValue("branch-a 맞춤 인사");
-      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+      expect(document.getElementById("template-select-message")).toBeEmptyDOMElement();
     });
   });
 
@@ -271,9 +271,10 @@ describe("messages/new branch template readiness", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
     submitForm();
     expect(api.post).not.toHaveBeenCalled();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
 
     templateQueries.GREETING = readyTemplate("GREETING", "branch-b 맞춤 인사", "branch-b");
     view.rerender(
@@ -284,7 +285,7 @@ describe("messages/new branch template readiness", () => {
 
     await waitFor(() => {
       expect(screen.getByLabelText("메시지 본문")).toHaveValue("branch-b 맞춤 인사");
-      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+      expect(document.getElementById("template-select-message")).toBeEmptyDOMElement();
     });
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 

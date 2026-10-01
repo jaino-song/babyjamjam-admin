@@ -129,7 +129,7 @@ const RECIPIENT_REQUIRED_MESSAGE = "수신자를 선택하거나 전화번호를
 const DUPLICATE_RECIPIENT_SLOT_COPY = "이미 추가된 수신자예요";
 const RECIPIENT_LIMIT_SLOT_COPY = `수신자는 최대 ${MAX_RECIPIENTS}명까지예요`;
 const RECIPIENT_FORMAT_MESSAGE = "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
-const RECIPIENT_FORMAT_SHORT = "010-1234-5678로 입력해 주세요";
+const RECIPIENT_FORMAT_SHORT = "010-1234-5678 형식";
 // One-line copy for the receiver slot when a picked client has no phone number.
 const CLIENT_WITHOUT_PHONE_SLOT_COPY = "연락처가 없는 고객이에요";
 const VARIABLE_HINT_SLOT_COPY = "템플릿 변수가 남아 있어요";
@@ -1413,7 +1413,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return {
         field: "body",
         message: `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`,
-        short: `최대 ${MAX_BODY}자까지 입력할 수 있어요`,
+        short: `최대 ${MAX_BODY}자`,
       };
     }
     return null;
@@ -1795,6 +1795,29 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     });
   };
 
+  // Moves the caret to the field whose slot now explains why nothing was sent.
+  const focusIssueField = (issue: ValidationIssue) => {
+    const target = issue.field;
+    if (target === "form") return;
+    let elementIds: string[];
+    if (target === "template") {
+      elementIds = ["template-select"];
+    } else if (typeof target === "string") {
+      elementIds = [target];
+    } else {
+      const slotKey = variableSlotKey(target.variable);
+      elementIds = slotKey === "name"
+        ? ["recipient-name", getVariableInputId("name")]
+        : slotKey === "type" || slotKey === "duration" || slotKey === "bankAccount"
+          ? [`price-info-${slotKey === "bankAccount" ? "bank-account" : slotKey}`]
+          : [getVariableInputId(slotKey)];
+    }
+    const element = elementIds.map((id) => document.getElementById(id)).find(Boolean);
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (needsSenderApproval || isSenderApprovalLoading) {
@@ -1808,8 +1831,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     }
 
     if (validationError) {
-      // Each problem is shown in its own field's slot.
+      // Each problem is shown in its own field's slot; the first one gets the focus.
       setSubmitAttempted(true);
+      if (validationIssue && issueHasSlot) focusIssueField(validationIssue);
       return;
     }
 
@@ -1847,8 +1871,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
     ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
 
+  // A field problem does not disable the button: pressing it is what shows the
+  // problem in its slot. Only a send that is already running or settled does.
   const isSubmitDisabled =
-    Boolean(validationError) ||
     sendMutation.isPending ||
     isSenderApprovalLoading ||
     needsSenderApproval ||
@@ -1980,6 +2005,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         }}
                         placeholder="산모님 성함"
                         label=""
+                        ariaDescribedBy={fieldMessageId("recipient-name")}
                       />
                     </div>
                   ) : null}
@@ -2031,6 +2057,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         onInputValueChange={setReceiver}
                         placeholder="010-1234-5678"
                         label=""
+                        ariaDescribedBy={fieldMessageId("receiver")}
                         allowManualEntry
                         manualEntryLabel="입력한 번호 추가"
                         manualEntryDescription="전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"

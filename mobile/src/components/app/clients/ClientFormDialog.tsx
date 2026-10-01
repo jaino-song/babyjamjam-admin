@@ -1065,12 +1065,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     <Separator />
 
                     {/* Flags Section */}
-                    <div className="space-y-4">
-                        <h4 className="text-sm font-medium text-primary">
-                            {t(locale, "clients.form.section-flags")}
-                        </h4>
+                    <div className="space-y-2">
+                        <FieldLabelRow
+                            data-component={`${CLIENT_FORM_DIALOG_BASE}_content_flags-field`}
+                            htmlFor="clientFlags"
+                            label={t(locale, "clients.form.section-flags")}
+                        />
 
-                        <div className="flex flex-wrap gap-6">
+                        <div id="clientFlags" role="group" aria-describedby={messageIdFor("clientFlags")} className="flex flex-wrap gap-6">
                             <div className="flex items-center gap-2">
                                 <Switch
                                     id="careCenter"
