@@ -270,7 +270,24 @@ export default function ContractCreationPage() {
     setFullPrice, setGrant, setActualPrice,
     setStartDate, setEndDate, setPaymentDate,
     setPreservePrefilledPrices,
+    supersede, clearSupersede,
   } = useFormStore();
+
+  // Re-issue: the replaced unsigned contract is cancelled only after the new one was
+  // sent, and only when the contract just sent belongs to the same client.
+  const supersedePreviousContract = (sentClientId: number | null | undefined) => {
+    if (!supersede || sentClientId !== supersede.clientId) return;
+    const { documentId } = supersede;
+    clearSupersede();
+    eformsignApi.deleteDocument(documentId)
+      .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
+      .catch(() => {
+        toast({
+          variant: "destructive",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 직접 삭제해 주세요",
+        });
+      });
+  };
 
   // The branch holiday calendar. The end date is saved with the contract, so
   // its auto-calculation waits for `ready`; before then `calendar` is the built-in list.
@@ -1095,6 +1112,7 @@ export default function ContractCreationPage() {
           }
           iframeOutcomeConfirmedRef.current = true;
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+          supersedePreviousContract(finalClientId);
           startNavigation();
           setTimeout(() => {
             closeEformsignModal();
@@ -1362,6 +1380,7 @@ export default function ContractCreationPage() {
         );
 
         if (isHeadlessSuccessResponse(headless)) {
+          supersedePreviousContract(finalClientId);
           startNavigation();
           setCreationProgress({ step: "sent", completed: true, failed: false });
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
@@ -1444,6 +1463,7 @@ export default function ContractCreationPage() {
               showSubmissionFailure(new Error("The adopted document response was invalid"), "UNKNOWN");
               return;
             }
+            supersedePreviousContract(finalClientId);
             startNavigation();
             setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });

@@ -237,6 +237,10 @@ export interface ContractCreationFormProps {
   footerClassName?: string;
   renderLayout?: (parts: ContractCreationFormLayoutParts) => ReactNode;
   initialClient?: Client;
+  /** Payment date (YYYY-MM-DD) to prefill for initialClient instead of leaving it empty. */
+  initialPaymentDate?: string;
+  /** Unsigned contract to cancel once the new one has been sent (contract re-issue). */
+  supersedeDocumentId?: string;
 }
 
 const CONTRACT_CREATION_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
@@ -622,6 +626,8 @@ export const ContractCreationForm = ({
   footerClassName,
   renderLayout,
   initialClient,
+  initialPaymentDate,
+  supersedeDocumentId,
 }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
@@ -1082,9 +1088,27 @@ export const ContractCreationForm = ({
 
     handleClientSelect(initialClient.id, initialClient);
     setArea(initialClient.areaId ?? "");
-    setPaymentDate("");
-    setPaymentDateInput("");
+    setPaymentDate(initialPaymentDate ?? "");
+    setPaymentDateInput(initialPaymentDate ?? "");
   }, [initialClient]);
+
+  // Re-issue: the replaced contract is cancelled only after the new one was sent,
+  // so abandoning or failing the send leaves the client's current contract intact.
+  const supersededRef = useRef(false);
+  useEffect(() => {
+    if (!isCreationSuccessOpen || !supersedeDocumentId || supersededRef.current) return;
+    // Only when the contract just sent is for the re-issued client.
+    if (!initialClient || clientId !== initialClient.id) return;
+    supersededRef.current = true;
+    eformsignApi.deleteDocument(supersedeDocumentId)
+      .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
+      .catch(() => {
+        toast({
+          variant: "destructive",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 직접 삭제해 주세요",
+        });
+      });
+  }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, queryClient, toast]);
 
   const initialClientEmployeePrefillAppliedRef = useRef(false);
 

@@ -17,6 +17,7 @@ import {
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
+import { eformsignApi } from "@/services/api";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -50,7 +51,14 @@ import { ClientMessageHistoryDetail } from "@/components/app/clients/client-mess
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
-import { ServiceScheduleContractResendModal } from "@/components/app/clients/ServiceScheduleContractResendModal";
+import {
+  ServiceScheduleContractResendModal,
+  type ContractReissueOptions,
+} from "@/components/app/clients/ServiceScheduleContractResendModal";
+import {
+  contractPaymentDateFromFields,
+  isCancellableContractStatus,
+} from "@babyjamjam/shared/eformsign/contract-reissue";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -609,7 +617,7 @@ export function ClientDetailContent({
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
   onMessage: () => void;
-  onIssueContract: (client: Client) => void;
+  onIssueContract: (client: Client, reissue?: ContractReissueOptions) => void;
   onEdit: (client: Client) => void;
   onDelete: (id: number) => void;
   onClientUpdated: (client: Client) => void;
@@ -630,6 +638,31 @@ export function ClientDetailContent({
   const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
   const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
   const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
+  const [isPreparingContractReissue, setIsPreparingContractReissue] = useState(false);
+
+  // 수정 전송: reopen contract creation with the new period, keeping the old payment date.
+  // An unsigned old contract is cancelled once the new one is sent.
+  const handleContractReissue = async (target: Client) => {
+    setIsPreparingContractReissue(true);
+    let paymentDate: string | undefined;
+    try {
+      if (target.eDocId) {
+        const previous = await eformsignApi.getDocument(target.eDocId);
+        paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
+      }
+    } catch {
+      // Without the old document the payment date falls back to the form's default.
+    } finally {
+      setIsPreparingContractReissue(false);
+    }
+    setContractResendClient(null);
+    onIssueContract(target, {
+      paymentDate,
+      supersedeDocumentId: target.eDocId && isCancellableContractStatus(target.documentStatus)
+        ? target.eDocId
+        : undefined,
+    });
+  };
   const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
   const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
@@ -707,10 +740,11 @@ export function ClientDetailContent({
       const changed = await applyServiceScheduleChange(scheduleChangeTarget.scheduleId, {
         toDate: selectedScheduleChangeDate,
       });
-      // The backend pulls the service start back with a session moved before it.
+      // Moving the first session (or any session before the start) moves the service start.
       const updatedClient: Client = {
         ...client,
-        ...(client.startDate && changed.toDate < client.startDate.slice(0, 10)
+        ...(changed.sessionIndex === 1
+          || (client.startDate && changed.toDate < client.startDate.slice(0, 10))
           ? { startDate: changed.toDate }
           : {}),
         endDate: changed.newEndDate,
@@ -1189,11 +1223,8 @@ export function ClientDetailContent({
           data-component={`${dataComponent}_schedule-contract-resend-modal`}
           open
           onKeep={() => setContractResendClient(null)}
-          onResend={() => {
-            const target = contractResendClient;
-            setContractResendClient(null);
-            onIssueContract(target);
-          }}
+          isPending={isPreparingContractReissue}
+          onResend={() => void handleContractReissue(contractResendClient)}
         />
       ) : null}
 

@@ -54,6 +54,10 @@ import {
 } from "@/components/app/clients/ClientFormDialog";
 import { MaternityContractDialog } from "@/components/app/clients/MaternityContractDialog";
 import { ServiceScheduleContractResendModal } from "@/components/app/clients/ServiceScheduleContractResendModal";
+import {
+    contractPaymentDateFromFields,
+    isCancellableContractStatus,
+} from "@babyjamjam/shared/eformsign/contract-reissue";
 import { canCreateNewContractDocument } from "@/components/app/contracts/ContractClientSelector";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
@@ -88,7 +92,7 @@ import {
     SteppedWizardStepper,
 } from "@/components/app/v3";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
-import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
+import { eformsignApi, settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS: Array<{ label: string; value: ClientListTab }> = [
     { label: "전체", value: "all" },
@@ -279,6 +283,11 @@ export default function ClientsPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [maternityContractClient, setMaternityContractClient] = useState<Client | null>(null);
+    const [contractReissue, setContractReissue] = useState<{
+        paymentDate?: string;
+        supersedeDocumentId?: string;
+    } | null>(null);
+    const [isPreparingContractReissue, setIsPreparingContractReissue] = useState(false);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
     const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
@@ -529,10 +538,11 @@ export default function ClientsPage() {
             const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
                 toDate: selectedScheduleChangeDate,
             });
-            // The backend pulls the service start back with a session moved before it.
+            // Moving the first session (or any session before the start) moves the service start.
             const withNewPeriod = (currentClient: Client): Client => ({
                 ...currentClient,
-                ...(currentClient.startDate && changed.data.toDate < currentClient.startDate.slice(0, 10)
+                ...(changed.data.sessionIndex === 1
+                    || (currentClient.startDate && changed.data.toDate < currentClient.startDate.slice(0, 10))
                     ? { startDate: changed.data.toDate }
                     : {}),
                 endDate: changed.data.newEndDate,
@@ -662,6 +672,31 @@ export default function ClientsPage() {
         setEditingClient((currentClient) => (
             currentClient?.id === client.id ? client : currentClient
         ));
+    };
+
+    // 수정 전송: reopen the contract wizard with the new period, keeping the old payment date.
+    // An unsigned old contract is cancelled by the wizard once the new one is sent.
+    const handleContractReissue = async (client: Client) => {
+        setIsPreparingContractReissue(true);
+        let paymentDate: string | undefined;
+        try {
+            if (client.eDocId) {
+                const previous = await eformsignApi.getDocument(client.eDocId);
+                paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
+            }
+        } catch {
+            // Without the old document the payment date is simply left for the user to fill.
+        } finally {
+            setIsPreparingContractReissue(false);
+        }
+        setContractReissue({
+            paymentDate,
+            supersedeDocumentId: client.eDocId && isCancellableContractStatus(client.documentStatus)
+                ? client.eDocId
+                : undefined,
+        });
+        setMaternityContractClient(client);
+        setContractResendClient(null);
     };
 
     const handleMaternityContractSuccess = async () => {
@@ -1171,10 +1206,8 @@ export default function ClientsPage() {
                     open
                     dataComponent="desktop_clients-detail_service-schedule-contract-resend-modal"
                     onKeep={() => setContractResendClient(null)}
-                    onResend={() => {
-                        setMaternityContractClient(contractResendClient);
-                        setContractResendClient(null);
-                    }}
+                    isPending={isPreparingContractReissue}
+                    onResend={() => void handleContractReissue(contractResendClient)}
                 />
             ) : null}
 
@@ -1182,7 +1215,12 @@ export default function ClientsPage() {
                 <MaternityContractDialog
                     open
                     client={maternityContractClient}
-                    onClose={() => setMaternityContractClient(null)}
+                    initialPaymentDate={contractReissue?.paymentDate}
+                    supersedeDocumentId={contractReissue?.supersedeDocumentId}
+                    onClose={() => {
+                        setMaternityContractClient(null);
+                        setContractReissue(null);
+                    }}
                     onSuccess={() => void handleMaternityContractSuccess()}
                 />
             ) : null}

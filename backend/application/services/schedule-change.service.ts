@@ -154,7 +154,6 @@ interface ScheduleForChange {
 interface ClientForChange {
     duration: number | null;
     birthDate?: Date | null;
-    dueDate?: Date | null;
 }
 
 interface ServiceRecordDayForChange {
@@ -242,21 +241,8 @@ export class ScheduleChangeService {
         const newEndDate = calendar.addBusinessDays(toDate, totalSessions - sessionIndex);
 
         // An admin may move the session earlier as well as later, but never
-        // before the birth date (출산일, falling back to the due date) and never
-        // onto or before the previous session's date.
-        const previousDate = sessionIndex > 1
-            ? planned?.find((row) => row.sessionIndex === sessionIndex - 1)?.serviceDate
-                ?? (() => {
-                    const row = days.find((day) => day.sessionIndex === sessionIndex - 1);
-                    return row ? toIso(row.serviceDate) : undefined;
-                })()
-            : undefined;
-        const birthDate = client.birthDate ?? client.dueDate ?? null;
-        const bounds = [
-            birthDate ? toIso(birthDate) : null,
-            previousDate ? calendar.nextBusinessDay(previousDate) : null,
-        ].filter((value): value is string => value !== null);
-        const minimumDate = bounds.length > 0 ? bounds.sort()[bounds.length - 1]! : null;
+        // before the birth date (출산일). Without a birth date there is no floor.
+        const minimumDate = client.birthDate ? toIso(client.birthDate) : null;
 
         return { sessionIndex, fromDate, toDate, newEndDate, minimumDate };
     }
@@ -491,8 +477,9 @@ export class ScheduleChangeService {
                 if (target.minimumDate && selectedDate < target.minimumDate) {
                     throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
                 }
-                // Moving the first session earlier moves the service start with it.
-                const startMoved = Boolean(schedule.startDate && selectedDate < toIso(schedule.startDate));
+                // The first session is the service start: moving it, either way, moves the start date.
+                const startMoved = target.sessionIndex === 1
+                    || Boolean(schedule.startDate && selectedDate < toIso(schedule.startDate));
                 const newStartDate = startMoved ? selectedDateValue : schedule.startDate;
 
                 const shiftedPlannedSessions = shiftCanonicalPlan(

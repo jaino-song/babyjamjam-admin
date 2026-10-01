@@ -10,6 +10,7 @@ import { useEmployees } from "@/hooks/useEmployees";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
+import type { ContractReissueOptions } from "@/components/app/clients/ServiceScheduleContractResendModal";
 import { todayIsoDate } from "@/lib/contracts/date-input";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
@@ -226,7 +227,7 @@ export function useClientDetailController({
     if (localDetailClient) router.push(`/messages/new?clientId=${localDetailClient.id}`);
   }, [localDetailClient, router]);
 
-  const handleIssueContract = useCallback((target: Client) => {
+  const handleIssueContract = useCallback((target: Client, reissue?: ContractReissueOptions) => {
     const primaryEmployee =
       employees.find((employee) => employee.id === target.primaryEmployee?.id) ??
       employees.find((employee) => employee.name.trim() === target.primaryEmployee?.name?.trim());
@@ -252,7 +253,8 @@ export function useClientDetailController({
       fullPrice: target.fullPrice ?? "",
       grant: target.grant ?? "",
       actualPrice: target.actualPrice ?? "",
-      paymentDate: todayIsoDate(),
+      paymentDate: reissue?.paymentDate ?? todayIsoDate(),
+      supersedeDocumentId: reissue?.supersedeDocumentId,
       voucherType: target.type ?? "",
       voucherDuration: target.duration != null ? String(target.duration) : "",
       area: target.areaId ?? "",
