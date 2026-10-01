@@ -1,13 +1,14 @@
-import { countBusinessDaysKr } from "./business-days";
+import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "./business-days";
 
 /** 바우처 일수와 구분하여 실제 서비스 기간 안에서 제공할 회차 수를 계산한다. */
 export function serviceRecordSessionCount(
     startDate: Date | null | undefined,
     endDate: Date | null | undefined,
     storedCount: number | null,
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
 ): number | null {
     if (!startDate || !endDate) return storedCount;
-    const businessDays = countBusinessDaysKr(
+    const businessDays = calendar.countBusinessDays(
         startDate.toISOString().slice(0, 10),
         endDate.toISOString().slice(0, 10),
     );
