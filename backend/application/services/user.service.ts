@@ -1033,6 +1033,31 @@ export class UserService {
 
     reject(id: string, actor?: AdminAuditActor): Promise<UserApprovalSummary> {
         return this.prismaService.$transaction(async (tx) => {
+            const effectiveActor = actor ?? currentAdminAuditActor();
+            if (effectiveActor?.userId && effectiveActor.userId === id) {
+                throw new ForbiddenException(this.selfRejectionProblem());
+            }
+
+            const target = await tx.user.findUnique({
+                where: { id },
+                select: { id: true, role: true },
+            });
+            if (!target) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if (target.role === "owner") {
+                throw new ForbiddenException(this.ownerRejectionProblem());
+            }
+
+            const removedMemberships = await tx.user_branch.findMany({
+                where: { userId: id },
+                select: { branchId: true },
+            });
+            const ownedBranches = await tx.branch.findMany({
+                where: { ownerId: id },
+                select: { id: true },
+            });
+
             const user = await tx.user.update({
                 where: { id },
                 data: {
@@ -1051,6 +1076,16 @@ export class UserService {
                     tokenVersion: true,
                 },
             });
+
+            await tx.user_branch.deleteMany({ where: { userId: id } });
+
+            if (ownedBranches.length > 0) {
+                await tx.branch.updateMany({
+                    where: { ownerId: id },
+                    data: { ownerId: null },
+                });
+            }
+
             await tx.auth_session.updateMany({
                 where: { userId: id, revokedAt: null },
                 data: {
@@ -1058,14 +1093,37 @@ export class UserService {
                     revokedReason: "approval_rejected",
                 },
             });
-            await this.appendAudit(tx, actor ?? currentAdminAuditActor(), {
+            await this.appendAudit(tx, effectiveActor, {
                 action: "user.rejected",
                 targetType: "user",
                 targetId: id,
                 before: { id, approvalStatus: "pending" },
-                after: { id, approvalStatus: "rejected" },
+                after: {
+                    id,
+                    approvalStatus: "rejected",
+                    removedBranchIds: removedMemberships.map((membership) => membership.branchId),
+                    clearedOwnerBranchIds: ownedBranches.map((branch) => branch.id),
+                },
             });
             return user;
+        });
+    }
+
+    /** 403 body: an actor may not reject their own admission. */
+    private selfRejectionProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "본인 계정은 거절할 수 없어요.",
+        });
+    }
+
+    /** 403 body: a global owner's admission may not be rejected through this path. */
+    private ownerRejectionProblem() {
+        return problemBody("ACCESS_DENIED", {
+            pointer: "/id",
+            code: "INVALID_VALUE",
+            detail: "오너 계정은 거절할 수 없어요.",
         });
     }
 }
