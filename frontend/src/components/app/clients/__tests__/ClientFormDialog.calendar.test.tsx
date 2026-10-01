@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
@@ -60,6 +60,13 @@ const BRANCH_CALENDAR = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "20
   supportedYears: [2024, 2025, 2026, 2027],
 });
 
+// A calendar that has not been synced for 2028 yet: any calculation reaching it throws.
+const UNSUPPORTED_2028_CALENDAR = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+  version: "kr-db-test-unsupported-2028",
+  supportedYears: [2026, 2027],
+});
+const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.";
+
 function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? KR_BUILTIN_CALENDAR;
   return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
@@ -82,6 +89,8 @@ function lastExtraYears(): number[] {
   const calls = mockedHook.mock.calls as unknown as Array<[{ extraYears?: number[] } | undefined]>;
   return calls[calls.length - 1]?.[0]?.extraYears ?? [];
 }
+
+const LATE_2027_PREFILL = { ...basePrefill, duration: 40, startDate: "2027-11-01" };
 
 function ui(prefill: typeof NOV_PREFILL | typeof MISMATCH_PREFILL) {
   return <ClientFormDialog open onClose={jest.fn()} prefill={prefill} />;
@@ -209,5 +218,74 @@ describe("ClientFormDialog — branch business-day calendar", () => {
     // 03-04, 03-05, 03-06 (no holidays in that week)
     await waitFor(() => expect(screen.getByLabelText("종료일")).toHaveValue("2024-03-06"));
     expect(lastExtraYears()).toEqual(expect.arrayContaining([2024, 2025]));
+  });
+
+  it("clears the stale end date, shows the notice and blocks submit for a year the calendar does not support", async () => {
+    mockedHook.mockImplementation(() => hookResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    render(<ClientFormDialog open onClose={jest.fn()} prefill={LATE_2027_PREFILL} />);
+    await screen.findByText("등록 가능한 번호입니다.");
+    // 40 business days from 2027-11-01 stay inside 2027.
+    await waitFor(() => expect(screen.getByLabelText("종료일")).not.toHaveValue(""));
+    expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+
+    // From 2027-12-15 the same 40 days reach 2028.
+    fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2027-12-15" } });
+
+    await waitFor(() => expect(screen.getByLabelText("종료일")).toHaveValue(""));
+    expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "생성" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2027-11-01" } });
+
+    await waitFor(() => expect(screen.getByLabelText("종료일")).not.toHaveValue(""));
+    expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "생성" })).toBeEnabled();
+  });
+
+  it("drops the unsupported-year notice once the user types an end date", async () => {
+    mockedHook.mockImplementation(() => hookResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    render(<ClientFormDialog open onClose={jest.fn()} prefill={{ ...LATE_2027_PREFILL, startDate: "2027-12-15" }} />);
+    await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+    expect(screen.getByLabelText("종료일")).toHaveValue("");
+
+    fireEvent.change(screen.getByLabelText("종료일"), { target: { value: "2028-02-15" } });
+
+    expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+  });
+
+  it("refuses to save from the duration confirmation once the calendar is no longer ready", async () => {
+    // Branch holiday on 11-03 leaves only 2 business days, so saving asks for confirmation.
+    mockedHook.mockImplementation(() => hookResult({ calendar: BRANCH_CALENDAR }));
+    const { rerender } = render(ui(MISMATCH_PREFILL));
+    await screen.findByText("등록 가능한 번호입니다.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
+
+    // The calendar becomes unavailable while the confirmation is open. The confirm button is
+    // not gated by the calendar, so only the handler guard stands between it and a save.
+    mockedHook.mockImplementation(() => hookResult({ ready: false, error: "load-failed" }));
+    rerender(ui(MISMATCH_PREFILL));
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it("saves from the same confirmation while the calendar stays ready", async () => {
+    mockedHook.mockImplementation(() => hookResult({ calendar: BRANCH_CALENDAR }));
+    render(ui(MISMATCH_PREFILL));
+    await screen.findByText("등록 가능한 번호입니다.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
+
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
   });
 });

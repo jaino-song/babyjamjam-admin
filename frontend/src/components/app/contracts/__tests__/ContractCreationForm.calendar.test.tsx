@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import type { UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
@@ -68,6 +68,22 @@ const BRANCH_CALENDAR = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "20
   supportedYears: [2024, 2025, 2026, 2027],
 });
 
+// A calendar that has not been synced for 2028 yet: any calculation reaching it throws.
+const UNSUPPORTED_2028_CALENDAR = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+  version: "kr-db-test-unsupported-2028",
+  supportedYears: [2026, 2027],
+});
+const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.";
+
+// Calls the element's React onClick directly, so the test reaches the handler even though
+// the (disabled) button would swallow a real click.
+function invokeReactClick(element: HTMLElement): void {
+  const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
+  const onClick = (element as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+  if (!onClick) throw new Error("element has no React onClick");
+  act(() => onClick());
+}
+
 function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? KR_BUILTIN_CALENDAR;
   return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
@@ -99,11 +115,13 @@ function seedStore(overrides: { startDate: string; endDate?: string; voucherDura
   });
 }
 
+const onActiveStepChange = jest.fn();
+
 function buildUi() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return (
     <QueryClientProvider client={queryClient}>
-      <ContractCreationForm activeStep={CONTRACT_INFO_STEP_INDEX} onActiveStepChange={jest.fn()} />
+      <ContractCreationForm activeStep={CONTRACT_INFO_STEP_INDEX} onActiveStepChange={onActiveStepChange} />
     </QueryClientProvider>
   );
 }
@@ -255,5 +273,81 @@ describe("ContractCreationForm — branch business-day calendar", () => {
     render(buildUi());
 
     expect(lastExtraYears()).toEqual(expect.arrayContaining([2026, 2027, 2029]));
+  });
+
+  describe("a period that reaches a year the calendar does not support", () => {
+    beforeEach(() => {
+      mockedHook.mockImplementation(() => hookResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    });
+
+    it("clears the stale end date, shows the notice and blocks submit, then recovers on a supported duration", () => {
+      seedStore({ startDate: "2027-12-01", voucherDuration: "3" });
+      render(buildUi());
+      expect(useFormStore.getState().endDate).toBe("2027-12-03");
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+
+      // 40 business days from 2027-12-01 reach 2028.
+      act(() => useFormStore.setState({ voucherDuration: "40" }));
+
+      expect(useFormStore.getState().endDate).toBe("");
+      expect(screen.getByLabelText("계약 종료일")).toHaveValue("");
+      expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
+
+      act(() => useFormStore.setState({ voucherDuration: "5" }));
+
+      expect(useFormStore.getState().endDate).toBe("2027-12-07");
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+      expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
+    });
+
+    it("refuses to start creation while the end date could not be calculated", () => {
+      seedStore({ startDate: "2027-12-01", voucherDuration: "40" });
+      render(buildUi());
+
+      invokeReactClick(screen.getByTestId("contract-creation-submit"));
+
+      expect(onActiveStepChange).not.toHaveBeenCalled();
+    });
+
+    it("drops the notice once the user types an end date", () => {
+      seedStore({ startDate: "2027-12-01", voucherDuration: "40" });
+      render(buildUi());
+      expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2028-01-31" } });
+
+      expect(useFormStore.getState().endDate).toBe("2028-01-31");
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+      expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
+    });
+  });
+
+  describe("submit handler guard", () => {
+    it("refuses to start creation while the calendar is not ready, even if the button is bypassed", () => {
+      seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
+      mockedHook.mockImplementation(() => hookResult({ ready: false }));
+      render(buildUi());
+      const submit = screen.getByTestId("contract-creation-submit");
+      expect(submit).toBeDisabled();
+
+      invokeReactClick(submit);
+
+      // Past the guard the wizard would move to the processing step.
+      expect(onActiveStepChange).not.toHaveBeenCalled();
+    });
+
+    it("lets the same handler run once the calendar is ready", async () => {
+      seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
+      render(buildUi());
+
+      invokeReactClick(screen.getByTestId("contract-creation-submit"));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(onActiveStepChange).toHaveBeenCalled();
+    });
   });
 });

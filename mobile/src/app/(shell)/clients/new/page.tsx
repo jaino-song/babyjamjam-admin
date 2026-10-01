@@ -310,6 +310,9 @@ export default function NewClientPage() {
   const calendarRef = useRef(calendar);
   calendarRef.current = calendar;
   const endDateCalcSkippedRef = useRef(false);
+  // The auto calculation reached a year the branch calendar does not cover. The end date is
+  // cleared (never left stale), a notice is shown and saving is blocked until it is resolved.
+  const [endDateUnsupported, setEndDateUnsupported] = useState(false);
   const { data: voucherYears = [] } = useVoucherYears();
   const resolvedVoucherYear = useMemo(
     () => voucherYear ?? resolveVoucherLookupYear(store.endDate, voucherYears),
@@ -802,12 +805,14 @@ export default function NewClientPage() {
     if (!servicePeriodChanged && !endDateCalcSkippedRef.current) return;
     if (!store.startDate || !effectiveDuration) {
       endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
       return;
     }
     // Only once the whole date has been typed — a half-entered one would
     // otherwise keep recomputing the end date under the user's cursor.
     if (!isStrictIsoDate(store.startDate)) {
       endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
       return;
     }
     // Existing and explicitly prefilled periods are authoritative until the
@@ -825,9 +830,13 @@ export default function NewClientPage() {
     try {
       endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, effectiveDuration);
     } catch {
-      // A year the branch calendar does not cover: leave the end date to the user.
+      // A year the branch calendar does not cover: clear the end date instead of keeping the
+      // previous one, and leave it to the user (the server validates a typed date).
+      setEndDateUnsupported(true);
+      if (store.endDate) setField("endDate", "");
       return;
     }
+    setEndDateUnsupported(false);
     if (!endIso) return;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
@@ -944,7 +953,7 @@ export default function NewClientPage() {
   ) => {
     if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
     // The saved period and its duration check depend on the branch calendar.
-    if (!calendarReady) return;
+    if (!calendarReady || endDateUnsupported) return;
     if (!validateStep(currentStep)) return;
 
     const { hasMismatch, periodKey } = serviceDateDurationCheck;
@@ -1143,7 +1152,7 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome || (isLastStep && !calendarReady);
+  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome || (isLastStep && (!calendarReady || endDateUnsupported));
 
   return (
     <>
@@ -1589,7 +1598,7 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
                     <CalendarLoadNotice
-                      error={calendarError}
+                      error={calendarError ?? (endDateUnsupported ? "unsupported-year" : null)}
                       onRetry={retryCalendar}
                       loading={!calendarReady && !calendarError}
                       dataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_calendar-notice"
@@ -1621,6 +1630,7 @@ export default function NewClientPage() {
                           hasUserEditedServicePeriodRef.current = true;
                           // A manual end date wins over a calculation that was waiting for the calendar.
                           endDateCalcSkippedRef.current = false;
+                          setEndDateUnsupported(false);
                           setField("endDate", formatIsoDateInput(e.target.value));
                         }}
                         {...fieldMessages.bind("endDate")}

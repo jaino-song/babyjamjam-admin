@@ -47,4 +47,13 @@ describe("CalendarLoadNotice", () => {
     expect(container.querySelector('[data-component="desktop_contracts_form_calendar-load-notice"]')).not.toBeNull();
     expect(container.querySelector('[data-source-component="CalendarLoadNotice"]')).not.toBeNull();
   });
+
+  it("explains an unsupported year without a retry action", () => {
+    render(<CalendarLoadNotice error="unsupported-year" onRetry={jest.fn()} />);
+
+    expect(
+      screen.getByText("이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
 });
