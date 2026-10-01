@@ -4,6 +4,7 @@ import {
     shiftServiceRecordScheduleSuffix,
     validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
+import { createKrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "./business-days";
 
 describe("getExpectedSessionDateFromRecords", () => {
     it("falls back to the N-th business day from start when no records exist", () => {
@@ -113,5 +114,45 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         ];
         expect(() => validateServiceRecordScheduleVector(invertedByIndex, vector.length))
             .toThrow(/not after the previous session/);
+    });
+});
+
+describe("calendar parameter", () => {
+    // 2028 exists only in the custom calendar, so the built-in default must reject it.
+    const calendar = createKrBusinessDayCalendar(["2028-01-05"], { supportedYears: [2028] });
+    const vector = ["2028-01-03", "2028-01-04", "2028-01-06"].map((serviceDate, index) => ({
+        sessionIndex: index + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${index + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "case-9",
+    }));
+
+    it("honours a custom calendar in year support and holiday checks", () => {
+        expect(() => validateServiceRecordScheduleVector(vector)).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(validateServiceRecordScheduleVector(vector, undefined, calendar)).toHaveLength(3);
+        expect(() => validateServiceRecordScheduleVector(
+            vector.map((row) => (row.sessionIndex === 2 ? { ...row, serviceDate: "2028-01-05", originalDate: "2028-01-05" } : row)),
+            undefined,
+            calendar,
+        )).toThrow("Korean business day");
+    });
+
+    it("threads the calendar through move and shift helpers", () => {
+        expect(() => moveServiceRecordSessionDate(vector, 1, "2028-01-07", false)).toThrow(UnsupportedKoreanHolidayYearError);
+        const moved = moveServiceRecordSessionDate(vector.slice(0, 2), 2, "2028-01-07", false, calendar);
+        expect(moved.entries.map((row) => row.serviceDate)).toEqual(["2028-01-03", "2028-01-07"]);
+        const shifted = shiftServiceRecordScheduleSuffix(vector, 3, "2028-01-07", calendar);
+        expect(shifted.deltaBusinessDays).toBe(1);
+        expect(shifted.entries.map((row) => row.serviceDate)).toEqual(["2028-01-03", "2028-01-04", "2028-01-07"]);
+    });
+
+    it("computes expected session dates with the custom calendar", () => {
+        // 2028-01-05 is a holiday on the custom calendar, so 3rd business day from 01-03 is 01-06.
+        expect(getExpectedSessionDateFromRecords("2028-01-03", 3, [], calendar)).toBe("2028-01-06");
+        expect(getExpectedSessionDateFromRecords("2028-01-03", 2, [{ sessionIndex: 1, serviceDate: "2028-01-04" }], calendar)).toBe("2028-01-06");
+        expect(() => getExpectedSessionDateFromRecords("2028-01-03", 3, [])).toThrow(UnsupportedKoreanHolidayYearError);
     });
 });
