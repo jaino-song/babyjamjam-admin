@@ -78,6 +78,7 @@ import { MessageAutomationBranchLockService } from "./message-automation-branch-
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 // Contract attention window, in KR business days before service start, within
@@ -265,6 +266,7 @@ export class ClientService {
         private readonly systemSettingService: SystemSettingService,
         private readonly documentSnapshotService: EformsignDocumentSnapshotService,
         private readonly messageAutomationIntentService: MessageAutomationIntentService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,

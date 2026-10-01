@@ -3,6 +3,7 @@ import { ConflictException } from "@nestjs/common";
 
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { ClientWriteAgentCapabilitiesProvider } from "./client-write-agent-capabilities.provider";
+import { createHolidayCalendarStub } from "../../../test/utils/holiday-calendar.stub";
 
 describe("ClientWriteAgentCapabilitiesProvider", () => {
     function setup() {
@@ -60,7 +61,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            voucherServiceSelection as never,
+            createHolidayCalendarStub(), voucherServiceSelection as never,
             triggerService as never,
             messageAutomationIntentService as never,
         );
@@ -1184,7 +1185,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             undefined,
             intent as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
@@ -1293,7 +1294,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             undefined,
             intent as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
@@ -1350,7 +1351,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const provider = new ClientWriteAgentCapabilitiesProvider(
             setupResult.createClient as never, setupResult.updateClient as never, setupResult.findClient as never,
             setupResult.clientRepository as never, { ...setupResult.prisma, area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) } } as never,
-            setupResult.serviceRecordLifecycle as never, undefined, setupResult.triggerService as never,
+            setupResult.serviceRecordLifecycle as never, createHolidayCalendarStub(), undefined, setupResult.triggerService as never,
             setupResult.messageAutomationIntentService as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
             records as never,

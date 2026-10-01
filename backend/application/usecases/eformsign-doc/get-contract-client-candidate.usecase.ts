@@ -11,6 +11,7 @@ import {
 import { normalizePhone } from "application/utils/normalize-phone";
 import { countBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 /**
  * Byte-identical copy of EformsignContractClientCandidateResponse in
@@ -79,6 +80,7 @@ export class GetContractClientCandidateUsecase {
     constructor(
         private readonly prisma: PrismaService,
         private readonly createEmployee: CreateEmployeeUsecase,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(

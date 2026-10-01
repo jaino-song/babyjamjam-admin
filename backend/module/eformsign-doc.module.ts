@@ -109,6 +109,7 @@ import { SbReceiptLinkTokenRepository } from "infrastructure/database/repositori
 import { SupabaseStorageAdapter } from "infrastructure/adapters/supabase-storage.adapter";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
 import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifier.service";
+import { HolidayModule } from "./holiday.module";
 
 @Module({
     imports: [
@@ -117,6 +118,7 @@ import { ReceiptPdfVerifierService } from "infrastructure/pdf/receipt-pdf-verifi
         MessageModule,
         SystemSettingModule,
         NotificationModule,
+        HolidayModule,
     ],
     controllers: [EformsignDocController],
     providers: [

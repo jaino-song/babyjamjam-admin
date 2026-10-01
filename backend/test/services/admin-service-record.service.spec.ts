@@ -8,6 +8,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 describe("AdminServiceRecordService", () => {
     const createPrisma = () => ({
@@ -110,7 +111,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
 
         const overview = await service.getClientOverview("branch-1", 100);
@@ -131,7 +132,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         const overview = await service.getClientOverview("branch-1", 100);
         expect(overview.assignments[0]?.totalSessions).toBe(4);
@@ -143,7 +144,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.client.findFirst.mockResolvedValue({ id: 100 });
         prisma.service_record_case.findFirst.mockResolvedValue(null);
@@ -232,7 +233,7 @@ describe("AdminServiceRecordService", () => {
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             editRepository as never,
         );
 
@@ -328,7 +329,7 @@ describe("AdminServiceRecordService", () => {
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             editRepository as never,
         );
 
@@ -349,7 +350,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
-            triggerService as unknown as MessageTriggerService,
+            triggerService as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.client.findFirst.mockResolvedValue(null);
 
@@ -422,7 +423,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
 
         const overview = await service.getClientOverview("branch-1", 100);
@@ -441,7 +442,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -577,7 +578,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -613,7 +614,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findMany.mockResolvedValue([
             createSchedule(1, "2026-07-04T00:00:00.000Z"),
@@ -636,7 +637,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
@@ -656,7 +657,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
-            createTriggerService() as unknown as MessageTriggerService,
+            createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
@@ -677,7 +678,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
-            triggerService as unknown as MessageTriggerService,
+            triggerService as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
@@ -703,7 +704,7 @@ describe("AdminServiceRecordService", () => {
         const service = new AdminServiceRecordService(
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
-            triggerService as unknown as MessageTriggerService,
+            triggerService as unknown as MessageTriggerService, createHolidayCalendarStub(),
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
@@ -725,7 +726,7 @@ describe("AdminServiceRecordService", () => {
             prisma as unknown as PrismaService,
             linkService as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService,
-            securityEventService as never,
+            createHolidayCalendarStub(), securityEventService as never,
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
@@ -765,7 +766,7 @@ describe("AdminServiceRecordService", () => {
             prisma as unknown as PrismaService,
             createLinkService() as unknown as ServiceRecordLinkService,
             createTriggerService() as unknown as MessageTriggerService,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             editRepository as never,
         );
 

@@ -1,4 +1,5 @@
 import { EformsignAgentCapabilitiesProvider } from "./eformsign-agent-capabilities.provider";
+import { createHolidayCalendarStub } from "../../../test/utils/holiday-calendar.stub";
 
 const context = {
     principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
@@ -39,7 +40,7 @@ describe("EformsignAgentCapabilitiesProvider — contracts.recent", () => {
     function setup(docs: ReturnType<typeof recentDoc>[]) {
         const findDocs = { execute: jest.fn() };
         const findRecentContracts = { execute: jest.fn().mockResolvedValue(docs) };
-        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, findRecentContracts as never);
+        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, createHolidayCalendarStub(), findRecentContracts as never);
         const capability = provider.getCapabilities().find((entry) => entry.meta.name === "contracts.recent")!;
         return { findRecentContracts, capability };
     }

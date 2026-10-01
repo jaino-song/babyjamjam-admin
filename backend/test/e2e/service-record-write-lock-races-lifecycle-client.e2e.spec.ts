@@ -11,6 +11,7 @@ import {
     assertApprovedServiceRecordWriteLockDatabaseTarget,
     createApprovedServiceRecordWriteLockClient,
 } from "./helpers/service-record-write-lock-order.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const ENABLED = process.env["SERVICE_RECORD_WRITE_LOCK_E2E"] === "1";
 const describeE2E = ENABLED ? describe : describe.skip;
@@ -296,7 +297,7 @@ function entryService(prisma: PrismaClient, lifecycle: ServiceRecordLifecycleSer
     return new ServiceRecordEntryService(
         prisma as unknown as PrismaService,
         { extendExpiryForCase: async () => undefined } as never,
-        lifecycle,
+        lifecycle, createHolidayCalendarStub(),
     );
 }
 
@@ -327,7 +328,7 @@ function clientService(
         undefined as never,
         undefined as never,
         undefined as never,
-        undefined as never,
+        createHolidayCalendarStub(), undefined as never,
         undefined as never,
         lifecycle,
         undefined as never,
@@ -372,7 +373,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const submitPrisma = instrumentPrisma(submitDb, {
             onTransactionPid: (pid) => { submitPid = pid; submitPidReady(); },
         });
-        const submitLifecycle = new ServiceRecordLifecycleService(submitPrisma as unknown as PrismaService);
+        const submitLifecycle = new ServiceRecordLifecycleService(submitPrisma as unknown as PrismaService, createHolidayCalendarStub());
         const submit = entryService(submitPrisma, submitLifecycle).upsertSession(context(f), 1, {
             serviceDate: "2026-09-01", answers: {}, paymentConfirmed: true, momApproval: "approved", clientSignature: SIGNATURE,
         }, true);
@@ -384,7 +385,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const recomputePrisma = instrumentPrisma(recomputeDb, {
             onRootRead: rootRead,
         });
-        const recompute = new ServiceRecordLifecycleService(recomputePrisma as unknown as PrismaService).recompute(f.caseIds[0]!);
+        const recompute = new ServiceRecordLifecycleService(recomputePrisma as unknown as PrismaService, createHolidayCalendarStub()).recompute(f.caseIds[0]!);
         // The old root path has no transaction lock to wait on. Pin its
         // initial stale snapshot before releasing the case holder so an old
         // implementation cannot win by reading the submitted day afterward.
@@ -418,7 +419,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const writerPrisma = instrumentPrisma(writer, {
             onTransactionPid: (pid) => { writerPid = pid; writerPidReady(); },
         });
-        const lifecycle = new ServiceRecordLifecycleService(writerPrisma as unknown as PrismaService);
+        const lifecycle = new ServiceRecordLifecycleService(writerPrisma as unknown as PrismaService, createHolidayCalendarStub());
         const header = entryService(writerPrisma, lifecycle).saveHeader(context(f), {
             momName: "Task 3 Mom", momBirth: "900101", babyName: "Task 3 Baby", babyBirth: "260901", deliveryType: "자연분만", babyWeight: "3.2",
         });
@@ -454,7 +455,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const submitPrisma = instrumentPrisma(submitDb, {
             onTransactionPid: (pid) => { submitPid = pid; submitPidReady(); },
         });
-        const submitLifecycle = new ServiceRecordLifecycleService(submitPrisma as unknown as PrismaService);
+        const submitLifecycle = new ServiceRecordLifecycleService(submitPrisma as unknown as PrismaService, createHolidayCalendarStub());
         const submit = entryService(submitPrisma, submitLifecycle).upsertSession(context(f), 1, {
             serviceDate: "2026-09-01", answers: {}, paymentConfirmed: true, momApproval: "approved", clientSignature: SIGNATURE,
         }, true);
@@ -468,7 +469,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const updatePrisma = instrumentPrisma(updateDb, {
             onTransactionPid: (pid) => { updatePid = pid; updatePidReady(); },
         });
-        const updateLifecycle = new ServiceRecordLifecycleService(updatePrisma as unknown as PrismaService);
+        const updateLifecycle = new ServiceRecordLifecycleService(updatePrisma as unknown as PrismaService, createHolidayCalendarStub());
         const update = clientService(updatePrisma, updateLifecycle, updatePreflight).update(f.branchId!, f.clientIds[0]!, { startDate: "2026-09-05" });
         await updatePreflightStarted;
         await updatePidStarted;
@@ -514,7 +515,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const editPrisma = instrumentPrisma(editDb, {
             onTransactionPid: (pid) => { editPid = pid; editPidReady(); },
         });
-        const edit = clientService(editPrisma, new ServiceRecordLifecycleService(editPrisma as unknown as PrismaService), editPreflight).update(f.branchId!, f.clientIds[0]!, {
+        const edit = clientService(editPrisma, new ServiceRecordLifecycleService(editPrisma as unknown as PrismaService, createHolidayCalendarStub()), editPreflight).update(f.branchId!, f.clientIds[0]!, {
             address: "fresh address", endDate: "2027-12-31",
         });
         await editPreflightStarted;
@@ -528,7 +529,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const replacementPrisma = instrumentPrisma(replacementDb, {
             onTransactionPid: (pid) => { replacementPid = pid; replacementPidReady(); },
         });
-        const replacement = clientService(replacementPrisma, new ServiceRecordLifecycleService(replacementPrisma as unknown as PrismaService), replacementPreflight).requestReplacement(f.branchId!, f.clientIds[0]!, newEmployee.id);
+        const replacement = clientService(replacementPrisma, new ServiceRecordLifecycleService(replacementPrisma as unknown as PrismaService, createHolidayCalendarStub()), replacementPreflight).requestReplacement(f.branchId!, f.clientIds[0]!, newEmployee.id);
         await replacementPreflightStarted;
         await replacementPidStarted;
         await waitForLock(prisma, replacementPid);
@@ -571,8 +572,8 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         const bPrisma = instrumentPrisma(bDb, {
             onTransactionPid: (pid) => { bPid = pid; bPidReady(); },
         });
-        const aService = clientService(aPrisma, new ServiceRecordLifecycleService(aPrisma as unknown as PrismaService));
-        const bService = clientService(bPrisma, new ServiceRecordLifecycleService(bPrisma as unknown as PrismaService));
+        const aService = clientService(aPrisma, new ServiceRecordLifecycleService(aPrisma as unknown as PrismaService, createHolidayCalendarStub()));
+        const bService = clientService(bPrisma, new ServiceRecordLifecycleService(bPrisma as unknown as PrismaService, createHolidayCalendarStub()));
         const aUpdate = aService.update(f.branchId!, f.clientIds[0]!, { primaryEmployeeId: high });
         await aCase;
         const bUpdate = bService.update(f.branchId!, b.clientId, { primaryEmployeeId: middle });

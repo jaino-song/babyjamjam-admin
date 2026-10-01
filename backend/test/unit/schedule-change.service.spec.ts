@@ -10,6 +10,7 @@ import { ServiceRecordTokenService } from "application/services/service-record-t
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const SCHEDULE_ID = 11;
 const CLIENT_ID = 21;
@@ -221,7 +222,7 @@ describe("ScheduleChangeService", () => {
         service = new ScheduleChangeService(
             prismaService as unknown as PrismaService,
             tokenService as unknown as ServiceRecordTokenService,
-            triggerService as unknown as MessageTriggerService,
+            createHolidayCalendarStub(), triggerService as unknown as MessageTriggerService,
             lifecycleService as unknown as ServiceRecordLifecycleService,
         );
     });

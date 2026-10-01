@@ -11,6 +11,7 @@ import {
     createServiceRecordConfirmFixture,
     SHIFTED_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -23,8 +24,8 @@ describeE2E("provider authoritative date context (actual disposable PostgreSQL)"
         prisma = createApprovedServiceRecordConfirmClient();
         await prisma.$connect();
         provider = new ServiceRecordEntryService(prisma as never, {} as never,
-            new ServiceRecordLifecycleService(prisma as never));
-        admin = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
+            new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub()), createHolidayCalendarStub());
+        admin = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
     });
     afterAll(async () => { await prisma?.$disconnect(); });
 

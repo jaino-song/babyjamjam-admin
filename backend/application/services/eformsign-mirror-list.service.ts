@@ -30,6 +30,7 @@ import {
     EFORMSIGN_DOC_REPOSITORY,
     IEformsignDocRepository,
 } from "domain/repositories/eformsign-doc.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export interface MirrorListQuery {
     branchId: string;
@@ -66,6 +67,7 @@ export class EformsignMirrorListService {
     constructor(
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     /**

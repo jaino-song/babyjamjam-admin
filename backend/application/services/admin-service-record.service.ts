@@ -47,6 +47,7 @@ import type {
     ServiceRecordRevisionDocumentSummary,
     ServiceRecordRevisionHistoryResponse,
 } from "interface/dto/admin-service-record-edit.dto";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 type ScheduleForOverview = Prisma.employee_scheduleGetPayload<{
     include: {
@@ -129,6 +130,7 @@ export class AdminServiceRecordService {
         private readonly prisma: PrismaService,
         private readonly serviceRecordLinkService: ServiceRecordLinkService,
         private readonly messageTriggerService: MessageTriggerService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly securityEventService?: ServiceRecordSecurityEventService,
         @Optional()
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)

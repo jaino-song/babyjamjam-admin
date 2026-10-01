@@ -7,6 +7,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 @Injectable()
 export class LinkDocumentToClientUsecase {
@@ -17,6 +18,7 @@ export class LinkDocumentToClientUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(branchid: string, documentId: string): Promise<void> {

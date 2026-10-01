@@ -4,6 +4,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("SyncClientEndDateUsecase", () => {
     const branchId = "test-branch";
@@ -105,7 +106,7 @@ describe("SyncClientEndDateUsecase", () => {
         usecase = new SyncClientEndDateUsecase(
             eformsignClient as never,
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
 
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity());

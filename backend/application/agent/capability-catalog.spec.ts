@@ -8,6 +8,7 @@ import { EformsignAgentCapabilitiesProvider } from "application/usecases/eformsi
 import { VoucherAgentCapabilitiesProvider } from "application/usecases/voucher-price-info/voucher-agent-capabilities.provider";
 import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-account-info/bank-account-agent-capabilities.provider";
 import type { AgentCapabilityProviderContract } from "./capability.types";
+import { createHolidayCalendarStub } from "../../test/utils/holiday-calendar.stub";
 
 describe("capability catalog", () => {
     it("allows all tenant roles on approved reference reads while preserving narrower capabilities", () => {
@@ -43,7 +44,7 @@ describe("capability catalog", () => {
             new EmployeeAgentCapabilitiesProvider(stub(), stub()),
             new EmployeeScheduleAgentCapabilitiesProvider(stub(), stub(), stub()),
             new DashboardAgentCapabilitiesProvider(stub()),
-            new EformsignAgentCapabilitiesProvider(stub()),
+            new EformsignAgentCapabilitiesProvider(stub(), createHolidayCalendarStub()),
             new VoucherAgentCapabilitiesProvider(stub()),
             new BankAccountAgentCapabilitiesProvider(stub()),
             new ExtendedReadAgentCapabilitiesProvider(stub(), stub(), stub(), stub(), stub(), stub(), stub()),

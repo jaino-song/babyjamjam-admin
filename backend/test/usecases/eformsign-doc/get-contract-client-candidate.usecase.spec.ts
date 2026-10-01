@@ -2,6 +2,7 @@ import { Logger } from "@nestjs/common";
 
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("GetContractClientCandidateUsecase", () => {
     const findUnique = jest.fn();
@@ -22,7 +23,7 @@ describe("GetContractClientCandidateUsecase", () => {
         findEmployee.mockResolvedValue(null);
         findVoucherPrices.mockResolvedValue([]);
         createEmployee.execute.mockReset();
-        usecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never);
+        usecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never, createHolidayCalendarStub());
     });
 
     afterEach(() => {

@@ -41,6 +41,7 @@ import {
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort, type ClientAutomationWriteValues } from "domain/ports/client-automation-impact.port";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const DateOnlyInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
     const parsed = new Date(`${value}T00:00:00Z`);
@@ -239,6 +240,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         private readonly clientRepository: IClientRepository,
         private readonly prisma: PrismaService,
         private readonly serviceRecordLifecycleService: ServiceRecordLifecycleService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly voucherServiceSelection?: ResolveVoucherServiceSelectionUsecase,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,

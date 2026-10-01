@@ -23,6 +23,7 @@ import { SystemSettingService } from "../../application/services/system-setting.
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 describe("ClientService", () => {
     // ============================================
@@ -298,7 +299,7 @@ describe("ClientService", () => {
             systemSettingService as unknown as SystemSettingService,
             documentSnapshotService as unknown as EformsignDocumentSnapshotService,
             messageAutomationIntentService as unknown as MessageAutomationIntentService,
-            triggerService as unknown as MessageTriggerService,
+            createHolidayCalendarStub(), triggerService as unknown as MessageTriggerService,
             serviceRecordLinkService as unknown as ServiceRecordLinkService,
             serviceRecordLifecycleService as unknown as ServiceRecordLifecycleService,
             configService as unknown as ConfigService,

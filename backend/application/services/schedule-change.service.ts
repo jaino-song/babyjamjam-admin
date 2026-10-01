@@ -31,6 +31,7 @@ import {
 } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -179,6 +180,7 @@ export class ScheduleChangeService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: ServiceRecordTokenService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,

@@ -1,5 +1,6 @@
 import { CreateClientUsecase } from "application/usecases/client/create-client.usecase";
 import { MockClientRepository } from "../../utils/mocks";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("CreateClientUsecase", () => {
     let usecase: CreateClientUsecase;
@@ -8,7 +9,7 @@ describe("CreateClientUsecase", () => {
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
-        usecase = new CreateClientUsecase(mockRepository);
+        usecase = new CreateClientUsecase(mockRepository, createHolidayCalendarStub());
     });
 
     afterEach(() => {

@@ -15,6 +15,8 @@ import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { EformsignListShadowCompareService } from "application/services/eformsign-list-shadow-compare.service";
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { EformsignCredentialBoundary } from "application/services/eformsign-credential-boundary.service";
 import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
@@ -130,6 +132,7 @@ describe("EformsignController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
+                { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                 {
                     provide: EformsignService,
@@ -1338,6 +1341,7 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
+                    { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                     { provide: EformsignService, useValue: eformsignService },
                     {
