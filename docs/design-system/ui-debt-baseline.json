@@ -824,11 +824,11 @@
         "111:10-111:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1118:13-1124:14|rawUiElement",
-        "1130:13-1136:14|rawUiElement",
-        "1509:25-1516:26|rawUiElement",
-        "1586:15-1591:16|rawUiElement",
-        "1594:15-1599:16|rawUiElement"
+        "1121:13-1127:14|rawUiElement",
+        "1133:13-1139:14|rawUiElement",
+        "1512:25-1519:26|rawUiElement",
+        "1589:15-1594:16|rawUiElement",
+        "1597:15-1602:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
