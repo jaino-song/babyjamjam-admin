@@ -380,6 +380,34 @@ EM-CAT 코드 정렬 검토(2026-09-14): EM-CAT-01은 코드가 카탈로그에 
 
 `AUTH_RESET_TOKEN_USED`
 
+### holiday-name-required
+
+`HOLIDAY_NAME_REQUIRED`
+
+### holiday-not-weekday
+
+`HOLIDAY_NOT_WEEKDAY`
+
+### holiday-date-in-past
+
+`HOLIDAY_DATE_IN_PAST`
+
+### holiday-year-unsupported
+
+`HOLIDAY_YEAR_UNSUPPORTED`
+
+### holiday-already-public
+
+`HOLIDAY_ALREADY_PUBLIC`
+
+### holiday-not-public
+
+`HOLIDAY_NOT_PUBLIC`
+
+### holiday-override-exists
+
+`HOLIDAY_OVERRIDE_EXISTS`
+
 ## 2026-09-17 auth 계정 상태·재설정 링크 코드 등록 (BJJ-319 phase 6d2)
 
 이미 공개 식별자로 운영되던 auth 코드 7종을 공유 카탈로그에 등록했다(EM-CAT-03: 기존 식별자 의미 유지, ko/en 문구 신규 — ko 문구는 해요체): 계정 상태 4종 `PENDING_APPROVAL`·`ACCOUNT_REJECTED`·`ACCOUNT_PROFILE_INCOMPLETE`·`NO_ACCESSIBLE_BRANCH`(모두 403; 웹·모바일 로그인 오류 모달이 `authError=` 코드로 분기하던 식별자)와 재설정 링크 3종 `AUTH_RESET_TOKEN_INVALID`·`AUTH_RESET_TOKEN_EXPIRED`·`AUTH_RESET_TOKEN_USED`(모두 400; `packages/shared/src/auth/reset-password-errors.ts`가 코드로 문구를 고르던 식별자). 등록으로 로그인·리프레시 경로의 `{code, message}` 레거시 본문이 `mapHttpProblem`의 problem+json 전환 대상이 되며, `sendProblemResponse`의 statusCode/message/error 호환 별칭은 유지된다. `message`와 `error`를 코드·문구로 읽던 BFF(로그인 actions의 `data.code`, 프록시·미들웨어의 `AUTH_REFRESH_REPLAY_CONCURRENT`)는 `code`가 보존되므로 영향이 없다. 로컬 전용 코드(`AUTH_REFRESH_*`, `AUTH_SESSION_REVOKED`)는 카탈로그에 넣지 않고 본문 멤버만 계약 형태로 전환했다(비카탈로그 4xx는 기존처럼 레거시 직렬화 경로를 유지). 같은 단위에서 auth.service·auth-session.service·user.service·ai-chat.service의 나머지 원시 throw를 등록 코드 본문으로 전환했고, 감사 배선 불변식(내부 신호)과 ai-chat 확인 서비스 미구성 신호는 plain Error로 남겼다.

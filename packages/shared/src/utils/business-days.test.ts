@@ -234,6 +234,21 @@ describe("createKrBusinessDayCalendar", () => {
         expect(() => noData.isBusinessDay("2028-01-03")).toThrow(UnsupportedKoreanHolidayYearError);
     });
 
+    it("lets an explicit supportedYears override the years implied by the holiday dates", () => {
+        const calendar = createKrBusinessDayCalendar(["2026-01-01", "2027-05-01"], { supportedYears: [2026] });
+        expect(calendar.isBusinessDay("2026-07-16")).toBe(true);
+        expect(() => calendar.isBusinessDay("2027-03-02")).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(() => calendar.assertSupportedYear(2027)).toThrow(UnsupportedKoreanHolidayYearError);
+    });
+
+    it("checks year support before the weekend rule", () => {
+        // 2028-01-01 is a Saturday, but 2028 is not supported by this calendar, so the year error wins.
+        const calendar = createKrBusinessDayCalendar(["2026-01-01"], { supportedYears: [2026] });
+        expect(() => calendar.isBusinessDay("2028-01-01")).toThrow(UnsupportedKoreanHolidayYearError);
+        const supported = createKrBusinessDayCalendar([], { supportedYears: [2028] });
+        expect(supported.isBusinessDay("2028-01-01")).toBe(false);
+    });
+
     it("does not fall back to the built-in years for an unpopulated year", () => {
         const calendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS.filter((date) => date.startsWith("2026-")));
         expect(calendar.isBusinessDay("2026-07-16")).toBe(true);
