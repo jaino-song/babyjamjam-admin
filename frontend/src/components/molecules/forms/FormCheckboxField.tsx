@@ -29,7 +29,7 @@ export const FormCheckboxField = React.forwardRef<HTMLInputElement, FormCheckbox
       data-component={dataComponent}
       className={cn(
         V3_INPUT_CONTROL_HEIGHT_CLASS_NAME,
-        "flex w-full cursor-pointer items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] border-v3-border bg-white px-[calc(14px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-dark transition-colors",
+        "flex w-full cursor-pointer items-center gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] border-border bg-white px-[calc(14px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-dark transition-colors",
         disabled && "cursor-not-allowed opacity-55",
         className,
       )}
@@ -41,7 +41,7 @@ export const FormCheckboxField = React.forwardRef<HTMLInputElement, FormCheckbox
         disabled={disabled}
         data-component={`${dataComponent}-input`}
         className={cn(
-          "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 accent-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20",
+          "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20",
           inputClassName,
         )}
       />

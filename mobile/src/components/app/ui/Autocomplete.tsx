@@ -331,7 +331,7 @@ export function Autocomplete<T>({
                                     }
                                 }
                             }}
-                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={toggleActionLabel}
                             title={toggleActionLabel}
                             data-component={toggleDc}
@@ -348,7 +348,7 @@ export function Autocomplete<T>({
                         data-slot="autocomplete-dropdown"
                         data-testid={dropdownDc}
                         data-state="open"
-                        className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
+                        className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
                             <div data-component={sub("loading")} className="flex items-center justify-center py-6">
@@ -387,8 +387,8 @@ export function Autocomplete<T>({
                                             onMouseEnter={() => setHighlightedIndex(index)}
                                             className={cn(
                                                 "flex flex-col items-start px-3 py-2 cursor-pointer transition-colors",
-                                                highlighted && "bg-v3-primary text-white",
-                                                selected && !highlighted && "bg-v3-primary/10"
+                                                highlighted && "bg-primary text-white",
+                                                selected && !highlighted && "bg-primary/10"
                                             )}
                                         >
                                             <div
@@ -428,7 +428,7 @@ export function Autocomplete<T>({
 
                         {manualEntry && (
                             <>
-                                <div data-component={sub("manual-divider")} className="h-px bg-v3-border" />
+                                <div data-component={sub("manual-divider")} className="h-px bg-border" />
                                 <div
                                     onPointerDown={(e) => {
                                         e.preventDefault();
@@ -448,7 +448,7 @@ export function Autocomplete<T>({
                                     className={cn(
                                         "flex flex-col w-full py-3 px-3 cursor-pointer transition-colors",
                                         activeHighlightedIndex === filteredItems.length &&
-                                            "bg-v3-primary text-white"
+                                            "bg-primary text-white"
                                     )}
                                     data-component={addBtnDc}
                                     data-testid={addBtnDc}

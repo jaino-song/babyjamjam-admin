@@ -38,10 +38,10 @@ const INLINE_PREVIEW_IMAGE_MIME_TYPES = new Set([
   "image/webp",
 ]);
 const DOCUMENT_FIELD_LABEL_CLASS_NAME =
-  "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted";
-const DOCUMENT_UPLOAD_CARD_CLASS_NAME = "rounded-[20px] bg-v3-dim-white p-5";
+  "text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-muted";
+const DOCUMENT_UPLOAD_CARD_CLASS_NAME = "rounded-[20px] bg-surface p-5";
 const DOCUMENT_TEXTAREA_CLASS_NAME =
-  "min-h-[calc(72px*var(--glint-ui-scale,1))] rounded-[16px] border-[1.5px] border-v3-border bg-white px-4 py-3 text-[0.85rem] text-v3-dark shadow-none transition-all focus-visible:border-v3-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "min-h-[calc(72px*var(--glint-ui-scale,1))] rounded-[16px] border-[1.5px] border-border bg-white px-4 py-3 text-[0.85rem] text-dark shadow-none transition-all focus-visible:border-primary focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 const FILE_FORMAT_LABEL_OVERRIDES: Record<string, string> = {
   jpeg: "JPG",
 };
@@ -256,28 +256,28 @@ export function DocumentDropzone({
   const getSelectedFileTone = () => {
     if (isSelectedHangulFile()) {
       return {
-        icon: "bg-v3-primary-light text-v3-primary",
-        badge: "border-v3-primary/20 bg-v3-primary-light text-v3-primary",
+        icon: "bg-primary-light text-primary",
+        badge: "border-primary/20 bg-primary-light text-primary",
       };
     }
 
     if (selectedFile?.type === "application/pdf") {
       return {
-        icon: "bg-v3-burgundy-light text-v3-burgundy",
-        badge: "border-v3-burgundy/20 bg-v3-burgundy-light text-v3-burgundy",
+        icon: "bg-burgundy-light text-burgundy",
+        badge: "border-burgundy/20 bg-burgundy-light text-burgundy",
       };
     }
 
     if (selectedFile?.type.startsWith("image/")) {
       return {
-        icon: "bg-v3-primary-light text-v3-primary",
-        badge: "border-v3-primary/20 bg-v3-primary-light text-v3-primary",
+        icon: "bg-primary-light text-primary",
+        badge: "border-primary/20 bg-primary-light text-primary",
       };
     }
 
     return {
-      icon: "bg-v3-dim-white text-v3-text-muted",
-      badge: "border-v3-border bg-v3-dim-white text-v3-text-muted",
+      icon: "bg-surface text-text-muted",
+      badge: "border-border bg-surface text-text-muted",
     };
   };
 
@@ -305,7 +305,7 @@ export function DocumentDropzone({
     >
       <div
         data-component={`${dataComponent}_visibility-notice`}
-        className="rounded-[16px] border border-v3-border bg-v3-primary-light px-4 py-3 text-[0.76rem] font-semibold leading-5 text-v3-primary"
+        className="rounded-[16px] border border-border bg-primary-light px-4 py-3 text-[0.76rem] font-semibold leading-5 text-primary"
       >
         {capabilities.uploadVisibilityScope === "all_branches"
           ? "오너가 올리는 파일은 모든 지점에서 볼 수 있습니다."
@@ -314,7 +314,7 @@ export function DocumentDropzone({
       {validationError && (
         <Alert
           variant="destructive"
-          className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
+          className="rounded-[18px] border-none bg-burgundy-light px-4 py-3 text-burgundy [&>svg]:text-burgundy"
         >
           <AlertDescription>{validationError}</AlertDescription>
         </Alert>
@@ -329,11 +329,11 @@ export function DocumentDropzone({
           className={cn(
             "flex flex-col items-center justify-center gap-4 overflow-hidden rounded-[24px] border-[1.5px] border-dashed px-6 py-8 text-center transition-all duration-200",
             isDragOver
-              ? "border-v3-primary bg-white shadow-[0_16px_40px_hsla(214,50%,20%,0.08)]"
-              : "border-v3-border bg-white",
+              ? "border-primary bg-white shadow-[0_16px_40px_hsla(214,50%,20%,0.08)]"
+              : "border-border bg-white",
             isLoading ? "cursor-wait opacity-70" : "cursor-pointer",
             !isLoading &&
-              "hover:border-v3-primary/50 hover:bg-white"
+              "hover:border-primary/50 hover:bg-white"
           )}
         >
           <input
@@ -344,11 +344,11 @@ export function DocumentDropzone({
             className="sr-only"
           />
 
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-v3-primary shadow-[0_12px_30px_hsla(214,50%,20%,0.10)]">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary shadow-[0_12px_30px_hsla(214,50%,20%,0.10)]">
             <CloudUpload className="h-8 w-8 text-white" />
           </div>
           <div className="flex flex-col items-center gap-2">
-            <p className="text-[1rem] font-bold tracking-[-0.02em] text-v3-dark">
+            <p className="text-[1rem] font-bold tracking-[-0.02em] text-dark">
               파일을 끌어다 놓거나 클릭해 선택하세요
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2">
@@ -356,7 +356,7 @@ export function DocumentDropzone({
                 <Badge
                   key={group.label}
                   variant="outline"
-                  className="border-v3-primary/20 bg-v3-primary-light px-3 py-1 text-[0.68rem] font-semibold text-v3-primary"
+                  className="border-primary/20 bg-primary-light px-3 py-1 text-[0.68rem] font-semibold text-primary"
                 >
                   {group.label} · {group.formats.join(" · ")}
                 </Badge>
@@ -366,21 +366,21 @@ export function DocumentDropzone({
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Badge
               variant="outline"
-              className="border-v3-border bg-white/90 px-3 py-1 text-[0.68rem] font-semibold text-v3-text-muted"
+              className="border-border bg-white/90 px-3 py-1 text-[0.68rem] font-semibold text-text-muted"
             >
               최대 {formatFileSizeLimit(capabilities.maxFileSizeBytes)} · 한 번에 파일 1개
             </Badge>
           </div>
-          <p className="max-w-xl text-[0.74rem] leading-5 text-v3-text-muted">
+          <p className="max-w-xl text-[0.74rem] leading-5 text-text-muted">
             PDF·이미지·한글은 화면에서 확인할 수 있고, 오피스·압축 파일은 안전하게 내려받아 확인합니다.
           </p>
           <Badge
             variant="outline"
             className={cn(
-              "border-v3-border bg-v3-dim-white px-3 py-1 text-[0.68rem] font-semibold",
+              "border-border bg-surface px-3 py-1 text-[0.68rem] font-semibold",
               capabilities.uploadVisibilityScope === "all_branches"
-                ? "text-v3-primary"
-                : "text-v3-text-muted"
+                ? "text-primary"
+                : "text-text-muted"
             )}
           >
             {capabilities.uploadVisibilityScope === "all_branches"
@@ -399,12 +399,12 @@ export function DocumentDropzone({
                   width={88}
                   height={88}
                   unoptimized
-                  className="h-[88px] w-[88px] rounded-[18px] border border-v3-border object-cover shadow-sm"
+                  className="h-[88px] w-[88px] rounded-[18px] border border-border object-cover shadow-sm"
                 />
               ) : (
                 <div
                   className={cn(
-                    "flex h-[88px] w-[88px] items-center justify-center rounded-[18px] border border-v3-border/70",
+                    "flex h-[88px] w-[88px] items-center justify-center rounded-[18px] border border-border/70",
                     selectedFileTone.icon
                   )}
                 >
@@ -423,14 +423,14 @@ export function DocumentDropzone({
                   >
                     {getSelectedFileFormatLabel()}
                   </Badge>
-                  <span className="text-[0.72rem] font-medium text-v3-text-muted">
+                  <span className="text-[0.72rem] font-medium text-text-muted">
                     {formatFileSize(selectedFile.size)}
                   </span>
                 </div>
-                <p className="mt-3 truncate text-[1rem] font-semibold text-v3-dark">
+                <p className="mt-3 truncate text-[1rem] font-semibold text-dark">
                   {selectedFile.name}
                 </p>
-                <p className="mt-1 text-[0.8rem] leading-6 text-v3-text-muted">
+                <p className="mt-1 text-[0.8rem] leading-6 text-text-muted">
                   업로드 전에 문서명, 카테고리, 태그를 정리하면 이후 검색과 관리가 쉬워집니다.
                 </p>
               </div>
@@ -440,7 +440,7 @@ export function DocumentDropzone({
                 size="icon"
                 onClick={handleRemoveFile}
                 disabled={isLoading}
-                className="h-10 w-10 shrink-0 rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none hover:bg-transparent hover:text-v3-dark"
+                className="h-10 w-10 shrink-0 rounded-full border-0 bg-transparent p-0 text-text-muted shadow-none hover:bg-transparent hover:text-dark"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -530,7 +530,7 @@ export function DocumentDropzone({
                           type="button"
                           onClick={() => !isLoading && handleDeleteTag(tag)}
                           data-component={`${dataComponent}_upload-form_details_tags-list_remove`}
-                          className="inline-flex items-center gap-1 rounded-full border border-v3-primary/20 bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary transition-colors hover:border-v3-primary/40 hover:bg-v3-primary-light/80"
+                          className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary transition-colors hover:border-primary/40 hover:bg-primary-light/80"
                         >
                           #{tag}
                           <X className="h-3 w-3" />
@@ -561,18 +561,18 @@ export function DocumentDropzone({
               </TemplateFieldGrid>
 
               {isLoading && (
-                <div className="rounded-[18px] bg-v3-dim-white px-4 py-4">
+                <div className="rounded-[18px] bg-surface px-4 py-4">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[0.8rem] font-semibold text-v3-dark">
+                    <span className="text-[0.8rem] font-semibold text-dark">
                       업로드 중...
                     </span>
-                    <span className="text-[0.78rem] font-semibold text-v3-primary">
+                    <span className="text-[0.78rem] font-semibold text-primary">
                       {Math.round(uploadProgress)}%
                     </span>
                   </div>
                   <Progress
                     value={uploadProgress}
-                    className="h-2.5 bg-v3-primary-light/70"
+                    className="h-2.5 bg-primary-light/70"
                   />
                 </div>
               )}

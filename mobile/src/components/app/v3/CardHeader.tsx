@@ -29,10 +29,10 @@ export function CardHeader({ "data-component": dataComponent, title, subtitle, i
     >
       <div data-component={sub("title")} className="flex flex-col gap-1">
         <h1 className={cn(
-          "text-[1.75rem] font-bold text-v3-dark flex items-center gap-2",
+          "text-[1.75rem] font-bold text-dark flex items-center gap-2",
           align === "center" && "justify-center"
         )}>
-          {Icon && <Icon className="w-6 h-6 text-v3-primary" />}
+          {Icon && <Icon className="w-6 h-6 text-primary" />}
           {title}
         </h1>
         {subtitle && (

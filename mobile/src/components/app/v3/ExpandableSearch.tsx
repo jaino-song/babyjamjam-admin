@@ -50,9 +50,9 @@ export function ExpandableSearch({
       <button
         onClick={handleToggle}
         aria-label={expanded ? closeLabel : openLabel}
-        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-v3-dim-white"
+        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-surface"
       >
-        <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
+        <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-text-muted"} />
       </button>
       <Input
         ref={inputRef}
@@ -64,7 +64,7 @@ export function ExpandableSearch({
         onBlur={handleBlur}
         style={{ border: "none", outline: "none", boxShadow: "none" }}
         className={cn(
-          "h-auto border-none bg-transparent p-0 text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50 focus-visible:ring-0 focus-visible:ring-offset-0",
+          "h-auto border-none bg-transparent p-0 text-sm text-dark caret-primary placeholder:text-text-muted/50 focus-visible:ring-0 focus-visible:ring-offset-0",
           expanded ? expandedWidth : "w-0"
         )}
       />

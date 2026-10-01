@@ -126,7 +126,7 @@ describe("ClientAutocomplete", () => {
     expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
-    expect(trigger).toHaveClass("text-v3-dark");
+    expect(trigger).toHaveClass("text-dark");
   });
 
   it("clears the selected client from the overlay clear button", async () => {

@@ -546,7 +546,7 @@ export function MessageTenantApplicationSettings() {
           title="설정"
           subtitle="메시지에 관련된 설정들을 정할 수 있어요"
           headerActions={
-            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+            <span className="inline-flex items-center whitespace-nowrap rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary">
               {listItems.length}개
             </span>
           }
@@ -577,7 +577,7 @@ export function MessageTenantApplicationSettings() {
         title="설정"
         subtitle="메시지에 관련된 설정들을 정할 수 있어요"
         headerActions={
-          <span className="inline-flex items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+          <span className="inline-flex items-center whitespace-nowrap rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary">
             {listItems.length}개
           </span>
         }
@@ -622,12 +622,12 @@ export function MessageTenantApplicationSettings() {
               <AnimatedSlotListItemContent
                 dataComponent="desktop_messages_sections_settings-tenant-list"
                 icon={item.icon}
-                iconContainerClassName="bg-white text-v3-primary"
+                iconContainerClassName="bg-white text-primary"
                 title={item.title}
                 subtitle={item.subtitle}
                 status={
                   item.kind === "tenant-application" ? (
-                    <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
+                    <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-primary">
                       {item.statusLabel}
                     </span>
                   ) : (
@@ -656,14 +656,14 @@ export function MessageTenantApplicationSettings() {
       {selectedItem?.kind === "automation-policy" ? (
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-2"
           avatar={
-            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-primary-light text-primary">
               <SelectedItemIcon className="h-5 w-5" />
             </div>
           }
           title={selectedItem.title}
           subtitle={selectedItem.subtitle}
           trailing={
-            <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+            <span className="inline-flex items-center rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary">
               {selectedItem.statusLabel}
             </span>
           }
@@ -717,7 +717,7 @@ export function MessageTenantApplicationSettings() {
                           variant="v3"
                           className="h-9 w-20 shrink-0 text-center"
                         />
-                        <span className="shrink-0 text-[0.8rem] font-semibold text-v3-text-muted">분</span>
+                        <span className="shrink-0 text-[0.8rem] font-semibold text-text-muted">분</span>
                       </div>
                     }
                   />
@@ -749,7 +749,7 @@ export function MessageTenantApplicationSettings() {
                         <div className="flex min-w-0 items-center justify-end gap-2">
                           <div className="min-w-0 text-right">
                             <span className="block truncate">{item.name}</span>
-                            <span className="block truncate text-[0.7rem] font-medium text-v3-text-muted">
+                            <span className="block truncate text-[0.7rem] font-medium text-text-muted">
                               {getTriggerRuleSummary(item)}
                             </span>
                           </div>
@@ -801,14 +801,14 @@ export function MessageTenantApplicationSettings() {
       ) : selectedItem?.kind === "duplicate-send-policy" ? (
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-4"
           avatar={
-            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-primary-light text-primary">
               <Repeat2 className="h-5 w-5" />
             </div>
           }
           title="중복 전송 확인"
           subtitle="같은 번호에 같은 메시지를 짧은 시간 안에 다시 보낼 때 재확인합니다."
           trailing={
-            <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+            <span className="inline-flex items-center rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary">
               활성
             </span>
           }
@@ -839,15 +839,15 @@ export function MessageTenantApplicationSettings() {
 
             <div
               data-component="desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_preview"
-              className="rounded-[18px] border border-v3-border bg-white p-4"
+              className="rounded-[18px] border border-border bg-white p-4"
             >
               <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-v3-primary-light text-v3-primary">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-primary-light text-primary">
                   <Clock3 className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <p className="text-[0.82rem] font-semibold text-v3-dark">중복 전송 확인</p>
-                  <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">
+                  <p className="text-[0.82rem] font-semibold text-dark">중복 전송 확인</p>
+                  <p className="mt-1 text-[0.74rem] leading-5 text-text-muted">
                     최근 같은 내용의 메시지를 보낸 기록이 있으면, 발송 버튼을 누른 뒤 최근 전송 시각과 함께 재전송 여부를 확인합니다.
                   </p>
                 </div>
@@ -858,7 +858,7 @@ export function MessageTenantApplicationSettings() {
       ) : (
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel-5"
           avatar={
-            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+            <div className="flex h-12 w-12 items-center justify-center rounded-[16px] bg-primary-light text-primary">
               <ShieldCheck className="h-5 w-5" />
             </div>
           }
@@ -866,7 +866,7 @@ export function MessageTenantApplicationSettings() {
           subtitle="메시지 발송 기능 사용을 위해 아래의 항목들을 확인 및 동의해 주세요."
           trailing={
             requestedAt ? (
-              <span className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary">
+              <span className="inline-flex items-center rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary">
                 접수 {requestedAt}
               </span>
             ) : undefined
@@ -875,25 +875,25 @@ export function MessageTenantApplicationSettings() {
           <div data-component="desktop_messages_sections_split-layout_detail-panel-5_tenant-form" className="space-y-5 pb-2">
             <div
               data-component="desktop_messages_sections_split-layout_detail-panel-5_tenant-form_card"
-              className="rounded-[18px] border border-v3-border bg-v3-dim-white/35 p-4"
+              className="rounded-[18px] border border-border bg-surface/35 p-4"
             >
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-white text-v3-primary shadow-sm">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-white text-primary shadow-sm">
                   <Building2 className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 flex h-11 items-center">
-                  <p className="text-[0.92rem] font-semibold leading-none text-v3-dark">{tenantName}</p>
+                  <p className="text-[0.92rem] font-semibold leading-none text-dark">{tenantName}</p>
                 </div>
               </div>
             </div>
 
             <div
               data-component="desktop_messages_sections_split-layout_detail-panel-5_tenant-form_sender-info"
-              className="rounded-[18px] border border-v3-border bg-v3-dim-white/35 p-4"
+              className="rounded-[18px] border border-border bg-surface/35 p-4"
             >
-              <p className="text-[0.76rem] font-semibold text-v3-dark">발신번호</p>
-              <p className="mt-1 text-[1rem] font-semibold text-v3-primary">{UNIFIED_SENDER_PHONE}</p>
-              <p className="mt-1 text-[0.72rem] leading-5 text-v3-text-muted">
+              <p className="text-[0.76rem] font-semibold text-dark">발신번호</p>
+              <p className="mt-1 text-[1rem] font-semibold text-primary">{UNIFIED_SENDER_PHONE}</p>
+              <p className="mt-1 text-[0.72rem] leading-5 text-text-muted">
                 모든 메시지는 사전 등록된 대표 발신번호 {UNIFIED_SENDER_PHONE} 으로 발송됩니다. 별도의 발신번호 입력이 필요하지 않습니다.
               </p>
             </div>
@@ -909,8 +909,8 @@ export function MessageTenantApplicationSettings() {
                     className={cn(
                       "block cursor-pointer rounded-[18px] border px-4 py-3 transition-colors",
                       checked
-                        ? "border-v3-primary bg-v3-primary-light/60"
-                        : "border-v3-border bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/20",
+                        ? "border-primary bg-primary-light/60"
+                        : "border-border bg-white hover:border-primary/30 hover:bg-primary-light/20",
                     )}
                   >
                     <div className="flex items-start gap-3">
@@ -921,12 +921,12 @@ export function MessageTenantApplicationSettings() {
                         className="mt-0.5"
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="text-[0.76rem] leading-5 text-v3-dark">{policy.text}</p>
+                        <p className="text-[0.76rem] leading-5 text-dark">{policy.text}</p>
                         <a
                           href={policy.sourceHref}
                           target="_blank"
                           rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-v3-primary hover:underline"
+                          className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-primary hover:underline"
                         >
                           {policy.sourceLabel}
                           <ExternalLink className="h-3.5 w-3.5" />

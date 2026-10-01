@@ -19,10 +19,10 @@ const variantStyles: Record<
   ActivityItem["iconVariant"],
   string
 > = {
-  success: "bg-v3-green-light text-v3-green",
-  warning: "bg-v3-orange-light text-v3-orange",
-  info: "bg-v3-primary-light text-v3-primary",
-  danger: "bg-v3-burgundy-light text-v3-burgundy",
+  success: "bg-green-light text-green",
+  warning: "bg-orange-light text-orange",
+  info: "bg-primary-light text-primary",
+  danger: "bg-burgundy-light text-burgundy",
 };
 
 export function ActivityTimeline({
@@ -44,7 +44,7 @@ export function ActivityTimeline({
         return (
           <div key={index} className="relative flex gap-3">
             {!isLast && (
-              <div className="absolute left-5 top-10 -bottom-4 w-px bg-v3-border" />
+              <div className="absolute left-5 top-10 -bottom-4 w-px bg-border" />
             )}
 
             <div
@@ -54,8 +54,8 @@ export function ActivityTimeline({
             </div>
 
             <div className="flex flex-col justify-center min-w-0">
-              <span className="text-[0.8rem] text-v3-text">{item.text}</span>
-              <span className="text-[0.65rem] text-v3-text-muted">
+              <span className="text-[0.8rem] text-text">{item.text}</span>
+              <span className="text-[0.65rem] text-text-muted">
                 {item.time}
               </span>
             </div>

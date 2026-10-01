@@ -277,15 +277,15 @@ export function ListPanel({
                     }}
                     disabled={disabled}
                     className={cn(
-                      "flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] rounded-[10px] border border-v3-border px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-dark transition-colors hover:bg-v3-dim-white",
+                      "flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] rounded-[10px] border border-border px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-dark transition-colors hover:bg-surface",
                       disabled && "cursor-not-allowed opacity-60 hover:bg-white",
                     )}
                   >
                     {activeTabLabel}
-                    <ChevronDown className={cn("h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
+                    <ChevronDown className={cn("h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-text-muted transition-transform", dropdownOpen && "rotate-180")} />
                   </button>
                   {dropdownOpen && !disabled && (
-                    <div className="animate-in fade-in-0 zoom-in-95 absolute left-0 top-full z-50 mt-[calc(4px*var(--glint-ui-scale,1))] max-h-[calc(240px*var(--glint-ui-scale,1))] min-w-[calc(140px*var(--glint-ui-scale,1))] overflow-y-auto rounded-[14px] border border-v3-border bg-white py-[calc(4px*var(--glint-ui-scale,1))] shadow-v3">
+                    <div className="animate-in fade-in-0 zoom-in-95 absolute left-0 top-full z-50 mt-[calc(4px*var(--glint-ui-scale,1))] max-h-[calc(240px*var(--glint-ui-scale,1))] min-w-[calc(140px*var(--glint-ui-scale,1))] overflow-y-auto rounded-[14px] border border-border bg-white py-[calc(4px*var(--glint-ui-scale,1))] shadow-v3">
                       {(tabs ?? []).map((tab) => (
                         <button
                           type="button"
@@ -294,8 +294,8 @@ export function ListPanel({
                           className={cn(
                             "w-full px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-left text-[calc(12px*var(--glint-ui-scale,1))] transition-colors",
                             activeTab === tab.value
-                              ? cn("font-semibold bg-v3-primary-light", tab.activeClassName ?? "text-v3-primary")
-                              : "text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-text"
+                              ? cn("font-semibold bg-primary-light", tab.activeClassName ?? "text-primary")
+                              : "text-text-muted hover:bg-surface hover:text-text"
                           )}
                         >
                           {tab.label}
@@ -334,11 +334,11 @@ export function ListPanel({
                           onClick={() => onTabChange?.(tab.value)}
                           aria-pressed={tabsAriaLabel ? activeTab === tab.value : undefined}
                           className={cn(
-                            "relative shrink-0 px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
+                            "relative shrink-0 px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
                             activeTab === tab.value
                               ? cn("font-semibold", tab.activeClassName ?? "text-primary")
-                              : "text-v3-text-muted hover:text-v3-text",
-                            disabled && "cursor-not-allowed text-v3-text-muted/60 hover:text-v3-text-muted/60"
+                              : "text-text-muted hover:text-text",
+                            disabled && "cursor-not-allowed text-text-muted/60 hover:text-text-muted/60"
                           )}
                         >
                           {tab.label}

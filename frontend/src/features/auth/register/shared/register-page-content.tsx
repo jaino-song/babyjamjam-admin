@@ -159,15 +159,15 @@ function DesktopRegisterStepIndicator({ currentStep }: { currentStep: RegisterSt
           <div key={step} data-component="desktop_auth_register_stepper-desktop_item" className="contents">
             <div
               data-component="desktop_auth_register_stepper-desktop_item_step"
-              className={cn("flex items-center overflow-visible py-0.5", isCurrent && "text-v3-primary", isCompleted && "text-v3-dark")}
+              className={cn("flex items-center overflow-visible py-0.5", isCurrent && "text-primary", isCompleted && "text-dark")}
             >
               <div
                 data-component="desktop_auth_register_stepper-desktop_item_step_circle"
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
-                  isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
-                  isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
-                  !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted",
+                  isCompleted && "bg-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                  isCurrent && "scale-110 bg-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                  !isCompleted && !isCurrent && "border-2 border-border bg-surface text-text-muted",
                 )}
               >
                 {isCompleted ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : step}
@@ -179,7 +179,7 @@ function DesktopRegisterStepIndicator({ currentStep }: { currentStep: RegisterSt
                 data-component="desktop_auth_register_stepper-desktop_item_connector"
                 className={cn(
                   "mx-1.5 h-0.5 w-10 rounded-full",
-                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border",
+                  idx < currentStep ? "bg-primary" : "bg-border",
                 )}
               />
             ) : null}
@@ -196,14 +196,14 @@ function MobileRegisterStepIndicator({ currentStep }: { currentStep: RegisterSte
   return (
     <div data-component="desktop_auth_register_stepper-mobile">
       <div data-component="desktop_auth_register_stepper-mobile_header" className="mb-2 flex items-center justify-end">
-        <span className="text-[0.64rem] font-semibold text-v3-text-muted">
+        <span className="text-[0.64rem] font-semibold text-text-muted">
           {currentStep + 1} / {REGISTER_STEP_TOTAL} 단계
         </span>
       </div>
-      <div data-component="desktop_auth_register_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-v3-border">
+      <div data-component="desktop_auth_register_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-border">
         <div
           data-component="desktop_auth_register_stepper-mobile_track_progress"
-          className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
+          className="h-full rounded-full bg-gradient-to-r from-primary to-blue-500 transition-all duration-400"
           style={{
             width: `${progress}%`,
             transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -577,7 +577,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
 
                 <div
                   data-component="desktop_auth_register_body_form_actions"
-                  className="mt-1 flex items-center justify-between border-t border-v3-border pt-3"
+                  className="mt-1 flex items-center justify-between border-t border-border pt-3"
                 >
                 <Button
                   data-component="desktop_auth_register_body_form_actions_prev-btn"

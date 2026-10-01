@@ -61,7 +61,7 @@ export function FooterNavigation({
     <div
       data-component={dataComponent}
       className={cn(
-        "mt-auto items-center gap-3 border-t border-v3-border pt-3",
+        "mt-auto items-center gap-3 border-t border-border pt-3",
         hasPositionLabel ? "grid grid-cols-[1fr_auto_1fr]" : "flex justify-between",
         stickyOnMobile &&
           "sticky bottom-0 bg-white rounded-b-[28px] shadow-[0_-4px_20px_hsla(214,50%,20%,0.06)]",
@@ -85,7 +85,7 @@ export function FooterNavigation({
         <div
           data-component={positionDataComponent}
           className={cn(
-            "justify-self-center text-[0.72rem] font-semibold text-v3-text-muted md:text-[0.77rem]",
+            "justify-self-center text-[0.72rem] font-semibold text-text-muted md:text-[0.77rem]",
             positionClassName,
           )}
         >

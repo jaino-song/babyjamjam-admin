@@ -128,11 +128,11 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
 
         <div
           data-component="mobile_messages_system-templates_template-key-detail_detail-panel_desktop-only"
-          className="info-card pop-up flex items-start gap-3 border border-dashed border-v3-border"
+          className="info-card pop-up flex items-start gap-3 border border-dashed border-border"
         >
-          <Monitor className="mt-0.5 h-5 w-5 shrink-0 text-v3-primary" />
-          <p className="text-[0.78rem] leading-relaxed text-v3-text-muted">
-            <span className="font-semibold text-v3-dark">시스템 템플릿 본문 편집·버전 롤백은 데스크톱에서만 가능합니다.</span>
+          <Monitor className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+          <p className="text-[0.78rem] leading-relaxed text-text-muted">
+            <span className="font-semibold text-dark">시스템 템플릿 본문 편집·버전 롤백은 데스크톱에서만 가능합니다.</span>
             <br />
             내용 변경이 필요하면 데스크톱에서 열어 주세요.
           </p>
@@ -143,10 +143,10 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
           data-component="mobile_messages_system-templates_template-key-detail_detail-panel_trigger-link"
           className="info-card pop-up flex items-start gap-3"
         >
-          <Workflow className="mt-0.5 h-5 w-5 shrink-0 text-v3-primary" />
+          <Workflow className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
           <div className="flex-1" data-component="mobile_messages_system-templates_template-key-detail_detail-panel_trigger-link_copy">
-            <p className="text-[0.85rem] font-semibold text-v3-dark">자동 발송 규칙 설정 (출시 예정)</p>
-            <p className="text-[0.72rem] text-v3-text-muted">
+            <p className="text-[0.85rem] font-semibold text-dark">자동 발송 규칙 설정 (출시 예정)</p>
+            <p className="text-[0.72rem] text-text-muted">
               이 템플릿의 자동 발송 ON/OFF·발송 시점은 메시지 → 자동 전송에서 관리합니다.
             </p>
           </div>

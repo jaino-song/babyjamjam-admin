@@ -133,10 +133,10 @@ export function AnimatedSlotList<T>({
             ? cn(
                 "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
                 isInteractive &&
-                  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
+                  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
                 slotState.isActive
-                  ? "border-v3-primary bg-v3-primary-light"
-                  : isInteractive && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
+                  ? "border-primary bg-primary-light"
+                  : isInteractive && "hover:border-primary/30 hover:bg-primary-light/50"
               )
             : "";
 
@@ -171,8 +171,8 @@ export function AnimatedSlotList<T>({
                 }
                 className="ml-[calc(56px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] max-w-full space-y-[calc(8px*var(--glint-ui-scale,1))]"
               >
-                <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-                <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-v3-dim-white" />
+                <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-surface" />
+                <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-surface" />
               </div>
             </div>
           );
@@ -235,7 +235,7 @@ export function AnimatedSlotList<T>({
             )}
           >
             <span className={cn(isFetchingMore && "animate-spin motion-reduce:animate-none")}>
-              <Loader2 className="h-5 w-5 text-v3-primary" aria-hidden="true" />
+              <Loader2 className="h-5 w-5 text-primary" aria-hidden="true" />
             </span>
             <span className="sr-only">목록을 더 불러오는 중</span>
           </div>

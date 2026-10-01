@@ -22,14 +22,14 @@
 
 .progressTitle {
     margin: 0 0 4px;
-    color: hsl(var(--v3-dark));
+    color: hsl(var(--dark));
     font-size: 1rem;
     font-weight: 800;
 }
 
 .progressSub {
     margin: 0 0 18px;
-    color: hsl(var(--v3-text-muted));
+    color: hsl(var(--text-muted));
     font-size: 0.74rem;
 }
 
@@ -43,23 +43,23 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    color: hsl(var(--v3-text-muted));
+    color: hsl(var(--text-muted));
     font-size: 0.85rem;
     font-weight: 500;
 }
 
 .progressRow.active {
-    color: hsl(var(--v3-primary));
+    color: hsl(var(--primary));
     font-weight: 700;
 }
 
 .progressRow.done {
-    color: hsl(var(--v3-green));
+    color: hsl(var(--green));
     font-weight: 600;
 }
 
 .progressRow.failed {
-    color: hsl(var(--v3-burgundy));
+    color: hsl(var(--burgundy));
     font-weight: 700;
 }
 
@@ -71,20 +71,20 @@
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    border: 1.5px solid hsl(var(--v3-border));
+    border: 1.5px solid hsl(var(--border));
     border-radius: 50%;
     background: white;
 }
 
 .progressRow.done .progressIndicator {
-    border-color: hsl(var(--v3-green));
-    background: hsl(var(--v3-green));
+    border-color: hsl(var(--green));
+    background: hsl(var(--green));
     color: white;
 }
 
 .progressRow.failed .progressIndicator {
-    border-color: hsl(var(--v3-burgundy));
-    background: hsl(var(--v3-burgundy));
+    border-color: hsl(var(--burgundy));
+    background: hsl(var(--burgundy));
     color: white;
 }
 
@@ -93,7 +93,7 @@
     position: absolute;
     inset: 1px;
     border-radius: 50%;
-    border: 2px solid hsl(var(--v3-primary));
+    border: 2px solid hsl(var(--primary));
     border-top-color: transparent;
     animation: progressSpin 0.7s linear infinite;
 }
@@ -106,8 +106,8 @@
     margin-top: 18px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: hsl(var(--v3-burgundy-light, 349 70% 95%));
-    color: hsl(var(--v3-burgundy));
+    background: hsl(var(--burgundy-light, 349 70% 95%));
+    color: hsl(var(--burgundy));
     font-size: 0.75rem;
     font-weight: 600;
     text-align: center;

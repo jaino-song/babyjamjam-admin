@@ -661,7 +661,7 @@ export function TemplateSendForm({
           </span>
           <button
             type="button"
-            className="flex h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-v3-primary/70 transition-colors hover:text-v3-primary"
+            className="flex h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-primary/70 transition-colors hover:text-primary"
             aria-label="수신자 제거"
             onClick={() => handleRemoveQueuedRecipient(item)}
           >
@@ -1184,13 +1184,13 @@ export function TemplateSendForm({
       id={resolvedFormId}
       data-component="desktop_messages_sections_template-send-form"
       data-template-id={templateId}
-      className={cn("flex min-h-0 flex-col gap-4 rounded-[20px] bg-v3-dim-white p-5", className)}
+      className={cn("flex min-h-0 flex-col gap-4 rounded-[20px] bg-surface p-5", className)}
       onSubmit={handleSubmit}
     >
       <div data-component="desktop_messages_sections_template-send-form_header" className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전송 정보</h3>
-          <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
+          <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-dark">전송 정보</h3>
+          <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">
             메시지 전송에 필요한 정보를 입력해 주세요.
           </p>
         </div>
@@ -1276,8 +1276,8 @@ export function TemplateSendForm({
           className={cn(
             "mt-4 rounded-[14px] px-4 py-3 text-[calc(12.48px*var(--glint-ui-scale,1))] font-semibold",
             feedback.tone === "success"
-              ? "bg-v3-primary-light text-v3-primary"
-              : "bg-v3-burgundy-light text-v3-burgundy",
+              ? "bg-primary-light text-primary"
+              : "bg-burgundy-light text-burgundy",
           )}
           role="status"
           tabIndex={feedback.tone === "error" ? -1 : undefined}
@@ -1331,18 +1331,18 @@ export function TemplateSendForm({
               <div
                 key={match.recipient.phone}
                 data-component="desktop_messages_sections_template-send-form_duplicate-send-confirm-list_recent"
-                className="rounded-[16px] bg-v3-dim-white px-4 py-3"
+                className="rounded-[16px] bg-surface px-4 py-3"
               >
                 {shouldShowRecipientNameInPill && match.recipient.name ? (
-                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-v3-dark">
+                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-dark">
                     {match.recipient.name} · {match.recipient.formattedPhone}
                   </p>
                 ) : (
-                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-v3-dark">
+                  <p className="mb-1 truncate text-[0.78rem] font-semibold text-dark">
                     {match.recipient.formattedPhone}
                   </p>
                 )}
-                <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
+                <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))] text-[0.78rem] font-semibold text-text-muted">
                   <Calendar className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
                   최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(match.record))}
                 </span>

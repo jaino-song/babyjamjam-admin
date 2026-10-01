@@ -129,7 +129,7 @@ export function SystemAdminBranchForm({
           name="slug"
           label="영문 지점 코드"
           labelTrailing={
-            <span className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+            <span className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-text-muted">
               영문 소문자, 숫자, 하이픈으로 입력해 주세요.
             </span>
           }
@@ -146,7 +146,7 @@ export function SystemAdminBranchForm({
         <div data-component="desktop_system-admin_sections_branch-form_manager" className="grid gap-[calc(7px*var(--glint-ui-scale,1))] sm:col-span-2">
           <Label
             htmlFor="system-admin-branch-manager"
-            className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+            className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-text-muted"
           >
             지점장
           </Label>

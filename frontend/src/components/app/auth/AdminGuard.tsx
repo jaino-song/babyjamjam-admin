@@ -22,12 +22,12 @@ export function AdminGuard({ children, fallback }: AdminGuardProps) {
     return (
       <div data-component="desktop_shell_admin-guard_loading" className="min-h-screen bg-background p-6">
         <div className="mx-auto max-w-4xl space-y-6">
-          <Skeleton className="h-8 w-40 bg-v3-dim-white" />
-          <div className="rounded-[24px] border border-v3-border bg-white p-6 shadow-v3">
+          <Skeleton className="h-8 w-40 bg-surface" />
+          <div className="rounded-[24px] border border-border bg-white p-6 shadow-v3">
             <div className="space-y-4">
-              <Skeleton className="h-6 w-48 bg-v3-dim-white" />
-              <Skeleton className="h-4 w-full bg-v3-dim-white" />
-              <Skeleton className="h-4 w-3/4 bg-v3-dim-white" />
+              <Skeleton className="h-6 w-48 bg-surface" />
+              <Skeleton className="h-4 w-full bg-surface" />
+              <Skeleton className="h-4 w-3/4 bg-surface" />
             </div>
           </div>
         </div>

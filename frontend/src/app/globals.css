@@ -53,7 +53,7 @@
   --info-foreground: 0 0% 100%;
 
   /* Border & Input */
-  --border: 214 32% 85%;
+  --border: 214 20% 92%;
   --input: 214 32% 85%;
   --ring: 214 100% 75%;
 
@@ -88,31 +88,25 @@
   --green: 137 34% 31%;
   --burgundy: 355 36% 45%;
   --gray: 0 0% 47%;
-  --dim-white: 0 0% 93%;
   --orange: 34 100% 55%;
 
   /* V3 Colors */
-  --v3-primary: 214 100% 34%;
-  --v3-primary-light: 214 80% 95%;
-  --v3-green: 137 34% 31%;
-  --v3-burgundy: 355 36% 45%;
-  --v3-orange: 34 100% 55%;
-  --v3-purple: 270 50% 50%;
-  --v3-teal: 180 50% 40%;
-  --v3-dim-white: 220 20% 97%;
-  --v3-primary-medium: 214 70% 88%;
-  --v3-primary-hover: 214 100% 28%;
-  --v3-green-light: 137 40% 93%;
-  --v3-burgundy-light: 355 40% 94%;
-  --v3-orange-light: 34 100% 94%;
-  --v3-purple-light: 270 60% 94%;
-  --v3-teal-light: 175 60% 93%;
-  --v3-gold: 45 100% 50%;
-  --v3-gold-light: 45 100% 94%;
-  --v3-dark: 214 40% 18%;
-  --v3-text: 214 25% 28%;
-  --v3-text-muted: 214 10% 55%;
-  --v3-border: 214 20% 92%;
+  --primary-light: 214 80% 95%;
+  --purple: 270 50% 50%;
+  --teal: 180 50% 40%;
+  --surface: 220 20% 97%;
+  --primary-medium: 214 70% 88%;
+  --primary-hover: 214 100% 28%;
+  --green-light: 137 40% 93%;
+  --burgundy-light: 355 40% 94%;
+  --orange-light: 34 100% 94%;
+  --purple-light: 270 60% 94%;
+  --teal-light: 175 60% 93%;
+  --gold: 45 100% 50%;
+  --gold-light: 45 100% 94%;
+  --dark: 214 40% 18%;
+  --text: 214 25% 28%;
+  --text-muted: 214 10% 55%;
 
   /* Status surfaces — one semantic triple per state: tinted surface, matching
      line, readable text. Single source for StatusBadge and Toaster, so a
@@ -153,7 +147,7 @@
   --popover: 220 20% 14%;
   --popover-foreground: 210 40% 98%;
 
-  --primary: 214 100% 45%;
+  --primary: 214 100% 50%;
   --primary-foreground: 0 0% 100%;
 
   --secondary: 217 32% 18%;
@@ -203,13 +197,11 @@
   --green: 137 40% 38%;
   --burgundy: 355 40% 52%;
   --gray: 0 0% 55%;
-  --dim-white: 0 0% 20%;
   --orange: 34 100% 60%;
 
   /* V3 Colors - Dark Mode */
-  --v3-primary: 214 100% 50%;
-  --v3-primary-light: 214 30% 20%;
-  --v3-dim-white: 220 15% 15%;
+  --primary-light: 214 30% 20%;
+  --surface: 220 15% 15%;
 }
 
 /* ========================================
@@ -272,31 +264,25 @@
   --color-green: hsl(137 34% 31%);
   --color-burgundy: hsl(355 36% 45%);
   --color-gray: hsl(0 0% 47%);
-  --color-dim-white: hsl(0 0% 93%);
   --color-orange: hsl(34 100% 55%);
 
   /* V3 Design System Colors */
-  --color-v3-primary: hsl(var(--v3-primary));
-  --color-v3-primary-light: hsl(var(--v3-primary-light));
-  --color-v3-primary-medium: hsl(var(--v3-primary-medium));
-  --color-v3-primary-hover: hsl(var(--v3-primary-hover));
-  --color-v3-green: hsl(var(--v3-green));
-  --color-v3-green-light: hsl(var(--v3-green-light));
-  --color-v3-burgundy: hsl(var(--v3-burgundy));
-  --color-v3-burgundy-light: hsl(var(--v3-burgundy-light));
-  --color-v3-orange: hsl(var(--v3-orange));
-  --color-v3-orange-light: hsl(var(--v3-orange-light));
-  --color-v3-purple: hsl(var(--v3-purple));
-  --color-v3-purple-light: hsl(var(--v3-purple-light));
-  --color-v3-teal: hsl(var(--v3-teal));
-  --color-v3-teal-light: hsl(var(--v3-teal-light));
-  --color-v3-gold: hsl(var(--v3-gold));
-  --color-v3-gold-light: hsl(var(--v3-gold-light));
-  --color-v3-dark: hsl(var(--v3-dark));
-  --color-v3-text: hsl(var(--v3-text));
-  --color-v3-text-muted: hsl(var(--v3-text-muted));
-  --color-v3-border: hsl(var(--v3-border));
-  --color-v3-dim-white: hsl(var(--v3-dim-white));
+  --color-primary-light: hsl(var(--primary-light));
+  --color-primary-medium: hsl(var(--primary-medium));
+  --color-primary-hover: hsl(var(--primary-hover));
+  --color-green-light: hsl(var(--green-light));
+  --color-burgundy-light: hsl(var(--burgundy-light));
+  --color-orange-light: hsl(var(--orange-light));
+  --color-purple: hsl(var(--purple));
+  --color-purple-light: hsl(var(--purple-light));
+  --color-teal: hsl(var(--teal));
+  --color-teal-light: hsl(var(--teal-light));
+  --color-gold: hsl(var(--gold));
+  --color-gold-light: hsl(var(--gold-light));
+  --color-dark: hsl(var(--dark));
+  --color-text: hsl(var(--text));
+  --color-text-muted: hsl(var(--text-muted));
+  --color-surface: hsl(var(--surface));
 
   /* Status surfaces (defined in :root). The warning and danger lines carry
      their alpha here so call sites stay plain utility classes. */
@@ -727,7 +713,7 @@
 
   .scrollbar-on-scroll[data-scroll-active="true"] {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--v3-border)) transparent;
+    scrollbar-color: hsl(var(--border)) transparent;
   }
 
   .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar {
@@ -740,14 +726,14 @@
   }
 
   .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--v3-border));
+    background-color: hsl(var(--border));
     border: 3px solid transparent;
     border-radius: 9999px;
     background-clip: content-box;
   }
 
   .scrollbar-on-scroll[data-scroll-active="true"]::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--v3-text-muted));
+    background-color: hsl(var(--text-muted));
   }
 
   /* Opt-out for specific children (e.g. to animate the grandchildren with staggering instead). */
@@ -1719,7 +1705,7 @@ body {
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-header"] { padding: 16px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-scroll-content"] { padding: 16px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-bottom-spacer"] { height: 0; }
-[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) { padding: 14px 16px; border-radius: 18px; background: hsl(var(--v3-dim-white)); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) { padding: 14px 16px; border-radius: 18px; background: hsl(var(--surface)); }
 [data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) h3 { font-size: .6rem; letter-spacing: .08em; margin-bottom: 8px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] { gap: 12px; padding: 8px 0; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] > span { font-size: .78rem; word-break: keep-all; }

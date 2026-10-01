@@ -239,7 +239,7 @@ export function OnboardingForm({
                     value={email ?? ""}
                     readOnly
                     disabled
-                    className="bg-v3-dim-white/80"
+                    className="bg-surface/80"
                     data-component="desktop_auth_kakao-onboarding_form_email-field"
                 />
                 <FormField
@@ -248,7 +248,7 @@ export function OnboardingForm({
                     value={name ?? ""}
                     readOnly
                     disabled
-                    className="bg-v3-dim-white/80"
+                    className="bg-surface/80"
                     data-component="desktop_auth_kakao-onboarding_form_name-field"
                 />
                 <FormField

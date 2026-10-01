@@ -13,13 +13,13 @@ const buttonVariants = cva(
         positive:
           "border-0 bg-[hsl(214,100%,34%)] text-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] hover:-translate-y-[2px] hover:bg-[hsl(214,100%,30%)] hover:shadow-[0_12px_48px_hsla(214,50%,20%,0.12)]",
         destructive:
-          "bg-v3-burgundy text-white shadow-[0_4px_24px_hsla(348,40%,24%,0.08)] hover:-translate-y-[2px] hover:bg-[hsl(348,58%,34%)] hover:shadow-[0_12px_48px_hsla(348,40%,24%,0.16)]",
+          "bg-burgundy text-white shadow-[0_4px_24px_hsla(348,40%,24%,0.08)] hover:-translate-y-[2px] hover:bg-[hsl(348,58%,34%)] hover:shadow-[0_12px_48px_hsla(348,40%,24%,0.16)]",
         negative:
-          "bg-v3-burgundy text-white shadow-[0_4px_24px_hsla(348,40%,24%,0.08)] hover:-translate-y-[2px] hover:bg-[hsl(348,58%,34%)] hover:shadow-[0_12px_48px_hsla(348,40%,24%,0.16)]",
+          "bg-burgundy text-white shadow-[0_4px_24px_hsla(348,40%,24%,0.08)] hover:-translate-y-[2px] hover:bg-[hsl(348,58%,34%)] hover:shadow-[0_12px_48px_hsla(348,40%,24%,0.16)]",
         outline:
-          "border-v3-border bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark",
+          "border-border bg-white text-text-muted shadow-none hover:bg-surface hover:text-dark",
         neutral:
-          "border-v3-border bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark",
+          "border-border bg-white text-text-muted shadow-none hover:bg-surface hover:text-dark",
         secondary:
           "bg-[hsl(214,80%,95%)] text-[hsl(214,100%,34%)] shadow-none hover:bg-[hsl(214,70%,90%)]",
         subtle:
@@ -27,7 +27,7 @@ const buttonVariants = cva(
         "positive-outline":
           "border-[hsl(214,100%,34%)] bg-white text-[hsl(214,100%,34%)] shadow-none hover:bg-[hsl(214,80%,95%)]",
         "negative-outline":
-          "border-v3-primary/30 bg-white text-v3-burgundy shadow-none hover:bg-v3-burgundy-light hover:text-v3-burgundy",
+          "border-primary/30 bg-white text-burgundy shadow-none hover:bg-burgundy-light hover:text-burgundy",
         ghost: "bg-transparent shadow-none hover:bg-accent hover:text-accent-foreground",
         link: "bg-transparent shadow-none text-primary underline-offset-4 hover:underline",
         kakao:

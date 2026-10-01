@@ -48,14 +48,14 @@ export function ReviewNeededContractsCard({ contracts }: ReviewNeededContractsCa
         data-component="desktop_dashboard_review-needed-contracts_header"
         className="mb-[calc(10px*var(--glint-ui-scale,1))] flex items-center justify-between gap-2"
       >
-        <h2 className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13.6px*var(--glint-ui-scale,1))] font-bold text-v3-dark">
-          <FilePen className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] text-v3-orange" aria-hidden="true" />
+        <h2 className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13.6px*var(--glint-ui-scale,1))] font-bold text-dark">
+          <FilePen className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] text-orange" aria-hidden="true" />
           검토 필요 계약서
-          <span className="text-v3-text-muted font-semibold">{contracts.length}건</span>
+          <span className="text-text-muted font-semibold">{contracts.length}건</span>
         </h2>
         <Link
           href="/contracts"
-          className="flex items-center gap-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted transition-colors hover:text-v3-primary"
+          className="flex items-center gap-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted transition-colors hover:text-primary"
         >
           전체 보기
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -73,13 +73,13 @@ export function ReviewNeededContractsCard({ contracts }: ReviewNeededContractsCa
               <Link
                 href={`/contracts?documentId=${encodeURIComponent(contract.documentId)}`}
                 data-component="desktop_dashboard_review-needed-contracts_list_item"
-                className="flex items-center justify-between gap-3 rounded-[14px] px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] transition-colors hover:bg-v3-dim-white"
+                className="flex items-center justify-between gap-3 rounded-[14px] px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] transition-colors hover:bg-surface"
               >
                 <span className="min-w-0 flex items-baseline gap-[calc(8px*var(--glint-ui-scale,1))]">
-                  <span className="truncate text-[calc(12.8px*var(--glint-ui-scale,1))] font-bold text-v3-dark">
+                  <span className="truncate text-[calc(12.8px*var(--glint-ui-scale,1))] font-bold text-dark">
                     {contract.customerName ?? "고객 미확인"}
                   </span>
-                  <span className="shrink-0 text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                  <span className="shrink-0 text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
                     {contract.contractEndDate
                       ? `종료 ${contract.contractEndDate.replaceAll("-", ".")}`
                       : "종료일 미확인"}
@@ -94,7 +94,7 @@ export function ReviewNeededContractsCard({ contracts }: ReviewNeededContractsCa
         })}
       </ul>
       {hiddenCount > 0 && (
-        <p className="mt-[calc(6px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
+        <p className="mt-[calc(6px*var(--glint-ui-scale,1))] px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
           외 {hiddenCount}건 — 전체 보기에서 확인하세요
         </p>
       )}

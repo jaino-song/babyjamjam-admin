@@ -96,7 +96,7 @@ export const TitleTextInputMolecule = React.forwardRef<
           <Label
             htmlFor={fieldId}
             className={cn(
-              "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+              "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-text-muted",
               labelClassName,
             )}
           >

@@ -30,7 +30,7 @@ export function ShortcutGrid({
   return (
     <section data-component="desktop_v3_shortcut-grid" className={cn("space-y-3", className)}>
       {title !== null && (
-        <h2 className="px-1 text-lg font-extrabold tracking-tight text-v3-dark">
+        <h2 className="px-1 text-lg font-extrabold tracking-tight text-dark">
           {title}
         </h2>
       )}
