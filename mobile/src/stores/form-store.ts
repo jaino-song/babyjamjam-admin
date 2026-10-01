@@ -267,7 +267,7 @@ export const useFormStore = create<FormStore>((set) => {
             voucherType: prefill.voucherType ?? "",
             voucherDuration: prefill.voucherDuration ?? "",
             voucherYear: prefill.voucherYear ?? currentYear,
-            area: "",
+            area: prefill.area ?? "",
             preservePrefilledPrices: true,
         }),
         resetAll: () => set({

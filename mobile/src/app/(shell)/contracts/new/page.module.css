@@ -266,15 +266,6 @@
   position: relative;
 }
 
-/* 저장된 고객의 값을 빈 선택 항목 문구로 보여줄 때 선택된 값처럼 보이지 않도록 흐리게 해요. */
-.storedPlaceholderSelect {
-  color: hsl(var(--v3-text-muted));
-}
-
-.storedPlaceholderSelect option {
-  color: hsl(var(--v3-dark));
-}
-
 .selectWrap .formInput {
   padding-right: 38px;
   cursor: pointer;

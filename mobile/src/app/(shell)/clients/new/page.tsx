@@ -243,7 +243,14 @@ export default function NewClientPage() {
   } = store;
   const fieldSpecs: Record<WizardValidatedField, FieldSpec> = {
     name: { kind: "text", label: "이름", required: true },
-    phone: { kind: "phone", label: "연락처", required: true, mobileOnly: true },
+    // 수정 모드에서 저장된 번호를 그대로 둔 동안은 유선 번호도 통과해요. 바꾸는 순간부터 휴대전화 번호만 받아요.
+    phone: {
+      kind: "phone",
+      label: "연락처",
+      required: true,
+      mobileOnly: true,
+      acceptedPhone: isEditMode ? editingClient?.phone : null,
+    },
     birthday: { kind: "birthday", label: "생년월일", required: true },
     dueDate: { kind: "date", label: "출산 예정일" },
     birthDate: { kind: "date", label: "출산일" },
