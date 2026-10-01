@@ -353,6 +353,53 @@ describe("SbUserRepository", () => {
         });
     });
 
+    // ============================================
+    // findNotificationRecipientsByBranchId
+    // ============================================
+    describe("findNotificationRecipientsByBranchId", () => {
+        const setup = () => {
+            const findManyModel = {
+                findMany: jest.fn().mockResolvedValue([]),
+            };
+            const findManyPrisma = { user: findManyModel } as unknown as PrismaService;
+            const findManyRepository = new SbUserRepository(findManyPrisma);
+            return { findManyModel, findManyRepository };
+        };
+
+        it("filters the prisma where-clause to approved users only", async () => {
+            // Arrange
+            const { findManyModel, findManyRepository } = setup();
+
+            // Act
+            await findManyRepository.findNotificationRecipientsByBranchId("branch-1");
+
+            // Assert
+            expect(findManyModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    approvalStatus: "approved",
+                    OR: [
+                        { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                        { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
+                    ],
+                },
+            });
+        });
+
+        it("still includes the branch owner when they are approved", async () => {
+            // Arrange
+            const { findManyModel, findManyRepository } = setup();
+            const ownerRow = createUserRow({ id: "owner-1", role: "owner" });
+            findManyModel.findMany.mockResolvedValue([ownerRow]);
+
+            // Act
+            const result = await findManyRepository.findNotificationRecipientsByBranchId("branch-1");
+
+            // Assert
+            expect(result).toHaveLength(1);
+            expect(result[0]).toMatchObject({ id: "owner-1", role: "owner" });
+        });
+    });
+
     describe("clearBranchOwnerships", () => {
         it("clears ownership and downgrades admin memberships for the owned branches", async () => {
             const branchModel = {
