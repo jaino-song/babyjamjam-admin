@@ -21,10 +21,15 @@ function makeRepository() {
         },
         client: {
             findFirst: jest.fn<Promise<unknown>, [unknown]>(async () => null),
+            findMany: jest.fn<Promise<unknown[]>, [unknown]>(async () => []),
         },
     };
     return { prisma, repository: new SbHolidayReviewRepository(prisma as unknown as PrismaService) };
 }
+
+afterEach(() => {
+    jest.useRealTimers();
+});
 
 /** The tenant extension only accepts a top-level `where.branchId` on aggregates and writes. */
 const whereOf = (mock: jest.Mock): Record<string, unknown> =>
@@ -184,6 +189,7 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
     });
 
     it("findFixSnapshot maps the client row to dates, duration, termination and case facts", async () => {
+        jest.useFakeTimers({ now: new Date("2026-10-01T03:00:00.000Z") });
         const { prisma, repository } = makeRepository();
         prisma.client.findFirst.mockResolvedValue({
             startDate: day("2026-11-02"),
@@ -198,7 +204,128 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
             endDate: "2026-11-13",
             duration: 10,
             terminated: true,
+            finished: false,
             facts: { caseStatus: "COMPLETED", days: [{ date: "2026-11-03", locked: true }] },
         });
+    });
+
+    describe("finished clients (stored end date before today, Asia/Seoul)", () => {
+        beforeEach(() => {
+            // 2026-09-30T20:00Z is already 2026-10-01 in Seoul.
+            jest.useFakeTimers({ now: new Date("2026-09-30T20:00:00.000Z") });
+        });
+
+        const snapshotRow = (endDate: Date | null) => ({
+            startDate: day("2026-04-27"),
+            endDate,
+            duration: 10,
+            serviceStatus: "active",
+            serviceRecordCase: null,
+        });
+
+        it.each([
+            ["the day before today", "2026-09-30", true],
+            ["today", "2026-10-01", false],
+            ["after today", "2026-10-02", false],
+        ])("findFixSnapshot: an end date %s is finished=%s", async (_label, end, finished) => {
+            const { prisma, repository } = makeRepository();
+            prisma.client.findFirst.mockResolvedValue(snapshotRow(day(end)));
+
+            await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toMatchObject({ finished });
+        });
+
+        it("findFixSnapshot: a client without an end date is not finished", async () => {
+            const { prisma, repository } = makeRepository();
+            prisma.client.findFirst.mockResolvedValue(snapshotRow(null));
+
+            await expect(repository.findFixSnapshot(BRANCH, 7)).resolves.toMatchObject({ finished: false });
+        });
+
+        it("findReviewCandidates bounds BOTH branches of the period rule by end >= today, not by the event date", async () => {
+            const { prisma, repository } = makeRepository();
+
+            // A change dated in the past (2026-05-01) still asks for ongoing clients only.
+            await repository.findReviewCandidates(BRANCH, "2026-05-01");
+
+            const where = whereOf(prisma.client.findMany) as { startDate: unknown; AND: Array<Record<string, unknown>> };
+            expect(where.startDate).toEqual({ lte: day("2026-05-01") });
+            // Top-level AND entry: it applies to the in-period branch and to the open-item branch alike.
+            expect(where.AND).toContainEqual({ endDate: { gte: day("2026-10-01") } });
+            expect(where.AND).toContainEqual({
+                OR: [
+                    { endDate: { gte: day("2026-05-01") } },
+                    { endDateReviewItems: { some: { status: "open", recalculatedEnd: { gte: day("2026-05-01") } } } },
+                ],
+            });
+        });
+    });
+});
+
+describe("SbHolidayReviewRepository.applyEventResult", () => {
+    const CLIENT = 7;
+    const draft = {
+        clientId: CLIENT,
+        branchId: BRANCH,
+        storedEnd: "2026-11-13",
+        recalculatedEnd: "2026-11-16",
+        previousEnd: "2026-11-13",
+        affectedFrom: "2026-11-10",
+        category: "safe" as const,
+        reason: "no_sessions_after_date" as const,
+    };
+    const input = {
+        eventId: EVENT,
+        drafts: [draft],
+        assumedOpenItemIds: {},
+        expectedUnprocessedEventIds: [EVENT],
+    };
+
+    function makeTxRepository(currentEnd: Date | null | "missing") {
+        const tx = {
+            $executeRaw: jest.fn(async () => 1),
+            holiday_change_event: {
+                findFirst: jest.fn(async () => ({ id: EVENT })),
+                findMany: jest.fn(async () => [{ id: EVENT }]),
+                update: jest.fn(async () => ({})),
+            },
+            end_date_review_item: {
+                findMany: jest.fn(async () => []),
+                updateMany: jest.fn(async () => ({ count: 0 })),
+                upsert: jest.fn(async () => ({})),
+            },
+            client: {
+                findMany: jest.fn(async () => (currentEnd === "missing" ? [] : [{ id: CLIENT, endDate: currentEnd }])),
+            },
+        };
+        const prisma = { $transaction: jest.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)) };
+        return { tx, repository: new SbHolidayReviewRepository(prisma as unknown as PrismaService) };
+    }
+
+    it("applies the drafts when each client's end date is still the one they were computed from", async () => {
+        const { tx, repository } = makeTxRepository(day("2026-11-13"));
+
+        await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "applied", created: 1, obsoleted: 0 });
+
+        expect(tx.client.findMany).toHaveBeenCalledWith({
+            where: { id: { in: [CLIENT] }, branchId: { in: [BRANCH] } },
+            select: { id: true, endDate: true },
+        });
+        expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
+        expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["moved to another date since", day("2026-11-17")],
+        ["was cleared", null],
+        ["is gone", "missing" as const],
+    ])("N2: returns items_changed and writes nothing when a client's end date %s", async (_label, currentEnd) => {
+        const { tx, repository } = makeTxRepository(currentEnd);
+
+        await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "items_changed" });
+
+        expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
+        expect(tx.end_date_review_item.updateMany).not.toHaveBeenCalled();
+        // The event stays unprocessed so the next run recomputes it.
+        expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
     });
 });

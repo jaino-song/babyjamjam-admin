@@ -3,10 +3,11 @@ import { Prisma, PrismaClient } from "@prisma/client";
 
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { HolidayReviewProcessorService } from "application/services/holiday-review-processor.service";
-import { KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
+import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbHolidayCalendarRepository } from "infrastructure/database/repositories/sb.holiday-calendar.repository";
 import { SbHolidayReviewRepository } from "infrastructure/database/repositories/sb.holiday-review.repository";
+import { pinToday, unpinToday } from "../utils/pin-today";
 
 /**
  * Real-PostgreSQL checks for the holiday review pipeline: the partial unique index,
@@ -79,6 +80,9 @@ describeReal("holiday review (real PostgreSQL)", () => {
             { findAllActive: async () => [{ id: branchA, name: "A" }, { id: branchB, name: "B" }] },
             { holdsLease: () => true } as never,
         );
+        // The fixtures are dated around Nov 2026 and the repository compares stored end dates with
+        // "today" (Asia/Seoul): pin Date so the specs do not rot as the calendar moves on.
+        pinToday("2026-10-01T03:00:00.000Z");
     });
 
     afterAll(async () => {
@@ -92,19 +96,22 @@ describeReal("holiday review (real PostgreSQL)", () => {
         await prisma.holiday_year_snapshot.deleteMany({});
         await prisma.branch.deleteMany({ where: { id: { in: [branchA, branchB] } } });
         await prisma.$disconnect();
+        unpinToday();
         jest.restoreAllMocks();
     });
 
-    /** Replaces the 2026 public calendar (built-in dates + `extra`) and bumps the revision. */
-    async function setPublic2026(extra: string[]): Promise<void> {
+    /** Replaces the 2026 public calendar (built-in dates + `extra` - `without`) and bumps the revision. */
+    async function setPublic2026(extra: string[], without: string[] = []): Promise<void> {
         await prisma.public_holiday.deleteMany({});
         await prisma.public_holiday.createMany({
-            data: [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra].map((date) => ({
-                date: d(date),
-                name: "공휴일",
-                source: "kasi",
-                fetchedAt: NOW,
-            })),
+            data: [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra]
+                .filter((date) => !without.includes(date))
+                .map((date) => ({
+                    date: d(date),
+                    name: "공휴일",
+                    source: "kasi",
+                    fetchedAt: NOW,
+                })),
         });
         await prisma.holiday_year_snapshot.upsert({
             where: { year: 2026 },
@@ -263,6 +270,78 @@ describeReal("holiday review (real PostgreSQL)", () => {
                 caseStatus: "COMPLETED",
                 days: [{ date: "2026-11-03", locked: true }],
             });
+        });
+    });
+
+    describe("F2: finished clients never get review items", () => {
+        // Today is pinned to 2026-10-01 (Seoul).
+        it("audit repro: a completed client 04-27..05-12 gets no item when KASI drops 05-01", async () => {
+            await setPublic2026([], ["2026-05-01"]); // KASI 2026 = built-in minus Labor Day
+            const finished = await makeClient(branchA, {
+                start: "2026-04-27",
+                end: "2026-05-12",
+                duration: 10,
+                status: "completed",
+            });
+            await makeEvent("2026-05-01", "removed", { createdAt: OLD });
+
+            const summary = await processor.processDueEvents(NOW);
+
+            expect(summary).toEqual({ processed: 1, stopped: false });
+            expect(await itemsOf(finished)).toHaveLength(0);
+        });
+
+        it("a past-dated change still files an item for a client whose period is ongoing", async () => {
+            // 09-21 + 8 business days = 10-02 under the built-in calendar: today (10-01) is inside it.
+            const storedEnd = KR_BUILTIN_CALENDAR.calcEndDateBusinessDays("2026-09-21", 8);
+            expect(storedEnd >= "2026-10-01").toBe(true);
+            const ongoing = await makeClient(branchA, { start: "2026-09-21", end: storedEnd, duration: 8 });
+            await setPublic2026(["2026-09-22"]); // a change dated in the past (Tue 09-22)
+            await makeEvent("2026-09-22", "added", { createdAt: OLD });
+
+            await processor.processDueEvents(NOW);
+
+            const items = await itemsOf(ongoing);
+            expect(items).toHaveLength(1);
+            expect(items[0]).toMatchObject({ status: "open", category: "safe" });
+            expect(iso(items[0]!.storedEnd)).toBe(storedEnd);
+            expect(iso(items[0]!.recalculatedEnd) > storedEnd).toBe(true);
+        });
+
+        it("B1: a stored 'completed' status with a future end date is still a candidate (only the end date decides)", async () => {
+            const lazyStatus = await makeClient(branchA, { status: "completed" }); // 11-02 .. 11-13
+            const found = await repository.findReviewCandidates(branchA, "2026-11-10");
+            expect(found.map((c) => c.clientId)).toContain(lazyStatus);
+        });
+
+        it("the open-item branch is bounded too: a finished client holding an open item is not a candidate", async () => {
+            const finished = await makeClient(branchA, { start: "2026-04-27", end: "2026-05-12" });
+            const e1 = await makeEvent("2026-05-01", "removed");
+            await prisma.end_date_review_item.create({
+                data: {
+                    changeEventId: e1,
+                    branchId: branchA,
+                    clientId: finished,
+                    storedEnd: d("2026-05-12"),
+                    recalculatedEnd: d("2026-11-20"), // would reach any date up to here
+                    affectedFrom: d("2026-05-01"),
+                    category: "safe",
+                },
+            });
+
+            const found = await repository.findReviewCandidates(branchA, "2026-05-04");
+
+            expect(found.map((c) => c.clientId)).not.toContain(finished);
+        });
+
+        it("a client whose period ends today is not finished; one that ended yesterday is", async () => {
+            const endsToday = await makeClient(branchA, { start: "2026-09-18", end: "2026-10-01" });
+            const endedYesterday = await makeClient(branchA, { start: "2026-09-17", end: "2026-09-30" });
+
+            const found = (await repository.findReviewCandidates(branchA, "2026-09-25")).map((c) => c.clientId);
+
+            expect(found).toContain(endsToday);
+            expect(found).not.toContain(endedYesterday);
         });
     });
 
@@ -606,13 +685,15 @@ describeReal("holiday review (real PostgreSQL)", () => {
 
         it("rolls the whole event back when one draft fails", async () => {
             const clientId = await makeClient(branchA);
+            const secondClientId = await makeClient(branchA);
             const eventId = await makeEvent("2026-11-10", "added");
             await prisma.holiday_change_event.update({ where: { id: eventId }, data: { processedAt: null } });
 
             await expect(
                 repository.applyEventResult({
                     eventId,
-                    drafts: [draft(clientId, branchA), draft(2_000_000_000, branchA)], // no such client: FK violation
+                    // The second draft violates the category CHECK constraint, after the first was written.
+                    drafts: [draft(clientId, branchA), { ...draft(secondClientId, branchA), category: "bogus" as never }],
                     assumedOpenItemIds: {},
                     expectedUnprocessedEventIds: [eventId],
                 }),

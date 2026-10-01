@@ -943,12 +943,15 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         };
         const ensureForClient = jest.fn().mockResolvedValue(null);
         const extendExpiryForCase = jest.fn().mockResolvedValue(undefined);
+        // A holiday far from the period: only here to make the branch calendar a distinct object.
+        const holidayCalendar = branchHolidayCalendar("2026-12-01");
         const { service, scheduleUpdate, clientUpdate, upsert } = createHarness({
             existing: null,
             transactionRecord,
             schedule,
             ensureForClient,
             extendExpiryForCase,
+            holidayCalendar,
         });
         const newEndDate = new Date("2026-07-10T00:00:00.000Z");
 
@@ -968,7 +971,12 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             where: { id: 100, branchId: BRANCH_ID },
             data: { endDate: newEndDate },
         });
-        expect(ensureForClient).toHaveBeenCalledWith(100, expect.anything());
+        expect(ensureForClient).toHaveBeenCalledWith(100, expect.anything(), expect.anything());
+        // N1: the auto-extend hands over the (fresh) calendar it already holds instead of letting
+        // the lifecycle service load another one on a second pooled connection.
+        const savedCalendar = await (holidayCalendar.forBranch as jest.Mock).mock.results[0]?.value;
+        expect(ensureForClient.mock.calls[0]?.[2]).toBe(savedCalendar);
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
         expect(extendExpiryForCase).toHaveBeenCalledWith(
             CASE_ID,
             new Date("2026-07-17T11:00:00.000Z"),

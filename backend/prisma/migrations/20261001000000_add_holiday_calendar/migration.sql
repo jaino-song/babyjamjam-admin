@@ -246,3 +246,43 @@ END $$;
 
 -- Seed the single revision row.
 INSERT INTO "holiday_calendar_revision" ("id", "revision") VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+-- Bump the calendar revision on EVERY change to the calendar tables, including raw SQL
+-- (e.g. deleting snapshot/holiday rows to fall back to the built-in list): running servers
+-- cache each branch's calendar by this revision, so a change that skipped the bump would
+-- never reach them. Statement-level, so a bulk write bumps once per statement. The app's own
+-- bump in the same transaction makes it a double bump, which is harmless: the revision is
+-- only a monotonic cache key (the model cache compares `>=`).
+-- UPDATE is deliberately narrow on public_holiday (date, name): the no-change daily sync
+-- only touches fetched_at / validated_at and must not invalidate every server's cache.
+-- Triggers are invisible to Prisma (no drift). Re-runnable: CREATE OR REPLACE + DROP IF EXISTS.
+CREATE OR REPLACE FUNCTION "holiday_calendar_bump_revision"() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    UPDATE "holiday_calendar_revision"
+    SET "revision" = "revision" + 1, "updated_at" = now()
+    WHERE "id" = 1;
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS "trg_holiday_year_snapshot_bump_revision" ON "holiday_year_snapshot";
+CREATE TRIGGER "trg_holiday_year_snapshot_bump_revision"
+    AFTER INSERT OR DELETE OR TRUNCATE ON "holiday_year_snapshot"
+    FOR EACH STATEMENT EXECUTE FUNCTION "holiday_calendar_bump_revision"();
+
+DROP TRIGGER IF EXISTS "trg_public_holiday_bump_revision" ON "public_holiday";
+CREATE TRIGGER "trg_public_holiday_bump_revision"
+    AFTER INSERT OR DELETE OR TRUNCATE ON "public_holiday"
+    FOR EACH STATEMENT EXECUTE FUNCTION "holiday_calendar_bump_revision"();
+
+DROP TRIGGER IF EXISTS "trg_public_holiday_update_bump_revision" ON "public_holiday";
+CREATE TRIGGER "trg_public_holiday_update_bump_revision"
+    AFTER UPDATE OF "date", "name" ON "public_holiday"
+    FOR EACH STATEMENT EXECUTE FUNCTION "holiday_calendar_bump_revision"();
+
+DROP TRIGGER IF EXISTS "trg_branch_holiday_override_bump_revision" ON "branch_holiday_override";
+CREATE TRIGGER "trg_branch_holiday_override_bump_revision"
+    AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON "branch_holiday_override"
+    FOR EACH STATEMENT EXECUTE FUNCTION "holiday_calendar_bump_revision"();

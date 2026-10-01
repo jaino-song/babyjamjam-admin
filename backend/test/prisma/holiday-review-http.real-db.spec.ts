@@ -7,6 +7,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbHolidayReviewRepository } from "infrastructure/database/repositories/sb.holiday-review.repository";
 import { TenantIsolationViolationError } from "infrastructure/tenant/tenant-isolation.reporter";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
+import { pinToday, unpinToday } from "../utils/pin-today";
 
 /**
  * Real-PostgreSQL checks for the review endpoints' repository methods, run through the
@@ -58,6 +59,9 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
         branchB = (await raw.branch.create({ data: { name: "B", slug: `throwaway-hrh-b-${suffix}` } })).id;
         const extended = new PrismaClient().$extends(tenantIsolationExtension());
         repository = new SbHolidayReviewRepository(extended as unknown as PrismaService);
+        // The fixtures are dated around Nov 2026 and the repository compares stored end dates with
+        // "today" (Asia/Seoul): pin Date so the specs do not rot as the calendar moves on.
+        pinToday("2026-10-01T03:00:00.000Z");
     });
 
     afterAll(async () => {
@@ -70,6 +74,7 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
         await raw.$disconnect();
         if (previousMode === undefined) delete process.env["TENANT_ISOLATION_MODE"];
         else process.env["TENANT_ISOLATION_MODE"] = previousMode;
+        unpinToday();
         jest.restoreAllMocks();
     });
 
@@ -100,14 +105,14 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
     async function makeClient(
         branchId: string,
         name: string,
-        partial: { end?: string; status?: string | null } = {},
+        partial: { start?: string; end?: string; status?: string | null } = {},
     ): Promise<number> {
         const row = await raw.client.create({
             data: {
                 name,
                 voucherClient: false,
                 branchId,
-                startDate: d("2026-11-02"),
+                startDate: d(partial.start ?? "2026-11-02"),
                 endDate: d(partial.end ?? "2026-11-13"),
                 duration: 10,
                 serviceStatus: partial.status === undefined ? "active" : partial.status,
@@ -121,14 +126,14 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
         eventId: string,
         branchId: string,
         clientId: number,
-        opts: { category?: "safe" | "risk"; status?: string; reason?: string } = {},
+        opts: { category?: "safe" | "risk"; status?: string; reason?: string; storedEnd?: string } = {},
     ) {
         return raw.end_date_review_item.create({
             data: {
                 changeEventId: eventId,
                 branchId,
                 clientId,
-                storedEnd: d("2026-11-13"),
+                storedEnd: d(opts.storedEnd ?? "2026-11-13"),
                 recalculatedEnd: d("2026-11-16"),
                 affectedFrom: d("2026-11-10"),
                 category: opts.category ?? "safe",
@@ -355,6 +360,7 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
                 endDate: "2026-11-13",
                 duration: 10,
                 terminated: false,
+                finished: false,
                 facts: { caseStatus: "COMPLETED", days: [{ date: "2026-11-03", locked: true }] },
             });
             expect((await asBranch(branchA, () => repository.findFixSnapshot(branchA, terminated)))?.terminated).toBe(true);
@@ -419,6 +425,29 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
             expect(await status(itemKeep.id)).toMatchObject({ status: "kept", resolvedBy: USER });
             expect(await status(itemMoved.id)).toMatchObject({ status: "obsolete", resolvedBy: null });
             expect(await status(itemRisk.id)).toMatchObject({ status: "open" });
+        });
+
+        it("F2: an item filed for a client whose period is over is closed obsolete as CLIENT_FINISHED, never fixed", async () => {
+            const event = await makeEvent("2026-05-01", "removed");
+            // Today is pinned to 2026-10-01: this client's stored end (05-12) is long past.
+            const finished = await makeClient(branchA, "가", { start: "2026-04-27", end: "2026-05-12" });
+            const item = await makeItem(event, branchA, finished, { storedEnd: "2026-05-12" });
+            const clientService = { update: jest.fn() };
+            const service = new HolidayReviewResolveService(
+                repository,
+                { forBranch: async () => ({ calcEndDateBusinessDays: () => "2026-05-11" }) } as never,
+                clientService as never,
+            );
+
+            const result = await asBranch(branchA, () =>
+                service.resolve(branchA, event, USER, { action: "fix", itemIds: [item.id] }),
+            );
+
+            expect(result).toEqual({ fixed: 0, kept: 0, skipped: [{ itemId: item.id, code: "CLIENT_FINISHED" }] });
+            expect(clientService.update).not.toHaveBeenCalled();
+            expect(await raw.end_date_review_item.findUniqueOrThrow({ where: { id: item.id } }))
+                .toMatchObject({ status: "obsolete", resolvedBy: null });
+            expect((await raw.client.findUniqueOrThrow({ where: { id: finished } })).endDate).toEqual(d("2026-05-12"));
         });
     });
 });
