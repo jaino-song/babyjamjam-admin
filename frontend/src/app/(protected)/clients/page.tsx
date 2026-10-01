@@ -53,6 +53,7 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { MaternityContractDialog } from "@/components/app/clients/MaternityContractDialog";
+import { ServiceScheduleContractResendModal } from "@/components/app/clients/ServiceScheduleContractResendModal";
 import { canCreateNewContractDocument } from "@/components/app/contracts/ContractClientSelector";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
@@ -129,19 +130,12 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
     },
 ];
 
-const getTodayIsoDate = (): string => {
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, "0");
-    const day = String(today.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-};
-
 interface ServiceScheduleChangeTarget {
+    client: Client;
     scheduleId: number;
     sessionIndex: number;
     currentDate: string;
-    minimumDate: string;
+    minimumDate: string | null;
 }
 
 function ClientAutomationSection() {
@@ -291,6 +285,7 @@ export default function ClientsPage() {
     const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
     const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
+    const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
     const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
     const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
     const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
@@ -490,7 +485,8 @@ export default function ClientsPage() {
         }
     };
 
-    const handleOpenServiceScheduleChange = async (clientId: number) => {
+    const handleOpenServiceScheduleChange = async (client: Client) => {
+        const clientId = client.id;
         setIsPreparingScheduleChange(true);
         try {
             const overview = await serviceRecordsApi.getClientOverview(clientId);
@@ -507,16 +503,13 @@ export default function ClientsPage() {
             }
 
             const preview = await serviceRecordsApi.previewScheduleChange(activeAssignment.scheduleId);
-            const today = getTodayIsoDate();
-            const minimumDate = preview.data.minimumDate > today
-                ? preview.data.minimumDate
-                : today;
-            setSelectedScheduleChangeDate(minimumDate);
+            setSelectedScheduleChangeDate(preview.data.fromDate);
             setScheduleChangeTarget({
+                client,
                 scheduleId: activeAssignment.scheduleId,
                 sessionIndex: preview.data.sessionIndex,
                 currentDate: preview.data.fromDate,
-                minimumDate,
+                minimumDate: preview.data.minimumDate,
             });
         } catch {
             toast({
@@ -536,14 +529,20 @@ export default function ClientsPage() {
             const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
                 toDate: selectedScheduleChangeDate,
             });
+            // The backend pulls the service start back with a session moved before it.
+            const withNewPeriod = (currentClient: Client): Client => ({
+                ...currentClient,
+                ...(currentClient.startDate && changed.data.toDate < currentClient.startDate.slice(0, 10)
+                    ? { startDate: changed.data.toDate }
+                    : {}),
+                endDate: changed.data.newEndDate,
+                pendingScheduleChange: null,
+            });
             setSelectedClient((currentClient) => {
                 if (!currentClient || currentClient.id !== changed.data.clientId) return currentClient;
-                return {
-                    ...currentClient,
-                    endDate: changed.data.newEndDate,
-                    pendingScheduleChange: null,
-                };
+                return withNewPeriod(currentClient);
             });
+            setContractResendClient(withNewPeriod(scheduleChangeTarget.client));
             setScheduleChangeTarget(null);
             setSelectedScheduleChangeDate("");
             await queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -1107,7 +1106,7 @@ export default function ClientsPage() {
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
                                             disabled={isPreparingScheduleChange}
-                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient.id)}
+                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
                                             className="gap-2"
                                         >
                                             <CalendarDays className="w-4 h-4" />
@@ -1166,6 +1165,18 @@ export default function ClientsPage() {
                 client={editingClient ?? null}
                 onSuccess={handleClientFormDialogSuccess}
             />
+
+            {contractResendClient ? (
+                <ServiceScheduleContractResendModal
+                    open
+                    dataComponent="desktop_clients-detail_service-schedule-contract-resend-modal"
+                    onKeep={() => setContractResendClient(null)}
+                    onResend={() => {
+                        setMaternityContractClient(contractResendClient);
+                        setContractResendClient(null);
+                    }}
+                />
+            ) : null}
 
             {maternityContractClient ? (
                 <MaternityContractDialog

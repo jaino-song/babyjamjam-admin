@@ -57,6 +57,45 @@ describe("ServiceScheduleChangeModal", () => {
         expect(onSubmit).toHaveBeenCalledTimes(1);
     });
 
+    it("submits a date earlier than the current service date but not before the birth date", () => {
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={1}
+                currentDate="2026-10-05"
+                minimumDate="2026-09-20"
+                selectedDate="2026-09-28"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={onSubmit}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks a date before the birth date", () => {
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={1}
+                currentDate="2026-10-05"
+                minimumDate="2026-09-20"
+                selectedDate="2026-09-18"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={jest.fn()}
+            />,
+        );
+
+        expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+        expect(screen.getByText("2026-09-20 이후로 입력해 주세요")).toBeInTheDocument();
+    });
+
     describe("inline date message", () => {
         const renderModal = (overrides: Partial<React.ComponentProps<typeof ServiceScheduleChangeModal>> = {}) => {
             const onDateChange = jest.fn();
@@ -81,7 +120,7 @@ describe("ServiceScheduleChangeModal", () => {
         it("shows the static guidance in the slot on first render", () => {
             renderModal();
 
-            expect(slot()).toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(slot()).toHaveTextContent("출산일 이후 날짜로 선택해 주세요");
             expect(slot()).toHaveAttribute("data-slot", "field-message");
             expect(screen.getByLabelText("3회차 서비스 제공 날짜")).not.toHaveAttribute("aria-invalid", "true");
             expect(screen.getByRole("button", { name: "일정 변경" })).not.toBeDisabled();
@@ -103,12 +142,12 @@ describe("ServiceScheduleChangeModal", () => {
 
             expect(slot()).toHaveTextContent("2026-07-21 이후로 입력해 주세요");
             expect(slot()).toHaveAttribute("data-slot", "field-error-message");
-            expect(slot()).not.toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(slot()).not.toHaveTextContent("출산일 이후 날짜로 선택해 주세요");
             expect(input).toHaveAttribute("aria-invalid", "true");
 
             rerender(<ServiceScheduleChangeModal {...modalProps} selectedDate="2026-07-25" />);
 
-            expect(slot()).toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(slot()).toHaveTextContent("출산일 이후 날짜로 선택해 주세요");
             expect(slot()).toHaveAttribute("data-slot", "field-message");
             expect(input).not.toHaveAttribute("aria-invalid", "true");
         });

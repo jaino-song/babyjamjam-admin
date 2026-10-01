@@ -153,6 +153,8 @@ interface ScheduleForChange {
 
 interface ClientForChange {
     duration: number | null;
+    birthDate?: Date | null;
+    dueDate?: Date | null;
 }
 
 interface ServiceRecordDayForChange {
@@ -197,7 +199,7 @@ export class ScheduleChangeService {
         days: ServiceRecordDayForChange[],
         calendar: KrBusinessDayCalendar,
         record?: ServiceRecordForChange,
-    ): { sessionIndex: number; fromDate: string; toDate: string; newEndDate: string } {
+    ): { sessionIndex: number; fromDate: string; toDate: string; newEndDate: string; minimumDate: string | null } {
         const hasPersistedPlan = record?.plannedSessions !== null && record?.plannedSessions !== undefined;
         const planned = record ? canonicalPlannedSessions(record, calendar) : null;
         if (hasPersistedPlan && !planned) {
@@ -239,7 +241,24 @@ export class ScheduleChangeService {
         const toDate = calendar.nextBusinessDay(fromDate);
         const newEndDate = calendar.addBusinessDays(toDate, totalSessions - sessionIndex);
 
-        return { sessionIndex, fromDate, toDate, newEndDate };
+        // An admin may move the session earlier as well as later, but never
+        // before the birth date (출산일, falling back to the due date) and never
+        // onto or before the previous session's date.
+        const previousDate = sessionIndex > 1
+            ? planned?.find((row) => row.sessionIndex === sessionIndex - 1)?.serviceDate
+                ?? (() => {
+                    const row = days.find((day) => day.sessionIndex === sessionIndex - 1);
+                    return row ? toIso(row.serviceDate) : undefined;
+                })()
+            : undefined;
+        const birthDate = client.birthDate ?? client.dueDate ?? null;
+        const bounds = [
+            birthDate ? toIso(birthDate) : null,
+            previousDate ? calendar.nextBusinessDay(previousDate) : null,
+        ].filter((value): value is string => value !== null);
+        const minimumDate = bounds.length > 0 ? bounds.sort()[bounds.length - 1]! : null;
+
+        return { sessionIndex, fromDate, toDate, newEndDate, minimumDate };
     }
 
     private serializeRequest(row: ScheduleChangeRequestForSerialization) {
@@ -356,7 +375,7 @@ export class ScheduleChangeService {
     async previewAdminChange(
         branchId: string,
         scheduleId: number,
-    ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string }> {
+    ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string | null }> {
         // Display-only: the cached branch calendar is enough.
         const calendar = await this.holidayCalendar.forBranch(branchId);
         const schedule = await this.prisma.employee_schedule.findFirst({
@@ -383,7 +402,7 @@ export class ScheduleChangeService {
         return {
             sessionIndex: target.sessionIndex,
             fromDate: target.fromDate,
-            minimumDate: target.fromDate,
+            minimumDate: target.minimumDate,
         };
     }
 
@@ -466,9 +485,15 @@ export class ScheduleChangeService {
                     serviceDate: day.serviceDate,
                     locked: day.locked,
                 })), calendar, record);
-                if (selectedDate <= target.fromDate) {
+                if (selectedDate === target.fromDate) {
                     throw new ConflictException(codeOnlyProblemBody("SCHEDULE_DATE_NOT_POSTPONED"));
                 }
+                if (target.minimumDate && selectedDate < target.minimumDate) {
+                    throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
+                }
+                // Moving the first session earlier moves the service start with it.
+                const startMoved = Boolean(schedule.startDate && selectedDate < toIso(schedule.startDate));
+                const newStartDate = startMoved ? selectedDateValue : schedule.startDate;
 
                 const shiftedPlannedSessions = shiftCanonicalPlan(
                     record,
@@ -549,13 +574,13 @@ export class ScheduleChangeService {
                     });
                 }
 
-                if (schedule.startDate) {
+                if (newStartDate) {
                     await assertNoActiveEmployeeScheduleOverlap(tx, {
                         branchId,
                         clientId: schedule.clientId,
                         primaryEmployeeId: schedule.primaryEmployeeId,
                         secondaryEmployeeId: schedule.secondaryEmployeeId,
-                        startDate: schedule.startDate,
+                        startDate: newStartDate,
                         endDate: newEndDate,
                         replaced: schedule.replaced,
                         excludeScheduleId: schedule.id,
@@ -569,11 +594,11 @@ export class ScheduleChangeService {
                 });
                 await tx.employee_schedule.update({
                     where: { id: scheduleId },
-                    data: { endDate: newEndDate },
+                    data: { ...(startMoved ? { startDate: newStartDate } : {}), endDate: newEndDate },
                 });
                 await tx.client.update({
                     where: { id: schedule.clientId },
-                    data: { endDate: newEndDate },
+                    data: { ...(startMoved ? { startDate: newStartDate } : {}), endDate: newEndDate },
                 });
 
                 const syncedRecord = await this.lifecycleService?.ensureForClient(

@@ -50,6 +50,7 @@ import { ClientMessageHistoryDetail } from "@/components/app/clients/client-mess
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import { ServiceScheduleContractResendModal } from "@/components/app/clients/ServiceScheduleContractResendModal";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -60,15 +61,7 @@ interface ServiceScheduleChangeTarget {
   scheduleId: number;
   sessionIndex: number;
   currentDate: string;
-  minimumDate: string;
-}
-
-function getTodayIsoDate(): string {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  minimumDate: string | null;
 }
 
 function formatScheduleChangeMonthDay(value: string): string {
@@ -636,6 +629,7 @@ export function ClientDetailContent({
   const [isResettingLink, setIsResettingLink] = useState(false);
   const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
   const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
+  const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
   const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
   const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
@@ -688,14 +682,12 @@ export function ClientDetailContent({
       }
 
       const preview = await previewServiceScheduleChange(activeAssignment.scheduleId);
-      const today = getTodayIsoDate();
-      const minimumDate = preview.minimumDate > today ? preview.minimumDate : today;
-      setSelectedScheduleChangeDate(minimumDate);
+      setSelectedScheduleChangeDate(preview.fromDate);
       setScheduleChangeTarget({
         scheduleId: activeAssignment.scheduleId,
         sessionIndex: preview.sessionIndex,
         currentDate: preview.fromDate,
-        minimumDate,
+        minimumDate: preview.minimumDate,
       });
     } catch {
       toast({
@@ -715,11 +707,17 @@ export function ClientDetailContent({
       const changed = await applyServiceScheduleChange(scheduleChangeTarget.scheduleId, {
         toDate: selectedScheduleChangeDate,
       });
-      onClientUpdated({
+      // The backend pulls the service start back with a session moved before it.
+      const updatedClient: Client = {
         ...client,
+        ...(client.startDate && changed.toDate < client.startDate.slice(0, 10)
+          ? { startDate: changed.toDate }
+          : {}),
         endDate: changed.newEndDate,
         pendingScheduleChange: null,
-      });
+      };
+      onClientUpdated(updatedClient);
+      setContractResendClient(updatedClient);
       setScheduleChangeTarget(null);
       setSelectedScheduleChangeDate("");
       toast({ variant: "success", description: `서비스 일정과 종료일(${changed.newEndDate})을 변경했어요` });
@@ -1183,6 +1181,19 @@ export function ClientDetailContent({
             setSelectedScheduleChangeDate("");
           }}
           onSubmit={() => void handleApplyServiceScheduleChange()}
+        />
+      ) : null}
+
+      {contractResendClient ? (
+        <ServiceScheduleContractResendModal
+          data-component={`${dataComponent}_schedule-contract-resend-modal`}
+          open
+          onKeep={() => setContractResendClient(null)}
+          onResend={() => {
+            const target = contractResendClient;
+            setContractResendClient(null);
+            onIssueContract(target);
+          }}
         />
       ) : null}
 
