@@ -1477,7 +1477,7 @@ function ContractDetailContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-text-muted transition-colors hover:bg-surface [&_svg]:pointer-events-none"
                 aria-label="계약 옵션"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu-trigger"
               >
@@ -1813,7 +1813,7 @@ function ContractDetailContent({
                 <div
                   style={{
                     fontSize: "0.82rem",
-                    color: "hsl(var(--v3-text-muted))",
+                    color: "hsl(var(--text-muted))",
                     padding: "12px 0",
                     textAlign: "center",
                   }}
@@ -2724,7 +2724,7 @@ export default function ContractsPage() {
                   padding: "32px 16px",
                   textAlign: "center",
                   fontSize: "0.82rem",
-                  color: "hsl(var(--v3-text-muted))",
+                  color: "hsl(var(--text-muted))",
                 }}
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_empty"
               >
@@ -2929,17 +2929,17 @@ export default function ContractsPage() {
       {isFinalizeDialogOpen && finalizeDoc ? (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/60 p-6" data-component="mobile_contracts_finalize-dialog">
           <div className="w-full max-w-[360px] rounded-2xl bg-white p-5 shadow-[0_12px_40px_rgba(0,0,0,0.18)]">
-            <h2 className="mb-1 text-base font-extrabold text-v3-dark">최종 확인</h2>
-            <p className="mb-4 text-[0.72rem] text-v3-text-muted">
+            <h2 className="mb-1 text-base font-extrabold text-dark">최종 확인</h2>
+            <p className="mb-4 text-[0.72rem] text-text-muted">
               계약을 완료 처리하기 전에 서비스 종료일을 확인해주세요.
             </p>
-            <label className="mb-1.5 block text-[0.7rem] font-bold uppercase tracking-wide text-v3-text-muted">
+            <label className="mb-1.5 block text-[0.7rem] font-bold uppercase tracking-wide text-text-muted">
               서비스 종료일
             </label>
             <input
               id={CONTRACT_FINALIZE_END_DATE_INPUT_ID}
               data-component={CONTRACT_FINALIZE_END_DATE_INPUT_ID}
-              className="box-border w-full rounded-xl border-[1.5px] border-v3-border bg-white px-3.5 py-3 text-[0.9rem] text-v3-dark outline-none focus:border-v3-primary"
+              className="box-border w-full rounded-xl border-[1.5px] border-border bg-white px-3.5 py-3 text-[0.9rem] text-dark outline-none focus:border-primary"
               value={finalizeEndDateInput}
               onChange={(e) => setFinalizeEndDateInput(e.target.value.replace(/\D/g, "").slice(0, 6))}
               inputMode="numeric"
@@ -2948,14 +2948,14 @@ export default function ContractsPage() {
               autoFocus
             />
             {finalizeErrorHint ? (
-              <div className="mt-2 text-[0.72rem] font-semibold text-v3-burgundy">
+              <div className="mt-2 text-[0.72rem] font-semibold text-burgundy">
                 {finalizeErrorHint}
               </div>
             ) : null}
             <div className="mt-5 flex gap-2">
               <button
                 type="button"
-                className="flex-1 rounded-xl bg-[hsl(220_20%_97%)] py-3 text-[0.88rem] font-bold text-v3-text"
+                className="flex-1 rounded-xl bg-[hsl(220_20%_97%)] py-3 text-[0.88rem] font-bold text-text"
                 onClick={closeFinalizeDialog}
                 disabled={isFinalizeSubmitting}
               >
@@ -2963,7 +2963,7 @@ export default function ContractsPage() {
               </button>
               <button
                 type="button"
-                className="flex-[2] rounded-xl bg-v3-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45"
+                className="flex-[2] rounded-xl bg-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45"
                 onClick={() => void handleFinalizeSubmit()}
                 disabled={isFinalizeSubmitting}
               >
@@ -2988,13 +2988,13 @@ export default function ContractsPage() {
       />
 
       {isStaffIframeOpen ? (
-        <div className="fixed inset-0 z-[200] flex flex-col bg-[hsl(var(--v3-dim-white))]" data-component="mobile_contracts_staff-iframe-modal">
-          <div className="flex h-14 items-center justify-between border-b border-v3-border bg-white px-4 text-base font-bold text-v3-dark">
+        <div className="fixed inset-0 z-[200] flex flex-col bg-[hsl(var(--surface))]" data-component="mobile_contracts_staff-iframe-modal">
+          <div className="flex h-14 items-center justify-between border-b border-border bg-white px-4 text-base font-bold text-dark">
             <span>계약서 최종 확인</span>
             <button
               type="button"
               onClick={closeStaffIframe}
-              className="flex h-[44px] w-[44px] items-center justify-center rounded-xl text-v3-text"
+              className="flex h-[44px] w-[44px] items-center justify-center rounded-xl text-text"
               aria-label="닫기"
             >
               <X size={20} strokeWidth={2.5} />

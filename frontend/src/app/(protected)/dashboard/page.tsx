@@ -286,9 +286,9 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       aria-label="고객 상세 메뉴"
-                      className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
+                      className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                     >
-                      <MoreVertical className="w-5 h-5 text-v3-text-muted" aria-hidden="true" />
+                      <MoreVertical className="w-5 h-5 text-text-muted" aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[140px]">

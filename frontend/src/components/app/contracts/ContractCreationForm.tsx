@@ -201,11 +201,11 @@ const parsePrice = (value: string | null | undefined): string => {
 };
 
 const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+  "inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-dark";
 
 const INPUT_CLS = "bg-white";
 
-const LABEL_CLS = "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted";
+const LABEL_CLS = "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-text-muted";
 const PANEL_GRID_CLASS_NAME =
   "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 const PANEL_THREE_COLUMN_GRID_CLASS_NAME =
@@ -565,7 +565,7 @@ function RegisteredValueDiffHint({ diffKey }: { diffKey: ClientDiffKey }) {
       id={getRegisteredValueDiffHintId(diffKey)}
       data-component={`desktop_contracts_creation_${diffKey.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)}_registered-value-diff-hint`}
       data-slot="registered-value-diff-hint"
-      className="m-0 truncate text-right text-v3-green"
+      className="m-0 truncate text-right text-green"
     >
       {REGISTERED_VALUE_DIFF_HINT}
     </FormHelperText>
@@ -2084,19 +2084,19 @@ export const ContractCreationForm = ({
         <div className="flex gap-3 flex-wrap">
           {name && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {name}
             </span>
           )}
           {phone && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {phone}
             </span>
           )}
           {area && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {getAreaTemplateDisplayLabel(
                 area,
                 areaTemplates.find((template) => template.areaId === area)?.templateName,
@@ -2168,13 +2168,13 @@ export const ContractCreationForm = ({
         <div className="flex gap-3 flex-wrap">
           {(employeeName || employeeId !== null) && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {employeeName || `ID ${employeeId}`}
             </span>
           )}
           {showEmployee2 && (employee2Name || employee2Id !== null) && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {employee2Name || `ID ${employee2Id}`}
             </span>
           )}
@@ -2311,19 +2311,19 @@ export const ContractCreationForm = ({
         <div className="flex gap-3 flex-wrap">
           {voucherType && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {voucherType}
             </span>
           )}
           {voucherDuration && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {voucherDuration}일
             </span>
           )}
           {hasVoucherPricingSelection && actualPrice && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {formatPrice(actualPrice)}원
             </span>
           )}
@@ -2428,13 +2428,13 @@ export const ContractCreationForm = ({
         <div className="flex gap-3 flex-wrap">
           {startDate && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {startDate} ~ {endDate || "(직원 입력 예정)"}
             </span>
           )}
           {paymentDate && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               결제일 {paymentDate}
             </span>
           )}
@@ -2671,7 +2671,7 @@ export const ContractCreationForm = ({
               >
                 <span
                   data-component="desktop_contracts_creation_client-diff-dialog_row_label"
-                  className="font-semibold text-v3-text-muted"
+                  className="font-semibold text-text-muted"
                 >
                   {row.label}
                 </span>
@@ -2687,7 +2687,7 @@ export const ContractCreationForm = ({
           {clientDiffPrompt?.showPeriodLockedNote ? (
             <p
               data-component="desktop_contracts_creation_client-diff-dialog_period-locked-note"
-              className="text-sm text-v3-text-muted"
+              className="text-sm text-text-muted"
             >
               {CLIENT_DIFF_PERIOD_LOCKED_NOTE}
             </p>

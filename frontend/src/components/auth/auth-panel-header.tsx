@@ -36,7 +36,7 @@ export function AuthPanelHeader({
         <h2
           data-component={titleDataComponent}
           className={cn(
-            "text-[1.9rem] font-extrabold tracking-[-0.03em] text-v3-dark md:text-[1.65rem]",
+            "text-[1.9rem] font-extrabold tracking-[-0.03em] text-dark md:text-[1.65rem]",
             titleClassName
           )}
         >
@@ -47,7 +47,7 @@ export function AuthPanelHeader({
         <p
           data-component={subtitleDataComponent}
           className={cn(
-            "mx-auto max-w-[32ch] break-keep text-sm leading-5 text-v3-text-muted md:text-[0.84rem]",
+            "mx-auto max-w-[32ch] break-keep text-sm leading-5 text-text-muted md:text-[0.84rem]",
             subtitleClassName
           )}
         >

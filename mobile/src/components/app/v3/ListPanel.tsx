@@ -96,13 +96,13 @@ export function ListPanel({
             <div ref={dropdownRef} className="relative">
               <button
                 onClick={() => setDropdownOpen(prev => !prev)}
-                className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-2xl border border-v3-border hover:bg-v3-dim-white transition-colors"
+                className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-dark px-3 py-1.5 rounded-2xl border border-border hover:bg-surface transition-colors"
               >
                 {activeTabLabel}
-                <ChevronDown className={cn("w-3.5 h-3.5 text-v3-text-muted transition-transform", dropdownOpen && "rotate-180")} />
+                <ChevronDown className={cn("w-3.5 h-3.5 text-text-muted transition-transform", dropdownOpen && "rotate-180")} />
               </button>
               {dropdownOpen && (
-                <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-2xl border border-v3-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
+                <div className="absolute top-full left-0 z-50 mt-1 min-w-[140px] max-h-[240px] overflow-y-auto rounded-2xl border border-border bg-white shadow-v3 py-1 animate-in fade-in-0 zoom-in-95">
                   {(tabs ?? []).map((tab) => (
                     <button
                       key={tab.value}
@@ -110,8 +110,8 @@ export function ListPanel({
                       className={cn(
                         "w-full text-left text-[0.8rem] px-4 py-2 transition-colors",
                         activeTab === tab.value
-                          ? "text-v3-primary font-semibold bg-v3-primary-light"
-                          : "text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-text"
+                          ? "text-primary font-semibold bg-primary-light"
+                          : "text-text-muted hover:bg-surface hover:text-text"
                       )}
                     >
                       {tab.label}
@@ -132,7 +132,7 @@ export function ListPanel({
                     "relative inline-flex min-h-[44px] items-center px-3 text-[0.8rem] transition-colors",
                     activeTab === tab.value
                       ? "text-primary font-semibold"
-                      : "text-v3-text-muted hover:text-v3-text"
+                      : "text-text-muted hover:text-text"
                   )}
                 >
                   {tab.label}

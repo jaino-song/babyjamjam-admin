@@ -82,7 +82,7 @@ function SelectContent({
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
-          "relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-[22px] border border-v3-border bg-white text-v3-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]",
+          "relative z-50 max-h-(--radix-select-content-available-height) min-w-[8rem] origin-(--radix-select-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-[22px] border border-border bg-white text-dark shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]",
           position === "popper" &&
             "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
           className
@@ -118,7 +118,7 @@ function SelectLabel({
     <SelectPrimitive.Label
       data-slot="select-label"
       className={cn(
-        "px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-v3-text-muted",
+        "px-3 py-2 text-[0.72rem] font-semibold uppercase tracking-[0.08em] text-text-muted",
         className
       )}
       {...props}
@@ -135,7 +135,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "data-[highlighted]:bg-v3-dim-white data-[highlighted]:text-v3-dark [&_svg:not([class*='text-'])]:text-v3-primary relative flex w-full cursor-default items-center gap-2 rounded-[16px] px-3 py-2 pr-9 text-[0.85rem] text-v3-dark outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "data-[highlighted]:bg-surface data-[highlighted]:text-dark [&_svg:not([class*='text-'])]:text-primary relative flex w-full cursor-default items-center gap-2 rounded-[16px] px-3 py-2 pr-9 text-[0.85rem] text-dark outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}

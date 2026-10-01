@@ -42,7 +42,7 @@ export function MessageSenderApprovalModal({
           >
             <DialogPrimitive.Title
               data-component="mobile_messages_sender-approval-modal_panel_header_title"
-              className="text-base font-bold text-v3-dark"
+              className="text-base font-bold text-dark"
             >
               {isApprovalPending
                 ? "메시지 발송 신청 승인 대기중 입니다."
@@ -62,7 +62,7 @@ export function MessageSenderApprovalModal({
             ) : (
               <DialogPrimitive.Description
                 data-component="mobile_messages_sender-approval-modal_panel_header_description"
-                className="text-[0.82rem] leading-relaxed text-v3-text-muted"
+                className="text-[0.82rem] leading-relaxed text-text-muted"
               >
                 문자 발신번호 승인 신청을 완료해야 메시지를 발송할 수 있습니다.
               </DialogPrimitive.Description>

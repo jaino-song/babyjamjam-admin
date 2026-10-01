@@ -249,23 +249,23 @@ const OWNER_ADMIN_SECTIONS = [
 ] as const satisfies readonly AdminSection[];
 
 const SECTION_ICON_CLASSNAMES: Record<AdminSectionId, string> = {
-  branches: "bg-v3-green-light text-v3-green",
-  accounts: "bg-v3-orange-light text-v3-orange",
-  notifications: "bg-v3-primary-light text-v3-primary",
-  templates: "bg-v3-primary-light text-v3-primary",
+  branches: "bg-green-light text-green",
+  accounts: "bg-orange-light text-orange",
+  notifications: "bg-primary-light text-primary",
+  templates: "bg-primary-light text-primary",
 };
 
 const CATEGORY_BADGE_STYLE: Record<string, { icon: string }> = {
-  messaging: { icon: "bg-v3-orange-light text-v3-orange" },
-  approved: { icon: "bg-v3-green-light text-v3-green" },
-  not_requested: { icon: "bg-v3-dim-white text-v3-text-muted" },
-  notifications: { icon: "bg-v3-primary-light text-v3-primary" },
+  messaging: { icon: "bg-orange-light text-orange" },
+  approved: { icon: "bg-green-light text-green" },
+  not_requested: { icon: "bg-surface text-text-muted" },
+  notifications: { icon: "bg-primary-light text-primary" },
   pending: { icon: "bg-amber-100 text-amber-700" },
-  owner: { icon: "bg-v3-green-light text-v3-green" },
-  admin: { icon: "bg-v3-orange-light text-v3-orange" },
-  "branch-manager": { icon: "bg-v3-orange-light text-v3-orange" },
+  owner: { icon: "bg-green-light text-green" },
+  admin: { icon: "bg-orange-light text-orange" },
+  "branch-manager": { icon: "bg-orange-light text-orange" },
   manager: { icon: "bg-sky-100 text-sky-700" },
-  user: { icon: "bg-v3-dim-white text-v3-text-muted" },
+  user: { icon: "bg-surface text-text-muted" },
 };
 
 function getAdminRolePillVariant(roleLabel: string): AdminTagPillVariant {
@@ -1112,14 +1112,14 @@ export function OwnerAdminConsole({
                           data-component="desktop_system-admin_sections_split-layout_list-panel_skeleton-row"
                           className="flex min-h-11 items-center gap-3"
                         >
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-v3-dim-white">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-surface">
                             <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                           </div>
                           <div className="min-w-0 flex-1 space-y-2">
-                            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
-                            <Skeleton className="h-3 w-44 bg-v3-dim-white" />
+                            <Skeleton className="h-4 w-28 bg-surface" />
+                            <Skeleton className="h-3 w-44 bg-surface" />
                           </div>
-                          <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
+                          <Skeleton className="h-6 w-14 rounded-full bg-surface" />
                         </div>
                       );
                     }
@@ -1157,7 +1157,7 @@ export function OwnerAdminConsole({
                           listSummary || hasInlinePills ? (
                             <>
                               {listSummary ? (
-                                <span className="min-w-0 truncate text-v3-text">{listSummary}</span>
+                                <span className="min-w-0 truncate text-text">{listSummary}</span>
                               ) : null}
                               {hasInlinePills
                                 ? listPillItems.map((pill) => (
@@ -1189,7 +1189,7 @@ export function OwnerAdminConsole({
             {branchFormMode ? (
               <DetailPanel data-component="desktop_system-admin_sections_split-layout_detail-panel"
                 avatar={
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-green-light text-v3-green">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-green-light text-green">
                     <Building2 className="h-5 w-5" aria-hidden="true" />
                   </div>
                 }
@@ -1248,13 +1248,13 @@ export function OwnerAdminConsole({
                 title={selectedRecord.listTitle}
                 subtitle={
                   activeSection.id === "branches" ? (
-                    <span className="text-sm text-v3-text-muted">
+                    <span className="text-sm text-text-muted">
                       {selectedRecord.listTitle}의 메시지 발신 권한 상태
                     </span>
                   ) : activeSection.id === "accounts" &&
                     selectedRecord.listSubtitle &&
                     selectedRecord.listStatusLabel ? (
-                    <span className="flex items-center gap-3 text-sm text-v3-text-muted">
+                    <span className="flex items-center gap-3 text-sm text-text-muted">
                       <span className="flex items-center gap-1">
                         <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
                         {selectedRecord.listSubtitle}
@@ -1265,7 +1265,7 @@ export function OwnerAdminConsole({
                       </span>
                     </span>
                   ) : (
-                    <span className="text-sm text-v3-text-muted">{selectedRecord.summary}</span>
+                    <span className="text-sm text-text-muted">{selectedRecord.summary}</span>
                   )
                 }
               >
@@ -1348,7 +1348,7 @@ export function OwnerAdminConsole({
                         <section
                           key={`${request.category}-${index}`}
                           data-component="desktop_system-admin_sections_split-layout_detail-panel-2_detail-section"
-                          className={cn("space-y-4", index > 0 && "border-t border-v3-border pt-5")}
+                          className={cn("space-y-4", index > 0 && "border-t border-border pt-5")}
                         >
                           {request.applicantRows ? (
                             <InfoCard data-component="desktop_system-admin_sections_detail-panel_info-card-4" title="신청인 정보">

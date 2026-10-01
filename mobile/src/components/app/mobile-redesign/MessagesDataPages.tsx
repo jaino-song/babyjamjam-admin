@@ -451,11 +451,11 @@ function RowSkeleton({ dataComponent, variant }: {
   dataComponent: string;
   variant: "upcoming" | "past";
 }) {
-  const line = "rounded-md bg-v3-dim-white";
+  const line = "rounded-md bg-surface";
 
   return (
     <div className="message-data-row" data-component={dataComponent} aria-hidden>
-      <Skeleton className="h-10 w-10 flex-none rounded-xl bg-v3-dim-white" />
+      <Skeleton className="h-10 w-10 flex-none rounded-xl bg-surface" />
       {variant === "upcoming" ? (
         <div className="message-data-row-copy message-data-row-copy-split">
           <div className="message-data-row-info">
@@ -463,7 +463,7 @@ function RowSkeleton({ dataComponent, variant }: {
             <Skeleton className={`mt-1 h-3 w-32 max-w-full ${line}`} />
           </div>
           <div className="message-data-status-group">
-            <Skeleton className="h-5 w-16 rounded-full bg-v3-dim-white" />
+            <Skeleton className="h-5 w-16 rounded-full bg-surface" />
             <Skeleton className={`h-3 w-12 ${line}`} />
           </div>
         </div>
@@ -474,7 +474,7 @@ function RowSkeleton({ dataComponent, variant }: {
             <Skeleton className={`mt-1 h-3 w-40 max-w-full ${line}`} />
             <Skeleton className={`mt-1 h-3 w-20 ${line}`} />
           </div>
-          <Skeleton className="mt-1 h-5 w-16 rounded-full bg-v3-dim-white" />
+          <Skeleton className="mt-1 h-5 w-16 rounded-full bg-surface" />
         </div>
       )}
     </div>
@@ -537,7 +537,7 @@ function UpcomingRow({
           {isCancelable ? (
             <button
               type="button"
-              className="text-[0.68rem] font-bold text-v3-burgundy"
+              className="text-[0.68rem] font-bold text-burgundy"
               data-component={`${UPCOMING_ROW_BASE}_cancel-action`}
               onClick={() => onCancel?.(job)}
             >

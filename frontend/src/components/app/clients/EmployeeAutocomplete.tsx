@@ -230,7 +230,7 @@ export function EmployeeAutocomplete({
     const labelNode = label ? (
         <Label
             className={cn(
-                "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-text-muted",
                 error && "text-destructive",
             )}
         >
@@ -291,7 +291,7 @@ export function EmployeeAutocomplete({
                                 V3_INPUT_CONTROL_CLASS_NAME,
                                 "w-full justify-between font-normal hover:bg-white",
                                 hasDisplayValue
-                                    ? "text-v3-dark hover:text-v3-dark"
+                                    ? "text-dark hover:text-dark"
                                     : "text-muted-foreground hover:text-muted-foreground",
                                 error && "border-destructive focus:ring-destructive",
                             )}
@@ -335,7 +335,7 @@ export function EmployeeAutocomplete({
                 </div>
                 <PopoverContent
                     data-component={`${dataComponent}_dropdown`}
-                    className="glint-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-v3-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
+                    className="glint-ui-scale-scope w-[var(--radix-popover-trigger-width)] overflow-hidden rounded-[22px] border-none bg-white p-0 text-dark shadow-[0_0_0_2px_hsla(214,30%,40%,0.12),0_0_12px_hsla(214,30%,40%,0.05)]"
                     align="start"
                     sideOffset={popoverSideOffset}
                 >
@@ -364,7 +364,7 @@ export function EmployeeAutocomplete({
                                         type="button"
                                         aria-label="수동 입력으로 진행"
                                         title="수동 입력으로 진행"
-                                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                                         disabled={!commandInputValue.trim()}
                                         onClick={commitManualInput}
                                     >

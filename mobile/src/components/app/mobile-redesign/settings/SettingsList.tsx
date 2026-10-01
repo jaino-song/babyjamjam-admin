@@ -70,7 +70,7 @@ export function SettingsList({
                     <StatusPill
                       data-component={`${itemBase}_trailing_status`}
                       variant="primary"
-                      className="pointer-events-none !rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-v3-primary/15 !bg-v3-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-v3-primary"
+                      className="pointer-events-none !rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-primary/15 !bg-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-primary"
                     >
                       {item.statusLabel}
                     </StatusPill>
@@ -92,12 +92,12 @@ export function SettingsList({
             {approvalError || policiesError ? (
               <div
                 data-component={sub("items_query-error")}
-                className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[calc(14px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] border-v3-border bg-v3-dim-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]"
+                className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[calc(14px*var(--glint-ui-scale,1))] border-[calc(1px*var(--glint-ui-scale,1))] border-border bg-surface px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]"
                 role="alert"
               >
                 <span
                   data-component={sub("items_query-error_message")}
-                  className="min-w-0 text-[calc(0.68rem*var(--glint-ui-scale,1))] font-semibold leading-[calc(0.95rem*var(--glint-ui-scale,1))] text-v3-text-muted"
+                  className="min-w-0 text-[calc(0.68rem*var(--glint-ui-scale,1))] font-semibold leading-[calc(0.95rem*var(--glint-ui-scale,1))] text-text-muted"
                 >
                   {approvalError
                     ? "메시지 발송 신청 상태를 불러오지 못했습니다"
@@ -107,7 +107,7 @@ export function SettingsList({
                   data-component={sub("items_query-error_retry")}
                   type="button"
                   aria-label={approvalError ? "신청 상태 재시도" : "재시도"}
-                  className="min-h-[calc(36px*var(--glint-ui-scale,1))] shrink-0 cursor-pointer rounded-[calc(10px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(0.68rem*var(--glint-ui-scale,1))] font-bold text-v3-primary outline-none transition-colors active:bg-v3-primary/15 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10"
+                  className="min-h-[calc(36px*var(--glint-ui-scale,1))] shrink-0 cursor-pointer rounded-[calc(10px*var(--glint-ui-scale,1))] bg-primary-light px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(0.68rem*var(--glint-ui-scale,1))] font-bold text-primary outline-none transition-colors active:bg-primary/15 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-primary/10"
                   onClick={approvalError ? onRetryApproval : onRetryPolicies}
                 >
                   재시도

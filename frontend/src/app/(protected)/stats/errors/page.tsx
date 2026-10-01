@@ -175,19 +175,19 @@ export default async function ErrorsDetailPage({ searchParams }: ErrorsDetailPag
           data-component="desktop_stats-errors_page_chart_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">이벤트 추이 ({statsPeriodLabel(period)})</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-text">이벤트 추이 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-red-100 text-red-700">
               Sentry
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
+            <span className="ml-auto text-[0.7rem] text-text-muted">
               {sentryConfigured ? `총 ${trend.reduce((s, p) => s + p.count, 0).toLocaleString("ko-KR")}건` : "—"}
             </span>
           </header>
           {!sentryConfigured ? (
             <StatsSourceEmpty source="Sentry" dataComponent="desktop_stats-errors_page_chart-unavailable" />
           ) : trend.length === 0 ? (
-            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
+            <p className="text-center py-8 text-[0.85rem] text-text-muted">
               {statsPeriodLabel(period)} 동안 기록된 이벤트가 없어요.
             </p>
           ) : (
@@ -279,30 +279,30 @@ export default async function ErrorsDetailPage({ searchParams }: ErrorsDetailPag
           data-component="desktop_stats-errors_page_issues_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-text">
               {sentryConfigured ? `미해결 이슈 (${totalIssues}건)` : "미해결 이슈"}
             </h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-red-100 text-red-700">
               Sentry
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">최근 발생 순</span>
+            <span className="ml-auto text-[0.7rem] text-text-muted">최근 발생 순</span>
           </header>
           {!sentryConfigured ? (
             <StatsSourceEmpty source="Sentry" dataComponent="desktop_stats-errors_page_issues-unavailable" />
           ) : issues.length === 0 ? (
-            <div className="py-10 text-center text-[0.85rem] text-v3-text-muted">
+            <div className="py-10 text-center text-[0.85rem] text-text-muted">
               열린 이슈가 없어요 🎉
             </div>
           ) : (
             <table className="w-full text-[0.82rem]">
               <thead>
-                <tr className="bg-v3-dim-white border-b border-v3-border">
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">레벨</th>
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이슈</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">발생 건수</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">영향 사용자</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">최근 발생</th>
+                <tr className="bg-surface border-b border-border">
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">레벨</th>
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">이슈</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">발생 건수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">영향 사용자</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">최근 발생</th>
                 </tr>
               </thead>
               <tbody>
@@ -310,21 +310,21 @@ export default async function ErrorsDetailPage({ searchParams }: ErrorsDetailPag
                   <tr
                     key={issue.id}
                     data-component="desktop_stats-errors_page_issues_card_body_row"
-                    className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
+                    className="border-b border-border last:border-0 hover:bg-surface"
                   >
                     <td className="px-3 py-3">
                       <span className="inline-flex items-center gap-1.5">
                         <span
                           className={`inline-block w-2 h-2 rounded-full ${LEVEL_DOT_CLASS[issue.level] ?? "bg-gray-400"}`}
                         />
-                        <strong className={LEVEL_TEXT_CLASS[issue.level] ?? "text-v3-text"}>
+                        <strong className={LEVEL_TEXT_CLASS[issue.level] ?? "text-text"}>
                           {LEVEL_LABEL[issue.level] ?? issue.level}
                         </strong>
                       </span>
                     </td>
                     <td className="px-3 py-3">
-                      <div className="font-semibold text-v3-text">{issue.title}</div>
-                      <div className="text-[0.65rem] font-mono text-v3-text-muted truncate max-w-[400px]">
+                      <div className="font-semibold text-text">{issue.title}</div>
+                      <div className="text-[0.65rem] font-mono text-text-muted truncate max-w-[400px]">
                         {issue.culprit ?? issue.filename ?? "—"}
                       </div>
                     </td>
@@ -334,7 +334,7 @@ export default async function ErrorsDetailPage({ searchParams }: ErrorsDetailPag
                     <td className="px-3 py-3 text-right tabular-nums">
                       {issue.userCount}
                     </td>
-                    <td className="px-3 py-3 text-right text-[0.75rem] text-v3-text-muted">
+                    <td className="px-3 py-3 text-right text-[0.75rem] text-text-muted">
                       {formatSentryRelativeTime(issue.lastSeen)}
                     </td>
                   </tr>

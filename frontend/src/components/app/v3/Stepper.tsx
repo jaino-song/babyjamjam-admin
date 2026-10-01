@@ -97,9 +97,9 @@ function resolveState(step: StepperStep, index: number, activeStep?: number): St
 }
 
 const STATE_CIRCLE: Record<StepState, string> = {
-  done:    "bg-v3-primary text-white",
-  active:  "bg-v3-primary text-white ring-2 ring-v3-primary/30 ring-offset-1",
-  pending: "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted",
+  done:    "bg-primary text-white",
+  active:  "bg-primary text-white ring-2 ring-primary/30 ring-offset-1",
+  pending: "border-2 border-border bg-surface text-text-muted",
 };
 
 interface RenderedStepperStep {
@@ -206,7 +206,7 @@ export function Stepper({
               className={cn(
                 "mt-[calc(4px*var(--glint-ui-scale,1))] whitespace-nowrap text-center",
                 tokens.label,
-                state === "done" ? "text-v3-primary" : "text-v3-text-muted",
+                state === "done" ? "text-primary" : "text-text-muted",
               )}
             >
               {step.label}
@@ -226,7 +226,7 @@ export function Stepper({
               <div
                 className={cn(
                   "h-0.5 w-full rounded-full",
-                  nextState === "done" || nextState === "active" ? "bg-v3-primary" : "bg-v3-border",
+                  nextState === "done" || nextState === "active" ? "bg-primary" : "bg-border",
                 )}
               />
             </div>
@@ -304,7 +304,7 @@ export function Stepper({
         >
           <div
             className={cn(
-              "flex items-center justify-center text-v3-primary",
+              "flex items-center justify-center text-primary",
               tokens.circle,
               size === "sm" && "gap-[calc(3.5px*var(--glint-ui-scale,1))]",
               size === "md" && "gap-[calc(4px*var(--glint-ui-scale,1))]",

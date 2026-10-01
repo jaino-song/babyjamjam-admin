@@ -31,7 +31,7 @@ export function V3MainContent({
       data-slot="main-content"
       data-source-component={SOURCE_COMPONENT}
       className={cn(
-        "bg-v3-dim-white",
+        "bg-surface",
         isLoginRoute
           ? "h-[100dvh] overflow-hidden"
           : isContractsNewRoute

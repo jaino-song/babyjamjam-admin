@@ -37,18 +37,18 @@ function SelectBranchLoadingSkeleton() {
                 <Card
                     key={index}
                     data-component="desktop_select-branch_loading_card"
-                    className="rounded-[24px] border-[1.35px] border-v3-border bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
+                    className="rounded-[24px] border-[1.35px] border-border bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
                 >
                     <CardContent className="p-4">
                         <div data-component="desktop_select-branch_loading_card_row" className="flex items-center justify-between gap-4">
                             <div data-component="desktop_select-branch_loading_card_row_main" className="flex min-w-0 items-center gap-3">
-                                <Skeleton className="h-11 w-11 shrink-0 rounded-[18px] bg-v3-dim-white" />
+                                <Skeleton className="h-11 w-11 shrink-0 rounded-[18px] bg-surface" />
                                 <div data-component="desktop_select-branch_loading_card_row_main_copy" className="min-w-0 flex-1 space-y-2">
-                                    <Skeleton className="h-4 w-32 bg-v3-dim-white" />
-                                    <Skeleton className="h-3 w-48 max-w-full bg-v3-dim-white" />
+                                    <Skeleton className="h-4 w-32 bg-surface" />
+                                    <Skeleton className="h-3 w-48 max-w-full bg-surface" />
                                 </div>
                             </div>
-                            <Skeleton className="h-6 w-16 shrink-0 rounded-full bg-v3-dim-white" />
+                            <Skeleton className="h-6 w-16 shrink-0 rounded-full bg-surface" />
                         </div>
                     </CardContent>
                 </Card>
@@ -228,11 +228,11 @@ export default function SelectBranchPage() {
                 subtitle="관리자에게 지점 접근 권한을 요청한 뒤 다시 시도해 주세요."
             >
                 <div data-component="desktop_select-branch_empty-state" className="flex flex-col items-center gap-6 text-center">
-                    <div data-component="desktop_select-branch_empty-state_icon" className="flex h-16 w-16 items-center justify-center rounded-full bg-v3-primary/8 text-v3-primary">
+                    <div data-component="desktop_select-branch_empty-state_icon" className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/8 text-primary">
                         <Building2 className="h-8 w-8" />
                     </div>
                     <div data-component="desktop_select-branch_empty-state_copy">
-                        <p className="text-sm text-v3-text-muted">
+                        <p className="text-sm text-text-muted">
                             권한이 부여되면 이 페이지를 새로고침하세요.
                         </p>
                     </div>
@@ -294,7 +294,7 @@ export default function SelectBranchPage() {
                     <Button
                         key={org.id}
                         data-component="desktop_select-branch_list_card"
-                        className={`h-auto min-h-0 w-full justify-start rounded-[24px] border-[1.35px] border-v3-border bg-white p-0 text-left font-normal shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] transition-all duration-300 ease-in-out hover:-translate-y-1 hover:border-v3-primary/35 hover:shadow-[0_12px_48px_hsla(214,50%,20%,0.12)] ${
+                        className={`h-auto min-h-0 w-full justify-start rounded-[24px] border-[1.35px] border-border bg-white p-0 text-left font-normal shadow-[0_4px_24px_hsla(214,50%,20%,0.06)] transition-all duration-300 ease-in-out hover:-translate-y-1 hover:border-primary/35 hover:shadow-[0_12px_48px_hsla(214,50%,20%,0.12)] ${
                             selecting ? "opacity-60 cursor-not-allowed" : ""
                         }`}
                         type="button"
@@ -307,25 +307,25 @@ export default function SelectBranchPage() {
                         <span className="block w-full p-4">
                             <span data-component="desktop_select-branch_list_card-row" className="flex items-center justify-between gap-4">
                                 <span data-component="desktop_select-branch_list_card-row_main" className="flex items-center gap-3">
-                                    <Avatar className="h-11 w-11 rounded-[18px] bg-[linear-gradient(180deg,hsl(214,100%,34%),hsl(214,92%,28%))] ring-1 ring-v3-primary/15">
+                                    <Avatar className="h-11 w-11 rounded-[18px] bg-[linear-gradient(180deg,hsl(214,100%,34%),hsl(214,92%,28%))] ring-1 ring-primary/15">
                                         <AvatarFallback className="rounded-[18px] bg-transparent text-primary-foreground">
                                             <Building2 className="w-5 h-5" />
                                         </AvatarFallback>
                                     </Avatar>
                                     <span data-component="desktop_select-branch_list_card-row_main_text" className="flex min-w-0 flex-col gap-1">
-                                        <span className="text-base font-semibold tracking-[-0.02em] text-v3-dark">
+                                        <span className="text-base font-semibold tracking-[-0.02em] text-dark">
                                             {org.name}
                                         </span>
                                         {org.description && (
-                                            <span className="text-sm leading-5 text-v3-text-muted">
+                                            <span className="text-sm leading-5 text-text-muted">
                                                 {org.description}
                                             </span>
                                         )}
                                     </span>
                                 </span>
                                 {selecting === org.id ? (
-                                    <span data-component="desktop_select-branch_list_card-row_spinner" className="flex h-8 w-8 items-center justify-center rounded-full bg-v3-primary/10">
-                                        <Spinner size="sm" className="text-v3-primary" />
+                                    <span data-component="desktop_select-branch_list_card-row_spinner" className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+                                        <Spinner size="sm" className="text-primary" />
                                     </span>
                                 ) : (
                                     <Badge

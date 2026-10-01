@@ -77,9 +77,9 @@ const SCHEDULE_KIND_ICONS = {
 } as const;
 
 const SCHEDULE_KIND_MARKER_CLASSES: Record<ScheduleKind, string> = {
-    start: "border-l-v3-primary text-v3-primary",
-    end: "border-l-v3-text-muted text-v3-dark",
-    replacement: "border-l-v3-burgundy text-v3-burgundy",
+    start: "border-l-primary text-primary",
+    end: "border-l-text-muted text-dark",
+    replacement: "border-l-burgundy text-burgundy",
 };
 
 const VIEW_TABS = [
@@ -300,7 +300,7 @@ function MonthControls({ visibleMonth, range, onMonthChange, onToday }: MonthCon
 
     return (
         <div data-slot="month-controls" className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
+            <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
                 범위: 2026년 1월부터 오늘 기준 12개월 후까지
             </span>
             <div className="flex items-center gap-1">
@@ -371,7 +371,7 @@ function CalendarGrid({
                 {WEEKDAY_LABELS.map((label) => (
                     <span
                         key={label}
-                        className="text-center text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                        className="text-center text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
                     >
                         {label}
                     </span>
@@ -407,16 +407,16 @@ function CalendarGrid({
                             onClick={() => onDateSelect(day)}
                             className={cn(
                                 "h-auto min-h-[calc(92px*var(--glint-ui-scale,1))] w-full flex-col items-stretch justify-start gap-2 rounded-[10px] border p-2 text-left shadow-none",
-                                day.isCurrentMonth ? "bg-white" : "bg-v3-dim-white/45 text-v3-text-muted",
-                                isSelected && "border-v3-primary bg-v3-primary-light text-v3-dark",
-                                isToday && !isSelected && "ring-2 ring-v3-primary/25 ring-offset-1",
-                                !day.isInHorizon && "cursor-not-allowed border-v3-border/50 bg-v3-dim-white/65 opacity-55",
+                                day.isCurrentMonth ? "bg-white" : "bg-surface/45 text-text-muted",
+                                isSelected && "border-primary bg-primary-light text-dark",
+                                isToday && !isSelected && "ring-2 ring-primary/25 ring-offset-1",
+                                !day.isInHorizon && "cursor-not-allowed border-border/50 bg-surface/65 opacity-55",
                             )}
                         >
                             <span className="flex items-center justify-between gap-1 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold">
                                 <span>{day.date.getDate()}</span>
                                 {isToday ? (
-                                    <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-primary">
+                                    <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-primary">
                                         오늘
                                     </span>
                                 ) : null}
@@ -435,7 +435,7 @@ function CalendarGrid({
                                     </span>
                                 ))}
                                 {entries.length > 2 ? (
-                                    <span className="block truncate text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                                    <span className="block truncate text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-text-muted">
                                         +{entries.length - 2}건 더보기
                                     </span>
                                 ) : null}
@@ -567,8 +567,8 @@ export function EmployeeScheduleManager({
                 data-slot="schedule-header"
                 className="shrink-0 px-[calc(4px*var(--glint-ui-scale,1))] pt-[calc(4px*var(--glint-ui-scale,1))]"
             >
-                <h1 className="text-[calc(22px*var(--glint-ui-scale,1))] font-bold text-v3-dark">서비스 일정</h1>
-                <p className="mt-1 text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted">
+                <h1 className="text-[calc(22px*var(--glint-ui-scale,1))] font-bold text-dark">서비스 일정</h1>
+                <p className="mt-1 text-[calc(13px*var(--glint-ui-scale,1))] text-text-muted">
                     2026년 1월부터 오늘 기준 12개월 후까지의 서비스 일정을 확인합니다.
                 </p>
             </header>
@@ -588,7 +588,7 @@ export function EmployeeScheduleManager({
                 <div
                     data-component={component("loading")}
                     data-slot="schedule-loading"
-                    className="flex min-h-0 flex-1 items-center justify-center rounded-[28px] bg-white text-sm text-v3-text-muted shadow-v3"
+                    className="flex min-h-0 flex-1 items-center justify-center rounded-[28px] bg-white text-sm text-text-muted shadow-v3"
                     role="status"
                     aria-label="일정 로딩 중"
                 >
@@ -685,7 +685,7 @@ export function EmployeeScheduleManager({
                         title={formatSelectedDate(selectedDate)}
                         subtitle="선택한 날짜의 서비스 일정"
                         trailing={(
-                            <span data-slot="agenda-count" className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                            <span data-slot="agenda-count" className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-text-muted">
                                 {selectedDateEntries.length}건
                             </span>
                         )}

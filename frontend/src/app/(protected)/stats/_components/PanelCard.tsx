@@ -51,9 +51,9 @@ export function PanelCard({
     >
       <header
         data-component={`${dataComponent}_head`}
-        className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border"
+        className="flex items-center gap-2.5 pb-3.5 border-b border-border"
       >
-        <h3 className="text-[0.95rem] font-bold text-v3-text tracking-tight">
+        <h3 className="text-[0.95rem] font-bold text-text tracking-tight">
           {iconEmoji ? <span className="mr-1.5">{iconEmoji}</span> : null}
           {title}
         </h3>
@@ -61,7 +61,7 @@ export function PanelCard({
           <span
             className={cn(
               "text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5",
-              SOURCE_PILL[source] ?? "bg-v3-dim-white text-v3-text-muted"
+              SOURCE_PILL[source] ?? "bg-surface text-text-muted"
             )}
           >
             {source}
@@ -70,7 +70,7 @@ export function PanelCard({
         <Link
           href={resolvedDetailHref}
           data-component={`${dataComponent}_head_detail-link`}
-          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-v3-primary-light px-3 py-1.5 text-[0.72rem] font-semibold text-v3-primary hover:bg-v3-primary hover:text-white transition-colors"
+          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-primary-light px-3 py-1.5 text-[0.72rem] font-semibold text-primary hover:bg-primary hover:text-white transition-colors"
         >
           <span>{detailLabel}</span>
           <ArrowRight className="w-3.5 h-3.5" />

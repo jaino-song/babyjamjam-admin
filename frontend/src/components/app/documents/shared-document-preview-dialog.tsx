@@ -582,11 +582,11 @@ export function SharedDocumentPreviewDialog({
           className={cn(
             "flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
             previewAvailabilityStatus === "missing" || previewAvailabilityStatus === "error"
-              ? "text-v3-burgundy"
-              : "text-v3-text"
+              ? "text-burgundy"
+              : "text-text"
           )}
         >
-          {isChecking && <Spinner size="sm" className="text-v3-primary" />}
+          {isChecking && <Spinner size="sm" className="text-primary" />}
           {message}
         </div>
       </div>
@@ -601,7 +601,7 @@ export function SharedDocumentPreviewDialog({
         size="sm"
         onClick={handlePrint}
         disabled={isZoomablePreview && !isPreviewReady}
-        className="min-w-[88px] border-v3-primary"
+        className="min-w-[88px] border-primary"
       >
         <Printer className="mr-2 h-4 w-4" />
         인쇄
@@ -614,7 +614,7 @@ export function SharedDocumentPreviewDialog({
         size="sm"
         data-component={`${dataComponent}_footer_file-actions_receipt-download`}
         onClick={() => triggerDownload(receiptDownloadUrl, receiptDownloadFileName)}
-        className="min-w-[88px] border-v3-primary"
+        className="min-w-[88px] border-primary"
       >
         <Download className="mr-2 h-4 w-4" />
         영수증
@@ -704,15 +704,15 @@ export function SharedDocumentPreviewDialog({
                   file={previewUrl}
                   loading={
                     <div className="flex min-h-full items-center justify-center">
-                      <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
-                        <Spinner size="sm" className="text-v3-primary" />
+                      <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-text shadow-sm">
+                        <Spinner size="sm" className="text-primary" />
                         PDF를 불러오는 중입니다
                       </div>
                     </div>
                   }
                   error={
                     <div className="flex min-h-full items-center justify-center">
-                      <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-burgundy shadow-sm">
+                      <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-burgundy shadow-sm">
                         PDF 미리보기를 불러오지 못했습니다.
                       </div>
                     </div>
@@ -769,8 +769,8 @@ export function SharedDocumentPreviewDialog({
                 className="pointer-events-none absolute inset-0 flex items-center justify-center px-6"
                 aria-live="polite"
               >
-                <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
-                  <Spinner size="sm" className="text-v3-primary" />
+                <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-text shadow-sm">
+                  <Spinner size="sm" className="text-primary" />
                   이미지를 불러오는 중입니다
                 </div>
               </div>
@@ -778,7 +778,7 @@ export function SharedDocumentPreviewDialog({
 
             {isImage && isPreviewReady && imageLoadStatus === "error" ? (
               <div className="absolute inset-0 flex items-center justify-center px-6" role="alert">
-                <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-burgundy shadow-sm">
+                <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-burgundy shadow-sm">
                   이미지 미리보기를 불러오지 못했습니다.
                 </div>
               </div>
@@ -803,7 +803,7 @@ export function SharedDocumentPreviewDialog({
             )}
 
             {overlayLabel && (
-              <div className="pointer-events-none absolute left-4 top-4 flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-v3-text-muted shadow-sm">
+              <div className="pointer-events-none absolute left-4 top-4 flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 text-xs font-medium text-text-muted shadow-sm">
                 <Eye className="h-3.5 w-3.5" />
                 {overlayLabel}
               </div>
@@ -814,12 +814,12 @@ export function SharedDocumentPreviewDialog({
                 {isPdf && numPages > 0 ? (
                   <div
                     aria-live="polite"
-                    className="min-w-[3.5rem] rounded-full bg-v3-dim-white px-2.5 py-1 text-center text-xs font-semibold text-v3-dark"
+                    className="min-w-[3.5rem] rounded-full bg-surface px-2.5 py-1 text-center text-xs font-semibold text-dark"
                   >
                     {currentPdfPage} / {numPages}
                   </div>
                 ) : null}
-                <div className="min-w-[3rem] text-right text-xs font-semibold text-v3-text">
+                <div className="min-w-[3rem] text-right text-xs font-semibold text-text">
                   확대
                 </div>
                 <input
@@ -835,7 +835,7 @@ export function SharedDocumentPreviewDialog({
                   className="h-2 w-32 cursor-pointer accent-[hsl(214,100%,34%)]"
                   aria-label={`${isPdf ? "PDF" : isHwp ? "한글 문서" : "이미지"} 미리보기 확대/축소`}
                 />
-                <div className="min-w-[3.5rem] rounded-full bg-v3-dim-white px-2.5 py-1 text-center text-xs font-semibold text-v3-dark">
+                <div className="min-w-[3.5rem] rounded-full bg-surface px-2.5 py-1 text-center text-xs font-semibold text-dark">
                   {zoomPercent}%
                 </div>
               </div>
