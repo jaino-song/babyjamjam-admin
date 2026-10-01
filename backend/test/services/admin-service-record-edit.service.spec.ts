@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from "@nest
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
+import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type {
     ServiceRecordEditRevisionFactsSource,
     ServiceRecordEditSource,
@@ -246,6 +247,7 @@ function createHarness(options: {
     source?: ReturnType<typeof sourceSnapshot> | null;
     activeDraft?: ReturnType<typeof draft> | null;
     targetDraft?: { serviceRecordCaseId: string } | null;
+    calendar?: KrBusinessDayCalendar;
 } = {}) {
     const repository = {
         createOrResumeDraft: jest.fn().mockImplementation((input: { sourceFingerprint: string; sourceSnapshot: unknown; changes?: unknown }) => Promise.resolve(draft({
@@ -264,8 +266,11 @@ function createHarness(options: {
         discardDraft: jest.fn().mockResolvedValue(draft({ status: "DISCARDED", draftVersion: 2 })),
         confirmDraft: jest.fn(),
     };
-    const service = new AdminServiceRecordEditService(repository as never, createHolidayCalendarStub());
-    return { service, repository };
+    const holidayCalendar = createHolidayCalendarStub();
+    const { calendar } = options;
+    if (calendar) (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => calendar);
+    const service = new AdminServiceRecordEditService(repository as never, holidayCalendar);
+    return { service, repository, holidayCalendar };
 }
 
 describe("AdminServiceRecordEditService", () => {
@@ -1666,6 +1671,102 @@ describe("AdminServiceRecordEditService", () => {
                 }),
                 404,
                 "RESOURCE_NOT_FOUND",
+            );
+        });
+    });
+
+    describe("branch calendar", () => {
+        // 2026-09-04 is a Friday that only this branch closes.
+        const branchCalendar = (date: string, version: string) => createKrBusinessDayCalendar(
+            [...KOREAN_HOLIDAY_CALENDAR[2026]!, date],
+            { version, supportedYears: [2026] },
+        );
+
+        async function previewWith(calendar?: KrBusinessDayCalendar) {
+            const source = previewSourceSnapshot();
+            const harness = createHarness({ source, calendar });
+            const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+            if (!started.draft) throw new Error("expected a draft");
+            const activeDraft = { ...started.draft, changes: {} };
+            (harness.repository as typeof harness.repository & { loadDraftWithSource: jest.Mock }).loadDraftWithSource =
+                jest.fn().mockResolvedValue({ draft: activeDraft, source });
+            const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: activeDraft.draftVersion,
+            });
+            return { harness, source, activeDraft, preview };
+        }
+
+        it("normalizes a date move with the fresh branch calendar before persisting the draft", async () => {
+            const harness = createHarness({
+                source: previewSourceSnapshot(),
+                calendar: branchCalendar("2026-09-04", "kr-db-branch-a"),
+            });
+            await harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 1,
+                changes: { header: { momName: "수정" } },
+                dateMove: { sessionIndex: 2, toDate: "2026-09-03" },
+            });
+            expect(harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+            const saved = harness.repository.updateDraft.mock.calls.at(-1)?.[0] as {
+                changes: { sessions: Array<{ sessionIndex: number; serviceDate?: string }> };
+            };
+            // Built-in calendar would put session 3 on Friday 09-04; the branch closes it.
+            expect(saved.changes.sessions.map(({ sessionIndex, serviceDate }) => [sessionIndex, serviceDate])).toEqual([
+                [2, "2026-09-03"],
+                [3, "2026-09-07"],
+            ]);
+
+            const builtin = createHarness({ source: previewSourceSnapshot() });
+            await builtin.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+                expectedDraftVersion: 1,
+                changes: { header: { momName: "수정" } },
+                dateMove: { sessionIndex: 2, toDate: "2026-09-03" },
+            });
+            const builtinSaved = builtin.repository.updateDraft.mock.calls.at(-1)?.[0] as {
+                changes: { sessions: Array<{ sessionIndex: number; serviceDate?: string }> };
+            };
+            expect(builtinSaved.changes.sessions.map(({ serviceDate }) => serviceDate)).toEqual(["2026-09-03", "2026-09-04"]);
+        });
+
+        it("previews with the fresh branch calendar and surfaces a branch holiday as a blocker", async () => {
+            const builtin = await previewWith();
+            expect(builtin.preview.blockingReasons).toEqual([]);
+            expect(builtin.harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+
+            // 2026-09-02 is inside the planned vector (09-01..09-03).
+            const branch = await previewWith(branchCalendar("2026-09-02", "kr-db-branch-b"));
+            expect(branch.preview.calendarVersion).toBe("kr-db-branch-b");
+            expect(branch.preview.blockingReasons.length).toBeGreaterThan(0);
+            expect(branch.preview.previewId).not.toBe(builtin.preview.previewId);
+        });
+
+        it("confirms with the preview's calendar and answers REQUEST_STALE once the calendar changed", async () => {
+            const calendarA = branchCalendar("2026-09-04", "kr-db-branch-a");
+            const { harness, source, activeDraft, preview } = await previewWith(calendarA);
+            expect(preview.calendarVersion).toBe("kr-db-branch-a");
+            harness.repository.confirmDraft.mockResolvedValue({ status: "confirmed" });
+            const confirmDto = {
+                expectedDraftVersion: activeDraft.draftVersion,
+                previewId: preview.previewId,
+                idempotencyKey: "11111111-1111-4111-8111-111111111111",
+            };
+
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto);
+            expect(harness.holidayCalendar.forBranch).toHaveBeenLastCalledWith(BRANCH_ID, { fresh: true });
+            const sameCalendar = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+            };
+            expect(() => sameCalendar.prepare({ draft: activeDraft, source })).not.toThrow();
+
+            (harness.holidayCalendar.forBranch as jest.Mock).mockImplementation(
+                async () => branchCalendar("2026-09-04", "kr-db-branch-c"),
+            );
+            await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto);
+            const changedCalendar = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+                prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
+            };
+            expect(() => changedCalendar.prepare({ draft: activeDraft, source })).toThrow(
+                expect.objectContaining({ response: expect.objectContaining({ code: "REQUEST_STALE" }) }),
             );
         });
     });

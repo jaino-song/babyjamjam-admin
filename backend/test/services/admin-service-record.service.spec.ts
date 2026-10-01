@@ -7,6 +7,7 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
+import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -137,6 +138,57 @@ describe("AdminServiceRecordService", () => {
         const overview = await service.getClientOverview("branch-1", 100);
         expect(overview.assignments[0]?.totalSessions).toBe(4);
         expect(schedule.client.duration).toBe(15);
+    });
+
+    it("counts overview totals against the branch calendar", async () => {
+        const prisma = createPrisma();
+        const schedule = createSchedule(1, "2026-09-03");
+        schedule.endDate = new Date("2026-09-08");
+        Object.assign(schedule.client, {
+            startDate: schedule.startDate, endDate: schedule.endDate, duration: 15,
+        });
+        prisma.employee_schedule.findMany.mockResolvedValue([schedule]);
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([]);
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-1",
+            status: "IN_PROGRESS",
+            startDate: new Date("2026-09-03"),
+            endDate: new Date("2026-09-08"),
+            requiredSessionCount: 15,
+            completedAt: null,
+            finalizationDueAt: null,
+            finalizedAt: null,
+            documentsCompletedAt: null,
+            lastError: null,
+            momName: null,
+            momBirth: null,
+            babyName: null,
+            babyBirth: null,
+            deliveryType: null,
+            babyWeight: null,
+            createdAt: new Date("2026-08-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-08-03T00:00:00.000Z"),
+            days: [],
+        } as never);
+        // The branch also closes Monday 2026-09-07.
+        const branchCalendar = createKrBusinessDayCalendar(
+            [...KOREAN_HOLIDAY_CALENDAR[2026]!, "2026-09-07"],
+            { version: "kr-db-branch-a", supportedYears: [2026] },
+        );
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+        const service = new AdminServiceRecordService(
+            prisma as unknown as PrismaService,
+            createLinkService() as unknown as ServiceRecordLinkService,
+            createTriggerService() as unknown as MessageTriggerService, holidayCalendar,
+        );
+
+        const overview = await service.getClientOverview("branch-1", 100);
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-1");
+        expect(overview.record?.totalSessions).toBe(3);
+        expect(overview.assignments[0]?.totalSessions).toBe(3);
     });
 
     it("asserts branch-owned client access before reading the editor overview", async () => {
