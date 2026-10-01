@@ -1,9 +1,9 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useParams } from "next/navigation";
 
 import ServiceRecordPage from "../[token]/page";
-import { isoDateInKorea } from "@/lib/date/business-days";
+import { isoDateInKorea, KOREAN_HOLIDAY_CALENDAR } from "@/lib/date/business-days";
 
 jest.mock("next/navigation", () => ({
     useParams: jest.fn(),
@@ -40,6 +40,7 @@ jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
         loading,
         confirmLabel,
         confirmDisabled,
+        children,
     }: {
         "data-component"?: string;
         open: boolean;
@@ -48,6 +49,7 @@ jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
         loading?: boolean;
         confirmLabel: string;
         confirmDisabled?: boolean;
+        children?: React.ReactNode;
     }) => open ? (
         <div
             role="dialog"
@@ -56,6 +58,7 @@ jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
         >
             <h2>{title}</h2>
             <p>{description}</p>
+            {children}
             <button disabled={loading || confirmDisabled}>{confirmLabel}</button>
         </div>
     ) : null,
@@ -86,6 +89,30 @@ jest.mock("@/components/app/service-record/SignaturePad", () => ({
 
 const mockUseParams = useParams as jest.Mock;
 const fetchMock = jest.fn();
+
+// Token-scoped holiday payloads (GET /api/service-record/:token/holidays?year=).
+// Served outside `fetchMock` so the positional `mockResolvedValueOnce` queues of
+// the link/context/submit calls stay unaffected by the calendar requests.
+const holidayRequests: string[] = [];
+let branchHolidays: Record<number, Array<{ date: string; name: string }>> = {};
+let holidayResponse: ((year: number) => Response | Promise<Response>) | null = null;
+
+function holidayYearPayload(year: number) {
+    const holidays = branchHolidays[year]
+        ?? (KOREAN_HOLIDAY_CALENDAR[year] ?? []).map((date) => ({ date, name: "공휴일" }));
+    return { year, revision: 1, supported: true, holidays };
+}
+
+function routeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const url = String(input);
+    const match = /\/holidays\?year=(\d+)$/.exec(url);
+    if (match) {
+        holidayRequests.push(url);
+        const year = Number(match[1]);
+        return Promise.resolve(holidayResponse ? holidayResponse(year) : jsonResponse(holidayYearPayload(year)));
+    }
+    return init === undefined ? fetchMock(input) : fetchMock(input, init);
+}
 
 function deferredResponse() {
     let resolve!: (response: Response) => void;
@@ -177,9 +204,12 @@ describe("ServiceRecordPage authentication restoration", () => {
     beforeEach(() => {
         mockUseParams.mockReturnValue({ token: "link-token" });
         fetchMock.mockReset();
+        holidayRequests.length = 0;
+        branchHolidays = {};
+        holidayResponse = null;
         window.sessionStorage.clear();
         window.history.replaceState(null, "", "/service-record/link-token");
-        global.fetch = fetchMock as typeof fetch;
+        global.fetch = routeFetch as typeof fetch;
     });
 
     it("restores a verified visit from the server cookie before showing identity verification", async () => {
@@ -593,6 +623,10 @@ describe("ServiceRecordPage authentication restoration", () => {
         render(<ServiceRecordPage />);
 
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        // The legacy default date depends on the branch calendar, so Back only
+        // restores an unlocked day once the calendar has loaded.
+        await waitFor(() => expect(holidayRequests).toHaveLength(3));
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
         act(() => {
             window.history.pushState(null, "", "/service-record/link-token?step=day&day=2&page=0");
             window.dispatchEvent(new PopStateEvent("popstate"));
@@ -641,6 +675,134 @@ describe("ServiceRecordPage authentication restoration", () => {
             etcService: expectedEtcService,
             notes: expectedNotes,
             paymentConfirmed: true,
+        });
+    });
+    describe("branch holiday calendar", () => {
+        const plannedContext = {
+            ...serviceRecordContext,
+            totalSessions: 1,
+            startDate: "2026-08-10",
+            header: completeHeader,
+            sessions: [],
+            plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-08-10" }],
+        };
+
+        function holdHolidays() {
+            const gate = deferredResponse();
+            holidayResponse = (year) => gate.promise.then(() => jsonResponse(holidayYearPayload(year)));
+            return { release: () => gate.resolve(jsonResponse(null)) };
+        }
+
+        async function openDayOne(user: ReturnType<typeof userEvent.setup>) {
+            await user.click(await screen.findByRole("button", { name: "기록 시작" }));
+            return screen.findByDisplayValue("2026-08-10");
+        }
+
+        it("loads the token calendar for the window plus the case's years only after the context loaded", async () => {
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse({ message: "Unauthorized" }, 401));
+            const { unmount } = render(<ServiceRecordPage />);
+            expect(await screen.findByText("제공인력 본인 확인")).toBeInTheDocument();
+            expect(holidayRequests).toEqual([]);
+            unmount();
+
+            fetchMock.mockReset();
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse({ ...plannedContext, startDate: "2024-12-30", plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2024-12-30" }] }));
+            render(<ServiceRecordPage />);
+            await screen.findByText("제공기록표");
+            const thisYear = Number(isoDateInKorea().slice(0, 4));
+            const expectedYears = [...new Set([2024, 2025, thisYear - 1, thisYear, thisYear + 1])].sort((a, b) => a - b);
+            await waitFor(() => expect(holidayRequests.slice().sort()).toEqual(
+                expectedYears.map((year) => `/api/service-record/link-token/holidays?year=${year}`).sort(),
+            ));
+        });
+
+        it("keeps the date-change confirm disabled until the calendar loads, then uses the branch holidays for the shift", async () => {
+            const user = userEvent.setup();
+            branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
+            const hold = holdHolidays();
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse(plannedContext));
+            render(<ServiceRecordPage />);
+
+            const dateInput = await openDayOne(user);
+            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
+
+            const dialog = await screen.findByRole("dialog");
+            expect(within(dialog).getByRole("button", { name: "확인" })).toBeDisabled();
+            expect(within(dialog).getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+            expect(dialog).not.toHaveTextContent("영업일 만큼");
+
+            await act(async () => { hold.release(); });
+
+            // 2026-08-10 -> 2026-08-13 spans 4 weekdays, one of which is the branch-added holiday.
+            await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "확인" })).toBeEnabled());
+            expect(screen.getByRole("dialog")).toHaveTextContent("2 영업일 만큼");
+        });
+
+        it("counts the same shift without the branch holiday when the branch has none", async () => {
+            const user = userEvent.setup();
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse(plannedContext));
+            render(<ServiceRecordPage />);
+
+            const dateInput = await openDayOne(user);
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
+
+            await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("3 영업일 만큼"));
+        });
+
+        it("shows a retryable notice and keeps the confirm disabled when the calendar fails to load", async () => {
+            const user = userEvent.setup();
+            holidayResponse = () => jsonResponse({ message: "boom" }, 500);
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse(plannedContext));
+            render(<ServiceRecordPage />);
+
+            const dateInput = await openDayOne(user);
+            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
+
+            const dialog = await screen.findByRole("dialog");
+            await waitFor(() => expect(within(dialog).getByText("공휴일 정보를 불러오지 못했어요.")).toBeInTheDocument());
+            expect(within(dialog).getByRole("button", { name: "확인" })).toBeDisabled();
+
+            holidayResponse = null;
+            await user.click(within(dialog).getByRole("button", { name: "다시 시도" }));
+            await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "확인" })).toBeEnabled());
+        });
+
+        it("does not seed a legacy day's default date from the built-in list while the calendar loads", async () => {
+            const user = userEvent.setup();
+            // 2026-08-12 is a business day on the built-in list but a branch holiday.
+            branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
+            const hold = holdHolidays();
+            fetchMock
+                .mockResolvedValueOnce(jsonResponse({ valid: true }))
+                .mockResolvedValueOnce(jsonResponse({
+                    ...serviceRecordContext,
+                    totalSessions: 1,
+                    startDate: "2026-08-12",
+                    header: completeHeader,
+                    sessions: [],
+                }));
+            render(<ServiceRecordPage />);
+
+            await user.click(await screen.findByRole("button", { name: "기록 시작" }));
+            expect(document.querySelector('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toBeInTheDocument();
+            expect(document.querySelector('[data-component="mobile_service-record_calendar-notice"]'))
+                .toHaveTextContent("공휴일 정보를 불러오는 중이에요…");
+
+            await act(async () => { hold.release(); });
+
+            expect(await screen.findByDisplayValue("2026-08-13")).toBeInTheDocument();
+            expect(screen.queryByDisplayValue("2026-08-12")).not.toBeInTheDocument();
         });
     });
 });

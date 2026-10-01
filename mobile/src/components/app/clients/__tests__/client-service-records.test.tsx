@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
+import { buildCalendarFromHolidayYears } from "@babyjamjam/shared/utils/holiday-calendar";
+
 import { ClientServiceRecords } from "../client-service-records";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import type { Client } from "@/lib/client/types";
 import type {
     ServiceRecordAssignment,
@@ -31,9 +35,20 @@ jest.mock("@/hooks/use-toast", () => ({
     toast: jest.fn(),
 }));
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("@/hooks/useGetAuthUser", () => ({
     useGetAuthUser: () => mockUseGetAuthUser(),
 }));
+
+const mockUseBusinessDayCalendar = useBusinessDayCalendar as jest.Mock;
+const builtinCalendarResult = {
+    calendar: KR_BUILTIN_CALENDAR,
+    ready: true,
+    error: null,
+    retry: jest.fn(),
+    version: KR_BUILTIN_CALENDAR.version,
+};
 
 const client = {
     id: 100,
@@ -113,6 +128,7 @@ function renderComponent(
 describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
         mockMutateAsync.mockResolvedValue(undefined);
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },
@@ -394,5 +410,34 @@ describe("ClientServiceRecords", () => {
         expect(scrollContainer.scrollTop).toBe(0);
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
         animationFrame.mockRestore();
+    });
+
+    it("shows expected session dates from the branch calendar", () => {
+        const assignment = { ...createAssignment(1, "none"), totalSessions: 3 };
+        // 2026-07-17 is already a public holiday; 2026-07-21 (Tue) is a branch-added day off, so session 3 moves to 07-22.
+        const branchCalendar = buildCalendarFromHolidayYears([
+            { year: 2026, revision: 2, supported: true, holidays: [
+                { date: "2026-07-17", name: "제헌절" },
+                { date: "2026-07-21", name: "지점 휴무" },
+            ] },
+        ]);
+
+        const { unmount } = renderComponent({ assignments: [assignment] });
+        expect(screen.getAllByText(/예정일/).map((node) => node.textContent)).toEqual([
+            "예정일 2026.07.16", "예정일 2026.07.20", "예정일 2026.07.21",
+        ]);
+        unmount();
+
+        mockUseBusinessDayCalendar.mockImplementation(() => ({
+            ...builtinCalendarResult,
+            calendar: branchCalendar,
+            version: branchCalendar.version,
+        }));
+        renderComponent({ assignments: [assignment] });
+        expect(screen.getAllByText(/예정일/).map((node) => node.textContent)).toEqual([
+            "예정일 2026.07.16", "예정일 2026.07.20", "예정일 2026.07.22",
+        ]);
+        // The hook is asked for the years of the assignment's own dates.
+        expect(mockUseBusinessDayCalendar).toHaveBeenCalledWith({ extraYears: expect.arrayContaining([2026, 2027]) });
     });
 });

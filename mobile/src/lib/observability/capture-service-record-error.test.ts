@@ -17,6 +17,7 @@ import {
   captureAndFlushServiceRecordError,
   captureServiceRecordError,
   captureServiceRecordResponseError,
+  getServiceRecordOperation,
 } from "./capture-service-record-error";
 
 function createAxiosError(options: {
@@ -120,5 +121,12 @@ describe("captureServiceRecordError", () => {
       code: "ERR_NETWORK",
       url: "/service-record/context",
     }))).resolves.toBeUndefined();
+  });
+});
+
+describe("getServiceRecordOperation", () => {
+  it("labels token-page holiday calendar requests as holidays", () => {
+    expect(getServiceRecordOperation("/holidays?year=2026")).toBe("holidays");
+    expect(getServiceRecordOperation("/context")).toBe("context");
   });
 });
