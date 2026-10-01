@@ -32,6 +32,8 @@ interface ClientAutocompleteProps {
     /** The field's one error/hint/status message (label-row slot); wins over `helperText`. */
     message?: SlotMessage | null;
     helperText?: string;
+    /** Id of a message slot the caller renders itself (when `label=""`). */
+    ariaDescribedBy?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
     manualEntryLabel?: string;
@@ -52,6 +54,7 @@ export function ClientAutocomplete({
     error = false,
     message,
     helperText,
+    ariaDescribedBy,
     excludeIds = [],
     allowManualEntry = false,
     manualEntryLabel,
@@ -155,6 +158,7 @@ export function ClientAutocomplete({
                 error={error}
                 message={message}
                 helperText={helperText}
+                ariaDescribedBy={ariaDescribedBy}
                 emptyMessage={t(locale, "contract-msg.no-client-found")}
                 manualEntry={
                     allowManualEntry

@@ -21,6 +21,21 @@ jest.mock("@/hooks/useVoucherData", () => ({
                 isLoading: false,
             };
         }
+        if (type === "B가1형") {
+            return {
+                data: [
+                    {
+                        id: 2,
+                        type: "B가1형",
+                        duration: "10",
+                        fullPrice: "100000",
+                        grant: "",
+                        actualPrice: "50000",
+                    },
+                ],
+                isLoading: false,
+            };
+        }
         return { data: [], isLoading: false };
     },
 }));
@@ -232,5 +247,66 @@ describe("ClientRegistrationWizard field messages", () => {
         expect(document.getElementById("voucherType")).toHaveAttribute("aria-invalid", "true");
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
         expect(screen.queryByText("바우처 정보를 입력해주세요.")).not.toBeInTheDocument();
+    });
+
+    const fillBasicsAndOpenVoucherStep = () => {
+        fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+        fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
+        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19580303" } });
+        fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20261120" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    };
+
+    const pickVoucherType = async (typeLabel: string) => {
+        fireEvent.keyDown(document.getElementById("voucherType") as HTMLElement, { key: "ArrowDown" });
+        fireEvent.click(await screen.findByRole("option", { name: typeLabel }));
+    };
+
+    const pickVoucherDuration = async () => {
+        fireEvent.keyDown(document.getElementById("voucherDuration") as HTMLElement, { key: "ArrowDown" });
+        fireEvent.click(await screen.findByRole("option", { name: "10일" }));
+    };
+
+    test("a period whose price has no amounts says so in the period slot instead of doing nothing", async () => {
+        render(<ClientRegistrationWizard />);
+        fillBasicsAndOpenVoucherStep();
+
+        await pickVoucherType("B가-1형");
+        await pickVoucherDuration();
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+        expect(document.getElementById("voucherDuration-message")).toHaveTextContent("요금 정보가 없어요");
+        expect(document.getElementById("voucherDuration")).toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    test("forgets a blocked 다음 when the customer type is switched", () => {
+        render(<ClientRegistrationWizard />);
+        fillBasicsAndOpenVoucherStep();
+
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(document.getElementById("voucherType-message")).toHaveTextContent("유형을 선택해 주세요");
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));
+        fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));
+
+        expect(document.getElementById("voucherType-message")).toBeEmptyDOMElement();
+    });
+
+    test("gives the customer-type and option checkboxes a label row with a slot above them", () => {
+        render(<ClientRegistrationWizard />);
+        fillBasicsAndOpenVoucherStep();
+
+        const customerType = screen.getByText("고객 유형");
+        expect(customerType.closest("label")).toHaveAttribute("for", "customerType");
+        expect(document.getElementById("customerType-message")).toBeEmptyDOMElement();
+        expect(screen.getByRole("checkbox", { name: "바우처 대상" })).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("checkbox", { name: "바우처 대상" }));
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+        expect(screen.getByText("추가 옵션").closest("label")).toHaveAttribute("for", "options");
+        expect(document.getElementById("options-message")).toBeEmptyDOMElement();
     });
 });

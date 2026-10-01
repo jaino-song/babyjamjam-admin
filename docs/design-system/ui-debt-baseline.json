@@ -830,11 +830,11 @@
         "111:10-111:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1109:13-1115:14|rawUiElement",
-        "1121:13-1127:14|rawUiElement",
-        "1500:25-1507:26|rawUiElement",
-        "1577:15-1582:16|rawUiElement",
-        "1585:15-1590:16|rawUiElement"
+        "1131:13-1137:14|rawUiElement",
+        "1143:13-1149:14|rawUiElement",
+        "1522:25-1529:26|rawUiElement",
+        "1599:15-1604:16|rawUiElement",
+        "1607:15-1612:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
@@ -935,8 +935,8 @@
         "827:10-827:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "2047:27-2052:28|rawUiElement",
-        "2317:23-2322:24|rawUiElement"
+        "2074:27-2079:28|rawUiElement",
+        "2344:23-2349:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {

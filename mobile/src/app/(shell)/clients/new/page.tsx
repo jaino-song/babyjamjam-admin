@@ -635,7 +635,11 @@ export default function NewClientPage() {
     };
   }, [phoneDigits, isUsingOriginalPhone]);
 
-  const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(
+  const {
+    data: voucherPriceInfos,
+    isLoading: isPriceLoading,
+    isError: isVoucherPriceError,
+  } = useVoucherPriceInfos(
     store.type || "",
     resolvedVoucherYear,
   );
@@ -672,6 +676,15 @@ export default function NewClientPage() {
     return matchedDuration !== undefined && Number.isFinite(matchedDuration) ? matchedDuration : null;
   }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, store.voucherClient, voucherPriceInfos]);
   const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
+  // A duration the client already carries (an edit, or a prefill) counts as chosen
+  // even when it is no longer on the current price list: it stays in the select
+  // and in the payload until the user picks another one. A type/year/customer-type
+  // change clears it, so it can never be a stale leftover.
+  const storedDuration = store.duration != null && store.duration > 0 ? store.duration : null;
+  const chosenDuration = effectiveDuration ?? storedDuration;
+  // Prices of the picked voucher type: still loading, or failed (no period can be picked).
+  const isVoucherPricePending = store.voucherClient && Boolean(store.type) && isPriceLoading;
+  const isVoucherPriceUnavailable = store.voucherClient && Boolean(store.type) && isVoucherPriceError;
 
   const serviceDateDurationCheck = useMemo(
     () => getServiceDateDurationCheck(
@@ -691,22 +704,28 @@ export default function NewClientPage() {
   }, [effectiveDuration, outOfPocketPriceInfos, store.voucherClient, voucherPriceInfos]);
 
   const durationOptions = useMemo(() => {
-    if (!store.voucherClient) {
-      return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+    const options = store.voucherClient
+      ? availableDurations.map((duration) => ({
+        value: String(duration),
+        label: `${duration}일`,
+      }))
+      : (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
         value: String(priceInfo.duration),
         label: formatOutOfPocketDurationLabel(priceInfo.duration),
       }));
+    // Keep the client's stored period selectable so the select can show it.
+    if (storedDuration !== null && !options.some((option) => option.value === String(storedDuration))) {
+      options.push({
+        value: String(storedDuration),
+        label: store.voucherClient ? `${storedDuration}일` : formatOutOfPocketDurationLabel(storedDuration),
+      });
     }
-
-    return availableDurations.map((duration) => ({
-      value: String(duration),
-      label: `${duration}일`,
-    }));
-  }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
+    return options;
+  }, [availableDurations, outOfPocketPriceInfos, storedDuration, store.voucherClient]);
 
   const arePriceInputsLocked = store.voucherClient
-    ? !store.type || !effectiveDuration || isPriceLoading
-    : !effectiveDuration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
+    ? !store.type || !chosenDuration || isPriceLoading
+    : !chosenDuration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
@@ -809,6 +828,7 @@ export default function NewClientPage() {
     hasUserEditedServicePeriodRef.current = true;
     setPricesManuallyEdited(false);
     setField("voucherClient", voucherClient);
+    setServiceStepAttempted(false);
     setField("type", "");
     setField("duration", null);
     setField("fullPrice", "");
@@ -840,7 +860,7 @@ export default function NewClientPage() {
         return true;
       case 1:
         // A voucher client needs its voucher type and period to be priced.
-        return !store.voucherClient || (Boolean(store.type) && Boolean(effectiveDuration));
+        return !store.voucherClient || (Boolean(store.type) && Boolean(chosenDuration));
       case 2:
         return fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[2]).length === 0;
       case 3:
@@ -911,7 +931,7 @@ export default function NewClientPage() {
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
         type: store.voucherClient ? store.type || null : null,
-        duration: effectiveDuration || null,
+        duration: chosenDuration || null,
         ...durationConfirmation,
         ...(confirmedUnavailableEmployeeIds
           ? { confirmedUnavailableEmployeeIds }
@@ -1039,11 +1059,13 @@ export default function NewClientPage() {
     ? { text: t(locale, "clients.form.error-type-required"), tone: "err" }
     : null;
   const durationMessage = pickSlotMessage(
-    serviceStepAttempted && store.voucherClient && !effectiveDuration
-      ? { text: t(locale, "clients.form.error-duration-required"), tone: "err" }
-      : null,
-    !store.voucherClient && isOutOfPocketPriceError
+    // A failed price lookup is its own problem, not a missing choice; and nothing is
+    // "missing" while the prices that fill the select are still on their way.
+    (store.voucherClient ? isVoucherPriceUnavailable : isOutOfPocketPriceError)
       ? { text: "요금 정보를 불러오지 못했어요", tone: "err" }
+      : null,
+    serviceStepAttempted && store.voucherClient && !chosenDuration && !isVoucherPricePending
+      ? { text: t(locale, "clients.form.error-duration-required"), tone: "err" }
       : null,
   );
 
@@ -1360,14 +1382,14 @@ export default function NewClientPage() {
                       <FormNativeSelect
                         id="duration"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field_select-wrap"
-                        value={effectiveDuration?.toString() || ""}
+                        value={chosenDuration?.toString() || ""}
                         onValueChange={(value) => {
                           hasUserEditedServicePeriodRef.current = true;
                           setField("duration", value ? Number(value) : null);
                           setPricesManuallyEdited(false);
                         }}
                         disabled={store.voucherClient
-                          ? !store.type || isPriceLoading
+                          ? !store.type || isPriceLoading || isVoucherPriceUnavailable
                           : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                         hideIcon={store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading}
                         className={(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading)

@@ -57,8 +57,8 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveCount(0);
 
     await page.getByLabel("산모님 생년월일").fill("19940315");
-    // Once the mismatch error clears, the lock rule returns as guidance in the same slot.
-    await expect(page.locator('[data-slot="lab-msg"]')).toHaveText("5회 틀리면 30분간 잠겨요");
+    // Once the mismatch error clears, the remaining attempts and the lock rule return together as guidance in the same slot.
+    await expect(page.locator('[data-slot="lab-msg"]')).toHaveText("남은 4회 · 틀리면 30분 잠겨요");
     await page.getByRole("button", { name: "다시 확인하기" }).click();
     await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
     await expect(page.getByRole("link", { name: "이미지 저장" })).toHaveAttribute(

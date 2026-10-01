@@ -730,8 +730,8 @@ describe("ReceiptLinkPage", () => {
         const input = screen.getByLabelText("산모님 생년월일");
         await waitFor(() => expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("일치하지 않아요 · 남은 3회"));
         expect(input).toHaveAttribute("aria-invalid", "true");
-        // Once the error clears, the lock rule comes back as guidance in the same slot.
+        // Once the error clears, the attempts left and the lock rule come back together as guidance in the same slot.
         fireEvent.change(input, { target: { value: "19940316" } });
-        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("5회 틀리면 30분간 잠겨요");
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("남은 3회 · 틀리면 30분 잠겨요");
     });
 });

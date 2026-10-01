@@ -56,6 +56,8 @@ export interface AutocompleteProps<T> {
     message?: SlotMessage | null;
     /** Always-on guidance, shown in the same slot while `message` has nothing to say. */
     helperText?: string;
+    /** Id of a message slot rendered by the caller (when it draws its own label row and passes `label=""`). */
+    ariaDescribedBy?: string;
     emptyMessage?: ReactNode;
     manualEntry?: AutocompleteManualEntry;
     disabled?: boolean;
@@ -83,6 +85,7 @@ export function Autocomplete<T>({
     error,
     message,
     helperText,
+    ariaDescribedBy,
     emptyMessage,
     manualEntry,
     disabled = false,
@@ -277,7 +280,7 @@ export function Autocomplete<T>({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
-                    aria-describedby={hasLabelRow ? slotId : undefined}
+                    aria-describedby={hasLabelRow ? slotId : ariaDescribedBy}
                     aria-invalid={error ? true : undefined}
                     data-component={inputDc}
                     data-slot="autocomplete-input"
