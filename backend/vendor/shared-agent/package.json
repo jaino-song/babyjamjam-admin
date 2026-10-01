@@ -14,6 +14,10 @@
       "types": "./utils/business-days.d.ts",
       "require": "./utils/business-days.js"
     },
+    "./utils/holiday-calendar": {
+      "types": "./utils/holiday-calendar.d.ts",
+      "require": "./utils/holiday-calendar.js"
+    },
     "./utils/birthday": {
       "types": "./utils/birthday.d.ts",
       "require": "./utils/birthday.js"
