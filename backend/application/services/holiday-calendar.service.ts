@@ -69,6 +69,16 @@ interface BranchCalendarModel {
     snapshotValidatedAt: ReadonlyMap<number, Date>;
     publicByDate: ReadonlyMap<string, PublicEntry>;
     overrides: readonly BranchHolidayOverrideRecord[];
+    /** The branch's effective holiday dates (public + adds - excludes), sorted. */
+    holidayDates: readonly string[];
+    supportedYears: ReadonlySet<number>;
+}
+
+export interface AdjustedHolidayDates {
+    /** Dates added to the branch's effective holiday set. */
+    add: readonly string[];
+    /** Dates removed from the branch's effective holiday set. */
+    remove: readonly string[];
 }
 
 const BUILTIN_YEARS: readonly number[] = Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number);
@@ -110,6 +120,28 @@ export class HolidayCalendarService {
 
     async forBranch(branchId: string, opts: HolidayCalendarOptions = {}): Promise<KrBusinessDayCalendar> {
         return (await this.modelFor(branchId, opts)).calendar;
+    }
+
+    /**
+     * The branch's current effective holidays with `add` dates added and `remove`
+     * dates removed (removals win a tie), over the same supported years. Used to
+     * rebuild the calendar a stored end date was probably computed with, so the
+     * holiday-change processor can tell whether a change caused a mismatch.
+     */
+    async forBranchWithAdjustedDates(
+        branchId: string,
+        adjustments: AdjustedHolidayDates,
+        opts: HolidayCalendarOptions = {},
+    ): Promise<KrBusinessDayCalendar> {
+        const model = await this.modelFor(branchId, opts);
+        const holidays = new Set<string>(model.holidayDates);
+        for (const date of adjustments.add) holidays.add(date);
+        for (const date of adjustments.remove) holidays.delete(date);
+        const sortedHolidays = [...holidays].sort();
+        return createKrBusinessDayCalendar(sortedHolidays, {
+            version: calendarVersion(model.supportedYears, sortedHolidays),
+            supportedYears: model.supportedYears,
+        });
     }
 
     /** The effective holiday list of one year as the branch sees it (for the settings screen). */
@@ -270,6 +302,14 @@ export class HolidayCalendarService {
             supportedYears,
         });
 
-        return { revision, calendar, snapshotValidatedAt, publicByDate, overrides };
+        return {
+            revision,
+            calendar,
+            snapshotValidatedAt,
+            publicByDate,
+            overrides,
+            holidayDates: sortedHolidays,
+            supportedYears,
+        };
     }
 }
