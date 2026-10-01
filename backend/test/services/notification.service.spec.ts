@@ -35,6 +35,7 @@ describe("NotificationService", () => {
     const userRepository = {
         findById: jest.fn(),
         findByIdInBranch: jest.fn(),
+        findApprovedByIdInBranch: jest.fn(),
         findByKakaoId: jest.fn(),
         findByEmail: jest.fn(),
         findByRoles: jest.fn(),
@@ -73,6 +74,7 @@ describe("NotificationService", () => {
 
         userRepository.findById.mockResolvedValue(null);
         userRepository.findByIdInBranch.mockImplementation(async (userId: string) => createUser(userId));
+        userRepository.findApprovedByIdInBranch.mockImplementation(async (userId: string) => createUser(userId));
         userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
             createUser("user-1"),
             createUser("user-2"),
@@ -155,6 +157,45 @@ describe("NotificationService", () => {
 
         expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
         expect(emailPort.send).not.toHaveBeenCalled();
+    });
+
+    describe("requireApprovedRecipient (BJJ-357)", () => {
+        it("resolves the recipient with the approval-filtered lookup when the option is set", async () => {
+            await service.sendNotification(
+                branchId, "user-1", "title", "body", undefined, { requireApprovedRecipient: true },
+            );
+
+            expect(userRepository.findApprovedByIdInBranch).toHaveBeenCalledWith("user-1", branchId);
+            expect(userRepository.findByIdInBranch).not.toHaveBeenCalled();
+        });
+
+        it("rejects with ForbiddenException and creates no notification when the approved lookup finds no user", async () => {
+            userRepository.findApprovedByIdInBranch.mockResolvedValue(null);
+
+            await expect(
+                service.sendNotification(
+                    branchId, "unapproved-user", "title", "body", undefined, { requireApprovedRecipient: true },
+                ),
+            ).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({
+                    code: "ACCESS_DENIED",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
+
+            expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
+            expect(sendNotificationUsecase.createNotificationRecord).not.toHaveBeenCalled();
+            expect(emailPort.send).not.toHaveBeenCalled();
+        });
+
+        it("uses the unfiltered branch-membership lookup when the option is omitted", async () => {
+            await service.sendNotification(branchId, "user-1", "title", "body");
+
+            expect(userRepository.findByIdInBranch).toHaveBeenCalledWith("user-1", branchId);
+            expect(userRepository.findApprovedByIdInBranch).not.toHaveBeenCalled();
+        });
     });
 
     describe("listRecipients", () => {

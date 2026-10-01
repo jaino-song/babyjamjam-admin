@@ -34,6 +34,17 @@ interface NotificationEmailTemplateContext {
  */
 export interface NotificationDeliveryOptions {
     deliveryMode?: "await" | "background";
+    /**
+     * When true, the recipient is resolved with the approval-filtered lookup
+     * (`findApprovedByIdInBranch`) instead of `findByIdInBranch`, so a manager
+     * cannot send a manual notification to a user whose approval was revoked
+     * but who still has a stale branch membership row (BJJ-357). Defaults to
+     * false — every existing caller (broadcast's per-recipient re-validation,
+     * push subscribe/unsubscribe, sendToBranchUsers, consultation-inquiry,
+     * the eformsign webhook, and the auto-finalize scheduler) keeps the prior
+     * branch-membership-only check unchanged.
+     */
+    requireApprovedRecipient?: boolean;
 }
 
 export interface DailyDigestNotificationItem {
@@ -243,7 +254,7 @@ export class NotificationService {
         data?: Record<string, unknown>,
         options?: NotificationDeliveryOptions,
     ): Promise<NotificationEntity> {
-        const user = await this.requireBranchUser(branchid, userId);
+        const user = await this.requireBranchUser(branchid, userId, options?.requireApprovedRecipient);
 
         if (options?.deliveryMode === "background") {
             const savedNotification = await this.sendNotificationUsecase.createNotificationRecord(
@@ -325,8 +336,14 @@ export class NotificationService {
         return { sent, failed };
     }
 
-    private async requireBranchUser(branchId: string, userId: string): Promise<UserEntity> {
-        const user = await this.userRepository.findByIdInBranch(userId, branchId);
+    private async requireBranchUser(
+        branchId: string,
+        userId: string,
+        requireApproved?: boolean,
+    ): Promise<UserEntity> {
+        const user = requireApproved
+            ? await this.userRepository.findApprovedByIdInBranch(userId, branchId)
+            : await this.userRepository.findByIdInBranch(userId, branchId);
         if (!user) {
             // 지점 경계 밖의 수신자 요청은 공개 접근 거부 계약으로 변환해요.
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));

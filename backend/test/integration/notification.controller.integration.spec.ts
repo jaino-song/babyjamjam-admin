@@ -127,7 +127,7 @@ describe("NotificationController", () => {
             "t",
             "b",
             undefined,
-            { deliveryMode: "background" },
+            { deliveryMode: "background", requireApprovedRecipient: true },
         );
     });
 

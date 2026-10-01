@@ -28,6 +28,20 @@ export class SbUserRepository implements IUserRepository {
         return user ? UserMapper.toDomain(user) : null;
     }
 
+    async findApprovedByIdInBranch(id: string, branchId: string): Promise<UserEntity | null> {
+        const user = await this.prismaService.user.findFirst({
+            where: {
+                id,
+                approvalStatus: "approved",
+                OR: [
+                    { userBranches: { some: { branchId, branch: { isActive: true } } } },
+                    { ownedBranches: { some: { id: branchId, isActive: true } } },
+                ],
+            },
+        });
+        return user ? UserMapper.toDomain(user) : null;
+    }
+
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         const user = await this.prismaService.user.findUnique({
             where: { kakaoId: kakaoId },

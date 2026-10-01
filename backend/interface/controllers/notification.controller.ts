@@ -186,14 +186,16 @@ export class NotificationController {
         // Manual "send" is backgrounded: respond once the in-app row is stored,
         // deliver push/email afterwards (BJJ-356). Every other caller of
         // NotificationService.sendNotification omits this option and keeps the
-        // default awaited behaviour.
+        // default awaited behaviour. requireApprovedRecipient refuses to send to
+        // a user whose approval was revoked but who still has a stale branch
+        // membership row (BJJ-357).
         const notification = await this.notificationService.sendNotification(
             tenant.branchId ?? "",
             dto.userId,
             dto.title,
             dto.body,
             dto.data,
-            { deliveryMode: "background" },
+            { deliveryMode: "background", requireApprovedRecipient: true },
         );
         return this.toResponseDto(notification);
     }

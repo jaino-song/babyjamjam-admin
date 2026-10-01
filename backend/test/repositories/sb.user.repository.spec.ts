@@ -400,6 +400,65 @@ describe("SbUserRepository", () => {
         });
     });
 
+    // ============================================
+    // findApprovedByIdInBranch
+    // ============================================
+    describe("findApprovedByIdInBranch", () => {
+        const setup = () => {
+            const findFirstModel = {
+                findFirst: jest.fn().mockResolvedValue(null),
+            };
+            const findFirstPrisma = { user: findFirstModel } as unknown as PrismaService;
+            const findFirstRepository = new SbUserRepository(findFirstPrisma);
+            return { findFirstModel, findFirstRepository };
+        };
+
+        it("filters the prisma where-clause to approved users and both membership branches", async () => {
+            // Arrange
+            const { findFirstModel, findFirstRepository } = setup();
+
+            // Act
+            await findFirstRepository.findApprovedByIdInBranch("user-1", "branch-1");
+
+            // Assert
+            expect(findFirstModel.findFirst).toHaveBeenCalledWith({
+                where: {
+                    id: "user-1",
+                    approvalStatus: "approved",
+                    OR: [
+                        { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
+                        { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                    ],
+                },
+            });
+        });
+
+        it("returns the mapped UserEntity when an approved match is found", async () => {
+            // Arrange
+            const { findFirstModel, findFirstRepository } = setup();
+            const row = createUserRow({ id: "user-2" });
+            findFirstModel.findFirst.mockResolvedValue(row);
+
+            // Act
+            const result = await findFirstRepository.findApprovedByIdInBranch("user-2", "branch-1");
+
+            // Assert
+            expect(result).toBeInstanceOf(UserEntity);
+            expect(result).toMatchObject({ id: "user-2" });
+        });
+
+        it("returns null when no approved match is found", async () => {
+            // Arrange
+            const { findFirstRepository } = setup();
+
+            // Act
+            const result = await findFirstRepository.findApprovedByIdInBranch("missing", "branch-1");
+
+            // Assert
+            expect(result).toBeNull();
+        });
+    });
+
     describe("clearBranchOwnerships", () => {
         it("clears ownership and downgrades admin memberships for the owned branches", async () => {
             const branchModel = {
