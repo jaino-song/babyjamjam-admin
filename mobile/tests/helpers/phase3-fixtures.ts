@@ -1,5 +1,7 @@
 import { expect, type Page, type Route } from "@playwright/test";
 
+import { getKoreanHolidays } from "../../src/lib/date/business-days";
+
 export const phase3Json = (body: unknown, status = 200) => ({
   status,
   contentType: "application/json",
@@ -52,6 +54,7 @@ export async function installPhase3ShellFixture(page: Page) {
         id: "e2e-user",
         name: "E2E Owner",
         role: "owner",
+        branchId: "e2e-branch",
         branchName: "테스트 지점",
       }),
     );
@@ -64,6 +67,35 @@ export async function installPhase3ShellFixture(page: Page) {
   });
   await page.route("**/api/notifications**", async (route: Route) => {
     await route.fulfill(phase3Json([]));
+  });
+  // The branch holiday calendar: the public list for the requested year, no branch edits.
+  // Registered after the `**/api/**` catch-all above, because Playwright matches the last-registered route first.
+  await page.route("**/api/branches/*/holidays**", async (route: Route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    let holidays: string[] = [];
+    let supported = true;
+    try {
+      holidays = [...getKoreanHolidays(year)];
+    } catch {
+      supported = false;
+    }
+    await route.fulfill(
+      phase3Json({
+        year,
+        revision: 1,
+        supported,
+        synced: true,
+        lastSyncedAt: null,
+        holidays: holidays.map((date) => ({
+          date,
+          name: "공휴일",
+          source: "public",
+          excluded: false,
+          overrideId: null,
+        })),
+        inactiveOverrides: [],
+      }),
+    );
   });
 }
 

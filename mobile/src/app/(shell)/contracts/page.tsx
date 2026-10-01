@@ -39,6 +39,7 @@ import { CONTRACTS_NEXT_PAGE_SIZE, useInfiniteContracts } from "@/hooks/useInfin
 import { useEformsign } from "@/hooks/useEformsign";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useToast } from "@/hooks/use-toast";
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
@@ -46,6 +47,7 @@ import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { EformsignDocument } from "@/lib/eformsign/types";
+import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import {
   getStatusCategory,
@@ -311,7 +313,23 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   unknown: "unknown",
 };
 
-function categorize(doc: EformsignDocument): ContractCategory {
+/**
+ * Display-only review-window check on the branch calendar. A contract end date
+ * in a year the branch calendar did not load falls back to the built-in list,
+ * which is only used to label the row (the backend's display_status is authoritative).
+ */
+function isReviewWindowOpen(
+  contractEndDate: string | null | undefined,
+  calendar: KrBusinessDayCalendar,
+): boolean {
+  try {
+    return isContractReviewWindowOpen(contractEndDate, undefined, calendar);
+  } catch {
+    return isContractReviewWindowOpen(contractEndDate, undefined, KR_BUILTIN_CALENDAR);
+  }
+}
+
+function categorize(doc: EformsignDocument, calendar: KrBusinessDayCalendar): ContractCategory {
   // The backend's serve-time display_status is authoritative when present.
   if (isContractDocDisplayStatus(doc.display_status)) {
     return CATEGORY_BY_DISPLAY_STATUS[doc.display_status] ?? "unknown";
@@ -319,7 +337,7 @@ function categorize(doc: EformsignDocument): ContractCategory {
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewStep(doc)) return "drafting";
-  return isContractReviewWindowOpen(doc.contract_end_date) ? "in-progress" : "signed";
+  return isReviewWindowOpen(doc.contract_end_date, calendar) ? "in-progress" : "signed";
 }
 
 /** 필터 pill → 서버 statusCategory 파라미터. "전체"는 상태 필터 없음(null). */
@@ -348,14 +366,14 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
 };
 
 /** status-counts 신호를 문서와 동일한 규칙으로 분류한다(categorize와 같은 로직). */
-function categorizeSignal(signal: EformsignStatusSignal): ContractCategory {
+function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDayCalendar): ContractCategory {
   if (isContractDocDisplayStatus(signal.display_status)) {
     return CATEGORY_BY_DISPLAY_STATUS[signal.display_status] ?? "unknown";
   }
   const cat = getStatusCategory(signal.status_type ?? undefined);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
-  return isContractReviewWindowOpen(signal.contract_end_date) ? "in-progress" : "signed";
+  return isReviewWindowOpen(signal.contract_end_date, calendar) ? "in-progress" : "signed";
 }
 
 /** 서버 검색 요청을 타이핑당 1회로 묶기 위한 로컬 디바운스. */
@@ -372,8 +390,8 @@ function isProviderReviewStep(doc: EformsignDocument): boolean {
   return isProviderReviewWorkflowStep(doc.current_status);
 }
 
-function isReviewNeeded(doc: EformsignDocument): boolean {
-  return categorize(doc) === "in-progress" && isProviderReviewStep(doc);
+function isReviewNeeded(doc: EformsignDocument, calendar: KrBusinessDayCalendar): boolean {
+  return categorize(doc, calendar) === "in-progress" && isProviderReviewStep(doc);
 }
 
 function yymmddToIsoDate(value: string): string {
@@ -603,14 +621,14 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
   );
 }
 
-function progressLabel(doc: EformsignDocument): string {
-  const category = categorize(doc);
+function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar): string {
+  const category = categorize(doc, calendar);
   if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "expired") return "기간 만료";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
-  if (isReviewNeeded(doc)) return "5/6 - 제공기관 검토 필요";
-  if (categorize(doc) === "signed" || hasCustomerSignatureDocument(doc)) return "4/6 - 이용자 서명 완료";
+  if (isReviewNeeded(doc, calendar)) return "5/6 - 제공기관 검토 필요";
+  if (categorize(doc, calendar) === "signed" || hasCustomerSignatureDocument(doc)) return "4/6 - 이용자 서명 완료";
   if (hasOpenedDocument(doc)) return "4/6 - 이용자 서명 대기";
   return "3/6 - 이용자 문서 열람 대기";
 }
@@ -1132,12 +1150,13 @@ function notificationMatchesDocument(
 function contractStageItems(
   doc: EformsignDocument,
   category: ContractCategory,
+  calendar: KrBusinessDayCalendar,
 ): ContractStageItem[] {
   const createdAt = formatDateTime(doc.created_date);
   const updatedAt = formatDateTime(doc.updated_date || doc.created_date);
   const sendFailed = hasDocumentSendFailure(doc);
   const hasOpened = hasOpenedDocument(doc);
-  const reviewNeeded = isReviewNeeded(doc);
+  const reviewNeeded = isReviewNeeded(doc, calendar);
   const hasCustomerSigned =
     category === "completed" || category === "signed" || reviewNeeded || hasCustomerSignatureDocument(doc);
   const items: ContractStageItem[] = [
@@ -1283,6 +1302,8 @@ function ContractDetailContent({
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Display-only status labels: the built-in list is fine until the branch calendar loads.
+  const { calendar } = useBusinessDayCalendar();
   const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(null);
   const [isReRequesting, setIsReRequesting] = useState(false);
   const [isReceiptSendConfirmOpen, setIsReceiptSendConfirmOpen] = useState(false);
@@ -1291,9 +1312,9 @@ function ContractDetailContent({
   const downloadControllersRef = useRef(new Map<DownloadBinaryKind, AbortController>());
   const receiptShareInFlightRef = useRef(false);
   const receiptShareControllerRef = useRef<AbortController | null>(null);
-  const category = categorize(doc);
+  const category = categorize(doc, calendar);
   const tones = categoryTones(category);
-  const reviewNeeded = isReviewNeeded(doc);
+  const reviewNeeded = isReviewNeeded(doc, calendar);
   const shouldReRequest =
     category === "drafting" && !hasDocumentSendFailure(doc) && canReRequestDocument(doc);
   const shouldShareReceipt = category === "completed";
@@ -1320,7 +1341,7 @@ function ContractDetailContent({
   const previewUrl = eformsignApi.getDocumentPreviewUrl(doc.id);
   const isPreviewOpen = previewDocumentId === doc.id;
   const statusLabel = tones.badge;
-  const stageItems = contractStageItems(doc, category);
+  const stageItems = contractStageItems(doc, category, calendar);
   const receiptCustomerName =
     resolvedCustomerName === UNKNOWN_CUSTOMER_NAME ? "" : resolvedCustomerName.trim();
   const receiptFilename = getReceiptFileName(receiptCustomerName);
@@ -1550,6 +1571,7 @@ function ContractDetailContent({
                     category: getStatusCategory(doc.current_status?.status_type),
                     currentStatus: doc.current_status,
                     contractEndDate: doc.contract_end_date,
+                    calendar,
                   })
                     ? []
                     : [
@@ -1848,6 +1870,8 @@ function ContractDetailContent({
 export default function ContractsPage() {
   const router = useRouter();
   const { toast } = useToast();
+  // Display-only categories and labels: the built-in list is fine until the branch calendar loads.
+  const { calendar } = useBusinessDayCalendar();
   const { data: employees = [] } = useEmployees();
   const clearPrefillClient = useClientDialogStore((state) => state.clearPrefillClient);
   const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
@@ -2576,10 +2600,10 @@ export default function ContractsPage() {
       "알 수 없음": 0,
     };
     for (const signal of statusCountsData?.documents ?? []) {
-      counts[FILTER_BY_CATEGORY[categorizeSignal(signal)]] += 1;
+      counts[FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)]] += 1;
     }
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
+  }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -2737,9 +2761,9 @@ export default function ContractsPage() {
                 {visibleSections.map((section) => (
                 <div className="section-block" key={section.key}>
                   {section.docs.map((doc, idx) => {
-                    const cat = categorize(doc);
+                    const cat = categorize(doc, calendar);
                     const tones = categoryTones(cat);
-                    const meta = progressLabel(doc);
+                    const meta = progressLabel(doc, calendar);
                     const isServiceRecordRow = activeSection === "service-records";
                     const mappedCustomerName = documentClientSummaryById.get(doc.id)?.clientName.trim();
                     const documentCustomerName = customerName(doc).trim();
@@ -2749,7 +2773,7 @@ export default function ContractsPage() {
                       ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
                       : contractDisplayName(doc);
                     const badgeLabel = isServiceRecordRow
-                      ? mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status)
+                      ? mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
                       : tones.badge;
 
                     return (

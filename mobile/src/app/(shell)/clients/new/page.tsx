@@ -45,7 +45,6 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import {
   isStrictIsoDate,
   normalizeIsoDate,
@@ -56,6 +55,8 @@ import { buildClientEditPrefillFromEformsignDocument } from "@/lib/eformsign/cli
 import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { useFieldMessages } from "@/hooks/use-field-messages";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import {
   focusFirstInvalidField,
   pickSlotMessage,
@@ -176,6 +177,21 @@ const parsePrice = (value: string | null | undefined): string => {
   return value.replace(/,/g, "");
 };
 
+/**
+ * Calendar years the form's own dates need on top of the default window: the
+ * year of each complete date, plus the year after the start date because a
+ * period that starts in December ends in January.
+ */
+const calendarYearsForDates = (startDate: string, endDate: string): number[] => {
+  const years = new Set<number>();
+  if (isStrictIsoDate(startDate)) {
+    years.add(Number(startDate.slice(0, 4)));
+    years.add(Number(startDate.slice(0, 4)) + 1);
+  }
+  if (isStrictIsoDate(endDate)) years.add(Number(endDate.slice(0, 4)));
+  return [...years];
+};
+
 /** The wizard holds these as YYYY-MM-DD; an incomplete one is sent as null. */
 const isoOrNull = (value: string | null | undefined): string | null => {
   const normalized = normalizeIsoDate(value);
@@ -279,6 +295,21 @@ export default function NewClientPage() {
     locale,
   });
   const { reset: resetFieldMessages } = fieldMessages;
+  // The branch holiday calendar. The service period is saved, so its
+  // computations wait for `ready`; before then `calendar` is the built-in list.
+  const calendarYears = useMemo(
+    () => calendarYearsForDates(store.startDate, store.endDate),
+    [store.endDate, store.startDate],
+  );
+  const {
+    calendar,
+    ready: calendarReady,
+    error: calendarError,
+    retry: retryCalendar,
+  } = useBusinessDayCalendar({ extraYears: calendarYears });
+  const calendarRef = useRef(calendar);
+  calendarRef.current = calendar;
+  const endDateCalcSkippedRef = useRef(false);
   const { data: voucherYears = [] } = useVoucherYears();
   const resolvedVoucherYear = useMemo(
     () => voucherYear ?? resolveVoucherLookupYear(store.endDate, voucherYears),
@@ -687,8 +718,9 @@ export default function NewClientPage() {
       isoOrNull(store.startDate),
       isoOrNull(store.endDate),
       effectiveDuration,
+      calendar,
     ),
-    [effectiveDuration, store.endDate, store.startDate],
+    [calendar, effectiveDuration, store.endDate, store.startDate],
   );
 
   const selectedPriceInfo = useMemo(() => {
@@ -754,8 +786,10 @@ export default function NewClientPage() {
     voucherPriceInfos,
   ]);
 
-  // 시작일(YYYY-MM-DD) + 바우처 기간이 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 시작일(YYYY-MM-DD) + 바우처 기간이 정해지면 평일(주말+지점 휴일 캘린더 기준 공휴일 제외)로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/duration이 다시 바뀌어야만 덮어쓴다.
+  // 종료일은 저장되는 값이라 지점 캘린더가 로드된 뒤에만 계산한다. 로드 중에 건너뛴 계산은
+  // 캘린더가 준비되는 순간 한 번만 실행하고, 캘린더 객체/버전이 바뀌어도 다시 계산하지 않는다.
   useEffect(() => {
     const previousServicePeriod = previousServicePeriodRef.current;
     const servicePeriodChanged = previousServicePeriod === null
@@ -765,18 +799,39 @@ export default function NewClientPage() {
       startDate: store.startDate,
       duration: effectiveDuration,
     };
-    if (!servicePeriodChanged || !store.startDate || !effectiveDuration) return;
+    if (!servicePeriodChanged && !endDateCalcSkippedRef.current) return;
+    if (!store.startDate || !effectiveDuration) {
+      endDateCalcSkippedRef.current = false;
+      return;
+    }
     // Only once the whole date has been typed — a half-entered one would
     // otherwise keep recomputing the end date under the user's cursor.
-    if (!isStrictIsoDate(store.startDate)) return;
+    if (!isStrictIsoDate(store.startDate)) {
+      endDateCalcSkippedRef.current = false;
+      return;
+    }
     // Existing and explicitly prefilled periods are authoritative until the
     // operator changes the start date or duration in this form.
-    if (!hasUserEditedServicePeriodRef.current && store.endDate) return;
-    const endIso = calcEndDateBusinessDays(store.startDate, effectiveDuration);
+    if (!hasUserEditedServicePeriodRef.current && store.endDate) {
+      endDateCalcSkippedRef.current = false;
+      return;
+    }
+    if (!calendarReady) {
+      endDateCalcSkippedRef.current = true;
+      return;
+    }
+    endDateCalcSkippedRef.current = false;
+    let endIso: string | null = null;
+    try {
+      endIso = calendarRef.current.calcEndDateBusinessDays(store.startDate, effectiveDuration);
+    } catch {
+      // A year the branch calendar does not cover: leave the end date to the user.
+      return;
+    }
     if (!endIso) return;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
-  }, [effectiveDuration, setField, store.endDate, store.startDate]);
+  }, [calendarReady, effectiveDuration, setField, store.endDate, store.startDate]);
 
   useEffect(() => {
     if (pendingDurationConfirmation === null) return;
@@ -888,6 +943,8 @@ export default function NewClientPage() {
     confirmedUnavailableEmployeeIds?: number[],
   ) => {
     if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
+    // The saved period and its duration check depend on the branch calendar.
+    if (!calendarReady) return;
     if (!validateStep(currentStep)) return;
 
     const { hasMismatch, periodKey } = serviceDateDurationCheck;
@@ -1086,7 +1143,7 @@ export default function NewClientPage() {
     handleStepChange(activeStep + 1);
   };
 
-  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome;
+  const isPrimaryDisabled = isSaving || hasUnknownMutationOutcome || (isLastStep && !calendarReady);
 
   return (
     <>
@@ -1531,6 +1588,12 @@ export default function NewClientPage() {
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
+                    <CalendarLoadNotice
+                      error={calendarError}
+                      onRetry={retryCalendar}
+                      loading={!calendarReady && !calendarError}
+                      dataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_calendar-notice"
+                    />
                     <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_start-date-field" label="시작일" htmlFor="startDate" slot={fieldMessages.slot("startDate")}>
                       <Input
                         id="startDate"
@@ -1556,6 +1619,8 @@ export default function NewClientPage() {
                         value={store.endDate}
                         onChange={(e) => {
                           hasUserEditedServicePeriodRef.current = true;
+                          // A manual end date wins over a calculation that was waiting for the calendar.
+                          endDateCalcSkippedRef.current = false;
                           setField("endDate", formatIsoDateInput(e.target.value));
                         }}
                         {...fieldMessages.bind("endDate")}

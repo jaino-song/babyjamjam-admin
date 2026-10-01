@@ -7,6 +7,8 @@ const mockUseEformsignDocumentsByType = jest.fn();
 const mockUseEformsignAuth = jest.fn();
 const mockUseLocale = jest.fn();
 
+jest.mock('@/hooks/useBusinessDayCalendar');
+
 jest.mock('@/hooks/useEformsignDocuments', () => ({
   useEformsignDocumentsByType: (...args: unknown[]) => mockUseEformsignDocumentsByType(...args),
 }));

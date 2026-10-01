@@ -2,6 +2,7 @@ import {
   buildClientContractData,
   resolveContractAreaTemplateId,
 } from "@/lib/contracts/client-contract-data";
+import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import type { Client } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
 import type { AreaTemplate } from "@/hooks/useVoucherData";
@@ -51,12 +52,20 @@ const areaTemplates: AreaTemplate[] = [
   { id: "at_003", areaId: "area_jung", templateId: "tmpl_003", templateName: "중구 서비스 계약서" },
 ];
 
+// A branch calendar for 2026: the public list plus the branch's own extra days.
+const branchCalendar2026 = (...extraDates: string[]) =>
+  createKrBusinessDayCalendar([...getKoreanHolidays(2026), ...extraDates], {
+    version: "kr-db-test",
+    supportedYears: [2026],
+  });
+
 describe("buildClientContractData", () => {
   it("builds eformsign contract data from an existing client", () => {
     const result = buildClientContractData({
       client: baseClient,
       employees,
       areaTemplates,
+      calendar: KR_BUILTIN_CALENDAR,
     });
 
     expect(result.areaId).toBe("area_namdong");
@@ -74,6 +83,30 @@ describe("buildClientContractData", () => {
       paymentMonth: "06",
       paymentDay: "03",
     });
+  });
+});
+
+describe("buildClientContractData end date", () => {
+  const clientWithoutEnd: Client = { ...baseClient, endDate: null };
+  const build = (calendar: ReturnType<typeof branchCalendar2026>) =>
+    buildClientContractData({ client: clientWithoutEnd, employees, areaTemplates, calendar }).contractData.endDate;
+
+  it("computes the missing end date on the calendar it is given", () => {
+    const publicEnd = build(KR_BUILTIN_CALENDAR);
+    // A branch-only holiday on the last counted day pushes the end date out.
+    expect(KR_BUILTIN_CALENDAR.isBusinessDay(publicEnd)).toBe(true);
+    const branchEnd = build(branchCalendar2026(publicEnd));
+    expect(branchEnd).toBe(KR_BUILTIN_CALENDAR.nextBusinessDay(publicEnd));
+  });
+
+  it("keeps a stored end date regardless of the calendar", () => {
+    const stored = buildClientContractData({
+      client: baseClient,
+      employees,
+      areaTemplates,
+      calendar: branchCalendar2026("2026-06-10"),
+    });
+    expect(stored.contractData.endDate).toBe("2026-06-23");
   });
 });
 
