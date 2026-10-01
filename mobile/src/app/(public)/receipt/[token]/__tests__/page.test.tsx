@@ -302,7 +302,7 @@ describe("ReceiptLinkPage", () => {
         expect(icon).toHaveAttribute("aria-hidden", "true");
     });
 
-    it("shows the 5-attempt warning box (not the neutral info box) on the locked screen (F9)", async () => {
+    it("shows the 5-attempt lock rule as guidance in the birthday slot on the locked screen (F9)", async () => {
         global.fetch = jest.fn(async (url: unknown) => {
             const href = String(url);
             if (href.endsWith("/status")) {
@@ -318,7 +318,11 @@ describe("ReceiptLinkPage", () => {
         const { container } = render(<ReceiptLinkPage />);
 
         await screen.findByRole("button", { name: "확인하기" });
-        expect(await screen.findByText(/5회 연속 틀리면 30분 동안 확인이 잠깁니다/)).toBeInTheDocument();
+        const input = screen.getByLabelText("산모님 생년월일");
+        await waitFor(() =>
+            expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("5회 틀리면 30분간 잠겨요"),
+        );
+        expect(container.querySelector(".rcpt-warn")).toBeNull();
         expect(container.querySelector(".rcpt-info")).toBeNull();
     });
 
@@ -726,7 +730,8 @@ describe("ReceiptLinkPage", () => {
         const input = screen.getByLabelText("산모님 생년월일");
         await waitFor(() => expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("일치하지 않아요 · 남은 3회"));
         expect(input).toHaveAttribute("aria-invalid", "true");
+        // Once the error clears, the lock rule comes back as guidance in the same slot.
         fireEvent.change(input, { target: { value: "19940316" } });
-        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toBeEmptyDOMElement();
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("5회 틀리면 30분간 잠겨요");
     });
 });

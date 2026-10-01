@@ -310,6 +310,8 @@
       "start-date": "시작일",
       "end-date": "종료일",
       "voucher-client": "바우처 고객",
+      "self-pay-client": "자부담 고객",
+      "customer-type": "고객 유형",
       "care-center": "산후조리원",
       "breast-pump": "유축기 대여",
       "error-name-required": "이름을 입력해 주세요",

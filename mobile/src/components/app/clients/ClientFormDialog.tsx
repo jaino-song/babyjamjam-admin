@@ -111,14 +111,14 @@ const SLOT_TONE_CLASS: Record<SlotTone, string> = {
     pending: "text-v3-primary",
 };
 
-const messageIdFor = (field: ClientFormField): string => `${field}-message`;
+const messageIdFor = (field: string): string => `${field}-message`;
 
 interface FieldLabelRowProps {
     "data-component": string;
-    htmlFor: ClientFormField;
+    htmlFor: string;
     label: string;
     required?: boolean;
-    message: SlotMessage | null;
+    message?: SlotMessage | null;
 }
 
 /**
@@ -131,14 +131,14 @@ function FieldLabelRow({
     htmlFor,
     label,
     required = false,
-    message,
+    message = null,
 }: FieldLabelRowProps) {
     return (
         <div
             className="flex h-[1lh] min-w-0 items-center gap-2 text-sm leading-none"
             data-component={`${dataComponent}_label-row`}
         >
-            <Label htmlFor={htmlFor} className="shrink-0">
+            <Label htmlFor={htmlFor} className="shrink-0 whitespace-nowrap">
                 {label}
                 {required ? <span className="text-destructive ml-1">*</span> : null}
             </Label>
@@ -822,7 +822,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                             {t(locale, "clients.form.section-service")}
                         </h4>
 
-                        <div className="flex justify-center" data-component={`${CLIENT_FORM_DIALOG_BASE}_content_customer-type-toggle-field`}>
+                        <FieldLabelRow
+                            data-component={`${CLIENT_FORM_DIALOG_BASE}_content_customer-type-field`}
+                            htmlFor="voucherClient"
+                            label={t(locale, "clients.form.customer-type")}
+                        />
+                        <div id="voucherClient" className="flex justify-center" data-component={`${CLIENT_FORM_DIALOG_BASE}_content_customer-type-toggle-field`}>
                             <TogglePill
                                 data-component={`${CLIENT_FORM_DIALOG_BASE}_content_customer-type-toggle-field_toggle`}
                                 value={formData.voucherClient}
@@ -835,12 +840,16 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {formData.voucherClient && <div className="space-y-2">
-                                <Label>{t(locale, "clients.form.voucher-type")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_voucher-type-field`}
+                                    htmlFor="type"
+                                    label={t(locale, "clients.form.voucher-type")}
+                                />
                                 <Select
                                     value={formData.type || ""}
                                     onValueChange={handleTypeChange}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger id="type" aria-describedby={messageIdFor("type")}>
                                         <SelectValue placeholder={t(locale, "clients.form.voucher-type")} />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -858,7 +867,14 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </Select>
                             </div>}
                             <div className="space-y-2">
-                                <Label>{t(locale, "clients.form.duration")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_duration-field`}
+                                    htmlFor="duration"
+                                    label={t(locale, "clients.form.duration")}
+                                    message={!formData.voucherClient && isOutOfPocketPriceError
+                                        ? { text: "요금 정보를 불러오지 못했어요", tone: "err" }
+                                        : null}
+                                />
                                 <div className="relative">
                                     <Select
                                         value={formData.duration?.toString() || ""}
@@ -871,7 +887,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                             ? !formData.type || isPriceLoading
                                             : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                                     >
-                                        <SelectTrigger>
+                                        <SelectTrigger id="duration" aria-describedby={messageIdFor("duration")}>
                                             <SelectValue placeholder={t(locale, "clients.form.duration")} />
                                         </SelectTrigger>
                                         <SelectContent>
@@ -890,11 +906,6 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                         </div>
-                        {!formData.voucherClient && isOutOfPocketPriceError && (
-                            <p className="text-xs font-medium text-destructive" data-component={`${CLIENT_FORM_DIALOG_BASE}_content_out-of-pocket-price-error`}>
-                                자부담 요금 정보를 불러오지 못했습니다.
-                            </p>
-                        )}
                     </div>
 
                     <Separator />
@@ -914,10 +925,15 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                         <div className={formData.voucherClient ? "grid grid-cols-1 sm:grid-cols-3 gap-4" : "grid grid-cols-1 gap-4"}>
                             <div className="space-y-2">
-                                <Label htmlFor="fullPrice">{t(locale, "clients.form.full-price")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_full-price-field`}
+                                    htmlFor="fullPrice"
+                                    label={t(locale, "clients.form.full-price")}
+                                />
                                 <div className="relative">
                                     <Input
                                         id="fullPrice"
+                                        aria-describedby={messageIdFor("fullPrice")}
                                         placeholder="0"
                                         value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
                                         onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
@@ -930,10 +946,15 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>
                             {formData.voucherClient && <div className="space-y-2">
-                                <Label htmlFor="grant">{t(locale, "clients.form.grant")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_grant-field`}
+                                    htmlFor="grant"
+                                    label={t(locale, "clients.form.grant")}
+                                />
                                 <div className="relative">
                                     <Input
                                         id="grant"
+                                        aria-describedby={messageIdFor("grant")}
                                         placeholder="0"
                                         value={formatPrice(formData.grant || "")}
                                         onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
@@ -945,10 +966,15 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </div>
                             </div>}
                             {formData.voucherClient && <div className="space-y-2">
-                                <Label htmlFor="actualPrice">{t(locale, "clients.form.actual-price")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_actual-price-field`}
+                                    htmlFor="actualPrice"
+                                    label={t(locale, "clients.form.actual-price")}
+                                />
                                 <div className="relative">
                                     <Input
                                         id="actualPrice"
+                                        aria-describedby={messageIdFor("actualPrice")}
                                         placeholder="0"
                                         value={formatPrice(formData.actualPrice || "")}
                                         onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
@@ -972,12 +998,16 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                             <div className="space-y-2 sm:col-span-2">
-                                <Label>{t(locale, "clients.form.contract-status")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_contract-status-field`}
+                                    htmlFor="serviceStatus"
+                                    label={t(locale, "clients.form.contract-status")}
+                                />
                                 <Select
                                     value={formData.serviceStatus || ""}
                                     onValueChange={(value) => handleChange("serviceStatus", value as ServiceStatus)}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger id="serviceStatus" aria-describedby={messageIdFor("serviceStatus")}>
                                         <SelectValue placeholder={t(locale, "clients.form.contract-status")} />
                                     </SelectTrigger>
                                     <SelectContent>

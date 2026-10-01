@@ -214,6 +214,7 @@
 
 .formLabel {
   display: block;
+  white-space: nowrap;
   margin-bottom: 6px;
   color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
@@ -299,12 +300,6 @@
 .formInputError,
 .formInputError:focus {
   border-color: hsl(var(--v3-burgundy));
-}
-
-.formHelper {
-  margin-top: 5px;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
 }
 
 .ok {
