@@ -47,6 +47,10 @@ export class MockUserRepository implements IUserRepository {
         return this.findById(id);
     }
 
+    async findApprovedByIdInBranch(id: string, _branchId: string): Promise<UserEntity | null> {
+        return this.findById(id);
+    }
+
     async findByKakaoId(kakaoId: string): Promise<UserEntity | null> {
         return (
             Array.from(this.users.values()).find(
