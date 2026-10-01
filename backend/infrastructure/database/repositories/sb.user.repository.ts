@@ -158,6 +158,11 @@ export class SbUserRepository implements IUserRepository {
     async findNotificationRecipientsByBranchId(branchId: string): Promise<UserEntity[]> {
         const users = await this.prismaService.user.findMany({
             where: {
+                // BJJ-357: approval_status is NOT NULL (CHECK constraint restricts it to
+                // 'pending' | 'approved' | 'rejected' — see the 20260713100000 migration),
+                // so an explicit null branch isn't reachable. Owners are always written with
+                // approvalStatus: "approved" by UserService.approve, so this never drops them.
+                approvalStatus: "approved",
                 OR: [
                     { ownedBranches: { some: { id: branchId, isActive: true } } },
                     { userBranches: { some: { branchId, branch: { isActive: true } } } },
