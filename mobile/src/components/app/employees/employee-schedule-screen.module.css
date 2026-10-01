@@ -57,19 +57,19 @@
   height: calc(5px * var(--glint-ui-scale, 1));
   flex: 0 0 auto;
   border-radius: 999px;
-  background: hsl(var(--v3-primary));
+  background: hsl(var(--primary));
 }
 
 .eventDotEnd {
-  background: hsl(var(--v3-orange));
+  background: hsl(var(--orange));
 }
 
 .eventDotReplacement {
-  background: hsl(var(--v3-burgundy));
+  background: hsl(var(--burgundy));
 }
 
 .eventCount {
-  color: hsl(var(--v3-text-muted));
+  color: hsl(var(--text-muted));
   font-size: calc(0.56rem * var(--glint-ui-scale, 1));
   line-height: 1;
 }
@@ -80,7 +80,7 @@
 
 .range {
   flex: 0 0 auto;
-  color: hsl(var(--v3-text-muted));
+  color: hsl(var(--text-muted));
   font-size: calc(0.58rem * var(--glint-ui-scale, 1));
   white-space: nowrap;
 }

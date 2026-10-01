@@ -18,6 +18,9 @@ const GRADE_OPTIONS = [
   { value: EMPLOYEE_GRADES[0], label: "프리미엄" },
 ] as const;
 
+/** Always-on guidance for the open-to-next-work switch, shown in its label-row slot. */
+const OPEN_STATUS_GUIDANCE = "완료 후 배정 후보에 표시돼요";
+
 export interface EmployeeFormCardData {
   name: string;
   workArea: string[];
@@ -230,14 +233,18 @@ export function EmployeeFormCard({
         </div>
 
         <div className={styles.field} data-component={sub("section-work_field-grade")}>
-          <label className={styles.label} htmlFor="employee-form-grade">
-            {t(locale, "employees.form.grade")}
-            <span className={styles.required}>*</span>
-          </label>
+          <FieldLabelRow
+            data-component={sub("section-work_field-grade")}
+            htmlFor="employee-form-grade"
+            label={t(locale, "employees.form.grade")}
+            required
+            messageId="employee-form-grade-message"
+          />
           <div className={styles.selectWrap}>
             <select
               id="employee-form-grade"
               className={styles.select}
+              aria-describedby="employee-form-grade-message"
               value={formData.grade || DEFAULT_EMPLOYEE_GRADE}
               onChange={(event) => setField("grade", event.target.value)}
               disabled={disabled}
@@ -287,18 +294,21 @@ export function EmployeeFormCard({
         </div>
 
         <div className={styles.field} data-component={sub("section-work_field-open-status")}>
-          <div className={styles.label}>{t(locale, "employees.form.open-to-next-work")}</div>
+          <FieldLabelRow
+            data-component={sub("section-work_field-open-status")}
+            label={t(locale, "employees.form.open-to-next-work")}
+            message={{ text: OPEN_STATUS_GUIDANCE, tone: "muted" }}
+            messageId="employee-form-open-status-message"
+          />
           <div className={styles.switchRow}>
-            <div>
-              <strong className={styles.switchTitle}>다음 근무 배정 가능</strong>
-              <span className={styles.switchDescription}>고객 생성 완료 후 배정 후보에 표시합니다.</span>
-            </div>
+            <strong className={styles.switchTitle}>다음 근무 배정 가능</strong>
             <Switch
               data-component={sub("section-work_field-open-status_switch")}
               thumbDataComponent="employees-form-dialog-open-status-switch-thumb"
               checked={formData.openToNextWork}
               onCheckedChange={(checked) => setField("openToNextWork", checked)}
               aria-label="다음 근무 배정 가능"
+              aria-describedby="employee-form-open-status-message"
               disabled={disabled}
             />
           </div>

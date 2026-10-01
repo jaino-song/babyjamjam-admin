@@ -128,7 +128,7 @@ export function DetailTabs({
       data-component="desktop_v3_detail-tabs"
       role="tablist"
       aria-label={ariaLabel}
-      className="relative flex gap-[calc(4px*var(--glint-ui-scale,1))] border-b border-v3-border"
+      className="relative flex gap-[calc(4px*var(--glint-ui-scale,1))] border-b border-border"
     >
       {tabs.map((tab, index) => (
         <button
@@ -150,10 +150,10 @@ export function DetailTabs({
           onKeyDown={(event) => handleKeyDown(event, index)}
           aria-disabled={isLoading ? "true" : undefined}
           className={cn(
-            "relative px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary",
+            "relative px-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary",
             activeTab === tab.key
               ? "text-primary font-semibold"
-              : "text-v3-text-muted hover:text-v3-text",
+              : "text-text-muted hover:text-text",
             isLoading && "cursor-default hover:text-inherit",
           )}
         >
@@ -163,7 +163,7 @@ export function DetailTabs({
               data-slot="skeleton"
               data-component="desktop_v3_detail-tabs_button_text-skeleton"
               className={cn(
-                "block h-[calc(16px*var(--glint-ui-scale,1))] animate-pulse rounded-md bg-v3-dim-white",
+                "block h-[calc(16px*var(--glint-ui-scale,1))] animate-pulse rounded-md bg-surface",
                 index === 0 ? "w-16" : "w-14",
               )}
             />

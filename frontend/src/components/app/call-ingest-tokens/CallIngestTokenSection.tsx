@@ -65,8 +65,8 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
     <section data-component={DATA_COMPONENT} data-source-component={SOURCE_COMPONENT}>
       <ContentPaper variant="v3">
         <div data-component={`${DATA_COMPONENT}_header`} className="mb-4 flex items-center gap-3">
-          <div data-component={`${DATA_COMPONENT}_header_icon`} className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
-            <KeyRound size={20} className="text-[hsl(var(--v3-primary))]" />
+          <div data-component={`${DATA_COMPONENT}_header_icon`} className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--primary))]/10">
+            <KeyRound size={20} className="text-[hsl(var(--primary))]" />
           </div>
           <div data-component={`${DATA_COMPONENT}_header_title-group`} className="flex-1 min-w-0">
             <h2 className="text-lg font-bold text-foreground">통화 수집 토큰</h2>

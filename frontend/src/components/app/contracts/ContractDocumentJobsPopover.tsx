@@ -152,7 +152,7 @@ function JobRow({
       subtitle={getJobSubtitle(job)}
       meta={getJobMeta(job)}
       status={<StatusBadge variant={statusCopy.variant}>{statusCopy.label}</StatusBadge>}
-      iconContainerClassName="bg-v3-dim-white"
+      iconContainerClassName="bg-surface"
     />
   );
 
@@ -172,7 +172,7 @@ function JobRow({
     <Link
       href={`/contracts?documentId=${encodeURIComponent(job.documentId)}`}
       data-component={sub("link")}
-      className="flex min-w-0 items-center rounded-[16px] px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left transition-colors hover:bg-v3-dim-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
+      className="flex min-w-0 items-center rounded-[16px] px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left transition-colors hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
       onClick={onNavigate}
     >
       {content}
@@ -194,8 +194,8 @@ function JobSection({
   return (
     <section data-component={base} data-slot="job-section" className="space-y-[calc(8px*var(--glint-ui-scale,1))]">
       <div data-component={base ? `${base}_heading` : undefined} className="flex items-center gap-2 px-[calc(4px*var(--glint-ui-scale,1))]">
-        <SectionIcon className="h-4 w-4 text-v3-text-muted" aria-hidden="true" />
-        <h3 className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-bold text-v3-text-muted">{title}</h3>
+        <SectionIcon className="h-4 w-4 text-text-muted" aria-hidden="true" />
+        <h3 className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-bold text-text-muted">{title}</h3>
       </div>
 
       {error ? (
@@ -203,8 +203,8 @@ function JobSection({
           data-component={base ? `${base}_error` : undefined}
           className="flex flex-col items-center gap-2 rounded-[16px] px-4 py-5 text-center"
         >
-          <AlertCircle className="h-5 w-5 text-v3-burgundy" aria-hidden="true" />
-          <p className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
+          <AlertCircle className="h-5 w-5 text-burgundy" aria-hidden="true" />
+          <p className="text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
             전자문서 작업을 불러오지 못했습니다.
           </p>
           {onRetry ? (
@@ -316,12 +316,12 @@ export function ContractDocumentJobsPopover({
           className,
         )}
       >
-        <div data-component={sub("header")} className="flex items-center justify-between border-b border-v3-border px-5 py-4">
+        <div data-component={sub("header")} className="flex items-center justify-between border-b border-border px-5 py-4">
           <div>
-            <p className="text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-v3-dark">전자문서 작업</p>
-            <p className="mt-1 text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">읽기 전용 처리 현황</p>
+            <p className="text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-dark">전자문서 작업</p>
+            <p className="mt-1 text-[calc(10.4px*var(--glint-ui-scale,1))] text-text-muted">읽기 전용 처리 현황</p>
           </div>
-          <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
+          <span className="text-[calc(10.4px*var(--glint-ui-scale,1))] text-text-muted">
             {(_summary?.activeCount ?? 0) + (_summary?.requiresAttentionCount ?? 0)}건
           </span>
         </div>

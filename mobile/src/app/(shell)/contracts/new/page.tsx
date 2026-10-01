@@ -79,7 +79,6 @@ import {
   buildClientDiffSnapshotFromForm,
   diffClientSnapshots,
   getRegisteredDiffKeys,
-  getVoucherTypeLabel,
   serializeClientDiffSnapshot,
   type ClientDiffDecision,
   type ClientDiffKey,
@@ -164,6 +163,16 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
 }
 
 const formatPhoneNumber = formatKoreanPhoneNumber;
+
+// 저장된 계약서 유형이 불러온 템플릿 목록에 있을 때만 값으로 돌려줘요. 없으면 빈 값이에요.
+function resolveStoredAreaId(
+  storedAreaId: string | null | undefined,
+  areaTemplates: ReadonlyArray<{ areaId: string }> | undefined,
+): string {
+  const trimmed = storedAreaId?.trim() ?? "";
+  if (!trimmed) return "";
+  return areaTemplates?.some((template) => template.areaId === trimmed) ? trimmed : "";
+}
 
 type ClientWithBirthdayAliases = Client & Partial<Record<
   "birthDate" | "birth_date" | "dateOfBirth" | "customerBirthDate" | "customerDOB",
@@ -384,9 +393,22 @@ export default function ContractCreationPage() {
     if (paymentDateInputTouchedRef.current) return;
     setPaymentDateInput(toIsoDate(paymentDate));
   }, [paymentDate]);
+  // 이전 방문에서 남은 계약서 유형은 비워요. 고객이 정해져 있으면 아래 effect가 저장된 유형을 다시 골라줘요.
   useEffect(() => {
     setArea("");
   }, [setArea]);
+  // 마지막으로 계약서 유형을 직접 고른 고객이에요(없으면 undefined). 같은 고객에게는 저장된 유형을 다시 덮어쓰지 않아요.
+  const manualAreaChoiceClientRef = useRef<number | null | undefined>(undefined);
+  // 고객 상세·계약서 목록의 수정 발송처럼 고객이 미리 채워져 들어오거나, 템플릿·고객 목록이 늦게 도착해도 저장된 유형을 골라줘요.
+  // 사용자가 직접 고른 뒤에는 같은 고객에게 다시 덮어쓰지 않아요. 저장된 유형이 템플릿에 없으면 비워 둬요.
+  useEffect(() => {
+    if (clientId === null || !allClients || !areaTemplates) return;
+    if (manualAreaChoiceClientRef.current === clientId) return;
+    const storedClient = allClients.find((candidate) => candidate.id === clientId);
+    if (!storedClient) return;
+    const storedAreaId = resolveStoredAreaId(storedClient.areaId, areaTemplates);
+    if (area !== storedAreaId) setArea(storedAreaId);
+  }, [allClients, area, areaTemplates, clientId, setArea]);
   useEffect(() => {
     if (clientId !== null && name.trim()) {
       selectedClientRef.current = { id: clientId, name };
@@ -690,6 +712,7 @@ export default function ContractCreationPage() {
     setLoadedClientBaseline(selectedClientId !== null && client
       ? { ...buildLoadedBaseline(client), id: selectedClientId }
       : null);
+    manualAreaChoiceClientRef.current = undefined;
     setClientId(selectedClientId);
     selectedClientRef.current = client;
     setEmployeeSelection(null, "", "");
@@ -701,7 +724,8 @@ export default function ContractCreationPage() {
       setBirthday(normalizeBirthdayInput(clientBirthdayValue(client)));
       setAddress(client.address || "");
       setDueDate(normalizeIsoDate(client.dueDate));
-      setArea("");
+      // 이전 고객의 유형은 버리고 새 고객의 저장된 유형만 골라요. 템플릿이 아직 없으면 위 effect가 나중에 채워요.
+      setArea(resolveStoredAreaId(client.areaId, areaTemplates));
       if (client.type) setVoucherType(client.type);
       if (client.duration) setVoucherDuration(client.duration.toString());
       if (client.fullPrice) setFullPrice(client.fullPrice);
@@ -1748,12 +1772,15 @@ export default function ContractCreationPage() {
                       <div className={styles.selectWrap}>
                         <select
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_area-card_area-select"
-                          className={cn(styles.formInput, !area && registeredSnapshot?.areaId.value && styles.storedPlaceholderSelect)}
+                          className={styles.formInput}
                           value={area}
-                          onChange={(e) => setArea(e.target.value)}
+                          onChange={(e) => {
+                            manualAreaChoiceClientRef.current = clientId;
+                            setArea(e.target.value);
+                          }}
                           aria-describedby={getLabelMessage("areaId")?.id}
                         >
-                          <option value="">{registeredPlaceholder("areaId", "선택하세요", formatAreaLabel)}</option>
+                          <option value="">선택하세요</option>
                           {(areaTemplates ?? []).map((tpl) => (
                             <option key={tpl.areaId} value={tpl.areaId}>
                               {getAreaTemplateDisplayLabel(tpl.areaId, tpl.templateName)}
@@ -1791,7 +1818,7 @@ export default function ContractCreationPage() {
                       <input
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-phone-input"
                         className={styles.formInput}
-                        value={employeePhone}
+                        value={formatPhoneNumber(employeePhone)}
                         type="tel"
                         inputMode="numeric"
                         maxLength={13}
@@ -1847,7 +1874,7 @@ export default function ContractCreationPage() {
                           <input
                             data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-phone-input"
                             className={styles.formInput}
-                            value={employee2Phone}
+                            value={formatPhoneNumber(employee2Phone)}
                             type="tel"
                             inputMode="numeric"
                             maxLength={13}
@@ -1892,12 +1919,12 @@ export default function ContractCreationPage() {
                         <div className={styles.selectWrap}>
                           <select
                             data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_type-select"
-                            className={cn(styles.formInput, !voucherType && registeredSnapshot?.type.value && styles.storedPlaceholderSelect)}
+                            className={styles.formInput}
                             value={voucherType}
                             onChange={(e) => handleVoucherTypeChange(e.target.value)}
                             aria-describedby={getLabelMessage("type")?.id}
                           >
-                            <option value="">{registeredPlaceholder("type", "선택하세요", getVoucherTypeLabel)}</option>
+                            <option value="">선택하세요</option>
                             {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
                               <optgroup key={groupName} label={groupName}>
                                 {Object.entries(types).map(([typeValue, typeData]) => (
@@ -1920,13 +1947,13 @@ export default function ContractCreationPage() {
                       <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !voucherType && styles.disabledSelect)}>
                         <select
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select"
-                          className={cn(styles.formInput, !voucherDuration && registeredSnapshot?.duration.value && styles.storedPlaceholderSelect)}
+                          className={styles.formInput}
                           value={voucherDuration}
                           onChange={(e) => handleDurationChange(e.target.value)}
                           disabled={!voucherType || isPriceLoading}
                           aria-describedby={getLabelMessage("duration")?.id}
                         >
-                          <option value="">{registeredPlaceholder("duration", "선택하세요", (duration) => `${duration}일`)}</option>
+                          <option value="">선택하세요</option>
                           {availableDurations.map((d) => (
                             <option key={d} value={d}>{d}일</option>
                           ))}

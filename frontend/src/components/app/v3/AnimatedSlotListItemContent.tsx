@@ -88,7 +88,7 @@ export function AnimatedSlotListItemContent({
       {statusChildren[0]}
       <span
         data-component={sub("status-more")}
-        className="shrink-0 text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+        className="shrink-0 text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
       >
         +{statusChildren.length - 1}
       </span>
@@ -102,7 +102,7 @@ export function AnimatedSlotListItemContent({
       <div
         data-component={sub("icon")}
         className={cn(
-          "flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white text-v3-text-muted shadow-md",
+          "flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-surface text-text-muted shadow-md",
           iconContainerClassName
         )}
       >
@@ -123,7 +123,7 @@ export function AnimatedSlotListItemContent({
           <span
             data-component={sub("title")}
             className={cn(
-              "truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-bold text-v3-dark",
+              "truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-bold text-dark",
               titleClassName
             )}
           >
@@ -135,7 +135,7 @@ export function AnimatedSlotListItemContent({
           <div
             data-component={sub("subtitle")}
             className={cn(
-              "min-w-0 text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted",
+              "min-w-0 text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted",
               subtitleClassName
             )}
           >
@@ -154,7 +154,7 @@ export function AnimatedSlotListItemContent({
           <div
             data-component={sub("meta")}
             className={cn(
-              "mt-[calc(6px*var(--glint-ui-scale,1))] flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] leading-none text-v3-text-muted",
+              "mt-[calc(6px*var(--glint-ui-scale,1))] flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] leading-none text-text-muted",
               metaClassName
             )}
           >

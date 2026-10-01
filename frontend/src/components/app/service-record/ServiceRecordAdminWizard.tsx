@@ -366,25 +366,38 @@ function ReadOnlySignature({
     value,
     signedAt,
 }: SignatureSlotProps) {
+    // One message in the label row: when it was signed, else what the field holds.
+    const message = signedAt
+        ? `${formatShortDate(signedAt)} 서명`
+        : value ? "서명 원본이에요" : "저장된 서명이 없어요";
     return (
         <div data-component={dataComponent} data-slot="signature" className="sign-fld locked">
-            <div data-slot="sign-head" className="sign-head">
+            <div data-component={`${dataComponent}_label-row`} data-slot="lab-row" className="lab-row">
                 <span data-slot="lab" className="lab">산모 서명</span>
-                {signedAt ? <span data-slot="signed-at" className="signed-chip show">{formatShortDate(signedAt)}</span> : null}
+                <span
+                    id={`${dataComponent}_message`}
+                    data-component={`${dataComponent}_helper`}
+                    data-slot="lab-msg"
+                    className="lab-msg hint"
+                    aria-live="polite"
+                    title={message}
+                >
+                    {message}
+                </span>
             </div>
-            {value ? (
-                <div data-slot="signature-image-wrap" className="padwrap locked">
+            <div data-slot="signature-image-wrap" className="padwrap locked">
+                {value ? (
                     <img
                         data-slot="signature-image"
                         className="admin-signature-image"
                         src={value}
                         alt="산모 서명"
+                        aria-describedby={`${dataComponent}_message`}
                     />
-                </div>
-            ) : (
-                <p data-slot="sign-empty" className="sign-note">저장된 서명이 없습니다.</p>
-            )}
-            <p data-slot="sign-note" className="sign-note">실제 서명 시각과 서명 원본입니다.</p>
+                ) : (
+                    <canvas data-slot="signature-empty" className="pad" aria-hidden="true" />
+                )}
+            </div>
         </div>
     );
 }

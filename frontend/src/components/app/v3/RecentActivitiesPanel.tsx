@@ -44,7 +44,7 @@ export interface RecentActivitiesPanelProps {
 }
 
 const SKELETON_ICON_BG = [
-  "bg-v3-primary",
+  "bg-primary",
   "bg-[hsl(355,36%,45%)]",
   "bg-[hsl(34,100%,55%)]",
   "bg-[hsl(213,15%,50%)]",
@@ -56,10 +56,10 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
       <div className="w-12 h-12 mx-auto rounded-[18px] bg-[hsl(355,40%,94%)] flex items-center justify-center">
         <AlertTriangle className="w-6 h-6 text-[hsl(355,36%,45%)]" />
       </div>
-      <p className="text-[0.9rem] font-bold text-v3-dark">
+      <p className="text-[0.9rem] font-bold text-dark">
         데이터를 불러올 수 없습니다
       </p>
-      <p className="text-[0.73rem] text-v3-text-muted">
+      <p className="text-[0.73rem] text-text-muted">
         네트워크 상태를 확인한 뒤 다시 시도해 주세요.
       </p>
       <button
@@ -168,7 +168,7 @@ export function RecentActivitiesPanel({
               render={({ index, item, isLoading: loading }) => {
                 if (loading) {
                   const iconBgClass =
-                    SKELETON_ICON_BG[index % SKELETON_ICON_BG.length]?.split(" ")[0] ?? "bg-v3-primary";
+                    SKELETON_ICON_BG[index % SKELETON_ICON_BG.length]?.split(" ")[0] ?? "bg-primary";
                   return (
                     <>
                       <div
@@ -181,12 +181,12 @@ export function RecentActivitiesPanel({
                       </div>
                       <div className="flex-1 min-w-0 space-y-2">
                         <div className="flex items-center gap-2">
-                          <Skeleton className="h-4 w-24 bg-v3-dim-white" />
-                          <Skeleton className="h-4 w-12 rounded-full bg-v3-dim-white" />
+                          <Skeleton className="h-4 w-24 bg-surface" />
+                          <Skeleton className="h-4 w-12 rounded-full bg-surface" />
                         </div>
-                        <Skeleton className="h-3 w-40 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-40 bg-surface" />
                       </div>
-                      <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
+                      <Skeleton className="h-6 w-14 rounded-full bg-surface shrink-0" />
                     </>
                   );
                 }
@@ -232,14 +232,14 @@ export function RecentActivitiesPanel({
 
       {isFetchingMore ? (
         <div className="flex justify-center py-4">
-          <Loader2 className="w-5 h-5 animate-spin text-v3-primary" />
+          <Loader2 className="w-5 h-5 animate-spin text-primary" />
         </div>
       ) : null}
 
       {hasMore && !onLoadMore ? (
         <Link
           href={viewAllHref}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border border-v3-border bg-v3-dim-white px-3 py-[11px] text-[0.75rem] font-bold text-v3-primary transition hover:-translate-y-0.5 hover:border-v3-primary/30 hover:bg-v3-primary-light"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border border-border bg-surface px-3 py-[11px] text-[0.75rem] font-bold text-primary transition hover:-translate-y-0.5 hover:border-primary/30 hover:bg-primary-light"
         >
           {viewAllLabel} <span aria-hidden="true">→</span>
         </Link>

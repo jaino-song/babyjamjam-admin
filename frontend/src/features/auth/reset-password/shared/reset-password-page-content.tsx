@@ -5,12 +5,17 @@ import { AlertTriangle, CheckCircle } from "lucide-react";
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
-import { PasswordRequirements } from "@/components/auth/password-requirements";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { MobileInputField } from "@/features/auth/shared/mobile/mobile-input-field";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
+import {
+  PASSWORD_GUIDANCE,
+  getPasswordRequirementMessage,
+  withGuidance,
+  type FieldMessageView,
+} from "@/lib/forms/field-message-text";
 import { cn } from "@/lib/utils";
 import { useResetPasswordPageController } from "@/features/auth/reset-password/shared/use-reset-password-page-controller";
 
@@ -36,6 +41,20 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
   } = useResetPasswordPageController();
 
   const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-2xl");
+
+  // One message per field, in the label-row slot: an error (after a failed
+  // submit, naming what is still missing), then live progress, then guidance.
+  const newPassword = formData.newPassword ?? "";
+  const newPasswordMessage: FieldMessageView | null = withGuidance(
+    fieldErrors.newPassword
+      ? getPasswordRequirementMessage(newPassword, passwordStrength.requirements, "error")
+        ?? { tone: "error", text: newPassword ? fieldErrors.newPassword : "비밀번호를 입력해 주세요" }
+      : getPasswordRequirementMessage(newPassword, passwordStrength.requirements),
+    PASSWORD_GUIDANCE,
+  );
+  const confirmPasswordMessage: FieldMessageView | null = fieldErrors.confirmPassword
+    ? { tone: "error", text: fieldErrors.confirmPassword }
+    : null;
 
   return (
     <AuthSurface
@@ -107,9 +126,9 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
             {variant === "mobile" ? (
               <MobileInputField
                 title="새 비밀번호"
-                message={fieldErrors.newPassword}
-                messageTone="error"
-                messageId={fieldErrors.newPassword ? "reset-password-new-error" : undefined}
+                message={newPasswordMessage?.text}
+                messageTone={newPasswordMessage?.tone === "error" ? "error" : newPasswordMessage?.tone === "ok" ? "ok" : "muted"}
+                messageId={newPasswordMessage ? "reset-password-new-message" : undefined}
                 className="gap-2"
                 labelClassName="text-sm"
                 inputProps={{
@@ -120,8 +139,8 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
                   disabled: isLoading,
                   autoComplete: "new-password",
                   autoFocus: true,
-                  "aria-invalid": !!fieldErrors.newPassword,
-                  "aria-describedby": fieldErrors.newPassword ? "reset-password-new-error" : undefined,
+                  "aria-invalid": newPasswordMessage?.tone === "error",
+                  "aria-describedby": newPasswordMessage ? "reset-password-new-message" : undefined,
                 }}
               />
             ) : (
@@ -130,7 +149,7 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
                 type="password"
                 value={formData.newPassword}
                 onChange={handleChange("newPassword")}
-                error={fieldErrors.newPassword}
+                message={newPasswordMessage}
                 disabled={isLoading}
                 autoComplete="new-password"
                 autoFocus
@@ -138,19 +157,12 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
               />
             )}
 
-            {formData.newPassword ? (
-              <PasswordRequirements
-                requirements={passwordStrength.requirements}
-                className="animate-fade-in"
-              />
-            ) : null}
-
             {variant === "mobile" ? (
               <MobileInputField
                 title="비밀번호 확인"
-                message={fieldErrors.confirmPassword}
+                message={confirmPasswordMessage?.text}
                 messageTone="error"
-                messageId={fieldErrors.confirmPassword ? "reset-password-confirm-error" : undefined}
+                messageId={confirmPasswordMessage ? "reset-password-confirm-message" : undefined}
                 className="gap-2"
                 labelClassName="text-sm"
                 inputProps={{
@@ -161,7 +173,7 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
                   disabled: isLoading,
                   autoComplete: "new-password",
                   "aria-invalid": !!fieldErrors.confirmPassword,
-                  "aria-describedby": fieldErrors.confirmPassword ? "reset-password-confirm-error" : undefined,
+                  "aria-describedby": fieldErrors.confirmPassword ? "reset-password-confirm-message" : undefined,
                 }}
               />
             ) : (
@@ -170,7 +182,7 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
                 type="password"
                 value={formData.confirmPassword}
                 onChange={handleChange("confirmPassword")}
-                error={fieldErrors.confirmPassword}
+                message={confirmPasswordMessage}
                 disabled={isLoading}
                 autoComplete="new-password"
                 data-component="desktop_auth_reset-password_form_confirm-field"

@@ -49,6 +49,7 @@ import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import {
     resolveElevenDigitPhoneMessage,
     toFieldMessageView,
+    withGuidance,
     type FieldMessageView,
 } from "@/lib/forms/field-message-text";
 import voucherOptions from "../messages/templates/json/voucher.json";
@@ -69,6 +70,7 @@ import {
     FormSection,
     FormSwitchRow,
     FormTextInput,
+    FormTextInputWithSuffix,
 } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import {
@@ -104,6 +106,10 @@ export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"
 }
 
 export type { ClientFormData };
+
+/** Static guidance shown in a field's label-row slot while nothing more urgent applies. */
+const AREA_FIELD_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
+const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
 
 const PANEL_STEP_CONTENT_CLASS_NAME =
     "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
@@ -213,6 +219,11 @@ const isUnstructuredLegacyClientError = (
     const payload = getErrorResponsePayload(error);
     return !isRecord(payload) || (!("type" in payload) && !("requestId" in payload));
 };
+
+const CLIENT_FORM_FIELDS: readonly ClientFormField[] = ["name", "phone", "primaryEmployeeId", "secondaryEmployeeId"];
+
+const isClientFormField = (field: string): field is ClientFormField =>
+    (CLIENT_FORM_FIELDS as readonly string[]).includes(field);
 
 const fieldForProblemError = (problemError: ProblemError): ClientFormField | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") return undefined;
@@ -511,6 +522,8 @@ function ClientFormContent({
     const fields = useFieldInputStates<ClientInputField>();
     const resetFieldStates = fields.reset;
     const [error, setError] = useState<ClientFormErrorState | null>(null);
+    // Fields whose server error the user already edited away; set again by each new error.
+    const [editedServerErrorFields, setEditedServerErrorFields] = useState<ClientFormField[]>([]);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
     const submissionInFlightRef = useRef(false);
     const summaryRef = useRef<HTMLDivElement>(null);
@@ -974,6 +987,9 @@ function ClientFormContent({
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
         setFormData(prev => ({ ...prev, [field]: value }));
+        if (isClientFormField(field)) {
+            setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
+        }
     };
 
     const inputValueOf = (field: ClientInputField): string => String(formData[field] ?? "");
@@ -1026,8 +1042,30 @@ function ClientFormContent({
         return null;
     };
 
+    // Server errors that map to a field show in that field's label-row slot
+    // until the user edits the field; only unmapped ones go to the summary.
+    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
+        fieldError,
+        field: fieldForProblemError(fieldError),
+        id: `${base}_error_${index}`,
+    }));
+    const serverFieldMessages: Partial<Record<ClientFormField, FieldMessageView>> = {};
+    for (const { fieldError, field } of formErrorEntries) {
+        if (field && !editedServerErrorFields.includes(field) && !serverFieldMessages[field]) {
+            serverFieldMessages[field] = { tone: "error", text: fieldError.detail };
+        }
+    }
+    const serverEmployeeMessages = {
+        primary: serverFieldMessages.primaryEmployeeId,
+        secondary: serverFieldMessages.secondaryEmployeeId,
+    };
+    const summaryErrorEntries = formErrorEntries.filter(({ field }) => field === undefined);
+
     const inputFieldMessages = Object.fromEntries(
-        CLIENT_INPUT_FIELDS.map((field) => [field, resolveInputFieldMessage(field)]),
+        CLIENT_INPUT_FIELDS.map((field) => [
+            field,
+            (isClientFormField(field) ? serverFieldMessages[field] : undefined) ?? resolveInputFieldMessage(field),
+        ]),
     ) as Record<ClientInputField, FieldMessageView | null>;
 
     const getFirstProblemField = (candidates: readonly ClientInputField[]): ClientInputField | undefined =>
@@ -1049,15 +1087,27 @@ function ClientFormContent({
         ) : null;
     };
 
+    /** The label-row slot content for a select, which has no input rules of its own. */
+    const renderSlotMessage = (message: FieldMessageView | null, id: string, dataComponent: string) =>
+        message ? (
+            <FieldMessageText id={id} data-component={dataComponent} tone={message.tone}>
+                {message.text}
+            </FieldMessageText>
+        ) : null;
+
+    const areaFieldMessage = withGuidance(null, AREA_FIELD_GUIDANCE);
+    const areaMessageId = `clients-form-${surface}-area-helper`;
+    const durationFieldMessage: FieldMessageView | null = !formData.voucherClient && isOutOfPocketPriceError
+        ? { tone: "error", text: OUT_OF_POCKET_PRICE_ERROR }
+        : null;
+    const durationMessageId = `clients-form-${surface}-duration-helper`;
+
     /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
-    const getInputFieldProps = (field: ClientInputField, serverErrorIds: readonly string[] = []) => {
+    const getInputFieldProps = (field: ClientInputField) => {
         const message = inputFieldMessages[field];
         return {
-            error: message?.tone === "error" || serverErrorIds.length > 0,
-            "aria-describedby": combineAriaDescribedBy(
-                message ? fieldMessageId(field) : undefined,
-                ...serverErrorIds,
-            ),
+            error: message?.tone === "error",
+            "aria-describedby": combineAriaDescribedBy(message ? fieldMessageId(field) : undefined),
             ...fields.focusProps(field, inputValueOf(field)),
         };
     };
@@ -1135,6 +1185,7 @@ function ClientFormContent({
             // the user can fix fields in order (basic info before assignment).
             setActiveStep(Math.min(...mappedFields.map((field) => PANEL_STEP_OF_FIELD[field])));
         }
+        setEditedServerErrorFields([]);
         setError({
             message: normalized.message,
             fieldErrors,
@@ -1313,19 +1364,6 @@ function ClientFormContent({
             Boolean(formData.phone?.trim()),
         ].filter(Boolean).length
     }개 입력됨`;
-    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
-        fieldError,
-        field: fieldForProblemError(fieldError),
-        id: `${base}_error_${index}`,
-    }));
-    const getFieldErrorIds = (field: ClientFormField): string[] =>
-        formErrorEntries
-            .filter((entry) => entry.field === field)
-            .map((entry) => entry.id);
-    const nameErrorIds = getFieldErrorIds("name");
-    const phoneErrorIds = getFieldErrorIds("phone");
-    const primaryEmployeeErrorIds = getFieldErrorIds("primaryEmployeeId");
-    const secondaryEmployeeErrorIds = getFieldErrorIds("secondaryEmployeeId");
     const isUnknownOutcome = error?.outcome === "UNKNOWN";
     // A field problem never disables the panel buttons: pressing one reveals the
     // message on every problem field. Only work in flight, an unknown outcome, a
@@ -1487,7 +1525,7 @@ function ClientFormContent({
                         placeholder="홍길동"
                         value={formData.name}
                         onChange={(e) => handleInputChange("name", e.target.value)}
-                        {...getInputFieldProps("name", nameErrorIds)}
+                        {...getInputFieldProps("name")}
                     />
                 </FormField>
 
@@ -1567,7 +1605,7 @@ function ClientFormContent({
                             clearFormError();
                         }}
                         maxLength={20}
-                        {...getInputFieldProps("phone", phoneErrorIds)}
+                        {...getInputFieldProps("phone")}
                     />
                 </FormField>
 
@@ -1575,9 +1613,11 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-area`}
                     htmlFor="clients-form-area"
                     label="관할 지역"
+                    labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_basic-grid_field-area_helper`)}
                 >
                     <FormNativeSelect
                         id="clients-form-area"
+                        aria-describedby={areaMessageId}
                         value={formData.areaId ?? ""}
                         options={areaOptions}
                         placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
@@ -1587,9 +1627,6 @@ function ClientFormContent({
                         selectDataComponent={`${base}_basic-grid_field-area_select`}
                         iconDataComponent={`${base}_basic-grid_field-area_select-icon`}
                     />
-                    <FormHelperText data-component={`${base}_basic-grid_field-area_helper`}>
-                        비용 안내 자동문자에서 관할 지역에 연결된 입금 계좌를 사용합니다.
-                    </FormHelperText>
                 </FormField>
 
                 <FormField
@@ -1631,8 +1668,8 @@ function ClientFormContent({
                     onManualEntry={() => {
                         openEmployeeDialog("primary");
                     }}
-                    error={primaryEmployeeErrorIds.length > 0}
-                    describedBy={combineAriaDescribedBy(...primaryEmployeeErrorIds)}
+                    error={serverEmployeeMessages.primary !== undefined}
+                    helperText={serverEmployeeMessages.primary?.text}
                     triggerButtonRef={primaryEmployeeTriggerRef}
                 />
                 <EmployeeAutocomplete
@@ -1646,8 +1683,8 @@ function ClientFormContent({
                     onManualEntry={() => {
                         openEmployeeDialog("secondary");
                     }}
-                    error={secondaryEmployeeErrorIds.length > 0}
-                    describedBy={combineAriaDescribedBy(...secondaryEmployeeErrorIds)}
+                    error={serverEmployeeMessages.secondary !== undefined}
+                    helperText={serverEmployeeMessages.secondary?.text}
                     triggerButtonRef={secondaryEmployeeTriggerRef}
                 />
             </FormGrid>
@@ -1713,10 +1750,13 @@ function ClientFormContent({
                         data-component={`${base}_service-grid_field-duration`}
                         htmlFor="clients-form-duration"
                         label={t(locale, "clients.form.duration")}
+                        labelAccessory={renderSlotMessage(durationFieldMessage, durationMessageId, `${base}_service-grid_field-duration_helper`)}
                     >
                         <div className="relative">
                             <FormNativeSelect
                                 id="clients-form-duration"
+                                aria-describedby={durationFieldMessage ? durationMessageId : undefined}
+                                aria-invalid={durationFieldMessage ? true : undefined}
                                 value={formData.duration?.toString() || ""}
                                 options={durationOptions}
                                 placeholder={t(locale, "clients.form.duration")}
@@ -1739,11 +1779,6 @@ function ClientFormContent({
                         </div>
                     </FormField>
                 </FormGrid>
-                {!formData.voucherClient && isOutOfPocketPriceError && (
-                    <FormHelperText tone="error" data-component={`${base}_out-of-pocket-price-error`}>
-                        자부담 요금 정보를 불러오지 못했습니다.
-                    </FormHelperText>
-                )}
             </ClientDialogSection>
 
             <ClientDialogSection
@@ -1762,18 +1797,14 @@ function ClientFormContent({
                         htmlFor="fullPrice"
                         label={t(locale, "clients.form.full-price")}
                     >
-                        <div className="relative">
-                            <FormTextInput
-                                id="fullPrice"
-                                value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
-                                onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                                disabled={arePriceInputsLocked}
-                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
-                            />
-                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                원
-                            </span>
-                        </div>
+                        <FormTextInputWithSuffix
+                            data-component={`${base}_pricing-grid_field-full-price_amount`}
+                            id="fullPrice"
+                            value={arePriceInputsLocked ? "" : formatPrice(formData.fullPrice || "")}
+                            onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                            disabled={arePriceInputsLocked}
+                            suffix="원"
+                        />
                     </FormField>
 
                     {formData.voucherClient && <FormField
@@ -1781,18 +1812,14 @@ function ClientFormContent({
                         htmlFor="grant"
                         label={t(locale, "clients.form.grant")}
                     >
-                        <div className="relative">
-                            <FormTextInput
-                                id="grant"
-                                value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
-                                onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                                disabled={arePriceInputsLocked}
-                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
-                            />
-                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                원
-                            </span>
-                        </div>
+                        <FormTextInputWithSuffix
+                            data-component={`${base}_pricing-grid_field-grant_amount`}
+                            id="grant"
+                            value={arePriceInputsLocked ? "" : formatPrice(formData.grant || "")}
+                            onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                            disabled={arePriceInputsLocked}
+                            suffix="원"
+                        />
                     </FormField>}
 
                     {formData.voucherClient && <FormField
@@ -1800,18 +1827,14 @@ function ClientFormContent({
                         htmlFor="actualPrice"
                         label={t(locale, "clients.form.actual-price")}
                     >
-                        <div className="relative">
-                            <FormTextInput
-                                id="actualPrice"
-                                value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
-                                onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                                disabled={arePriceInputsLocked}
-                                className="pr-[calc(32px*var(--glint-ui-scale,1))]"
-                            />
-                            <span className="absolute right-[calc(12px*var(--glint-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                원
-                            </span>
-                        </div>
+                        <FormTextInputWithSuffix
+                            data-component={`${base}_pricing-grid_field-actual-price_amount`}
+                            id="actualPrice"
+                            value={arePriceInputsLocked ? "" : formatPrice(formData.actualPrice || "")}
+                            onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                            disabled={arePriceInputsLocked}
+                            suffix="원"
+                        />
                     </FormField>}
                 </FormGrid>
             </ClientDialogSection>
@@ -1936,7 +1959,7 @@ function ClientFormContent({
                     placeholder="홍길동"
                     value={formData.name}
                     onChange={(event) => handleInputChange("name", event.target.value)}
-                    {...getInputFieldProps("name", nameErrorIds)}
+                    {...getInputFieldProps("name")}
                 />
             </FormField>
 
@@ -2014,7 +2037,7 @@ function ClientFormContent({
                         clearFormError();
                     }}
                     maxLength={20}
-                    {...getInputFieldProps("phone", phoneErrorIds)}
+                    {...getInputFieldProps("phone")}
                 />
             </FormField>
 
@@ -2022,9 +2045,11 @@ function ClientFormContent({
                 data-component={`${base}_area-field`}
                 htmlFor="clients-form-panel-area"
                 label="관할 지역"
+                labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_area-field_helper`)}
             >
                 <FormNativeSelect
                     id="clients-form-panel-area"
+                    aria-describedby={areaMessageId}
                     value={formData.areaId ?? ""}
                     options={areaOptions}
                     placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
@@ -2034,9 +2059,6 @@ function ClientFormContent({
                     selectDataComponent={`${base}_area-field_select`}
                     iconDataComponent={`${base}_area-field_select-icon`}
                 />
-                <FormHelperText data-component={`${base}_area-field_helper`}>
-                    비용 안내 자동문자에서 관할 지역에 연결된 입금 계좌를 사용합니다.
-                </FormHelperText>
             </FormField>
 
             <FormField
@@ -2071,8 +2093,8 @@ function ClientFormContent({
                 onManualEntry={() => {
                     openEmployeeDialog("primary");
                 }}
-                error={primaryEmployeeErrorIds.length > 0}
-                describedBy={combineAriaDescribedBy(...primaryEmployeeErrorIds)}
+                error={serverEmployeeMessages.primary !== undefined}
+                helperText={serverEmployeeMessages.primary?.text}
                 triggerButtonRef={primaryEmployeeTriggerRef}
             />
             <EmployeeAutocomplete
@@ -2085,8 +2107,8 @@ function ClientFormContent({
                 onManualEntry={() => {
                     openEmployeeDialog("secondary");
                 }}
-                error={secondaryEmployeeErrorIds.length > 0}
-                describedBy={combineAriaDescribedBy(...secondaryEmployeeErrorIds)}
+                error={serverEmployeeMessages.secondary !== undefined}
+                helperText={serverEmployeeMessages.secondary?.text}
                 triggerButtonRef={secondaryEmployeeTriggerRef}
             />
         </>
@@ -2147,10 +2169,13 @@ function ClientFormContent({
                 data-component={`${base}_duration-field`}
                 htmlFor="clients-form-panel-duration"
                 label={t(locale, "clients.form.duration")}
+                labelAccessory={renderSlotMessage(durationFieldMessage, durationMessageId, `${base}_duration-field_helper`)}
             >
                 <div className="relative">
                     <FormNativeSelect
                         id="clients-form-panel-duration"
+                        aria-describedby={durationFieldMessage ? durationMessageId : undefined}
+                        aria-invalid={durationFieldMessage ? true : undefined}
                         value={formData.duration?.toString() || ""}
                         options={durationOptions}
                         placeholder={t(locale, "clients.form.duration")}
@@ -2172,16 +2197,6 @@ function ClientFormContent({
                     )}
                 </div>
             </FormField>
-
-            {!formData.voucherClient && isOutOfPocketPriceError && (
-                <FormHelperText
-                    tone="error"
-                    className={PANEL_FULL_FIELD_CLASS_NAME}
-                    data-component={`${base}_out-of-pocket-price-error`}
-                >
-                    자부담 요금 정보를 불러오지 못했습니다.
-                </FormHelperText>
-            )}
 
             <FormField
                 data-component={`${base}_full-price-input`}
@@ -2338,38 +2353,13 @@ function ClientFormContent({
             <AlertDescription>
                 <div className="flex flex-col gap-2">
                     <p>{error.message}</p>
-                    {formErrorEntries.length > 0 ? (
+                    {summaryErrorEntries.length > 0 ? (
                         <ul className="flex flex-col gap-1">
-                            {formErrorEntries.map(({ fieldError, field, id }) => {
-                                const fieldLabel = field === "name"
-                                    ? t(locale, "clients.form.name")
-                                    : field === "phone"
-                                        ? t(locale, "clients.form.phone")
-                                        : field === "primaryEmployeeId"
-                                            ? t(locale, "clients.form.primary-employee")
-                                            : field === "secondaryEmployeeId"
-                                                ? t(locale, "clients.form.secondary-employee")
-                                                : resolveProblemPresentation(locale).unmappedField;
-                                const detail = `${fieldLabel}: ${fieldError.detail}`;
-
-                                return (
-                                    <li key={id} id={id}>
-                                        {field ? (
-                                            <Button
-                                                type="button"
-                                                variant="link"
-                                                size="sm"
-                                                className="h-auto whitespace-normal p-0 text-left"
-                                                onClick={() => focusField(field)}
-                                            >
-                                                {detail}
-                                            </Button>
-                                        ) : (
-                                            <span>{detail}</span>
-                                        )}
-                                    </li>
-                                );
-                            })}
+                            {summaryErrorEntries.map(({ fieldError, id }) => (
+                                <li key={id} id={id}>
+                                    <span>{`${resolveProblemPresentation(locale).unmappedField}: ${fieldError.detail}`}</span>
+                                </li>
+                            ))}
                         </ul>
                     ) : null}
                     {isUnknownOutcome ? (
@@ -2491,7 +2481,7 @@ function ClientFormContent({
                     footer={dialogFormActions}
                 >
                     {notice && (
-                        <p data-component={`${base}_notice`} className="text-sm text-v3-text-muted" role="note">
+                        <p data-component={`${base}_notice`} className="text-sm text-text-muted" role="note">
                             {notice}
                         </p>
                     )}

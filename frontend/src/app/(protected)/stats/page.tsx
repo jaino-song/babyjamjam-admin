@@ -161,7 +161,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
               >
                 {sentryConfigured ? sentry.openCount : "—"}
               </span>
-              <span className="text-[0.85rem] text-v3-text-muted">미해결 이슈</span>
+              <span className="text-[0.85rem] text-text-muted">미해결 이슈</span>
               {sentryConfigured ? (
                 <span
                   className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
@@ -182,21 +182,21 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
               <Sparkline values={sentry.selectedRange.sparkline} color="hsl(0 84% 55%)" />
             )}
             {sentryConfigured && sentry.topIssue ? (
-              <div className="rounded-2xl bg-v3-dim-white p-3.5">
-                <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-1.5">
+              <div className="rounded-2xl bg-surface p-3.5">
+                <div className="text-[0.62rem] font-bold uppercase tracking-wider text-text-muted mb-1.5">
                   주요 오류
                 </div>
-                <div className="text-[0.82rem] font-semibold text-v3-text truncate">
+                <div className="text-[0.82rem] font-semibold text-text truncate">
                   {sentry.topIssue.title}
                 </div>
-                <div className="text-[0.65rem] font-mono text-v3-text-muted truncate">
+                <div className="text-[0.65rem] font-mono text-text-muted truncate">
                   {sentry.topIssue.culprit ?? sentry.topIssue.filename ?? "—"}
                   {" · "}
                   {sentry.topIssue.count}건 · {formatSentryRelativeTime(sentry.topIssue.lastSeen)}
                 </div>
               </div>
             ) : sentryConfigured ? (
-              <div className="rounded-2xl bg-v3-dim-white p-3.5 text-[0.78rem] text-v3-text-muted">
+              <div className="rounded-2xl bg-surface p-3.5 text-[0.78rem] text-text-muted">
                 미해결 이슈가 없어요 🎉
               </div>
             ) : null}
@@ -213,11 +213,11 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
             <div className="flex items-baseline gap-3">
               <span
                 data-component="desktop_stats_page_grid_inner_panel-inquiries-count"
-                className="text-[2.4rem] font-bold leading-none tabular-nums text-v3-primary"
+                className="text-[2.4rem] font-bold leading-none tabular-nums text-primary"
               >
                 {posthogConfigured ? inquiries.today : "—"}
               </span>
-              <span className="text-[0.85rem] text-v3-text-muted">건 (오늘)</span>
+              <span className="text-[0.85rem] text-text-muted">건 (오늘)</span>
               {posthogConfigured ? (
                 <span
                   className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
@@ -225,7 +225,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                       ? "bg-green-100 text-green-700"
                       : inquiryDelta.tone === "down"
                         ? "bg-red-100 text-red-700"
-                        : "bg-v3-dim-white text-v3-text-muted"
+                        : "bg-surface text-text-muted"
                   }`}
                 >
                   {inquiryDelta.label}
@@ -235,15 +235,15 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
               )}
             </div>
             {posthogConfigured ? <MiniBars data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend" values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
-            <div className="text-[0.78rem] text-v3-text-muted">
+            <div className="text-[0.78rem] text-text-muted">
               {posthogConfigured ? (
                 <>
                   {statsPeriodLabel(period)} 평균{" "}
-                  <strong className="text-v3-text tabular-nums">
+                  <strong className="text-text tabular-nums">
                     {inquiries.selectedRange.average.toFixed(1)}
                   </strong>
                   건 · 최근 신청{" "}
-                  <strong className="text-v3-text">
+                  <strong className="text-text">
                     {formatRelativeKo(inquiries.lastSubmissionAt)}
                   </strong>
                 </>
@@ -274,7 +274,7 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 감소 · 가장 큰 이탈
               </div>
             ) : posthogConfigured && funnel.totalEntries === 0 ? (
-              <div className="text-[0.78rem] text-v3-text-muted">
+              <div className="text-[0.78rem] text-text-muted">
                 펀널 진입 이벤트가 아직 없어요.
               </div>
             ) : posthogConfigured ? (
@@ -294,19 +294,19 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
           >
             <div className="grid grid-cols-3 gap-3">
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-pv">
-                <div className="text-[0.65rem] font-medium text-v3-text-muted">페이지뷰</div>
+                <div className="text-[0.65rem] font-medium text-text-muted">페이지뷰</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
                   {posthogConfigured ? traffic.today.pv.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-unique">
-                <div className="text-[0.65rem] font-medium text-v3-text-muted">방문자</div>
+                <div className="text-[0.65rem] font-medium text-text-muted">방문자</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
                   {posthogConfigured ? traffic.today.unique.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-session">
-                <div className="text-[0.65rem] font-medium text-v3-text-muted">평균 방문 시간</div>
+                <div className="text-[0.65rem] font-medium text-text-muted">평균 방문 시간</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
                   {!posthogConfigured || traffic.selectedRange.total.pv === 0
                     ? "—"
@@ -315,21 +315,21 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
               </div>
             </div>
             <div>
-              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-1.5">
+              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-text-muted mb-1.5">
                 인기 페이지
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-top-pages">
                 {!posthogConfigured ? (
                   <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-traffic-top-pages-unavailable" />
                 ) : topPages.length === 0 ? (
-                  <div className="py-2 text-[0.75rem] text-v3-text-muted">데이터 없음</div>
+                  <div className="py-2 text-[0.75rem] text-text-muted">데이터 없음</div>
                 ) : (
                   topPages.map((p) => (
                     <div
                       key={p.path}
-                      className="flex justify-between items-center py-1.5 border-b border-v3-border last:border-0 text-[0.78rem]"
+                      className="flex justify-between items-center py-1.5 border-b border-border last:border-0 text-[0.78rem]"
                     >
-                      <span className="font-mono text-v3-text truncate mr-2">{p.path}</span>
+                      <span className="font-mono text-text truncate mr-2">{p.path}</span>
                       <span className="font-semibold tabular-nums shrink-0">{p.pv}</span>
                     </div>
                   ))
@@ -338,9 +338,9 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
             </div>
               {posthogConfigured ? (
                 <div>
-                  <div className="flex h-2 rounded-full overflow-hidden bg-v3-dim-white">
+                  <div className="flex h-2 rounded-full overflow-hidden bg-surface">
                     <div
-                      className="bg-v3-primary"
+                      className="bg-primary"
                       style={{ width: `${mobile}%` }}
                     />
                     <div
@@ -348,12 +348,12 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                       style={{ width: `${desktop}%` }}
                     />
                   </div>
-                  <div className="mt-1.5 flex justify-between text-[0.7rem] text-v3-text-muted">
+                  <div className="mt-1.5 flex justify-between text-[0.7rem] text-text-muted">
                     <span>
-                      <strong className="text-v3-text">Mobile</strong> {mobile.toFixed(0)}%
+                      <strong className="text-text">Mobile</strong> {mobile.toFixed(0)}%
                     </span>
                     <span>
-                      <strong className="text-v3-text">Desktop</strong> {desktop.toFixed(0)}%
+                      <strong className="text-text">Desktop</strong> {desktop.toFixed(0)}%
                     </span>
                   </div>
                 </div>

@@ -64,7 +64,7 @@ export function AutomationStatusNotice({
             data-source-component={SOURCE_COMPONENT}
             className="space-y-2"
         >
-            <p className="text-[0.85rem] leading-6 text-v3-text-muted">
+            <p className="text-[0.85rem] leading-6 text-text-muted">
                 {enabled
                     ? "앱에서 발송한 계약서는 발송 시점에 고객이 먼저 등록됩니다. eformsign에서 직접 만든 계약서는 도착하거나 완결되는 시점에 고객이 자동으로 등록·연결됩니다."
                     : "자동 고객 등록이 꺼져 있습니다. 켜면 eformsign에서 직접 만든 계약서가 도착할 때 고객이 자동으로 등록됩니다."}
@@ -73,7 +73,7 @@ export function AutomationStatusNotice({
                 <ul
                     data-component={`${dataComponent}_status-list`}
                     data-slot="automation-status-list"
-                    className="space-y-1 text-[0.8rem] leading-5 text-v3-text-muted"
+                    className="space-y-1 text-[0.8rem] leading-5 text-text-muted"
                 >
                     <li
                         data-component={`${dataComponent}_status-list_webhook-item`}

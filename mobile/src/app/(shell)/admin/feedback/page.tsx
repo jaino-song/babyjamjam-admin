@@ -78,7 +78,7 @@ export default function AdminFeedbackPage() {
   if (error) {
     return (
       <div data-component={`${FEEDBACK_BASE}_error`} className="p-6">
-        <div data-component={`${FEEDBACK_BASE}_error_message`} className="bg-v3-burgundy-light text-v3-burgundy rounded-2xl p-6 text-center">
+        <div data-component={`${FEEDBACK_BASE}_error_message`} className="bg-burgundy-light text-burgundy rounded-2xl p-6 text-center">
           피드백을 불러오는데 실패했습니다.
         </div>
       </div>
@@ -124,7 +124,7 @@ export default function AdminFeedbackPage() {
             slotClassName={({ isLoading: slotLoading }) =>
               cn(
                 'flex items-center gap-3 p-3 rounded-2xl transition-all duration-200 bg-white border-2 border-transparent',
-                !slotLoading && 'cursor-pointer hover:bg-v3-primary-light/50 hover:border-v3-primary/30'
+                !slotLoading && 'cursor-pointer hover:bg-primary-light/50 hover:border-primary/30'
               )
             }
             getSlotHref={(feedback) => `/admin/feedback/${feedback.id}`}
@@ -132,14 +132,14 @@ export default function AdminFeedbackPage() {
               if (slotLoading) {
                 return (
                   <>
-                    <div data-component={`${FEEDBACK_LIST}_item_skeleton-icon`} className="w-9 h-9 rounded-2xl shrink-0 bg-v3-dim-white flex items-center justify-center">
+                    <div data-component={`${FEEDBACK_LIST}_item_skeleton-icon`} className="w-9 h-9 rounded-2xl shrink-0 bg-surface flex items-center justify-center">
                       <Skeleton className="w-4 h-4 rounded-2xl bg-white/70" />
                     </div>
                     <div data-component={`${FEEDBACK_LIST}_item_skeleton-content`} className="flex-1 min-w-0">
-                      <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
-                      <Skeleton className="h-3 w-32 bg-v3-dim-white" />
+                      <Skeleton className="h-4 w-24 mb-1.5 bg-surface" />
+                      <Skeleton className="h-3 w-32 bg-surface" />
                     </div>
-                    <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
+                    <Skeleton className="h-3 w-12 bg-surface shrink-0" />
                   </>
                 );
               }
@@ -158,14 +158,14 @@ export default function AdminFeedbackPage() {
                     }
                   </div>
                   <div data-component={`${FEEDBACK_LIST}_item_content`} className="flex-1 min-w-0">
-                    <p className="text-[0.8rem] font-semibold text-v3-dark truncate">
+                    <p className="text-[0.8rem] font-semibold text-dark truncate">
                       {feedback.user.name || feedback.user.email || '익명'}
                     </p>
-                    <p className="text-[0.7rem] text-v3-text-muted truncate">
+                    <p className="text-[0.7rem] text-text-muted truncate">
                       {truncateText(feedback.comment, 30)}
                     </p>
                   </div>
-                  <span className="text-[0.65rem] text-v3-text-muted whitespace-nowrap">
+                  <span className="text-[0.65rem] text-text-muted whitespace-nowrap">
                     {formatDate(feedback.createdAt)}
                   </span>
                 </>

@@ -37,9 +37,20 @@ export interface FieldSpec {
    * landline the shared resolver accepts still counts as incomplete here.
    */
   mobileOnly?: boolean;
+  /**
+   * Phone + mobileOnly only: the number already stored for the record being
+   * edited. While the value still equals it (digits only) the mobile-only rule
+   * is waived, so an existing landline passes until the user changes it.
+   */
+  acceptedPhone?: string | null;
 }
 
 const MOBILE_PHONE_DIGITS = /^01\d{9}$/;
+
+function isAcceptedStoredPhone(spec: FieldSpec, value: string): boolean {
+  const accepted = normalizeKoreanPhoneDigits(spec.acceptedPhone ?? "");
+  return accepted !== "" && accepted === normalizeKoreanPhoneDigits(value);
+}
 
 /** A value the shared resolver can never accept, used to force its "incomplete" branch. */
 const ALWAYS_INCOMPLETE_PHONE = "0";
@@ -81,6 +92,7 @@ export function resolveSlotMessage(
     && spec.mobileOnly
     && state.value !== ""
     && !MOBILE_PHONE_DIGITS.test(normalizeKoreanPhoneDigits(state.value))
+    && !isAcceptedStoredPhone(spec, state.value)
       // Reuse the resolver's hint/error timing instead of duplicating it.
       ? resolveFieldMessage("phone", { ...state, value: ALWAYS_INCOMPLETE_PHONE }, resolverOptions)
       : resolveFieldMessage(spec.kind === "birthday" ? "date" : spec.kind, state, resolverOptions);

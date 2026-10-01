@@ -32,8 +32,8 @@ export function SectionNav({ "data-component": dataComponent, items, activeId, o
                 onClick={() => onSelect(item.id)}
                 className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 text-left ${
                   isActive
-                    ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                    : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
+                    ? "bg-[hsl(var(--primary-light))] text-[hsl(var(--primary))]"
+                    : "text-[hsl(var(--text-muted))] hover:bg-[hsl(var(--v3-bg))]"
                 }`}
               >
                 <Icon className="w-4 h-4" />
@@ -57,8 +57,8 @@ export function SectionNav({ "data-component": dataComponent, items, activeId, o
                   onClick={() => onSelect(item.id)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all duration-200 ${
                     isActive
-                      ? "bg-[hsl(var(--v3-primary-light))] text-[hsl(var(--v3-primary))]"
-                      : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
+                      ? "bg-[hsl(var(--primary-light))] text-[hsl(var(--primary))]"
+                      : "text-[hsl(var(--text-muted))] bg-[hsl(var(--v3-bg))]"
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -70,7 +70,7 @@ export function SectionNav({ "data-component": dataComponent, items, activeId, o
         </div>
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[hsl(var(--v3-dim-white))] to-transparent"
+          className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[hsl(var(--surface))] to-transparent"
         />
       </div>
     </nav>

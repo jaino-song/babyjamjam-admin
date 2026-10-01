@@ -3,16 +3,24 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { api } from "@/lib/api/client";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 
+import type { Client } from "@/lib/client/types";
+
 import NewClientPage from "./page";
 
 const mockCreateClient = jest.fn();
+const mockUpdateClient = jest.fn();
 const mockEmptyPrices: never[] = [];
+let mockVoucherPrices: unknown[] = mockEmptyPrices;
+let mockVoucherPricesLoading = false;
+let mockVoucherPricesError = false;
+let mockSearchParams = new URLSearchParams();
+let mockEditingClient: Client | undefined;
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));
 
 jest.mock("@tanstack/react-query", () => ({
@@ -20,9 +28,9 @@ jest.mock("@tanstack/react-query", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
-  useClient: () => ({ data: undefined }),
+  useClient: () => ({ data: mockEditingClient }),
   useCreateClient: () => ({ isPending: false, mutateAsync: mockCreateClient }),
-  useUpdateClient: () => ({ isPending: false, mutateAsync: jest.fn() }),
+  useUpdateClient: () => ({ isPending: false, mutateAsync: mockUpdateClient }),
 }));
 
 jest.mock("@/hooks/useEmployees", () => ({
@@ -32,7 +40,11 @@ jest.mock("@/hooks/useEmployees", () => ({
 jest.mock("@/hooks/useVoucherData", () => ({
   useAllVoucherPrices: () => ({ data: mockEmptyPrices, isLoading: false, isFetching: false }),
   useOutOfPocketPriceInfos: () => ({ data: mockEmptyPrices, isLoading: false, isError: false }),
-  useVoucherPriceInfos: () => ({ data: mockEmptyPrices, isLoading: false }),
+  useVoucherPriceInfos: () => ({
+    data: mockVoucherPricesError ? undefined : mockVoucherPrices,
+    isLoading: mockVoucherPricesLoading,
+    isError: mockVoucherPricesError,
+  }),
   useVoucherYears: () => ({ data: mockEmptyPrices }),
 }));
 
@@ -82,6 +94,11 @@ const renderPage = async (step = 0) => {
 describe("mobile client wizard field messages", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockVoucherPrices = mockEmptyPrices;
+    mockVoucherPricesLoading = false;
+    mockVoucherPricesError = false;
+    mockSearchParams = new URLSearchParams();
+    mockEditingClient = undefined;
     act(() => useClientWizardStore.getState().reset());
     (api.get as jest.Mock).mockResolvedValue({ data: { exists: false } });
   });
@@ -182,5 +199,195 @@ describe("mobile client wizard field messages", () => {
     fireEvent.click(screen.getByRole("button", { name: "등록" }));
     expect(field("endDate")).toHaveFocus();
     expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  describe("service period guidance", () => {
+    const GUIDANCE = "유형에 따라 기간이 달라져요";
+
+    it("keeps the voucher period guidance in the label-row slot and nothing below the select", async () => {
+      await renderPage(1);
+      act(() => useClientWizardStore.getState().setField("voucherClient", true));
+
+      const duration = field("duration");
+      expect(slotOf(duration)).toHaveTextContent(GUIDANCE);
+      expect(slotOf(duration)).toHaveAttribute("aria-live", "polite");
+      // The guidance exists exactly once: in the slot, not as a line under the select.
+      expect(screen.getAllByText(GUIDANCE)).toHaveLength(1);
+      const wrapper = duration.closest('[data-component$="duration-field"]') as HTMLElement;
+      expect(wrapper.querySelectorAll("p")).toHaveLength(0);
+    });
+
+    it("shows no guidance for a self-pay client", async () => {
+      await renderPage(1);
+
+      expect(slotOf(field("duration"))).toBeEmptyDOMElement();
+      expect(screen.queryByText(GUIDANCE)).not.toBeInTheDocument();
+    });
+
+    it("keeps the guidance when 다음 is pressed with no type or period, and shows no required error", async () => {
+      await renderPage(1);
+      act(() => useClientWizardStore.getState().setField("voucherClient", true));
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+      expect(screen.queryByText("바우처 유형을 선택해 주세요")).not.toBeInTheDocument();
+      expect(screen.queryByText("서비스 기간을 선택해 주세요")).not.toBeInTheDocument();
+
+      act(() => useClientWizardStore.getState().setCurrentStep(1));
+      expect(slotOf(field("type"))).toBeEmptyDOMElement();
+      expect(field("type")).not.toHaveAttribute("aria-invalid", "true");
+      expect(slotOf(field("duration"))).toHaveTextContent(GUIDANCE);
+      expect(field("duration")).not.toHaveAttribute("aria-invalid", "true");
+    });
+  });
+
+  describe("service step gate", () => {
+    const PRICES = [{ duration: 15, fullPrice: "1000000", grant: "800000", actualPrice: "200000" }];
+    const setForm = (values: Record<string, unknown>) =>
+      act(() => {
+        Object.entries(values).forEach(([key, value]) =>
+          useClientWizardStore.getState().setField(key as never, value as never));
+      });
+
+    it("lets a self-pay client move from the service step to the next one", async () => {
+      await renderPage(1);
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+    });
+
+    it("lets a voucher client with no type or period move on and shows no required error", async () => {
+      mockVoucherPrices = PRICES;
+      await renderPage(1);
+      setForm({ voucherClient: true });
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+      expect(screen.queryByText("바우처 유형을 선택해 주세요")).not.toBeInTheDocument();
+      expect(screen.queryByText("서비스 기간을 선택해 주세요")).not.toBeInTheDocument();
+    });
+
+    it("lets a complete voucher client move on", async () => {
+      mockVoucherPrices = PRICES;
+      await renderPage(1);
+      setForm({ voucherClient: true, type: "A가1", duration: 15 });
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+    });
+
+    const editingVoucherClient = (duration: number, endDate: string) =>
+      ({
+        id: 7,
+        name: "박서연",
+        birthday: "1990-01-01",
+        dueDate: null,
+        birthDate: null,
+        address: "서울",
+        phone: "010-1234-5678",
+        primaryEmployee: null,
+        secondaryEmployee: null,
+        type: "A가1",
+        duration,
+        fullPrice: null,
+        grant: null,
+        actualPrice: null,
+        startDate: "2026-12-01",
+        endDate,
+        careCenter: false,
+        voucherClient: true,
+        breastPump: false,
+        serviceStatus: "pre_booking",
+        eDocId: null,
+        areaId: null,
+        hasSigned: false,
+        documentStatus: null,
+      }) as Client;
+
+    const openStoredPeriodEdit = async (client: Client) => {
+      mockSearchParams = new URLSearchParams("clientId=7");
+      mockVoucherPrices = PRICES;
+      mockUpdateClient.mockResolvedValue({ id: 7 });
+      mockEditingClient = client;
+      await renderPage(1);
+
+      expect(field("duration")).toHaveValue(String(client.duration));
+      expect(slotOf(field("duration"))).not.toHaveTextContent("서비스 기간을 선택해 주세요");
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+    };
+
+    it("asks for the business-day confirmation before saving a stored period missing from the price list", async () => {
+      // 2026-12-01 .. 2026-12-19 is 14 business days, not the stored 99.
+      await openStoredPeriodEdit(editingVoucherClient(99, "2026-12-19"));
+
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      await act(async () => {});
+
+      expect(screen.getByText("서비스 기간 확인")).toBeInTheDocument();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "확인" }));
+      await act(async () => {});
+
+      expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+      expect(mockUpdateClient).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 7,
+          dto: expect.objectContaining({ duration: 99, allowBusinessDayMismatch: true }),
+        }),
+      );
+    });
+
+    it("saves a stored period missing from the price list without confirmation when the dates match it", async () => {
+      // 2026-12-01 .. 2026-12-19 is exactly the stored 14 business days.
+      await openStoredPeriodEdit(editingVoucherClient(14, "2026-12-19"));
+
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      await act(async () => {});
+
+      expect(screen.queryByText("서비스 기간 확인")).not.toBeInTheDocument();
+      expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+      const { dto } = mockUpdateClient.mock.calls[0][0];
+      expect(dto).toEqual(expect.objectContaining({ duration: 14 }));
+      expect(dto).not.toHaveProperty("allowBusinessDayMismatch");
+    });
+
+    it("shows a failed voucher price lookup in the period slot", async () => {
+      mockVoucherPricesError = true;
+      await renderPage(1);
+      setForm({ voucherClient: true, type: "A가1" });
+
+      expect(slotOf(field("duration"))).toHaveTextContent("요금 정보를 불러오지 못했어요");
+      expect(field("duration")).toBeDisabled();
+      expect(field("duration")).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("shows no error in the period slot while its prices are still loading", async () => {
+      mockVoucherPricesLoading = true;
+      await renderPage(1);
+      setForm({ voucherClient: true, type: "A가1" });
+
+      expect(slotOf(field("duration"))).not.toHaveTextContent("서비스 기간을 선택해 주세요");
+      expect(field("duration")).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("keeps the guidance after the customer type changes", async () => {
+      await renderPage(1);
+      setForm({ voucherClient: true });
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+      act(() => useClientWizardStore.getState().setCurrentStep(1));
+
+      fireEvent.click(screen.getByRole("tab", { name: "자부담 고객" }));
+      fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
+
+      expect(slotOf(field("type"))).toBeEmptyDOMElement();
+      expect(slotOf(field("duration"))).toHaveTextContent("유형에 따라 기간이 달라져요");
+    });
   });
 });

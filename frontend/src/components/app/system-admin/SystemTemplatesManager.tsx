@@ -192,7 +192,7 @@ export function SystemTemplatesManager({
           title="메시지 템플릿"
           subtitle="고객에게 보내는 기본 메시지의 문구와 변수를 관리합니다"
           disabled={isSaving}
-          disabledOverlay={<span className="text-sm text-v3-text-muted">저장 중에는 템플릿을 전환할 수 없습니다.</span>}
+          disabledOverlay={<span className="text-sm text-text-muted">저장 중에는 템플릿을 전환할 수 없습니다.</span>}
           emptyState={
             templatesQuery.isError ? (
               <ListEmptyState message="시스템 템플릿을 불러오지 못했습니다." />
@@ -217,7 +217,7 @@ export function SystemTemplatesManager({
                 if (!isSaving) setSelectedTemplateKey(template.templateKey);
               }}
               render={({ item, isLoading }) => {
-                if (isLoading) return <Skeleton className="h-16 w-full rounded-[18px] bg-v3-dim-white" />;
+                if (isLoading) return <Skeleton className="h-16 w-full rounded-[18px] bg-surface" />;
                 if (!item) return null;
 
                 return (

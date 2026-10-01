@@ -63,12 +63,12 @@ export function MobileAuthCardContainer({
             className="flex flex-col gap-1 p-0 text-center"
           >
             {title ? (
-              <h2 data-component={componentSlots.title} className="text-2xl font-extrabold text-v3-dark md:text-xl">
+              <h2 data-component={componentSlots.title} className="text-2xl font-extrabold text-dark md:text-xl">
                 {title}
               </h2>
             ) : null}
             {subtitle ? (
-              <p data-component={componentSlots.subtitle} className="break-keep text-xs text-v3-text-muted md:text-[0.8rem]">
+              <p data-component={componentSlots.subtitle} className="break-keep text-xs text-text-muted md:text-[0.8rem]">
                 {subtitle}
               </p>
             ) : null}

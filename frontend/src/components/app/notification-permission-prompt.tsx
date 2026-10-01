@@ -90,7 +90,7 @@ export function NotificationPermissionPrompt() {
         >
             <div
                 aria-hidden="true"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-v3-orange-light text-v3-orange"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-light text-orange"
             >
                 <Bell className="h-5 w-5" />
             </div>
@@ -112,7 +112,7 @@ export function NotificationPermissionPrompt() {
                     <button
                         type="button"
                         onClick={handleDismiss}
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 dark:text-gray-400 dark:hover:bg-gray-700"
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:text-gray-400 dark:hover:bg-gray-700"
                     >
                         나중에
                     </button>
@@ -121,7 +121,7 @@ export function NotificationPermissionPrompt() {
             <button
                 type="button"
                 onClick={handleDismiss}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:hover:bg-gray-700 dark:hover:text-gray-300"
                 aria-label="알림 권한 안내 닫기"
             >
                 <X className="h-4 w-4" aria-hidden="true" />

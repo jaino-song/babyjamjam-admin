@@ -211,7 +211,7 @@ function ClientAutomationSection() {
                                     <AnimatedSlotListItemContent
                                         data-component="desktop_clients_sections_section-content_automation-section_split-layout_list-panel_content_item"
                                         icon={item.icon}
-                                        iconContainerClassName="text-v3-primary"
+                                        iconContainerClassName="text-primary"
                                         title={item.title}
                                         subtitle={item.subtitle}
                                         status={(
@@ -331,9 +331,6 @@ export default function ClientsPage() {
         () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
         [directory.clients, directory.isBranchContextReady, isSearchSettled],
     );
-    const matchedTotal = isSearchSettled && directory.isBranchContextReady && directory.data !== undefined
-        ? directory.matchedTotal
-        : null;
     const summary = isSearchSettled && listSummary.isBranchContextReady
         ? listSummary.data
         : undefined;
@@ -750,9 +747,6 @@ export default function ClientsPage() {
     const isDirectoryUnavailable = !directory.isBranchContextReady;
     const isDirectoryInitialError = isSearchSettled && directory.isInitialError;
     const isDirectoryRefreshError = isSearchSettled && directory.hasStaleData;
-    const listScopeSubtitle = matchedTotal !== null && !isDirectoryInitialError
-        ? `${summaryScopeLabel} · 일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시`
-        : undefined;
     const listSubHeader = isDirectoryRefreshError ? (
         <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
             <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
@@ -850,7 +844,6 @@ export default function ClientsPage() {
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
                     title="고객 목록"
-                    subtitle={listScopeSubtitle}
                     tabs={FILTER_CHIPS}
                     activeTab={activeFilter}
                     onTabChange={handleFilterChange}
@@ -868,7 +861,7 @@ export default function ClientsPage() {
                             data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_header_add"
                             className={
                                 shouldShowClientFormPanel
-                                    ? "max-w-full shrink-0 whitespace-nowrap bg-v3-primary px-[calc(10px*var(--glint-ui-scale,1))] text-white hover:bg-v3-primary"
+                                    ? "max-w-full shrink-0 whitespace-nowrap bg-primary px-[calc(10px*var(--glint-ui-scale,1))] text-white hover:bg-primary"
                                     : undefined
                             }
                         />
@@ -928,14 +921,14 @@ export default function ClientsPage() {
 	                                        if (isLoading) {
 	                                            return (
 	                                                <>
-	                                                    <div data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_avatar-skeleton" className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md">
+	                                                    <div data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_avatar-skeleton" className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-surface shadow-md">
 	                                                        <Skeleton className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
 	                                                    </div>
 	                                                    <div data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_info-skeleton" className="flex-1 min-w-0">
-	                                                        <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
-	                                                        <Skeleton className="mt-[calc(6px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(192px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+	                                                        <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-surface" />
+	                                                        <Skeleton className="mt-[calc(6px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(192px*var(--glint-ui-scale,1))] bg-surface" />
 	                                                    </div>
-	                                                    <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white" />
+	                                                    <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] rounded-full bg-surface" />
 	                                                </>
 	                                            );
 	                                        }
@@ -975,7 +968,7 @@ export default function ClientsPage() {
                                                             {remainingClientBadges.length > 0 ? (
                                                                 <span
                                                                     data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"
-                                                                    className="shrink-0 text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                                                    className="shrink-0 text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
                                                                 >
                                                                     +{remainingClientBadges.length}
                                                                 </span>
@@ -1068,7 +1061,7 @@ export default function ClientsPage() {
                                             aria-label="고객 작업 메뉴 열기"
                                             className="focus-visible:ring-0 focus-visible:ring-offset-0"
                                         >
-                                            <MoreVertical className="h-5 w-5 text-v3-text-muted" />
+                                            <MoreVertical className="h-5 w-5 text-text-muted" />
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end" className="min-w-[140px]">

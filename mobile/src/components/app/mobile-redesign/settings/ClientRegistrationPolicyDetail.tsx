@@ -38,7 +38,7 @@ export function ClientRegistrationPolicyDetail({
       <div
         data-component={sub("client-auto-registration")}
         data-slot="info-row"
-        className="flex items-center gap-[calc(14px*var(--glint-ui-scale,1))] border-b-[calc(1px*var(--glint-ui-scale,1))] border-v3-border py-[calc(11px*var(--glint-ui-scale,1))]"
+        className="flex items-center gap-[calc(14px*var(--glint-ui-scale,1))] border-b-[calc(1px*var(--glint-ui-scale,1))] border-border py-[calc(11px*var(--glint-ui-scale,1))]"
       >
         <div
           data-component={sub("client-auto-registration_copy")}
@@ -46,13 +46,13 @@ export function ClientRegistrationPolicyDetail({
         >
           <span
             data-component={sub("client-auto-registration_copy_label")}
-            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.08rem*var(--glint-ui-scale,1))] text-v3-dark"
+            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.08rem*var(--glint-ui-scale,1))] text-dark"
           >
             eformsign 계약서 도착 시 고객 자동 등록
           </span>
           <span
             data-component={sub("client-auto-registration_copy_description")}
-            className="text-[calc(0.66rem*var(--glint-ui-scale,1))] leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-v3-text-muted"
+            className="text-[calc(0.66rem*var(--glint-ui-scale,1))] leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-text-muted"
           >
             eformsign 계약서가 도착하거나 완결되면 산모를 고객 목록에 자동으로 등록합니다.
           </span>
@@ -81,13 +81,13 @@ export function ClientRegistrationPolicyDetail({
         >
           <span
             data-component={sub("greeting-on-auto-registration_copy_label")}
-            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.08rem*var(--glint-ui-scale,1))] text-v3-dark"
+            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.08rem*var(--glint-ui-scale,1))] text-dark"
           >
             자동 등록 시 인사 문자 발송
           </span>
           <span
             data-component={sub("greeting-on-auto-registration_copy_description")}
-            className="text-[calc(0.66rem*var(--glint-ui-scale,1))] leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-v3-text-muted"
+            className="text-[calc(0.66rem*var(--glint-ui-scale,1))] leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-text-muted"
           >
             자동 등록된 고객에게 인사 문자를 함께 발송합니다.
           </span>

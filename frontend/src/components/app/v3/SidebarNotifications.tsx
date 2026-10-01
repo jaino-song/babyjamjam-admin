@@ -39,10 +39,10 @@ const getNotificationIconContainerClassName = (notification: SidebarNotification
   }
 
   if (notification.icon === "consultation") {
-    return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-v3-primary";
+    return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-primary";
   }
 
-  return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-v3-primary";
+  return "border border-[hsl(214,70%,85%)] bg-[hsl(214,80%,95%)] text-primary";
 };
 
 const getNotificationStatusVariant = (
@@ -239,7 +239,7 @@ export function SidebarNotifications() {
                   type="button"
                   aria-label="알림 닫기"
                   data-component="desktop_chrome_sidebar_notifications-modal_close"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-text-muted transition-colors hover:bg-surface hover:text-dark"
                   onClick={() => setOpen(false)}
                 >
                   <X className="h-4 w-4" />
@@ -264,9 +264,9 @@ export function SidebarNotifications() {
                     })}
                     slotClassName={({ item }) =>
                       cn(
-                        "hover:!border-transparent hover:!bg-v3-primary-light/55",
+                        "hover:!border-transparent hover:!bg-primary-light/55",
                         item && "h-auto min-h-[calc(94px*var(--glint-ui-scale,1))] items-start overflow-visible",
-                        item?.unread && "border-v3-primary/20 bg-v3-primary-light/20 hover:!border-v3-primary/20 hover:!bg-v3-primary-light/65",
+                        item?.unread && "border-primary/20 bg-primary-light/20 hover:!border-primary/20 hover:!bg-primary-light/65",
                       )
                     }
                     render={({ item }) => {
@@ -294,7 +294,7 @@ export function SidebarNotifications() {
                               ) : null}
                               <span
                                 data-component="desktop_chrome_sidebar_notifications-modal_item_time"
-                                className="inline-flex items-center whitespace-nowrap text-right text-[calc(10.4px*var(--glint-ui-scale,1))] font-medium text-v3-text-muted"
+                                className="inline-flex items-center whitespace-nowrap text-right text-[calc(10.4px*var(--glint-ui-scale,1))] font-medium text-text-muted"
                               >
                                 {item.timeLabel}
                               </span>
@@ -309,12 +309,12 @@ export function SidebarNotifications() {
                     data-component="desktop_chrome_sidebar_notifications-modal_empty"
                     className="flex flex-col items-center justify-center gap-3 px-4 py-10 text-center"
                   >
-                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-v3-dim-white text-v3-text-muted">
+                    <div className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-muted">
                       <Bell className="h-5 w-5" />
                     </div>
                     <div>
-                      <p className="text-[0.85rem] font-semibold text-v3-dark">새 알림이 없습니다</p>
-                      <p className="mt-1 text-[0.74rem] leading-5 text-v3-text-muted">
+                      <p className="text-[0.85rem] font-semibold text-dark">새 알림이 없습니다</p>
+                      <p className="mt-1 text-[0.74rem] leading-5 text-text-muted">
                         확인이 필요한 일정이나 상태 변경이 생기면 여기에 표시됩니다.
                       </p>
                     </div>
@@ -340,8 +340,8 @@ export function SidebarNotifications() {
         aria-label="알림 열기"
         aria-expanded={open}
         className={cn(
-          "relative z-50 h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 bg-white text-v3-primary shadow-none [&_svg]:!size-[calc(20px*var(--glint-ui-scale,1))]",
-          "hover:bg-v3-primary-light hover:text-v3-primary"
+          "relative z-50 h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 bg-white text-primary shadow-none [&_svg]:!size-[calc(20px*var(--glint-ui-scale,1))]",
+          "hover:bg-primary-light hover:text-primary"
         )}
         onClick={() => setOpen((current) => !current)}
       >
@@ -349,7 +349,7 @@ export function SidebarNotifications() {
         {unreadCount > 0 ? (
           <span
             data-component="desktop_chrome_sidebar_notifications_trigger_badge"
-            className="absolute -right-[calc(4px*var(--glint-ui-scale,1))] -top-[calc(4px*var(--glint-ui-scale,1))] inline-flex h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] items-center justify-center rounded-full bg-v3-primary p-0 text-[calc(8.8px*var(--glint-ui-scale,1))] font-bold leading-none text-white"
+            className="absolute -right-[calc(4px*var(--glint-ui-scale,1))] -top-[calc(4px*var(--glint-ui-scale,1))] inline-flex h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] items-center justify-center rounded-full bg-primary p-0 text-[calc(8.8px*var(--glint-ui-scale,1))] font-bold leading-none text-white"
           >
             {unreadCount > 9 ? "9+" : unreadCount}
           </span>

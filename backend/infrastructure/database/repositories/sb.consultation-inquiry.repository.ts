@@ -89,7 +89,24 @@ export class SbConsultationInquiryRepository implements IConsultationInquiryRepo
             where: { id: branchId },
             select: {
                 ownerId: true,
+                // BJJ-357 follow-up: apply the same approval rule as
+                // findNotificationRecipientsByBranchId/findApprovedByIdInBranch
+                // (sb.user.repository.ts) and the login rule (auth.service.ts /
+                // auth-session.service.ts assertUserApproved) — a branch member must be
+                // approved, or be a global owner, to receive notifications. The branch
+                // owner (branch.ownerId, handled separately below) is always included
+                // regardless of this filter. Branch-active semantics are left exactly
+                // as before (this method already scopes to one branch fetched by id, so
+                // there was never a branch.isActive check here to preserve).
                 userBranches: {
+                    where: {
+                        user: {
+                            OR: [
+                                { approvalStatus: "approved" },
+                                { role: "owner" },
+                            ],
+                        },
+                    },
                     select: { userId: true },
                 },
             },

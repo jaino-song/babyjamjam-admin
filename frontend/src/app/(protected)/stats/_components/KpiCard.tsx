@@ -19,7 +19,7 @@ interface KpiCardProps {
 }
 
 const TONE_CLASSES = {
-  default: "text-v3-text",
+  default: "text-text",
   warn: "text-red-600",
   success: "text-green-700",
 } as const;
@@ -27,7 +27,7 @@ const TONE_CLASSES = {
 const DELTA_TONE_CLASSES = {
   up: "bg-green-100 text-green-700",
   down: "bg-red-100 text-red-700",
-  flat: "bg-v3-dim-white text-v3-text-muted",
+  flat: "bg-surface text-text-muted",
 } as const;
 
 export function KpiCard({
@@ -50,11 +50,11 @@ export function KpiCard({
     >
       <div data-component={`${dataComponent}_head`} className="flex items-center gap-2 mb-3">
         {Icon ? (
-          <Icon className="w-4 h-4 text-v3-text-muted" />
+          <Icon className="w-4 h-4 text-text-muted" />
         ) : iconEmoji ? (
           <span className="text-base leading-none">{iconEmoji}</span>
         ) : null}
-        <span className="text-[0.7rem] font-medium text-v3-text-muted truncate">{label}</span>
+        <span className="text-[0.7rem] font-medium text-text-muted truncate">{label}</span>
         {infoText ? (
           <InfoTooltip
             text={infoText}
@@ -75,7 +75,7 @@ export function KpiCard({
           {value}
         </span>
         {unit ? (
-          <span className="text-[0.78rem] text-v3-text-muted font-medium">{unit}</span>
+          <span className="text-[0.78rem] text-text-muted font-medium">{unit}</span>
         ) : null}
         {delta ? (
           <span
@@ -91,7 +91,7 @@ export function KpiCard({
       {meta ? (
         <div
           data-component={`${dataComponent}_meta`}
-          className="mt-1.5 text-[0.68rem] text-v3-text-muted leading-tight"
+          className="mt-1.5 text-[0.68rem] text-text-muted leading-tight"
         >
           {meta}
         </div>

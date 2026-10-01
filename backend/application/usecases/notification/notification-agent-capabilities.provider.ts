@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { z } from "zod";
 
 import { AgentCapabilityProvider } from "application/agent/capability.decorator";
@@ -11,6 +11,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHash } from "node:crypto";
 import { recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
 import { maskEmail, maskPhone } from "application/utils/mask";
+import { USER_REPOSITORY, IUserRepository } from "domain/repositories/user.repository.interface";
 
 const TestSchema = z.object({ userId: z.string().uuid(), title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(500) });
 const OutputSchema = z.object({
@@ -64,6 +65,8 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
     constructor(
         private readonly sendNotification: SendNotificationUsecase,
         private readonly prisma: PrismaService,
+        @Inject(USER_REPOSITORY)
+        private readonly userRepository: IUserRepository,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -214,7 +217,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
     }
 
     private async resolveNotificationTarget(branchId: string, userId: string): Promise<NotificationTarget | null> {
-        const [membership, branch] = await Promise.all([
+        const [membership, branch, approvedUser] = await Promise.all([
             this.prisma.user_branch.findFirst({
                 where: { userId, branchId },
                 select: {
@@ -231,7 +234,12 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                     owner: { select: { name: true, phone: true, email: true } },
                 },
             }),
+            // Matches the login rule (auth.service.ts / auth-session.service.ts
+            // assertUserApproved) and the BJJ-357 recipient filters: a rejected or
+            // pending non-owner is treated as not found here, same as a non-member.
+            this.userRepository.findApprovedByIdInBranch(userId, branchId),
         ]);
+        if (!approvedUser) return null;
         if (membership?.user) {
             return {
                 membershipId: membership.id,
@@ -274,6 +282,12 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 $queryRawUnsafe?: (query: string, ...values: unknown[]) => Promise<unknown>;
             };
             if (typeof rawTransaction.$queryRawUnsafe === "function") {
+                // Lock order must match reject() (user -> user_branch -> branch) to
+                // avoid a cross-transaction deadlock between the two paths.
+                await rawTransaction.$queryRawUnsafe(
+                    'SELECT "id" FROM "user" WHERE "id" = $1 FOR UPDATE',
+                    userId,
+                );
                 await rawTransaction.$queryRawUnsafe(
                     'SELECT "id" FROM "user_branch" WHERE "user_id" = $1 AND "branch_id" = $2 FOR UPDATE',
                     userId,
@@ -284,7 +298,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                     context.principal.branchId,
                 );
             }
-            const [membership, branch] = await Promise.all([
+            const [membership, branch, approvalUser] = await Promise.all([
                 transaction.user_branch.findFirst({
                     where: { userId, branchId: context.principal.branchId },
                     select: {
@@ -301,8 +315,21 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                         owner: { select: { name: true, phone: true, email: true } },
                     },
                 }),
+                transaction.user.findUnique({
+                    where: { id: userId },
+                    select: { approvalStatus: true, role: true },
+                }),
             ]);
-            const target = membership?.user
+            // Re-check approval inside the execution transaction: a user approved
+            // at inspect time (resolveNotificationTarget / findApprovedByIdInBranch)
+            // may have been rejected or reset to pending since. Matches the same
+            // approved-or-owner rule as findApprovedByIdInBranch, and treats a
+            // rejected/pending non-owner exactly like a vanished target below
+            // rather than as a separate failure path.
+            const isApproved = approvalUser != null && (approvalUser.approvalStatus === "approved" || approvalUser.role === "owner");
+            const target = !isApproved
+                ? null
+                : membership?.user
                 ? {
                     membershipId: membership.id,
                     role: membership.role,

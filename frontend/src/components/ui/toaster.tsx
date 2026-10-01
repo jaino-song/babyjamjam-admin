@@ -23,7 +23,7 @@ const VARIANT_SURFACE = {
   // A plain toast is a floating surface rather than a state, so it keeps the
   // white card colour. The neutral status tint is close enough to the page
   // background that it would read as a smudge rather than a card.
-  default: "bg-card border-v3-border text-v3-text",
+  default: "bg-card border-border text-text",
   success: STATUS_SURFACE.success,
   destructive: STATUS_SURFACE.danger,
 } as const;

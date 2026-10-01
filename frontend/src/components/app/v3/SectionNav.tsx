@@ -56,12 +56,12 @@ export function SectionNav({
                 aria-pressed={isActive}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-xl px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left text-[calc(14px*var(--glint-ui-scale,1))] font-medium transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
+                className={`flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-xl px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-left text-[calc(14px*var(--glint-ui-scale,1))] font-medium transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                   item.disabled
-                    ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed"
+                    ? "text-[hsl(var(--text-muted))]/40 cursor-not-allowed"
                     : isActive
-                      ? "bg-[hsl(var(--v3-primary))] text-white"
-                      : "text-[hsl(var(--v3-text-muted))] hover:bg-[hsl(var(--v3-bg))]"
+                      ? "bg-[hsl(var(--primary))] text-white"
+                      : "text-[hsl(var(--text-muted))] hover:bg-[hsl(var(--v3-bg))]"
                 }`}
               >
                 <Icon className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))]" />
@@ -90,12 +90,12 @@ export function SectionNav({
                 aria-pressed={isActive}
                 onClick={() => !item.disabled && onSelect(item.id)}
                 disabled={item.disabled}
-                className={`flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] rounded-full px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] font-medium whitespace-nowrap transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 ${
+                className={`flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] rounded-full px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] font-medium whitespace-nowrap transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                   item.disabled
-                    ? "text-[hsl(var(--v3-text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
+                    ? "text-[hsl(var(--text-muted))]/40 cursor-not-allowed bg-[hsl(var(--v3-bg))]"
                     : isActive
-                      ? "bg-[hsl(var(--v3-primary))] text-white"
-                      : "text-[hsl(var(--v3-text-muted))] bg-[hsl(var(--v3-bg))]"
+                      ? "bg-[hsl(var(--primary))] text-white"
+                      : "text-[hsl(var(--text-muted))] bg-[hsl(var(--v3-bg))]"
                 }`}
               >
                 <Icon className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))]" />

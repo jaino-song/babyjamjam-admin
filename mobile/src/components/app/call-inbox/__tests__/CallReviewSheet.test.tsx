@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CallReviewSheet } from "../CallReviewSheet";
@@ -480,6 +480,35 @@ describe("CallReviewSheet — field messages", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockConfirmMutateAsync.mockResolvedValue({ clientId: 42 });
+  });
+
+  describe("CLIENT_UPDATE low confidence", () => {
+    it("shows the low-confidence warning as guidance in the field slot, and an error replaces it", () => {
+      mockUseClientDraft.mockReturnValue({
+        data: {
+          ...baseDetail,
+          type: "CLIENT_UPDATE" as const,
+          clientId: 7,
+          client: { id: 7, name: "박지영", phone: "01099998888" },
+          proposals: [
+            { field: "startDate", value: "2026-07-20", currentValue: "2026-06-01", evidence: "7월 20일", confidence: "low" as const },
+          ],
+        },
+        isLoading: false,
+      });
+      render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
+
+      const start = screen.getByLabelText("시작일");
+      expect(slotOf(start)).toHaveTextContent("⚠ 확신도 낮음");
+
+      fireEvent.change(start, { target: { value: "2026-07" } });
+      fireEvent.blur(start);
+      expect(slotOf(start)).not.toHaveTextContent("확신도 낮음");
+      expect(slotOf(start)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
+
+      fireEvent.change(start, { target: { value: "2026-07-21" } });
+      expect(slotOf(start)).toHaveTextContent("⚠ 확신도 낮음");
+    });
   });
 
   describe("NEW_CLIENT", () => {

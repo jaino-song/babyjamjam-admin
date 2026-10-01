@@ -48,7 +48,7 @@ export default async function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={`${Pretendard.variable} antialiased min-h-screen bg-v3-dim-white`}>
+      <body className={`${Pretendard.variable} antialiased min-h-screen bg-surface`}>
         {/*
           `mobile-app-root` is a styling hook paired with data-slot="app-root" so
           globals.css's shell-geometry guard keeps its (0,2,2) specificity over

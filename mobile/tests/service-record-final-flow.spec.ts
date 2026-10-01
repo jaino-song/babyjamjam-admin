@@ -103,8 +103,8 @@ test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기�
   await expect(page.getByText("서비스 제공 기록은 해당 날짜에만 기록이 가능합니다.", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "기록 시작" }).click();
 
-  await expect(page.locator('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]'))
-    .toHaveText("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+  // The warning lives in the date field's own label-row slot.
+  await expect(page.locator("#service-record-date-helper")).toHaveText("오늘과 다른 날짜예요");
   await expect(page.getByRole("button", { name: "열상" })).toBeEnabled();
   await page.getByRole("button", { name: "열상" }).click();
   await page.getByLabel("식사").fill("3");

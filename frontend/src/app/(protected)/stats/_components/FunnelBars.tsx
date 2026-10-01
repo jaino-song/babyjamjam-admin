@@ -17,7 +17,7 @@ export function FunnelBars({
 }: FunnelBarsProps) {
   if (steps.length === 0) {
     return (
-      <p className="text-[0.78rem] text-v3-text-muted py-4 text-center">
+      <p className="text-[0.78rem] text-text-muted py-4 text-center">
         펀널 데이터가 아직 없어요.
       </p>
     );
@@ -40,7 +40,7 @@ export function FunnelBars({
                   variant === "verbose" ? "w-[200px]" : "w-[150px]"
                 )}
               >
-                <div className="text-[0.78rem] font-medium text-v3-text leading-tight">
+                <div className="text-[0.78rem] font-medium text-text leading-tight">
                   {s.label}
                   {isBiggestDrop ? (
                     <span className="ml-1.5 inline-block rounded bg-red-100 px-1.5 py-0.5 text-[0.6rem] font-semibold text-red-600 align-middle">
@@ -48,11 +48,11 @@ export function FunnelBars({
                     </span>
                   ) : null}
                 </div>
-                <div className="text-[0.6rem] font-mono text-v3-text-muted truncate">
+                <div className="text-[0.6rem] font-mono text-text-muted truncate">
                   {s.event}
                 </div>
               </div>
-              <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
+              <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
                 <div
                   className={cn(
                     "h-full rounded-md transition-all",
@@ -60,14 +60,14 @@ export function FunnelBars({
                       ? "bg-gradient-to-r from-green-600 to-green-700"
                       : isBiggestDrop
                         ? "bg-gradient-to-r from-red-500 to-red-600"
-                        : "bg-gradient-to-r from-v3-primary to-blue-700"
+                        : "bg-gradient-to-r from-primary to-blue-700"
                   )}
                   style={{ width: s.pct === 0 ? "0%" : `${Math.max(s.pct, 1)}%` }}
                 />
               </div>
-              <div className="w-20 text-right text-[0.78rem] font-semibold text-v3-text tabular-nums">
+              <div className="w-20 text-right text-[0.78rem] font-semibold text-text tabular-nums">
                 {s.count}
-                <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
+                <span className="ml-1 text-[0.65rem] font-normal text-text-muted">
                   {s.pct.toFixed(0)}%
                 </span>
               </div>
@@ -77,7 +77,7 @@ export function FunnelBars({
                 className={cn(
                   "mt-1 text-[0.65rem] tabular-nums",
                   variant === "verbose" ? "pl-[200px]" : "pl-[150px]",
-                  isBiggestDrop ? "text-red-600 font-semibold" : "text-v3-text-muted"
+                  isBiggestDrop ? "text-red-600 font-semibold" : "text-text-muted"
                 )}
               >
                 ↓ {Math.round(steps[i - 1].count - s.count)}명 감소 ({s.dropFromPrevPct.toFixed(0)}%)

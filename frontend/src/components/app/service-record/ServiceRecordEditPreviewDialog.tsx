@@ -92,7 +92,7 @@ function SessionDateList({
                     key={`${session.sessionIndex}-${session.assignmentId}`}
                 >
                     <span>{session.sessionIndex}회차</span>
-                    <span className="font-semibold text-v3-dark">{formatDate(session.serviceDate)}</span>
+                    <span className="font-semibold text-dark">{formatDate(session.serviceDate)}</span>
                 </li>
             ))}
         </ol>
@@ -218,32 +218,32 @@ export function ServiceRecordEditPreviewDialog({
 
                             <section data-component={`${dataComponent}_content_dates`} data-slot="dates" className="grid gap-4 md:grid-cols-2">
                                 <div data-component={`${dataComponent}_content_dates_before`} data-slot="before" className="flex flex-col gap-2">
-                                    <h3 className="text-sm font-semibold text-v3-dark">변경 전</h3>
-                                    <p className="text-sm text-v3-text-muted">{formatDate(preview.before.startDate)} ~ {formatDate(preview.before.endDate)}</p>
+                                    <h3 className="text-sm font-semibold text-dark">변경 전</h3>
+                                    <p className="text-sm text-text-muted">{formatDate(preview.before.startDate)} ~ {formatDate(preview.before.endDate)}</p>
                                     <SessionDateList dataComponent={`${dataComponent}_content_dates_before_sessions`} sessions={preview.before.sessions} />
                                 </div>
                                 <div data-component={`${dataComponent}_content_dates_after`} data-slot="after" className="flex flex-col gap-2">
-                                    <h3 className="text-sm font-semibold text-v3-dark">변경 후</h3>
-                                    <p className="text-sm text-v3-text-muted">{formatDate(preview.after.startDate)} ~ {formatDate(preview.after.endDate)}</p>
+                                    <h3 className="text-sm font-semibold text-dark">변경 후</h3>
+                                    <p className="text-sm text-text-muted">{formatDate(preview.after.startDate)} ~ {formatDate(preview.after.endDate)}</p>
                                     <SessionDateList dataComponent={`${dataComponent}_content_dates_after_sessions`} sessions={preview.after.sessions} />
                                 </div>
                             </section>
 
                             <section data-component={`${dataComponent}_content_assignments`} data-slot="assignments" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">배정 영향</h3>
+                                <h3 className="text-sm font-semibold text-dark">배정 영향</h3>
                                 {preview.impactedAssignments.length > 0 ? (
-                                    <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
+                                    <ul className="list-disc space-y-1 pl-5 text-sm text-text-muted">
                                         {preview.impactedAssignments.map((assignmentId) => <li key={assignmentId}>{assignmentId}</li>)}
                                     </ul>
                                 ) : (
-                                    <p data-slot="none" className="text-sm text-v3-text-muted">변경되는 배정이 없습니다.</p>
+                                    <p data-slot="none" className="text-sm text-text-muted">변경되는 배정이 없습니다.</p>
                                 )}
                             </section>
 
                             <section data-component={`${dataComponent}_content_changes`} data-slot="content-changes" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">내용 변경</h3>
-                                <p className="text-sm text-v3-text-muted">기본정보: {contentChanges.headerChanged ? "변경됨" : "변경 없음"}</p>
-                                <p className="text-sm text-v3-text-muted">
+                                <h3 className="text-sm font-semibold text-dark">내용 변경</h3>
+                                <p className="text-sm text-text-muted">기본정보: {contentChanges.headerChanged ? "변경됨" : "변경 없음"}</p>
+                                <p className="text-sm text-text-muted">
                                     기록 회차: {contentChanges.changedSessionIndexes.length > 0
                                         ? contentChanges.changedSessionIndexes.map((sessionIndex) => `${sessionIndex}회차`).join(", ")
                                         : "변경 없음"}
@@ -251,12 +251,12 @@ export function ServiceRecordEditPreviewDialog({
                             </section>
 
                             <section data-component={`${dataComponent}_content_signature-metadata`} data-slot="signature-metadata" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">제공기록지 서명 메타데이터</h3>
-                                <p className="text-sm text-v3-text-muted">처리: {formatSignatureTreatment(preview.signatureMetadata.treatment)}</p>
-                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.signatureMetadata.evidence)}</p>
-                                <p className="text-xs text-v3-text-muted">이 항목은 제공기록지 서명만 다루며 계약서 서명을 재사용하지 않습니다.</p>
+                                <h3 className="text-sm font-semibold text-dark">제공기록지 서명 메타데이터</h3>
+                                <p className="text-sm text-text-muted">처리: {formatSignatureTreatment(preview.signatureMetadata.treatment)}</p>
+                                <p className="text-sm text-text-muted">근거: {formatEvidence(preview.signatureMetadata.evidence)}</p>
+                                <p className="text-xs text-text-muted">이 항목은 제공기록지 서명만 다루며 계약서 서명을 재사용하지 않습니다.</p>
                                 {preview.signatureMetadata.sessions.length > 0 ? (
-                                    <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
+                                    <ul className="list-disc space-y-1 pl-5 text-sm text-text-muted">
                                         {preview.signatureMetadata.sessions.map((session) => (
                                             <li key={session.sessionIndex}>
                                                 {session.sessionIndex}회차 · {session.hasSignature ? "서명 있음" : "서명 없음"}
@@ -266,29 +266,29 @@ export function ServiceRecordEditPreviewDialog({
                                         ))}
                                     </ul>
                                 ) : (
-                                    <p data-slot="none" className="text-sm text-v3-text-muted">회차별 서명 메타데이터가 없습니다.</p>
+                                    <p data-slot="none" className="text-sm text-text-muted">회차별 서명 메타데이터가 없습니다.</p>
                                 )}
                             </section>
 
                             <section data-component={`${dataComponent}_content_document-scope`} data-slot="document-scope" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">전자문서 영향 범위</h3>
-                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.documentScope.evidence)}</p>
-                                <p className="text-sm text-v3-text-muted">계약 상태: {formatContractStage(preview.documentScope.contract.stage)}</p>
-                                <p className="text-sm text-v3-text-muted">
+                                <h3 className="text-sm font-semibold text-dark">전자문서 영향 범위</h3>
+                                <p className="text-sm text-text-muted">근거: {formatEvidence(preview.documentScope.evidence)}</p>
+                                <p className="text-sm text-text-muted">계약 상태: {formatContractStage(preview.documentScope.contract.stage)}</p>
+                                <p className="text-sm text-text-muted">
                                     현재 계약 문서: {preview.documentScope.contract.currentDocumentId ?? "확인되지 않음"}
                                 </p>
-                                <p className="text-sm text-v3-text-muted">
+                                <p className="text-sm text-text-muted">
                                     제공기록지 문서: {preview.documentScope.serviceRecordSnapshot.documentIds.length > 0
                                         ? preview.documentScope.serviceRecordSnapshot.documentIds.join(", ")
                                         : "확인되지 않음"}
                                 </p>
-                                <p className="text-sm text-v3-text-muted">
+                                <p className="text-sm text-text-muted">
                                     문서·버전 범위: snapshot {preview.documentScope.serviceRecordSnapshot.snapshotVersion ?? "확인되지 않음"}
                                     · 청크 {preview.documentScope.serviceRecordSnapshot.chunks.length}개
                                     · 현재 수정본 {preview.documentScope.currentRevision.revisionNumber ?? "확인되지 않음"}
                                     · 양식 {preview.documentScope.form.version ?? "확인되지 않음"}
                                 </p>
-                                <p className="text-xs text-v3-text-muted">
+                                <p className="text-xs text-text-muted">
                                     날짜 표시 변경 범위와 문서 재생성 범위는 서버가 확인한 값만 표시합니다.
                                 </p>
                             </section>

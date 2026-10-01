@@ -417,7 +417,7 @@ function InfoRowsCard({
             >
               <Skeleton
                 className={cn(
-                  "bg-v3-border/70",
+                  "bg-border/70",
                   row.label === "주소" ? "h-10 w-[78%] rounded-[12px]" : "h-4 rounded-full",
                   row.label !== "주소" && ([
                     "w-24",
@@ -701,7 +701,7 @@ export default function ContractsPage() {
   if (authError || error) {
     return (
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
-        <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
+        <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-burgundy">
           {authError
             ? "인증에 실패했어요. 페이지를 새로고침 해 주세요."
             : "문서를 불러오는데 실패했어요."}
@@ -783,7 +783,7 @@ export default function ContractsPage() {
                 data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"
                 className={
                   isCreating || hasContractCreationSession
-                    ? "bg-v3-primary text-white hover:bg-v3-primary"
+                    ? "bg-primary text-white hover:bg-primary"
                     : undefined
                 }
               />
@@ -852,7 +852,7 @@ export default function ContractsPage() {
                       avatar={
                         <div
                           data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel_avatar"
-                          className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
+                          className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary"
                         >
                           <Send className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                         </div>
@@ -997,7 +997,7 @@ export default function ContractsPage() {
                   title="제공인력 계약 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1009,7 +1009,7 @@ export default function ContractsPage() {
                   title="제공인력 계약서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <Briefcase className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1030,7 +1030,7 @@ export default function ContractsPage() {
                   title="전자문서 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1042,7 +1042,7 @@ export default function ContractsPage() {
                   title="전자문서"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <FileText className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1063,7 +1063,7 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1075,7 +1075,7 @@ export default function ContractsPage() {
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
-                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary">
+                    <div className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary">
                       <Bell className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
                     </div>
                   }
@@ -1815,7 +1815,7 @@ export function ContractDetail({
           label: "고객명",
           value: (
             <span className="flex w-full items-center justify-end gap-1.5 text-right">
-              <User className="w-3.5 h-3.5 text-v3-text-muted" />
+              <User className="w-3.5 h-3.5 text-text-muted" />
               {customerName}
             </span>
           ),
@@ -1825,7 +1825,7 @@ export function ContractDetail({
           label: "주소",
           value: customerAddress ? (
             <span className="flex w-full min-w-0 items-start justify-end gap-1.5 text-right leading-5">
-              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-v3-text-muted" />
+              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
               <span className="break-keep whitespace-normal">{customerAddress}</span>
             </span>
           ) : (
@@ -1837,7 +1837,7 @@ export function ContractDetail({
           label: "이메일",
           value: contactInfo.email ? (
             <span className="flex w-full items-center justify-end gap-1.5 text-right">
-              <Mail className="w-3.5 h-3.5 text-v3-text-muted" />
+              <Mail className="w-3.5 h-3.5 text-text-muted" />
               {contactInfo.email}
             </span>
           ) : (
@@ -1959,7 +1959,7 @@ export function ContractDetail({
       <button
         type="button"
         data-component={`${dataComponent}_header_stepper-actions_activity-trigger`}
-        className="overflow-visible rounded-[18px] p-[calc(4px*var(--glint-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/20"
+        className="overflow-visible rounded-[18px] p-[calc(4px*var(--glint-ui-scale,1))] transition-colors duration-200 ease-out hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20"
         onClick={() => setIsActivityOpen(true)}
         aria-label="계약서 단계 보기"
         title="계약서 단계 보기"
@@ -1977,7 +1977,7 @@ export function ContractDetail({
               variant="ghost"
               size="icon"
               data-component={`${dataComponent}_header_stepper-actions_more-menu_trigger`}
-              className="mt-[calc(8px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 p-0 text-v3-text-muted hover:bg-v3-dim-white hover:text-v3-primary"
+              className="mt-[calc(8px*var(--glint-ui-scale,1))] h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] rounded-full border-0 p-0 text-text-muted hover:bg-surface hover:text-primary"
               aria-label="계약 작업 더보기"
             >
               <MoreVertical className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
