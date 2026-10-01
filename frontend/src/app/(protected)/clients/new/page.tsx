@@ -42,7 +42,7 @@ import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { FieldMessageText } from "@/components/app/ui/field-message";
-import { FormField as AppFormField, FormNativeSelect } from "@/components/app/ui/form-section";
+import { FormField as AppFormField, FormNativeSelect, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
@@ -111,11 +111,6 @@ const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
     ? "문제가 발생했어요. 새로고침 해주세요."
     : "Something went wrong. Please refresh and try again.";
 
-const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
-  locale === "ko"
-    ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
-    : "Checking for duplicate phone number. Please wait.";
-
 export default function NewClientPage() {
   const router = useRouter();
   const locale = useLocale();
@@ -137,12 +132,16 @@ export default function NewClientPage() {
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
-  const phoneInlineMessage = phoneDigits.length === 11
+  // Duplicate-check status for the phone field's label-row slot: a failed
+  // check or duplicate is an error, a check still running is a hint.
+  const phoneInlineMessage: FieldMessageView | null = phoneDigits.length === 11
     ? hasPhoneDuplicateCheckFailed
-      ? getPhoneDuplicateCheckFailedMessage(locale)
-      : isPhoneDuplicate
-        ? t(locale, "clients.form.error-phone-duplicate")
-        : null
+      ? { tone: "error", text: getPhoneDuplicateCheckFailedMessage(locale) }
+      : isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits
+        ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
+        : isPhoneDuplicate
+          ? { tone: "error", text: t(locale, "clients.form.error-phone-duplicate") }
+          : null
     : null;
 
   useEffect(() => {
@@ -374,9 +373,7 @@ export default function NewClientPage() {
     if (field === "birthday" && value.length === 10 && !isValidBirthdayIsoDate(value)) {
       return { tone: "error", text: t(locale, "form.validation.birthday-future") };
     }
-    if (!settled && field === "phone" && phoneInlineMessage) {
-      return { tone: "error", text: phoneInlineMessage };
-    }
+    if (!settled && field === "phone" && phoneInlineMessage) return phoneInlineMessage;
     return null;
   };
 
@@ -400,15 +397,13 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (phoneDigits.length === 11) {
-          if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
-            return false;
-          }
-          if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
-            return false;
-          }
-          if (isPhoneDuplicate) {
+          // A pending, failed or duplicate check already shows in the phone slot.
+          if (
+            isCheckingPhoneDuplicate
+            || lastCheckedPhoneDigits !== phoneDigits
+            || hasPhoneDuplicateCheckFailed
+            || isPhoneDuplicate
+          ) {
             document.getElementById(clientInputElementId("phone"))?.focus();
             return false;
           }
@@ -572,18 +567,26 @@ export default function NewClientPage() {
           </div>
 
           <div data-component="desktop_clients-new_service_step_grid" className={GRID_CLS}>
-            {store.voucherClient && <div data-component="desktop_clients-new_service_step_grid_year-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-year")}</label>
+            {store.voucherClient && <AppFormField
+              data-component="desktop_clients-new_service_step_grid_year-field"
+              htmlFor="clients-new-voucher-year"
+              label={t(locale, "clients.form.voucher-year")}
+            >
               <FormNativeSelect
+                id="clients-new-voucher-year"
                 className={SELECT_CLS}
                 value={resolvedVoucherYear.toString()}
                 onValueChange={handleVoucherYearChange}
                 options={voucherYearOptions}
               />
-            </div>}
-            {store.voucherClient && <div data-component="desktop_clients-new_service_step_grid_type-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
+            </AppFormField>}
+            {store.voucherClient && <AppFormField
+              data-component="desktop_clients-new_service_step_grid_type-field"
+              htmlFor="clients-new-voucher-type"
+              label={t(locale, "clients.form.voucher-type")}
+            >
               <FormNativeSelect
+                id="clients-new-voucher-type"
                 className={SELECT_CLS}
                 value={store.type}
                 onValueChange={handleTypeChange}
@@ -597,9 +600,10 @@ export default function NewClientPage() {
                   ),
                 ]}
               />
-            </div>}
+            </AppFormField>}
             <AppFormField
               data-component="desktop_clients-new_service_step_grid_duration-field"
+              htmlFor="clients-new-duration"
               label={t(locale, "clients.form.duration")}
               labelAccessory={!store.voucherClient && isOutOfPocketPriceError ? (
                 <FieldMessageText
@@ -613,6 +617,7 @@ export default function NewClientPage() {
             >
               <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap" className="relative">
                 <FormNativeSelect
+                  id="clients-new-duration"
                   className={cn(SELECT_CLS, (store.voucherClient
                     ? !store.type || isPriceLoading
                     : isOutOfPocketPriceLoading || isOutOfPocketPriceError) && "opacity-50")}
@@ -640,13 +645,12 @@ export default function NewClientPage() {
           </div>
 
           <div data-component="desktop_clients-new_service_step_employee-grid" className={GRID_CLS}>
-            <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.primary-employee")}</label>
+            <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field">
               <EmployeeAutocomplete
                   data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field_autocomplete"
                 value={store.primaryEmployeeId}
                 onChange={(id) => setField("primaryEmployeeId", id)}
-                label=""
+                label={t(locale, "clients.form.primary-employee")}
                 excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
@@ -655,13 +659,12 @@ export default function NewClientPage() {
                 }}
               />
             </div>
-            <div data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.secondary-employee")}</label>
+            <div data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field">
               <EmployeeAutocomplete
                   data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field_autocomplete"
                 value={store.secondaryEmployeeId}
                 onChange={(id) => setField("secondaryEmployeeId", id)}
-                label=""
+                label={t(locale, "clients.form.secondary-employee")}
                 excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
@@ -682,43 +685,52 @@ export default function NewClientPage() {
               )}
             </div>
             <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid" className={cn("grid grid-cols-1 gap-4", store.voucherClient && "md:grid-cols-3")}>
-              <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.full-price")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field_full-price-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
-                    onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                    disabled={arePriceInputsLocked}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>
-              {store.voucherClient && <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.grant")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field_grant-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={formatPrice(store.grant)}
-                    onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>}
-              {store.voucherClient && <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.actual-price")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field_actual-price-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={formatPrice(store.actualPrice)}
-                    onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>}
+              <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field"
+                htmlFor="clients-new-full-price"
+                label={t(locale, "clients.form.full-price")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field_full-price-input-wrap"
+                  id="clients-new-full-price"
+                  value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
+                  onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                  disabled={arePriceInputsLocked}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>
+              {store.voucherClient && <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field"
+                htmlFor="clients-new-grant"
+                label={t(locale, "clients.form.grant")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field_grant-input-wrap"
+                  id="clients-new-grant"
+                  value={formatPrice(store.grant)}
+                  onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>}
+              {store.voucherClient && <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field"
+                htmlFor="clients-new-actual-price"
+                label={t(locale, "clients.form.actual-price")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field_actual-price-input-wrap"
+                  id="clients-new-actual-price"
+                  value={formatPrice(store.actualPrice)}
+                  onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>}
             </div>
           </div>
 
@@ -784,15 +796,19 @@ export default function NewClientPage() {
       content: (
         <div data-component="desktop_clients-new_contract_step" className="space-y-6">
           <div data-component="desktop_clients-new_contract_step_grid" className={GRID_CLS}>
-            <div data-component="desktop_clients-new_contract_step_grid_status-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.contract-status")}</label>
+            <AppFormField
+              data-component="desktop_clients-new_contract_step_grid_status-field"
+              htmlFor="clients-new-contract-status"
+              label={t(locale, "clients.form.contract-status")}
+            >
               <FormNativeSelect
+                id="clients-new-contract-status"
                 className={SELECT_CLS}
                 value={store.serviceStatus}
                 onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
                 options={SERVICE_STATUS_OPTIONS}
               />
-            </div>
+            </AppFormField>
             <div data-component="desktop_clients-new_contract_step_grid_spacer" />
             <div data-component="desktop_clients-new_contract_step_grid_start-date-field">
               <FormField

@@ -62,10 +62,11 @@ export function withGuidance(
 }
 
 /** Static guidance for a new-password field: what a valid password needs. */
-export const PASSWORD_GUIDANCE = "소문자·숫자·특수문자 8자 이상";
+export const PASSWORD_GUIDANCE = "대·소문자·숫자·특수문자 8자+";
 
 const PASSWORD_REQUIREMENT_SHORT_LABELS: Record<string, string> = {
     "최소 8자 이상": "8자 이상",
+    "대문자 포함": "대문자",
     "소문자 포함": "소문자",
     "숫자 포함": "숫자",
     "특수문자 포함": "특수문자",
@@ -79,10 +80,11 @@ const PASSWORD_REQUIREMENT_SHORT_LABELS: Record<string, string> = {
 export function getPasswordRequirementMessage(
     password: string,
     requirements: ReadonlyArray<{ label: string; met: boolean }>,
+    missingTone: "hint" | "error" = "hint",
 ): FieldMessageView | null {
     if (!password) return null;
     const missing = requirements.filter((requirement) => !requirement.met);
     if (missing.length === 0) return { tone: "ok", text: "사용할 수 있는 비밀번호예요" };
     const names = missing.map((requirement) => PASSWORD_REQUIREMENT_SHORT_LABELS[requirement.label] ?? requirement.label);
-    return { tone: "hint", text: `${names.join("·")} 필요` };
+    return { tone: missingTone, text: `${names.join("·")} 필요` };
 }

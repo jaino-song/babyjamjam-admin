@@ -55,7 +55,7 @@ export const forgotPasswordSchema = z.object({
 // Reset password schema
 export const resetPasswordSchema = z.object({
     newPassword: passwordSchema,
-    confirmPassword: z.string().min(1, '확인할 비밀번호를 다시 입력해 주세요.'),
+    confirmPassword: z.string().min(1, '비밀번호를 다시 입력해 주세요.'),
 }).refine((data) => data.newPassword === data.confirmPassword, {
     message: "비밀번호가 일치하지 않아요.",
     path: ['confirmPassword'],
@@ -64,7 +64,7 @@ export const resetPasswordSchema = z.object({
 // Link password schema (for OAuth users adding password)
 export const linkPasswordSchema = z.object({
     password: passwordSchema,
-    confirmPassword: z.string().min(1, '확인할 비밀번호를 다시 입력해 주세요.'),
+    confirmPassword: z.string().min(1, '비밀번호를 다시 입력해 주세요.'),
 }).refine((data) => data.password === data.confirmPassword, {
     message: "비밀번호가 일치하지 않아요.",
     path: ['confirmPassword'],
@@ -79,8 +79,10 @@ export type ResetPasswordFormData = z.infer<typeof resetPasswordSchema>;
 export type LinkPasswordFormData = z.infer<typeof linkPasswordSchema>;
 
 // Helper to get password requirements for UI display
+// Must mirror `authPasswordSchema` rule for rule (auth.test.ts compares them).
 export const passwordRequirements = [
     { label: '최소 8자 이상', regex: /.{8,}/ },
+    { label: '대문자 포함', regex: /[A-Z]/ },
     { label: '소문자 포함', regex: /[a-z]/ },
     { label: '숫자 포함', regex: /[0-9]/ },
     { label: '특수문자 포함', regex: /[^A-Za-z0-9]/ },

@@ -2119,7 +2119,7 @@ export const ContractCreationForm = ({
               excludeIds={employee2Id !== null ? [employee2Id] : []}
               placeholder={registeredSnapshot?.primaryEmployeeId.display ?? undefined}
               labelTrailing={registeredDiffHint("primaryEmployeeId")}
-              describedBy={registeredDiffDescribedBy("primaryEmployeeId")}
+              describedBy={employeeMessage === null ? registeredDiffDescribedBy("primaryEmployeeId") : undefined}
               error={employeeMessage !== null}
               helperText={employeeMessage?.text}
             />
@@ -2149,7 +2149,7 @@ export const ContractCreationForm = ({
                 excludeIds={employeeId !== null ? [employeeId] : []}
                 placeholder={registeredSnapshot?.secondaryEmployeeId.display ?? undefined}
                 labelTrailing={registeredDiffHint("secondaryEmployeeId")}
-                describedBy={registeredDiffDescribedBy("secondaryEmployeeId")}
+                describedBy={employee2Message === null ? registeredDiffDescribedBy("secondaryEmployeeId") : undefined}
                 error={employee2Message !== null}
                 helperText={employee2Message?.text}
               />
