@@ -1,4 +1,45 @@
 import fs from "node:fs";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen } from "@testing-library/react";
+
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+
+import SettingsPage from "./page";
+
+jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: jest.fn() }));
+jest.mock("@/hooks/usePushNotification", () => ({
+  usePushNotification: () => ({
+    isSupported: false,
+    isSubscribed: false,
+    permission: "default",
+    isLoading: false,
+    error: null,
+    subscribe: jest.fn(),
+    unsubscribe: jest.fn(),
+  }),
+}));
+jest.mock("@/services/api", () => ({
+  settingsApi: {
+    getNotificationPreferences: jest.fn().mockResolvedValue({ emailNotificationsEnabled: true }),
+    updateNotificationPreferences: jest.fn(),
+  },
+}));
+jest.mock("@/features/auth/settings/kakao-link-result-modal", () => ({
+  KakaoLinkResultModal: () => null,
+}));
+jest.mock("@/components/app/call-ingest-tokens/CallIngestTokenSection", () => ({
+  CallIngestTokenSection: () => <div>call-ingest-section</div>,
+}));
+jest.mock("@/components/app/notifications/SendNotificationSection", () => ({
+  SendNotificationSection: () => <div>send-notification-section</div>,
+}));
+jest.mock("@/components/app/holidays/HolidaySettingsSection", () => ({
+  HolidaySettingsSection: ({ branchId, branchName }: { branchId: string; branchName?: string | null }) => (
+    <div>{`holiday-section ${branchId} ${branchName ?? ""}`}</div>
+  ),
+}));
+
+const mockedUseGetAuthUser = useGetAuthUser as jest.Mock;
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -82,5 +123,49 @@ describe("SettingsPage send-notification tab gating", () => {
     expect(gate).toContain("branchId ? (");
     expect(truthyArm).toBeGreaterThan(-1);
     expect(falsyArm).toBeGreaterThan(truthyArm);
+  });
+});
+
+// Behavioral check of the 공휴일 nav entry: shown to branch managers (admin,
+// manager, global owner), hidden from a plain member.
+describe("SettingsPage holidays section", () => {
+  function renderPage(user: Record<string, unknown>) {
+    mockedUseGetAuthUser.mockReturnValue({ data: user, isPending: false, isLoading: false, isFetching: false, isError: false });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <SettingsPage />
+      </QueryClientProvider>,
+    );
+  }
+
+  it.each([
+    ["branch manager", { role: "user", branchRole: "manager" }],
+    ["branch admin", { role: "user", branchRole: "admin" }],
+    ["global owner", { role: "owner", branchRole: null }],
+  ])("offers 공휴일 to a %s and opens the section for the active branch", (_label, authority) => {
+    renderPage({ ...authority, name: "관리자", branchId: "branch-1", branchName: "인천 남동지점" });
+
+    const navButtons = screen.getAllByRole("button", { name: "공휴일" });
+    expect(navButtons.length).toBeGreaterThan(0);
+
+    fireEvent.click(navButtons[0]);
+    expect(screen.getByText("holiday-section branch-1 인천 남동지점")).toBeInTheDocument();
+  });
+
+  it("explains itself instead of an empty panel when the manager has no branch", () => {
+    renderPage({ role: "owner", branchRole: null, name: "대표", branchId: null });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "공휴일" })[0]);
+    expect(screen.getByText(/상단에서 지점을 먼저 선택해 주세요/)).toBeInTheDocument();
+    expect(screen.queryByText(/holiday-section/)).not.toBeInTheDocument();
+  });
+
+  it("hides 공휴일 from a plain branch member", () => {
+    renderPage({ role: "user", branchRole: "member", name: "직원", branchId: "branch-1", branchName: "인천 남동지점" });
+
+    expect(screen.queryByRole("button", { name: "공휴일" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "통화 수집 토큰" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "계정" }).length).toBeGreaterThan(0);
   });
 });
