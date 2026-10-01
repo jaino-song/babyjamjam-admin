@@ -10,7 +10,8 @@ import {
 } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
-import { addBusinessDaysKr } from "domain/utils/business-days";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { KOREAN_HOLIDAY_CALENDAR, addBusinessDaysKr, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { UpsertSessionDto } from "interface/dto/service-record-entry.dto";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
@@ -93,6 +94,7 @@ function createHarness(options: {
     employeeScheduleFindFirst?: jest.Mock;
     ensureForClient?: jest.Mock;
     extendExpiryForCase?: jest.Mock;
+    holidayCalendar?: HolidayCalendarService;
 } = {}) {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
@@ -167,7 +169,7 @@ function createHarness(options: {
     const service = new ServiceRecordEntryService(
         prisma as unknown as PrismaService,
         tokenService as unknown as ServiceRecordTokenService,
-        lifecycle as unknown as ServiceRecordLifecycleService, createHolidayCalendarStub(),
+        lifecycle as unknown as ServiceRecordLifecycleService, options.holidayCalendar ?? createHolidayCalendarStub(),
     );
 
     return {
@@ -181,6 +183,17 @@ function createHarness(options: {
         scheduleUpdate,
         clientUpdate,
     };
+}
+
+/** A calendar service whose branch calendar is the built-in one plus the dates that branch added. */
+function branchHolidayCalendar(...extraHolidays: string[]): HolidayCalendarService {
+    const stub = createHolidayCalendarStub();
+    const calendar = createKrBusinessDayCalendar(
+        [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), ...extraHolidays],
+        { version: "kr-db-test", supportedYears: Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number) },
+    );
+    (stub.forBranch as jest.Mock).mockImplementation(async () => calendar);
+    return stub;
 }
 
 function createContextPrisma(record: ReturnType<typeof createRecord>) {
@@ -1373,5 +1386,114 @@ describe("ServiceRecordEntryService.saveHeader", () => {
         expect(transaction.service_record_case.update).not.toHaveBeenCalled();
         expect(transaction.service_record.upsert).not.toHaveBeenCalled();
         expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+});
+
+describe("ServiceRecordEntryService branch calendar", () => {
+    const plannedThroughJuly6 = [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-06",
+        "2026-07-07",
+    ].map((serviceDate, offset) => ({
+        sessionIndex: offset + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${offset + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "revision-1",
+    }));
+
+    function contextService(record: ReturnType<typeof createRecord>, holidayCalendar: HolidayCalendarService) {
+        return new ServiceRecordEntryService(
+            createContextPrisma(record) as unknown as PrismaService,
+            {} as ServiceRecordTokenService,
+            {} as ServiceRecordLifecycleService,
+            holidayCalendar,
+        );
+    }
+
+    it("getContext counts a legacy case's sessions against the branch calendar (cached read)", async () => {
+        // 2026-07-01..07-06 holds 4 business days; a branch holiday on 07-06 leaves 3.
+        const record = createRecord({
+            requiredSessionCount: 5,
+            endDate: new Date("2026-07-06T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+        const builtin = contextService(record, createHolidayCalendarStub());
+        const holidayCalendar = branchHolidayCalendar("2026-07-06");
+        const branch = contextService(record, holidayCalendar);
+
+        expect((await builtin.getContext(context)).totalSessions).toBe(4);
+        expect((await branch.getContext(context)).totalSessions).toBe(3);
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
+    });
+
+    it("getContext refuses a persisted planned vector that lands on a branch holiday", async () => {
+        const record = createRecord({ plannedSessions: plannedThroughJuly6 });
+
+        await expect(contextService(record, createHolidayCalendarStub()).getContext(context)).resolves.toBeDefined();
+        await expectException(
+            contextService(record, branchHolidayCalendar("2026-07-06")).getContext(context),
+            ConflictException,
+            "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+        );
+    });
+
+    it("upsertSession reads the branch calendar fresh before its transaction and extends the end date over a branch holiday", async () => {
+        // Session 1 of 2 on Fri 2026-07-03: the last session lands on Mon 07-06 in the built-in
+        // calendar (no extension), but on Tue 07-07 when the branch closed on 07-06.
+        const record = createRecord({
+            requiredSessionCount: 2,
+            endDate: new Date("2026-07-06T00:00:00.000Z"),
+        });
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-07-01T00:00:00.000Z"),
+            endDate: new Date("2026-07-06T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+        const dto = () => createDto({ serviceDate: "2026-07-03T00:00:00.000Z" });
+
+        const builtin = createHarness({ existing: null, transactionRecord: record, schedule });
+        await builtin.service.upsertSession(context, 1, dto(), false);
+        expect(builtin.scheduleUpdate).not.toHaveBeenCalled();
+
+        const holidayCalendar = branchHolidayCalendar("2026-07-06");
+        const branch = createHarness({ existing: null, transactionRecord: record, schedule, holidayCalendar });
+        await branch.service.upsertSession(context, 1, dto(), false);
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+        const calendarCall = (holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!;
+        const transactionCall = branch.prisma.$transaction.mock.invocationCallOrder[0]!;
+        expect(calendarCall).toBeLessThan(transactionCall);
+        expect(branch.scheduleUpdate).toHaveBeenCalledWith({
+            where: { id: 10, branchId: BRANCH_ID },
+            data: { endDate: new Date("2026-07-07T00:00:00.000Z") },
+        });
+    });
+
+    it("upsertSession fails closed when the persisted planned vector lands on a branch holiday", async () => {
+        // The vector's 07-06 session is only valid while 07-06 is a business day. After the
+        // branch closes that day the vector is unusable, so the write fails closed.
+        const record = createRecord({ plannedSessions: plannedThroughJuly6 });
+        const harness = createHarness({
+            existing: null,
+            transactionRecord: record,
+            holidayCalendar: branchHolidayCalendar("2026-07-06"),
+        });
+
+        await expectException(
+            harness.service.upsertSession(context, 1, createDto(), false),
+            ConflictException,
+            "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
+        );
+        expect(harness.upsert).not.toHaveBeenCalled();
     });
 });
