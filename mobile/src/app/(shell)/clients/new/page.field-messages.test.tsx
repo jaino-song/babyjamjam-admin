@@ -278,11 +278,8 @@ describe("mobile client wizard field messages", () => {
       expect(useClientWizardStore.getState().currentStep).toBe(2);
     });
 
-    it("keeps an edited voucher client's stored period that is no longer on the price list", async () => {
-      mockSearchParams = new URLSearchParams("clientId=7");
-      mockVoucherPrices = PRICES;
-      mockUpdateClient.mockResolvedValue({ id: 7 });
-      mockEditingClient = {
+    const editingVoucherClient = (duration: number, endDate: string) =>
+      ({
         id: 7,
         name: "박서연",
         birthday: "1990-01-01",
@@ -293,12 +290,12 @@ describe("mobile client wizard field messages", () => {
         primaryEmployee: null,
         secondaryEmployee: null,
         type: "A가1",
-        duration: 99,
+        duration,
         fullPrice: null,
         grant: null,
         actualPrice: null,
         startDate: "2026-12-01",
-        endDate: "2026-12-19",
+        endDate,
         careCenter: false,
         voucherClient: true,
         breastPump: false,
@@ -307,20 +304,56 @@ describe("mobile client wizard field messages", () => {
         areaId: null,
         hasSigned: false,
         documentStatus: null,
-      } as Client;
+      }) as Client;
+
+    const openStoredPeriodEdit = async (client: Client) => {
+      mockSearchParams = new URLSearchParams("clientId=7");
+      mockVoucherPrices = PRICES;
+      mockUpdateClient.mockResolvedValue({ id: 7 });
+      mockEditingClient = client;
       await renderPage(1);
 
-      expect(field("duration")).toHaveValue("99");
+      expect(field("duration")).toHaveValue(String(client.duration));
       expect(slotOf(field("duration"))).not.toHaveTextContent("서비스 기간을 선택해 주세요");
 
       fireEvent.click(screen.getByRole("button", { name: "다음" }));
       expect(useClientWizardStore.getState().currentStep).toBe(2);
+    };
+
+    it("asks for the business-day confirmation before saving a stored period missing from the price list", async () => {
+      // 2026-12-01 .. 2026-12-19 is 14 business days, not the stored 99.
+      await openStoredPeriodEdit(editingVoucherClient(99, "2026-12-19"));
 
       fireEvent.click(screen.getByRole("button", { name: "저장" }));
       await act(async () => {});
+
+      expect(screen.getByText("서비스 기간 확인")).toBeInTheDocument();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "확인" }));
+      await act(async () => {});
+
+      expect(mockUpdateClient).toHaveBeenCalledTimes(1);
       expect(mockUpdateClient).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 7, dto: expect.objectContaining({ duration: 99 }) }),
+        expect.objectContaining({
+          id: 7,
+          dto: expect.objectContaining({ duration: 99, allowBusinessDayMismatch: true }),
+        }),
       );
+    });
+
+    it("saves a stored period missing from the price list without confirmation when the dates match it", async () => {
+      // 2026-12-01 .. 2026-12-19 is exactly the stored 14 business days.
+      await openStoredPeriodEdit(editingVoucherClient(14, "2026-12-19"));
+
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      await act(async () => {});
+
+      expect(screen.queryByText("서비스 기간 확인")).not.toBeInTheDocument();
+      expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+      const { dto } = mockUpdateClient.mock.calls[0][0];
+      expect(dto).toEqual(expect.objectContaining({ duration: 14 }));
+      expect(dto).not.toHaveProperty("allowBusinessDayMismatch");
     });
 
     it("shows a failed voucher price lookup in the period slot", async () => {

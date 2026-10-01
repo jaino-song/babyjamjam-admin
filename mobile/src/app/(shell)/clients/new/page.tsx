@@ -692,9 +692,12 @@ export default function NewClientPage() {
     () => getServiceDateDurationCheck(
       isoOrNull(store.startDate),
       isoOrNull(store.endDate),
-      effectiveDuration,
+      // The duration that is actually submitted: a stored one missing from the
+      // current price list must still go through the business-day confirmation,
+      // or the backend rejects it with CLIENT_DURATION_OUT_OF_RANGE.
+      chosenDuration,
     ),
-    [effectiveDuration, store.endDate, store.startDate],
+    [chosenDuration, store.endDate, store.startDate],
   );
 
   const selectedPriceInfo = useMemo(() => {
