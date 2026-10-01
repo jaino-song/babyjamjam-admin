@@ -5,12 +5,14 @@ import { AgentFlagsService } from "application/agent/agent-flags.service";
 import { AgentTaskPolicyService } from "application/agent/agent-task-policy.service";
 import { AgentTaskService } from "application/agent/agent-task.service";
 import { CapabilityRegistryService } from "application/agent/capability-registry.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { AgentTaskController } from "interface/controllers/agent-task.controller";
 import { AgentModule } from "./agent.module";
 import { AGENT_TASK_REPOSITORY } from "domain/repositories/agent-task.repository.interface";
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { PrismaAgentTaskRepository } from "infrastructure/database/repositories/prisma-agent-task.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { createHolidayCalendarStub } from "../test/utils/holiday-calendar.stub";
 
 describe("AgentModule task wiring", () => {
     it("registers task service, controller, and scoped repository adapters", () => {
@@ -73,6 +75,7 @@ describe("AgentModule task wiring", () => {
                 AgentTaskPolicyService,
                 { provide: AGENT_TASK_REPOSITORY, useValue: {} },
                 { provide: CLIENT_REPOSITORY, useValue: {} },
+                { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 { provide: AgentFlagsService, useValue: {} },
                 { provide: CapabilityRegistryService, useValue: {} },
             ],

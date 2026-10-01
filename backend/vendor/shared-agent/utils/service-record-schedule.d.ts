@@ -1,3 +1,4 @@
+import { type KrBusinessDayCalendar } from "./business-days";
 export interface ServiceRecordScheduleEntry {
     sessionIndex: number;
     serviceDate: string;
@@ -29,15 +30,15 @@ export declare class ServiceRecordScheduleValidationError extends Error {
  * callers with legacy rows must first resolve those fields from unique source
  * evidence rather than inventing placeholders.
  */
-export declare function validateServiceRecordScheduleVector(entries: ReadonlyArray<ServiceRecordPlannedSession>, requiredSessionCount?: number): ServiceRecordPlannedSession[];
+export declare function validateServiceRecordScheduleVector(entries: ReadonlyArray<ServiceRecordPlannedSession>, requiredSessionCount?: number, calendar?: KrBusinessDayCalendar): ServiceRecordPlannedSession[];
 /**
  * Shift the selected session and every later session by one signed business
  * day delta. Each original date is retained and each current date is shifted
  * independently, preserving intentionally irregular gaps in the vector.
  */
-export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string): ServiceRecordScheduleShiftResult;
+export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleShiftResult;
 /** A per-session correction moves later dates only with explicit approval. */
-export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, shiftFollowing: boolean): ServiceRecordScheduleShiftResult;
+export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, shiftFollowing: boolean, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleShiftResult;
 /**
  * Computes the expected (예정일) date for an unwritten session slot.
  *
@@ -47,4 +48,4 @@ export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<Serv
  * own scheduling logic. Only when no written session precedes this slot do
  * we fall back to counting business days from the assignment's start date.
  */
-export declare function getExpectedSessionDateFromRecords(startDate: string | null, sessionIndex: number, records: ReadonlyArray<ServiceRecordScheduleEntry>): string | null;
+export declare function getExpectedSessionDateFromRecords(startDate: string | null, sessionIndex: number, records: ReadonlyArray<ServiceRecordScheduleEntry>, calendar?: KrBusinessDayCalendar): string | null;

@@ -57,7 +57,9 @@ import {
     normalizeEformsignStatusCode,
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -186,7 +188,7 @@ type EformsignStatusSignal = {
     display_status: EformsignDocDisplayStatus;
 };
 
-function toStatusSignal(doc: unknown): EformsignStatusSignal {
+function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): EformsignStatusSignal {
     const { current_status: currentStatus, contract_end_date: contractEndDate } = doc as {
         current_status?: {
             status_type?: unknown;
@@ -212,7 +214,7 @@ function toStatusSignal(doc: unknown): EformsignStatusSignal {
                 ? recipient.recipient_type
                 : null),
         contract_end_date: stringFromUnknown(contractEndDate),
-        display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc),
+        display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc, new Date(), calendar),
     };
 }
 
@@ -234,6 +236,7 @@ export class EformsignController {
         private readonly getContractClientCandidateUsecase: GetContractClientCandidateUsecase,
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) { }
 
     /**
@@ -278,9 +281,13 @@ export class EformsignController {
                 ),
             },
         );
+        // Display only, and the request's own branch (params.branchId is the tenant's):
+        // the cached calendar is enough, fetched once for the whole page.
+        const calendar = await this.holidayCalendar.forBranch(params.branchId);
         const { documents } = this.mirrorListService.filterScope(
             snapshot.entries.map((entry) => entry.document),
             params,
+            calendar,
         );
         const page = documents.slice(params.skip, params.skip + params.limit);
 
@@ -289,7 +296,7 @@ export class EformsignController {
             // the 서명 완료→검토 필요 flip moves with the calendar, not with document writes.
             documents: enrichMirrorPage(page).map((document) => ({
                 ...document,
-                display_status: resolveEformsignDocDisplayStatus(document),
+                display_status: resolveEformsignDocDisplayStatus(document, new Date(), calendar),
             })),
             total_rows: documents.length,
             limit: params.limit,
@@ -541,6 +548,8 @@ export class EformsignController {
                         ),
                     },
                 );
+            // Display only; fetched once per request, never per row.
+            const calendar = await this.holidayCalendar.forBranch(branchId);
             const { documents } = this.mirrorListService.filterScope(
                 countSnapshot.entries.map((entry) => entry.document),
                 {
@@ -552,8 +561,9 @@ export class EformsignController {
                     search,
                     excludeDeleted,
                 },
+                calendar,
             );
-            return { documents: documents.map((doc) => toStatusSignal(doc)) };
+            return { documents: documents.map((doc) => toStatusSignal(doc, calendar)) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }

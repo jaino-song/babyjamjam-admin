@@ -1,10 +1,14 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import DashboardPage from "../page";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import type { Client } from "@/lib/client/types";
+import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }), redirect: jest.fn() }));
 jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));
@@ -97,4 +101,41 @@ it("includes an eligible page-two pre-booking client in the upcoming filter coun
   expect(screen.getByText("QA 예정 고객")).toBeInTheDocument();
   expect(screen.getByText("QA 2페이지 예정 고객")).toBeInTheDocument();
   expect(clientsQuery).toHaveBeenCalledWith({ staleTime: 60_000 });
+});
+
+describe("due labels on the branch calendar", () => {
+  const mockedCalendarHook = jest.mocked(useBusinessDayCalendar);
+  const calendarResult = (calendar: typeof KR_BUILTIN_CALENDAR) => ({
+    calendar,
+    ready: true,
+    error: null,
+    retry: jest.fn(),
+    version: calendar.version,
+  });
+
+  afterEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult(KR_BUILTIN_CALENDAR));
+  });
+
+  it("counts a branch-added holiday as a non-business day in the start countdown", () => {
+    render(<DashboardPage />);
+    fireEvent.click(screen.getByRole("button", { name: /시작 예정/ }));
+    expect(screen.getAllByText("서비스 시작 2 영업일 남음").length).toBeGreaterThan(0);
+
+    // The branch is closed Thursday 2026-06-11, between "now" (06-10) and the start (06-12).
+    mockedCalendarHook.mockReturnValue(
+      calendarResult(
+        createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-06-11"], {
+          version: "kr-db-branch",
+          supportedYears: [2026],
+        }),
+      ),
+    );
+    cleanup();
+    render(<DashboardPage />);
+    fireEvent.click(screen.getByRole("button", { name: /시작 예정/ }));
+
+    expect(screen.queryByText("서비스 시작 2 영업일 남음")).not.toBeInTheDocument();
+    expect(screen.getAllByText("서비스 시작 1 영업일 남음").length).toBeGreaterThan(0);
+  });
 });

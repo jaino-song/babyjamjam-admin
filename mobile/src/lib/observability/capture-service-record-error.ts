@@ -13,6 +13,7 @@ export type ServiceRecordOperation =
   | "public-link"
   | "verify"
   | "context"
+  | "holidays"
   | "save-header"
   | "save-session"
   | "submit-session"
@@ -52,6 +53,7 @@ function getRequestPath(url: string | undefined): string {
 export function getServiceRecordOperation(path: string): ServiceRecordOperation {
   if (path.includes("/verify")) return "verify";
   if (path.includes("/context")) return "context";
+  if (path.includes("/holidays")) return "holidays";
   if (path.includes("/header")) return "save-header";
   if (path.includes("/schedule-change")) return "schedule-change";
   if (path.includes("/finalize")) return "finalize";

@@ -18,6 +18,7 @@ import { ListEmptyState } from "./ListEmptyState";
 import { ListPanel } from "./ListPanel";
 import { StatusBadge } from "./StatusBadge";
 import type { Client } from "@/lib/client/types";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 type RecentActivityListItem = {
   key: string;
@@ -27,6 +28,8 @@ type RecentActivityListItem = {
 export interface RecentActivitiesPanelProps {
   title?: string;
   items: Client[];
+  /** Branch calendar for the due labels; the built-in one when omitted. */
+  calendar?: KrBusinessDayCalendar;
   isLoading: boolean;
   isError: boolean;
   onRetry: () => void;
@@ -73,6 +76,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 export function RecentActivitiesPanel({
   title = "최근 현황",
   items,
+  calendar,
   isLoading,
   isError,
   onRetry,
@@ -194,7 +198,7 @@ export function RecentActivitiesPanel({
                 const clientBadges = getClientBadges(item.client);
                 const sortedClientBadges = prioritizeClientBadges(clientBadges);
                 const primaryClientBadge = getPrimaryClientBadge(clientBadges);
-                const subtitle = getDashboardClientDueLabel(item.client)
+                const subtitle = getDashboardClientDueLabel(item.client, { calendar })
                   ?? `${item.client.type || "일반"} · ${item.client.primaryEmployee?.name || "-"}`;
 
                 return (

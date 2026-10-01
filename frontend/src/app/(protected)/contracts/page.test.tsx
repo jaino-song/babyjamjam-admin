@@ -203,6 +203,7 @@ interface MockPdfPageProps {
   pageNumber: number;
 }
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("@/lib/pdf-config", () => ({}));
 jest.mock("react-pdf", () => {
   const React = jest.requireActual<typeof import("react")>("react");

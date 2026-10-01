@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 declare global {
   interface Window {
@@ -138,6 +139,17 @@ async function mockStatsRoute(page: Page, delayMs = 0, body = DEFAULT_STATS) {
 }
 
 test.describe("Dashboard activities animations", () => {
+  test.beforeEach(async ({ page }) => {
+    // Branch holiday calendar for the apps' business-day maths (built-in list, no branch changes).
+    await page.route("**/api/branches/*/holidays**", async (route) => {
+        const year = Number(new URL(route.request().url()).searchParams.get("year"));
+        const holidays = KR_BUILTIN_HOLIDAYS
+            .filter((date) => date.startsWith(`${year}-`))
+            .map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null }));
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ year, revision: 1, supported: holidays.length > 0, synced: true, lastSyncedAt: null, holidays, inactiveOverrides: [] }) });
+    });
+  });
+
   test("does not re-run intro/list animations when stats loading completes", async ({ page }) => {
     // Collect only our v3 animations
     await page.addInitScript(() => {

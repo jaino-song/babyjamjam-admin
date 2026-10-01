@@ -1,6 +1,6 @@
 import { ClientEntity } from "domain/entities/client.entity";
 import { SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
-import { isoDateInKorea } from "domain/utils/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 
 export type AutomaticServiceStatusUpdateResult = "updated" | "stale";
@@ -318,6 +318,7 @@ export interface IClientRepository {
             eDocId: string | null;
             areaId: string | null;
         }>,
+        calendar: KrBusinessDayCalendar,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null>;
     delete(branchid: string, id: number): Promise<void>;

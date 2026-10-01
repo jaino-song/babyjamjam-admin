@@ -8,6 +8,7 @@ import {
     createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -18,7 +19,7 @@ describeE2E("revision operation intent readiness (disposable PostgreSQL)", () =>
         assertApprovedServiceRecordConfirmDatabaseTarget();
         prisma = createApprovedServiceRecordConfirmClient();
         await prisma.$connect();
-        editor = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as unknown as PrismaService));
+        editor = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as unknown as PrismaService), createHolidayCalendarStub());
     });
     afterAll(async () => { await prisma?.$disconnect(); });
 

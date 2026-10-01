@@ -13,6 +13,7 @@ import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture, serviceRecordConfirmBarrier,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -27,7 +28,7 @@ describeE2E("receipt preparation before atomic authorization (actual PostgreSQL)
 
     async function setup() {
         const fixture = await createServiceRecordConfirmFixture(prisma);
-        const admin = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
+        const admin = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
         const started = await admin.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         const draft = started.draft!;
         const saved = await admin.updateDraft(fixture.branch.id, draft.id, fixture.actorUserId, {

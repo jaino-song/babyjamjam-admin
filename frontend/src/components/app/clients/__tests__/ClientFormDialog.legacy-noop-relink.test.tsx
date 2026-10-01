@@ -12,6 +12,7 @@ let mockOutOfPocketPriceInfos: Array<{
   fullPrice: string;
 }> = [];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

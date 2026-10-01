@@ -22,6 +22,8 @@ import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import {
     adminServiceRecordEditApi,
 } from "@/features/service-records/api/admin-service-record-edit.api";
@@ -350,6 +352,15 @@ function draftForSession(session: {
     };
 }
 
+function dateYears(values: ReadonlyArray<unknown>): number[] {
+    const years = new Set<number>();
+    for (const value of values) {
+        const match = /^(\d{4})-\d{2}-\d{2}/.exec(asDateString(value));
+        if (match) years.add(Number(match[1]));
+    }
+    return [...years];
+}
+
 function ReadOnlySignature({
     "data-component": dataComponent,
     value,
@@ -456,6 +467,18 @@ export function ServiceRecordAdminWizard({
 }: ServiceRecordAdminWizardProps) {
     const [overview, setOverview] = useState(initialOverview);
     const baseView = useMemo(() => buildAdminServiceRecordView(overview), [overview]);
+    // Date moves are sent to the server, so they wait for the branch calendar.
+    // Load every year the record already holds so older records compute too.
+    const calendarYears = useMemo(() => dateYears([
+        ...baseView.plannedSessions.flatMap((entry) => [entry.serviceDate, entry.originalDate]),
+        ...baseView.context.sessions.map((session) => session.serviceDate),
+    ]), [baseView]);
+    const {
+        calendar,
+        ready: calendarReady,
+        error: calendarError,
+        retry: retryCalendar,
+    } = useBusinessDayCalendar({ extraYears: calendarYears });
     const [draftState, setDraftState] = useState(initialDraftState);
     const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
     const [recoveryChanges, setRecoveryChanges] = useState<AdminServiceRecordEditChanges | null>(
@@ -563,8 +586,9 @@ export function ServiceRecordAdminWizard({
         finally { saving.current = false; setBusy(false); }
     };
     const applyDate = (next: string, shiftFollowing: boolean) => {
+        if (!calendarReady) return null;
         try {
-            const result = moveServiceRecordSessionDate(vector, day, next, shiftFollowing);
+            const result = moveServiceRecordSessionDate(vector, day, next, shiftFollowing, calendar);
             setDateMove(next === sourceDate ? null : { sessionIndex: day, toDate: next, shiftFollowing });
             setDraft((current) => ({ ...current, _date: next }));
             setCollision(null);
@@ -578,11 +602,11 @@ export function ServiceRecordAdminWizard({
         }
     };
     const selectDate = (next: string) => {
-        if (locked || baseView.scheduleProjectionBlockingReasons.length) return;
+        if (locked || !calendarReady || baseView.scheduleProjectionBlockingReasons.length) return;
         const nextSession = vector.find((item) => item.sessionIndex === day + 1);
         if (nextSession && next >= nextSession.serviceDate) {
             try {
-                const result = moveServiceRecordSessionDate(vector, day, next, true);
+                const result = moveServiceRecordSessionDate(vector, day, next, true, calendar);
                 setCollision({ date: next, delta: result.deltaBusinessDays });
                 setDateDialogOpen(false);
             } catch { setDateError("회차 순서와 제공일을 확인해 주세요."); }
@@ -593,6 +617,7 @@ export function ServiceRecordAdminWizard({
         if (priorChanges && !recover) { resetLocal(); return; }
         if (!recover && !changed && !saveStarted) { resetLocal(); return; }
         if (needsReload) return;
+        if (dateMove && !calendarReady) return;
         if (!recover && !editingHeader && hasInvalidNumericAnswers) {
             setError("숫자 입력값을 확인해 주세요.");
             return;
@@ -662,7 +687,7 @@ export function ServiceRecordAdminWizard({
                     throw new Error("다른 회차의 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
                 }
                 const expectedDates = dateMove
-                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing)).entries
+                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), calendar).entries
                     : preview.before.sessions;
                 const unexpectedDates = preview.after.sessions.length !== expectedDates.length
                     || new Set(preview.after.sessions.map((entry) => entry.sessionIndex)).size !== expectedDates.length
@@ -759,6 +784,14 @@ export function ServiceRecordAdminWizard({
                     <AlertDescription>{baseView.scheduleProjectionBlockingReasons.map((reason) => reason.message).join(" ")}</AlertDescription>
                 </Alert>
             ) : null}
+            {screen === "day" ? (
+                <CalendarLoadNotice
+                    error={calendarError}
+                    onRetry={retryCalendar}
+                    loading={!calendarReady && !calendarError}
+                    dataComponent={`${ADMIN_WIZARD_COMPONENT}_calendar-load-notice`}
+                />
+            ) : null}
             <ServiceRecordWizard
                 data-component={ADMIN_WIZARD_COMPONENT}
                 screen={screen} phone="" phoneError={null}
@@ -778,7 +811,7 @@ export function ServiceRecordAdminWizard({
                 onHeaderChange={(key, value) => { if (!locked) setHeaderDraft((current) => ({ ...current, [key]: value })); }}
                 onDeliveryTypeChange={(value) => { if (!locked) setHeaderDraft((current) => ({ ...current, deliveryType: value })); }}
                 onSaveHeader={() => void confirm()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
-                onOpenServiceDateEditor={() => { if (!locked && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
+                onOpenServiceDateEditor={() => { if (!locked && calendarReady && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
                 onServiceDateChange={selectDate}
                 onFieldChange={(key, value) => { if (!locked) setDraft((current) => ({ ...current, [key]: value })); }}
                 onToggleMulti={(key, option) => {
@@ -814,11 +847,11 @@ export function ServiceRecordAdminWizard({
                         </span>;
                     },
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
+                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
                     ),
                     adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
-                            disabled={busy || slotHasInvalidNumericAnswers || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
+                            disabled={busy || slotHasInvalidNumericAnswers || (!calendarReady && changed) || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
                             onClick={() => supplemental ? resetLocal() : void confirm()}>
                             {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
                         </Button>
@@ -840,8 +873,8 @@ export function ServiceRecordAdminWizard({
                 preview={recoveryPreview} onConfirm={needsReload || !prepared.current ? undefined : () => confirm(true)}
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_recovery-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
-                currentServiceDate={String(draft._date || sourceDate)} sessionLabel={`${day}회차`}
-                onApply={selectDate} error={dateError} disabled={locked}
+                currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
+                onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
             <Dialog open={Boolean(collision)} onOpenChange={(open) => { if (!open) { setCollision(null); setDateDialogOpen(true); } }}>
                 <FormDialogShell mobileSheet size="compact" title={`${day}회차 서비스 제공일 수정`}

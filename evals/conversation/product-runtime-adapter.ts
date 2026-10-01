@@ -5,6 +5,7 @@ import { AgentRuntimeService } from "../../backend/application/agent/agent-runti
 import { AgentSessionService } from "../../backend/application/agent/agent-session.service";
 import { AgentTaskPolicyService } from "../../backend/application/agent/agent-task-policy.service";
 import { AgentTaskService } from "../../backend/application/agent/agent-task.service";
+import { KR_BUILTIN_CALENDAR } from "../../backend/domain/utils/business-days";
 import { ConversationContextAssemblerService } from "../../backend/application/agent/conversation-context-assembler.service";
 import { ConversationTaskOrchestratorService } from "../../backend/application/agent/conversation-task-orchestrator.service";
 import { DeterministicAgentLanguageModel } from "../../backend/infrastructure/agent/deterministic-agent-language-model";
@@ -1038,7 +1039,8 @@ export class DeterministicProductRuntimeHost implements ProductRuntimeDriver {
             isCapabilityEnabledFromSnapshot: () => true,
         };
         const policy = new AgentTaskPolicyService(flags as never, registry as never);
-        this.taskService = new AgentTaskService(this.taskRepository, policy, new DeterministicProductClientRepository());
+        const holidayCalendar = { forBranch: async () => KR_BUILTIN_CALENDAR };
+        this.taskService = new AgentTaskService(this.taskRepository, policy, new DeterministicProductClientRepository(), holidayCalendar as never);
         const modelFactory = {
             modelId: "deterministic-product-v1",
             providerOptions: () => ({}),

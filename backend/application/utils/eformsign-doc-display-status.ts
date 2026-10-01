@@ -5,9 +5,8 @@ import {
 } from "application/utils/eformsign-document-list";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import {
-    assertSupportedKoreanHolidayYear,
-    isBusinessDayKr,
     isoDateInKorea,
+    type KrBusinessDayCalendar,
 } from "domain/utils/business-days";
 
 /**
@@ -39,8 +38,6 @@ export type EformsignDocDisplayStatus =
 
 const YMD_PATTERN = /^(\d{4})-(\d{2})-(\d{2})/;
 
-const SUBTRACT_BUSINESS_DAY_SEARCH_LIMIT = 30;
-
 function parseYmdToUtc(ymd: string): Date | null {
     const match = YMD_PATTERN.exec(ymd);
     if (!match) return null;
@@ -59,39 +56,31 @@ function parseYmdToUtc(ymd: string): Date | null {
     return parsed;
 }
 
-/** Step back `days` Korean business days (weekends AND KR holidays skipped). */
-function subtractBusinessDaysKr(date: Date, days: number): Date {
-    const result = new Date(date.getTime());
-    let remaining = days;
-    for (let i = 0; remaining > 0 && i < SUBTRACT_BUSINESS_DAY_SEARCH_LIMIT; i += 1) {
-        result.setUTCDate(result.getUTCDate() - 1);
-        if (isBusinessDayKr(result.toISOString().slice(0, 10))) remaining -= 1;
-    }
-    return result;
-}
-
 /**
  * True when today (KST) is on or after 1 Korean business day before the
- * contract end date — weekends and the shared versioned Korean holiday
- * calendar are both skipped; a missing or malformed end date opens the window
- * (legacy behavior).
+ * contract end date — weekends and the given calendar's holidays are both
+ * skipped; a missing or malformed end date opens the window (legacy behavior).
+ *
+ * `calendar` is the branch calendar.
  */
 export function isContractReviewWindowOpen(
     contractEndDate: string | null | undefined,
-    now: Date = new Date(),
+    now: Date,
+    calendar: KrBusinessDayCalendar,
 ): boolean {
     const endDate = contractEndDate ? parseYmdToUtc(contractEndDate) : null;
     if (!endDate) return true;
-    assertSupportedKoreanHolidayYear(endDate.getUTCFullYear());
+    calendar.assertSupportedYear(endDate.getUTCFullYear());
 
-    const threshold = subtractBusinessDaysKr(endDate, 1);
-    return isoDateInKorea(now) >= threshold.toISOString().slice(0, 10);
+    const threshold = calendar.shiftBusinessDays(endDate.toISOString().slice(0, 10), -1);
+    return isoDateInKorea(now) >= threshold;
 }
 
 /** Resolve the display status of a projected list document. */
 export function resolveEformsignDocDisplayStatus(
     document: EformsignListDoc,
-    now: Date = new Date(),
+    now: Date,
+    calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
     const category = getDocumentStatusCategory(document);
     if (category === "completed") return "completed";
@@ -108,5 +97,5 @@ export function resolveEformsignDocDisplayStatus(
     const contractEndDate = typeof document["contract_end_date"] === "string"
         ? document["contract_end_date"]
         : null;
-    return isContractReviewWindowOpen(contractEndDate, now) ? "review" : "signed";
+    return isContractReviewWindowOpen(contractEndDate, now, calendar) ? "review" : "signed";
 }

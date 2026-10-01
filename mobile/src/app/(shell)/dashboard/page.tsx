@@ -40,6 +40,7 @@ import type {
   SectionRows,
 } from "@/components/app/mobile-redesign/mockup-data";
 import { getMobileClientBadges } from "@/lib/client/badges";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { compactDashboardBadges, type DashboardStatusBadge } from "./dashboard-badges";
 import {
   dueForContractRequired,
@@ -199,6 +200,8 @@ export default function DashboardPage() {
     staleTime: 60_000,
   });
   const user = useInitialUser();
+  // Display-only due labels: the built-in list is fine until the branch calendar loads.
+  const { calendar } = useBusinessDayCalendar();
   const [activeFilter, setActiveFilter] = useState<string>(ALL_FILTER);
 
   useEffect(() => {
@@ -348,18 +351,18 @@ export default function DashboardPage() {
       let statusOrder: number;
 
       if (c.serviceStatus === "replacement_requested") {
-        dueInfo = dueForServiceStatus(c);
+        dueInfo = dueForServiceStatus(c, calendar);
         statusOrder = DASHBOARD_STATUS_ORDER.replacementRequested;
       } else if (getMobileClientBadges(c).some((badge) => badge.key === "contract_required")) {
-        dueInfo = dueForContractRequired(c);
+        dueInfo = dueForContractRequired(c, calendar);
         statusOrder = c.documentStatus && c.documentStatus !== "completed" && c.eDocId
           ? DASHBOARD_STATUS_ORDER.reviewNeeded
           : DASHBOARD_STATUS_ORDER.sendPending;
       } else if (c.documentStatus && c.documentStatus !== "completed" && c.eDocId) {
-        dueInfo = dueForServiceStatus(c);
+        dueInfo = dueForServiceStatus(c, calendar);
         statusOrder = DASHBOARD_STATUS_ORDER.reviewNeeded;
       } else {
-        dueInfo = dueForServiceStatus(c);
+        dueInfo = dueForServiceStatus(c, calendar);
         statusOrder = DASHBOARD_STATUS_ORDER.sendPending;
       }
 
@@ -380,7 +383,7 @@ export default function DashboardPage() {
     };
 
     const toUpcomingRow = (c: Client, i: number): DashboardStatusRow => {
-      const dueInfo = dueForServiceStartDate(c.startDate);
+      const dueInfo = dueForServiceStartDate(c.startDate, calendar);
       const hasEmployee = Boolean(c.primaryEmployee);
       const badges = dashboardBadgesForClient(c, dueInfo);
       const primaryBadge = badges[0];
@@ -399,7 +402,7 @@ export default function DashboardPage() {
     };
 
     const toEndingRow = (c: Client, i: number): DashboardStatusRow => {
-      const dueInfo = dueForServiceEndDate(c.endDate);
+      const dueInfo = dueForServiceEndDate(c.endDate, calendar);
       const badges = dashboardBadgesForClient(c, dueInfo);
       const primaryBadge = badges[0];
 
@@ -435,7 +438,7 @@ export default function DashboardPage() {
     ];
 
     return { analytics: dashboardAnalytics, sections: allSections, filters, allRows, loading: false };
-  }, [allClients, analytics, clientsLoading, openClient]);
+  }, [allClients, analytics, calendar, clientsLoading, openClient]);
 
   const sectionsFull = useMemo(() => {
     if (activeFilter === ALL_FILTER) {

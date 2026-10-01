@@ -1,4 +1,27 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { KOREAN_HOLIDAY_CALENDAR } from '@babyjamjam/shared/utils/business-days';
+
+// The client form waits for the branch holiday calendar before it computes or
+// saves dates. Serve the built-in list for whichever year is requested.
+async function installHolidayCalendarRoute(page: Page) {
+    await page.route('**/api/branches/*/holidays*', (route) => {
+        const year = Number(new URL(route.request().url()).searchParams.get('year'));
+        const dates = KOREAN_HOLIDAY_CALENDAR[year] ?? [];
+        return route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+                year,
+                revision: 'e2e-builtin',
+                supported: dates.length > 0,
+                synced: false,
+                lastSyncedAt: null,
+                holidays: dates.map((date) => ({ date, name: '공휴일', source: 'builtin', excluded: false, overrideId: null })),
+                inactiveOverrides: [],
+            }),
+        });
+    });
+}
 
 /**
  * ClientFormDialog E2E Tests
@@ -14,6 +37,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Client Creation Flow', () => {
     test.beforeEach(async ({ page }) => {
+        await installHolidayCalendarRoute(page);
         await page.goto('/clients');
         await page.waitForLoadState('networkidle');
     });
@@ -470,6 +494,7 @@ test.describe('Client Creation Flow', () => {
 // ============================================
 test.describe('Complete Client Creation Flow', () => {
     test('should create client with all required fields', async ({ page }) => {
+        await installHolidayCalendarRoute(page);
         await page.goto('/clients');
         await page.waitForLoadState('networkidle');
 

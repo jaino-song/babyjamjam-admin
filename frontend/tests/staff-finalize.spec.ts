@@ -1,5 +1,6 @@
 import { test, expect, Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
+import { KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 test.beforeEach(async ({ page, baseURL }) => {
   const appUrl = baseURL ?? "http://localhost:3000";
@@ -129,6 +130,15 @@ async function installCommonRoutes(page: Page) {
     }
 
     return route.fallback();
+  });
+
+  // Branch holiday calendar for the apps' business-day maths (built-in list, no branch changes).
+  await page.route("**/api/branches/*/holidays**", async (route) => {
+      const year = Number(new URL(route.request().url()).searchParams.get("year"));
+      const holidays = KR_BUILTIN_HOLIDAYS
+          .filter((date) => date.startsWith(`${year}-`))
+          .map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null }));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ year, revision: 1, supported: holidays.length > 0, synced: true, lastSyncedAt: null, holidays, inactiveOverrides: [] }) });
   });
 
   await page.route("**/api/eformsign/auth-status", (route) =>

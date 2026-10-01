@@ -57,7 +57,7 @@ import {
 } from "domain/repositories/client.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeClientPricing } from "domain/services/client-pricing";
-import { addBusinessDaysKr, diffBusinessDaysKr, isoDateInKorea } from "domain/utils/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     computeServiceStatus,
@@ -78,6 +78,7 @@ import { MessageAutomationBranchLockService } from "./message-automation-branch-
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const FILTER_DAYS_THRESHOLD = 7;
 // Contract attention window, in KR business days before service start, within
@@ -265,6 +266,7 @@ export class ClientService {
         private readonly systemSettingService: SystemSettingService,
         private readonly documentSnapshotService: EformsignDocumentSnapshotService,
         private readonly messageAutomationIntentService: MessageAutomationIntentService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
         @Optional() private readonly serviceRecordLifecycleService?: ServiceRecordLifecycleService,
@@ -529,7 +531,9 @@ export class ClientService {
             });
 
             if (shouldUpdateClientDocument) {
-                client.update({ eDocId: latestContract.documentId });
+                // SAVED computation: update() re-derives the client's duration.
+                const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+                client.update({ eDocId: latestContract.documentId }, calendar);
             }
             if (documentIdsToReassign.length > 0) {
                 await this.invalidateContractDocumentSnapshots(
@@ -620,7 +624,9 @@ export class ClientService {
             select: { eDocId: true },
         });
         if (persistedClient) {
-            client.update({ eDocId: persistedClient.eDocId });
+            // SAVED computation: update() re-derives the client's duration.
+            const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+            client.update({ eDocId: persistedClient.eDocId }, calendar);
         }
         await this.invalidateContractDocumentSnapshots(
             branchId,
@@ -766,7 +772,7 @@ export class ClientService {
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
-    }): ClientActionRequired | null {
+    }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
         if (
             params.serviceStatus === SERVICE_STATUS.PRE_BOOKING ||
             params.serviceStatus === SERVICE_STATUS.COMPLETED ||
@@ -777,7 +783,7 @@ export class ClientService {
 
         if (!params.startDate) return null;
 
-        const businessDaysUntilStart = diffBusinessDaysKr(
+        const businessDaysUntilStart = calendar.diffBusinessDays(
             params.startDate.toISOString().slice(0, 10),
         );
         if (businessDaysUntilStart === null) return null;
@@ -796,12 +802,12 @@ export class ClientService {
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
-    }): ClientActionRequired | null {
+    }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
         if (params.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
             return { reason: "교체 요청", priority: 1 };
         }
 
-        return this.computeContractActionRequired(params);
+        return this.computeContractActionRequired(params, calendar);
     }
 
     private buildClientBadges(params: {
@@ -1083,7 +1089,9 @@ export class ClientService {
         const dueDate = parseClientDate(params.dueDate, "dueDate") ?? null;
         const birthDate = parseClientDate(params.birthDate, "birthDate") ?? null;
         mergeAndValidateClientServicePeriod(null, { startDate, endDate });
-        const derivedDuration = deriveClientDuration(startDate, endDate);
+        // SAVED computation: the derived duration is persisted.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+        const derivedDuration = deriveClientDuration(startDate, endDate, calendar);
         // On create there is no prior duration to clear, so an explicit null
         // carries the same "no opinion" as an omitted field and the count is
         // derived from the dates. Only a supplied number is checked against
@@ -1158,7 +1166,7 @@ export class ClientService {
                 // own owning transaction so the lifecycle service can lock and
                 // reread the client/schedule set before any case repair.
                 await this.prismaService.$transaction(async (transaction) => {
-                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction);
+                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction, calendar);
                 });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
@@ -1287,7 +1295,7 @@ export class ClientService {
                     workAddress: params.address ?? "",
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
-                }, transaction);
+                }, transaction, calendar);
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1307,6 +1315,7 @@ export class ClientService {
                 await this.serviceRecordLifecycleService?.ensureForClient(
                     created.client.id,
                     transaction,
+                    calendar,
                 );
                 return created;
             });
@@ -1314,7 +1323,12 @@ export class ClientService {
             createdScheduleId = result.scheduleId;
         } else {
             client = await this.prismaService.$transaction(async (transaction) => {
-                const created = await this.createClientUsecase.execute(branchid, createParams, transaction);
+                const created = await this.createClientUsecase.execute(
+                    branchid,
+                    createParams,
+                    transaction,
+                    calendar,
+                );
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1327,6 +1341,7 @@ export class ClientService {
                 await this.serviceRecordLifecycleService?.ensureForClient(
                     created.id,
                     transaction,
+                    calendar,
                 );
                 return created;
             });
@@ -1494,6 +1509,9 @@ export class ClientService {
         // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
         const latestContractMap = await this.findLatestContractByClientId(clientIds);
 
+        // Display-only: the cached branch calendar is enough for the badges.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
+
         // Compute and update service status for each client (lazy update strategy)
         const clientsNeedingUpdate: {
             id: number;
@@ -1531,12 +1549,12 @@ export class ClientService {
                 hasActiveContractDocument,
             };
             const badges = this.buildClientBadges({
-                contractActionRequired: this.computeContractActionRequired(contractSignals),
+                contractActionRequired: this.computeContractActionRequired(contractSignals, calendar),
                 serviceStatus: computedStatus,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
             });
-            const actionRequired = this.computeActionRequired(contractSignals);
+            const actionRequired = this.computeActionRequired(contractSignals, calendar);
 
                 return {
                     id: client.id,
@@ -1722,6 +1740,14 @@ export class ClientService {
         breastPump?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
+        /**
+         * Optimistic guard for callers that compute a change from a snapshot
+         * (the holiday review fix). When supplied, the locked client row's end
+         * date (`YYYY-MM-DD`, or null) must still equal it; otherwise the write
+         * is rejected with 409 SERVICE_RECORD_WRITE_TARGET_CHANGED. Not a field
+         * to update.
+         */
+        expectedEndDate?: string | null;
     }): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
@@ -1743,7 +1769,9 @@ export class ClientService {
             }
         }
 
-        const hasRequestedUpdate = Object.values(params).some((value) => value !== undefined);
+        const hasRequestedUpdate = Object.entries(params).some(
+            ([field, value]) => field !== "expectedEndDate" && value !== undefined,
+        );
         if (!hasRequestedUpdate) {
             const existingPhone = normalizePhone(existingClient.phone);
             if (existingPhone) {
@@ -1802,9 +1830,13 @@ export class ClientService {
             endDate: endDateUpdate,
         });
         const hasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
+        // SAVED computation: validates and persists the duration. The same
+        // calendar instance is reused for the locked re-check below.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const derivedDuration = deriveClientDuration(
             mergedServicePeriod.startDate,
             mergedServicePeriod.endDate,
+            calendar,
         );
         assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
@@ -1896,6 +1928,12 @@ export class ClientService {
             // retaining the preflight entity here keeps those doubles focused
             // on the client repository seam.
             const currentClient = lockedClient ?? existingClient;
+            if (
+                params.expectedEndDate !== undefined
+                && (currentClient.endDate?.toISOString().slice(0, 10) ?? null) !== params.expectedEndDate
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
             const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
@@ -1904,6 +1942,7 @@ export class ClientService {
             const lockedDerivedDuration = deriveClientDuration(
                 lockedMergedServicePeriod.startDate,
                 lockedMergedServicePeriod.endDate,
+                calendar,
             );
             assertClientDurationMatchesDates(
                 params.duration,
@@ -2116,7 +2155,7 @@ export class ClientService {
             } else if (!currentClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
+            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
             if (
                 automationImpact
                 && automationImpact.availability === "available"
@@ -2213,6 +2252,11 @@ export class ClientService {
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
         const ordinaryMutationId = randomUUID();
+        // SAVED computation (the update re-derives the persisted duration):
+        // read the branch calendar before the transaction opens, never inside
+        // it, so the locked client row does not wait on a second pooled
+        // connection.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2259,7 +2303,7 @@ export class ClientService {
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
                 endDate: terminationAt,
-            }, transaction);
+            }, transaction, calendar);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
                 data: { terminatedAt: terminationAt },
@@ -2477,6 +2521,9 @@ export class ClientService {
 
         this.logger.log(`Completing replacement for client ${clientId}`);
 
+        // SAVED computation: loaded before the transaction opens (see
+        // terminateService).
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2526,8 +2573,8 @@ export class ClientService {
             );
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: computedStatus,
-            }, transaction);
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction);
+            }, transaction, calendar);
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return updated;
         });
         return updatedClient;
@@ -2592,6 +2639,7 @@ export class ClientService {
         const latestContracts = await this.findLatestContractByClientId(
             branchClients.map((client) => client.id),
         );
+        const calendar = await this.holidayCalendar.forBranch(branchid);
         const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
             if (
                 doc.permanentPurgeRequestedAt != null
@@ -2610,7 +2658,7 @@ export class ClientService {
                     step_name: doc.stepName,
                 },
                 ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
-            }) === "review";
+            }, now, calendar) === "review";
         }).length;
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
@@ -2635,13 +2683,17 @@ export class ClientService {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        // Display-only: one cached calendar instance serves both the cutoff
+        // pre-filter and the per-client decision below.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
+
         // The window is business days, which spans more calendar days than its
         // count. Translate it into the exact calendar date it reaches so this
         // pre-filter only narrows the scan — computeActionRequired still decides
         // (it alone knows whether the latest document is active).
         const businessDayCutoff = (businessDays: number): Date => {
             const cutoff = new Date(
-                `${addBusinessDaysKr(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
+                `${calendar.addBusinessDays(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
             );
             cutoff.setHours(23, 59, 59, 999);
             return cutoff;
@@ -2693,7 +2745,7 @@ export class ClientService {
                     serviceStatus,
                     startDate: client.startDate,
                     hasActiveContractDocument: hasActiveDocumentByClientId.get(client.id) ?? false,
-                });
+                }, calendar);
 
                 if (!actionRequired) {
                     return null;

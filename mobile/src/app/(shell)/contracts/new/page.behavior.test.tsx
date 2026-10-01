@@ -38,6 +38,8 @@ const mockClients = [{
   eDocId: null,
 } as Client];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));

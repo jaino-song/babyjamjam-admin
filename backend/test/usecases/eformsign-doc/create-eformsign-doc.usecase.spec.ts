@@ -1,6 +1,14 @@
 import { CreateEformsignDocParams, CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
+
+/** A branch calendar over the given years: the built-in 2026 holidays plus the given branch-added days off. */
+const branchCalendar = (extra: string[], supportedYears = [2026]) => createKrBusinessDayCalendar(
+    [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra],
+    { supportedYears, version: "branch-test" },
+);
 
 describe("CreateEformsignDocUsecase", () => {
     const branchId = "branch-1";
@@ -60,7 +68,7 @@ describe("CreateEformsignDocUsecase", () => {
         clientRepository.update.mockReset();
         usecase = new CreateEformsignDocUsecase(
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
     });
 
@@ -113,6 +121,56 @@ describe("CreateEformsignDocUsecase", () => {
         );
         expect(phoneMatchedClient.eDocId).toBe(documentId);
         expect(clientRepository.update).toHaveBeenCalledWith(branchId, phoneMatchedClient);
+    });
+
+    describe("branch calendar", () => {
+        // 2026-05-04..08 has 4 business days (5/5 is a holiday); the branch adds 5/7 off.
+        const createClientWithPeriod = (): ClientEntity =>
+            ClientEntity.reconstitute(
+                7, "고객 7", null, "010-1234-5678", null, null, null, null, null,
+                new Date("2026-05-04T00:00:00.000Z"), new Date("2026-05-08T00:00:00.000Z"),
+                null, true, null, null, null, false, null,
+            );
+
+        it("derives the linked client's duration with the branch calendar, loaded fresh", async () => {
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar(["2026-05-07"]));
+            const branchUsecase = new CreateEformsignDocUsecase(
+                eformsignDocRepository as never,
+                clientRepository as never,
+                holidayCalendar,
+            );
+            const client = createClientWithPeriod();
+            clientRepository.findById.mockResolvedValue(client);
+
+            await branchUsecase.execute(branchId, createParams());
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            expect(client.duration).toBe(3);
+        });
+
+        it("passes the fresh branch calendar to the locked target-version write", async () => {
+            const calendar = branchCalendar(["2026-05-07"]);
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const updateIfTargetVersion = jest.fn().mockResolvedValue(createClientWithPeriod());
+            const branchUsecase = new CreateEformsignDocUsecase(
+                eformsignDocRepository as never,
+                { ...clientRepository, updateIfTargetVersion } as never,
+                holidayCalendar,
+            );
+            clientRepository.findById.mockResolvedValue(createClientWithPeriod());
+
+            await branchUsecase.execute(branchId, createParams({ clientTargetVersion: "version-1" }));
+
+            expect(updateIfTargetVersion).toHaveBeenCalledWith(
+                branchId,
+                7,
+                "version-1",
+                { eDocId: documentId },
+                calendar,
+            );
+        });
     });
 
     it("returns a warning while keeping the document when client linking fails", async () => {

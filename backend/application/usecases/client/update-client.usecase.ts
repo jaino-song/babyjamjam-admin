@@ -3,6 +3,8 @@ import { clientCodeOnlyProblemBody, clientProblemBody } from "application/usecas
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import type { Prisma } from "@prisma/client";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 export type UpdateClientParams = {
     name?: string;
@@ -38,6 +40,7 @@ export class UpdateClientUsecase {
     constructor(
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(
@@ -45,8 +48,13 @@ export class UpdateClientUsecase {
         id: number,
         updates: UpdateClientParams,
         transaction?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<ClientEntity> {
         assertNonNullableClientPatch(updates);
+        // SAVED computation: update() re-derives the persisted duration. A
+        // caller with an open transaction passes the calendar it loaded before
+        // opening it; the in-transaction read is only the fallback.
+        const branchCalendar = calendar ?? await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = transaction
             ? await this.clientRepository.findByIdForUpdate(branchid, id, transaction)
             : await this.clientRepository.findById(branchid, id);
@@ -54,7 +62,7 @@ export class UpdateClientUsecase {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
-        client.update(updates);
+        client.update(updates, branchCalendar);
         return this.clientRepository.update(branchid, client, transaction);
     }
 
@@ -69,13 +77,18 @@ export class UpdateClientUsecase {
         updates: UpdateClientParams,
         expectedTargetVersion: string,
         transaction?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<ClientEntity> {
         assertNonNullableClientPatch(updates);
+        // SAVED computation: loaded before the repository takes the row lock
+        // (and, for a transactional caller, before the transaction opened).
+        const branchCalendar = calendar ?? await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updated = await this.clientRepository.updateIfTargetVersion(
             branchid,
             id,
             expectedTargetVersion,
             updates,
+            branchCalendar,
             transaction,
         );
         if (updated) return updated;

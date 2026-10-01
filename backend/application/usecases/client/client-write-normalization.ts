@@ -1,6 +1,7 @@
 import { BadRequestException } from "@nestjs/common";
 import { CLIENT_DURATION_NEEDS_SERVICE_PERIOD_MESSAGE, clientDurationOutOfRangeMessage } from "domain/entities/client.entity";
 import type { ClientEntity } from "domain/entities/client.entity";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { normalizeClientPricing } from "domain/services/client-pricing";
 import type { CreateClientUsecase } from "./create-client.usecase";
 import type { UpdateClientParams } from "./update-client.usecase";
@@ -33,9 +34,10 @@ export function normalizeMergedClientPricing(existing: ClientWriteExisting, upda
 function validatedDerivedDuration(
     existing: Pick<ClientWriteExisting, "startDate" | "endDate"> | null,
     updates: Pick<UpdateClientParams, "startDate" | "endDate" | "duration">,
+    calendar: KrBusinessDayCalendar,
 ): number | null {
     const period = mergeAndValidateClientServicePeriod(existing, updates);
-    const derived = deriveClientDuration(period.startDate, period.endDate);
+    const derived = deriveClientDuration(period.startDate, period.endDate, calendar);
     assertClientDurationMatchesDates(updates.duration, derived);
     const hasDateUpdate = existing !== null && (updates.startDate !== undefined || updates.endDate !== undefined);
     if (hasDateUpdate && derived !== null && updates.duration === null) {
@@ -50,12 +52,13 @@ function validatedDerivedDuration(
 /** Same write descriptor for inspection, automation planning, and persistence; no lookups or writes. */
 export function normalizeClientCreateInput(
     input: ClientWriteInput & { name: string; phone: string },
+    calendar: KrBusinessDayCalendar,
 ): Parameters<CreateClientUsecase["execute"]>[1] {
     const dates = {
         startDate: parseClientDate(input.startDate, "startDate") ?? null,
         endDate: parseClientDate(input.endDate, "endDate") ?? null,
     };
-    const derived = validatedDerivedDuration(null, { ...dates, duration: input.duration });
+    const derived = validatedDerivedDuration(null, { ...dates, duration: input.duration }, calendar);
     const voucherClient = input.voucherClient ?? false;
     return {
         name: input.name,
@@ -87,7 +90,11 @@ const CLIENT_UPDATE_FIELDS = [
     "serviceStatus", "breastPump", "areaId",
 ] as const satisfies readonly (keyof ClientWriteInput)[];
 
-export function normalizeClientUpdateInput(existing: ClientWriteExisting, input: ClientWriteInput): UpdateClientParams {
+export function normalizeClientUpdateInput(
+    existing: ClientWriteExisting,
+    input: ClientWriteInput,
+    calendar: KrBusinessDayCalendar,
+): UpdateClientParams {
     // Select fields explicitly: IDs, approval artifacts and caller metadata are never part of the write.
     const updates = Object.fromEntries(CLIENT_UPDATE_FIELDS
         .filter((key) => input[key] !== undefined)
@@ -100,7 +107,7 @@ export function normalizeClientUpdateInput(existing: ClientWriteExisting, input:
         dueDate: parseClientDate(updates.dueDate, "dueDate"),
         birthDate: parseClientDate(updates.birthDate, "birthDate"),
     };
-    const derived = validatedDerivedDuration(existing, parsed);
+    const derived = validatedDerivedDuration(existing, parsed, calendar);
     // A contracted count is authoritative. Omission fills only an absent count;
     // it must never replace an existing count with the length of an extended period.
     const duration = parsed.duration !== undefined ? parsed.duration

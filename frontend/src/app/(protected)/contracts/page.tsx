@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
   FileText,
@@ -35,6 +36,7 @@ import {
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInfiniteContracts";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
@@ -46,6 +48,7 @@ import {
   type DocumentStatusCategory,
   contractStatusBadgeType,
   mapDocStatusLabel,
+  calendarForEndDate,
   getStatusCategory,
   foldContractStats,
 } from "@/lib/eformsign/status-codes";
@@ -455,6 +458,8 @@ type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
 export default function ContractsPage() {
   const router = useRouter();
+  // Display-only (status labels, stat counts): the built-in calendar stands in while it loads.
+  const { calendar } = useBusinessDayCalendar();
   const searchParams = useSearchParams();
   const [activeSection, setActiveSection] = useState<SectionId>("maternity");
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -587,8 +592,8 @@ export default function ContractsPage() {
   );
 
   const stats = useMemo(
-    () => getContractStatsValues(statusCounts),
-    [statusCounts],
+    () => getContractStatsValues(statusCounts, calendar),
+    [statusCounts, calendar],
   );
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
@@ -823,6 +828,7 @@ export default function ContractsPage() {
                       document={doc}
                       customerName={customerName}
                       isLoading={isLoading}
+                      calendar={calendar}
                     />
                   );
                 }}
@@ -949,6 +955,7 @@ export default function ContractsPage() {
                         customerName={resolveCustomerName(doc)}
                         subtitle="제공기록지"
                         isLoading={isLoading}
+                        calendar={calendar}
                       />
                     )}
                   />
@@ -1143,6 +1150,8 @@ export function ContractDetail({
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Display-only (status label, receipt gate): the built-in calendar stands in while it loads.
+  const { calendar } = useBusinessDayCalendar();
   const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
   const enqueueFinalizationMutation = useEnqueueEformsignDocumentFinalization();
   const detailQuery = useQuery<EformsignDocument>({
@@ -1172,7 +1181,12 @@ export function ContractDetail({
       full: ["계약 종료일", "계약종료일", "endDate", "contractEndDate"],
     }) ?? "",
   );
-  const statusLabel = mapDocStatusLabel(detailedDocument.current_status, contractEndDateIso || null);
+  const statusLabel = mapDocStatusLabel(
+    detailedDocument.current_status,
+    contractEndDateIso || null,
+    undefined,
+    calendar,
+  );
   const statusType: StatusType = contractStatusBadgeType(statusLabel);
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTabKey>("document");
   const [isReRequestDialogOpen, setIsReRequestDialogOpen] = useState(false);
@@ -2324,6 +2338,7 @@ export function ContractDetail({
             category,
             currentStatus: detailedDocument.current_status,
             contractEndDate: detailedDocument.contract_end_date,
+            calendar: calendarForEndDate(detailedDocument.contract_end_date, calendar),
           })
             ? undefined
             : () =>
@@ -2357,6 +2372,7 @@ export const contractStatsQueryKeys = {
 
 export function getContractStatsValues(
   statusCounts: EformsignStatusCountsResponse | undefined,
+  calendar?: KrBusinessDayCalendar,
 ): ReturnType<typeof foldContractStats> | null {
-  return statusCounts ? foldContractStats(statusCounts.documents) : null;
+  return statusCounts ? foldContractStats(statusCounts.documents, calendar) : null;
 }

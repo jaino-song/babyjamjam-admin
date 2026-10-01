@@ -4,6 +4,7 @@ import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EFORMSIGN_END_DATE_FIELD_IDS } from "./eformsign-end-date-field-ids";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export interface SyncedClientEndDate {
     clientId: number;
@@ -27,6 +28,7 @@ export class SyncClientEndDateUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(
@@ -129,7 +131,9 @@ export class SyncClientEndDateUsecase {
             if (options.persist) {
                 await options.persist(target);
             } else {
-                client.update({ endDate });
+                // SAVED computation: the end date drives the persisted duration.
+                const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+                client.update({ endDate }, calendar);
                 await this.clientRepository.update(branchId, client);
             }
 

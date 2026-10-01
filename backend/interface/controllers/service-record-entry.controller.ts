@@ -7,9 +7,14 @@ import {
     Param,
     Req,
     ParseIntPipe,
+    Query,
     UseGuards,
 } from "@nestjs/common";
+import { Type } from "class-transformer";
+import { IsDefined, IsInt, Max, Min } from "class-validator";
 import { Request } from "express";
+import type { HolidayYearPayload } from "@babyjamjam/shared/utils/holiday-calendar";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
@@ -23,6 +28,16 @@ import {
 
 type ServiceRecordRequest = Request & { serviceRecordContext: ServiceRecordTokenContext };
 
+/** `?year=` of the token-page holiday read; unlike the admin read it is required. */
+export class ServiceRecordHolidaysQueryDto {
+    @IsDefined()
+    @Type(() => Number)
+    @IsInt()
+    @Min(2000)
+    @Max(2100)
+    year!: number;
+}
+
 /**
  * No-login 제공기록지 endpoints (BJJ-247).
  * `link/:token` + `verify` are public (link token + phone). Everything else is behind
@@ -33,6 +48,7 @@ export class ServiceRecordEntryController {
     constructor(
         private readonly service: ServiceRecordEntryService,
         private readonly scheduleChangeService: ScheduleChangeService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     @Get("link/:linkToken")
@@ -51,6 +67,31 @@ export class ServiceRecordEntryController {
     @Get("context")
     getContext(@Req() req: ServiceRecordRequest) {
         return this.service.getContext(req.serviceRecordContext);
+    }
+
+    /**
+     * The branch's effective holidays for the caregiver page. The branch comes
+     * from the link token, never from the request; branch-excluded dates are
+     * omitted and branch additions are included.
+     */
+    @UseGuards(ServiceRecordGuard)
+    @Get("holidays")
+    async getHolidays(
+        @Req() req: ServiceRecordRequest,
+        @Query() query: ServiceRecordHolidaysQueryDto,
+    ): Promise<HolidayYearPayload> {
+        const effective = await this.holidayCalendar.getEffectiveYear(
+            req.serviceRecordContext.branchId,
+            query.year,
+        );
+        return {
+            year: effective.year,
+            revision: effective.revision,
+            supported: effective.supported,
+            holidays: effective.holidays
+                .filter((holiday) => !holiday.excluded)
+                .map(({ date, name }) => ({ date, name })),
+        };
     }
 
     @UseGuards(ServiceRecordGuard)
