@@ -20,7 +20,7 @@ const MAX_EVENTS_PER_RUN = 200;
 
 export interface HolidayReviewRunSummary {
     processed: number;
-    /** True when the run stopped before the queue was drained (failure or a concurrent change). */
+    /** True when the run stopped early because of a failure or a concurrent change (hitting the per-run cap is not a stop). */
     stopped: boolean;
 }
 
@@ -77,22 +77,28 @@ export class HolidayReviewProcessorService {
     async processDueEvents(now: Date = new Date()): Promise<HolidayReviewRunSummary> {
         const cutoff = now.getTime() - HOLIDAY_REVIEW_GRACE_MS;
         let processed = 0;
-        for (let i = 0; i < MAX_EVENTS_PER_RUN; i += 1) {
-            // Re-listed every round so "later events" is always the current queue.
-            const queue = await this.repository.listUnprocessedEvents().catch((error: unknown) => {
-                this.logger.error(`[Holiday Review] could not list events: ${this.describeError(error)}`);
-                return null;
-            });
-            if (queue === null) return { processed, stopped: true };
-            const [event, ...later] = queue;
-            if (!event || event.createdAt.getTime() >= cutoff) {
+        // The WHOLE queue, once per run (no cap): `later` below is every unprocessed event after
+        // the current one, which is what the previous-calendar undo and the repository's
+        // `events_changed` guard both need. Only the number processed per run is bounded, so a
+        // backlog drains over several runs instead of stalling the guard. An event that appears
+        // mid-run trips the guard and ends the run; the next run lists it.
+        const queue = await this.repository.listUnprocessedEvents().catch((error: unknown) => {
+            this.logger.error(`[Holiday Review] could not list events: ${this.describeError(error)}`);
+            return null;
+        });
+        if (queue === null) return { processed, stopped: true };
+        for (let i = 0; i < queue.length && i < MAX_EVENTS_PER_RUN; i += 1) {
+            const event = queue[i] as HolidayChangeEventRecord;
+            if (event.createdAt.getTime() >= cutoff) {
                 return { processed, stopped: false };
             }
             try {
-                const outcome = await this.processEvent(event, later);
-                if (outcome === "events_changed") {
+                const outcome = await this.processEvent(event, queue.slice(i + 1));
+                if (outcome === "events_changed" || outcome === "items_changed") {
                     this.logger.warn(
-                        `[Holiday Review] event ${event.id}: new events appeared while processing; retrying next run`,
+                        `[Holiday Review] event ${event.id}: ${
+                            outcome === "events_changed" ? "new events appeared" : "an open item changed"
+                        } while processing; retrying next run`,
                     );
                     return { processed, stopped: true };
                 }
@@ -105,26 +111,31 @@ export class HolidayReviewProcessorService {
                 return { processed, stopped: true };
             }
         }
-        return { processed, stopped: true };
+        // Per-run cap reached with events left: not a failure, the next run continues.
+        return { processed, stopped: false };
     }
 
     private async processEvent(
         event: HolidayChangeEventRecord,
         later: HolidayChangeEventRecord[],
-    ): Promise<"applied" | "already_processed" | "events_changed"> {
+    ): Promise<"applied" | "already_processed" | "events_changed" | "items_changed"> {
         const branchIds = event.branchId !== null
             ? [event.branchId]
             : (await this.branchRepository.findAllActive()).map((branch) => branch.id);
 
         // Calendars and candidates are loaded before the write transaction opens.
         const drafts: ReviewItemDraft[] = [];
+        const assumedOpenItemIds: Record<number, string> = {};
         for (const branchId of branchIds) {
-            drafts.push(...(await this.draftsForBranch(branchId, event, later)));
+            const branchDrafts = await this.draftsForBranch(branchId, event, later);
+            drafts.push(...branchDrafts.drafts);
+            Object.assign(assumedOpenItemIds, branchDrafts.assumedOpenItemIds);
         }
 
         const result = await this.repository.applyEventResult({
             eventId: event.id,
             drafts,
+            assumedOpenItemIds,
             expectedUnprocessedEventIds: [event.id, ...later.map((e) => e.id)],
         });
         if (result.status === "applied") {
@@ -140,7 +151,7 @@ export class HolidayReviewProcessorService {
         branchId: string,
         event: HolidayChangeEventRecord,
         later: HolidayChangeEventRecord[],
-    ): Promise<ReviewItemDraft[]> {
+    ): Promise<{ drafts: ReviewItemDraft[]; assumedOpenItemIds: Record<number, string> }> {
         const overrides = await this.repository.listBranchOverrides(branchId);
         const overrideDates = new Set(overrides.map((override) => override.date));
         const current = await this.calendarService.forBranch(branchId, { fresh: true });
@@ -161,7 +172,7 @@ export class HolidayReviewProcessorService {
             this.logger.debug(
                 `[Holiday Review] event ${event.id} is a no-op for branch ${branchId}; skipping the branch`,
             );
-            return [];
+            return { drafts: [], assumedOpenItemIds: {} };
         }
 
         // The calendar the stored end dates were most likely saved with: undo this event and
@@ -181,6 +192,14 @@ export class HolidayReviewProcessorService {
         );
 
         const candidates = await this.repository.findReviewCandidates(branchId, event.date);
+        // A client's open item from an earlier event is replaced by this event's item, so the
+        // new item covers the older change too: sessions since the FIRST change must still count.
+        const openItems = await this.repository.listOpenItemsForClients(
+            event.id,
+            candidates.map((candidate) => candidate.clientId),
+        );
+        const openByClient = new Map(openItems.map((item) => [item.clientId, item]));
+        const assumedOpenItemIds: Record<number, string> = {};
         const drafts: ReviewItemDraft[] = [];
         for (const candidate of candidates) {
             let recalculatedEnd: string;
@@ -200,7 +219,12 @@ export class HolidayReviewProcessorService {
             // "" means the end date could not be derived from start and duration.
             if (recalculatedEnd === "" || previousEnd === "") continue;
 
-            const { category, reason } = classifyReviewItem(candidate.facts, event.date, recalculatedEnd);
+            const openItem = openByClient.get(candidate.clientId);
+            const affectedFrom = openItem !== undefined && openItem.affectedFrom < event.date
+                ? openItem.affectedFrom
+                : event.date;
+            if (openItem !== undefined) assumedOpenItemIds[candidate.clientId] = openItem.id;
+            const { category, reason } = classifyReviewItem(candidate.facts, affectedFrom, recalculatedEnd);
             drafts.push({
                 clientId: candidate.clientId,
                 // The CLIENT's branch, not the event's: a public event spans every branch.
@@ -208,11 +232,12 @@ export class HolidayReviewProcessorService {
                 storedEnd: candidate.endDate,
                 recalculatedEnd,
                 previousEnd,
+                affectedFrom,
                 category,
                 reason,
             });
         }
-        return drafts;
+        return { drafts, assumedOpenItemIds };
     }
 
     private describeError(error: unknown): string {

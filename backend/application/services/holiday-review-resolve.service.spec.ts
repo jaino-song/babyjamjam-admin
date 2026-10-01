@@ -32,6 +32,7 @@ function item(overrides: Partial<ReviewItemRecord> = {}): ReviewItemRecord {
         clientName: "김아기",
         storedEnd: "2026-11-13",
         recalculatedEnd: "2026-11-16",
+        affectedFrom: "2026-11-10",
         category: "safe",
         reason: "no_sessions_after_date",
         status: "open",
@@ -391,12 +392,10 @@ describe("HolidayReviewResolveService", () => {
                 ["a locked session lies after the new end", { caseStatus: null, days: [{ date: "2026-11-17", locked: true }] }, "locked_session_after_new_end"],
             ])("re-files the item as risk when %s", async (_label, facts, reason) => {
                 // The change date is moved past the recorded days so only the intended rule matches.
-                const open = item();
-                const s = makeService({
-                    items: [open],
-                    snapshots: { 7: snapshot({ facts }) },
-                    event: { ...EVENT, date: reason === "locked_session_after_new_end" ? "2026-11-30" : EVENT.date },
+                const open = item({
+                    affectedFrom: reason === "locked_session_after_new_end" ? "2026-11-30" : "2026-11-10",
                 });
+                const s = makeService({ items: [open], snapshots: { 7: snapshot({ facts }) } });
 
                 await expect(resolveFix(s, [open.id])).resolves.toEqual({
                     fixed: 0,
@@ -410,6 +409,61 @@ describe("HolidayReviewResolveService", () => {
                 });
                 expect(s.clientService.update).not.toHaveBeenCalled();
                 expect(s.repository.closeOpenItem).not.toHaveBeenCalled();
+            });
+        });
+
+        it("B1: classifies against the item's affectedFrom, not the event's date (a later event cannot hide an earlier session)", async () => {
+            // The event is 11-11, but the item stands for the 11-04 change too, and a session sits on 11-04.
+            const open = item({ affectedFrom: "2026-11-04" });
+            const s = makeService({
+                items: [open],
+                snapshots: { 7: snapshot({ facts: { caseStatus: null, days: [{ date: "2026-11-04", locked: false }] } }) },
+                event: { ...EVENT, date: "2026-11-11" },
+            });
+
+            await expect(resolveFix(s, [open.id])).resolves.toEqual({
+                fixed: 0,
+                kept: 0,
+                skipped: [{ itemId: open.id, code: "NO_LONGER_SAFE" }],
+            });
+            expect(s.clientService.update).not.toHaveBeenCalled();
+            expect(s.repository.reclassifyOpenItem).toHaveBeenCalledWith(BRANCH, EVENT_ID, open.id, {
+                category: "risk",
+                reason: "session_on_or_after_date",
+                recalculatedEnd: "2026-11-16",
+            });
+        });
+
+        describe("RECALCULATED_CHANGED (F4)", () => {
+            it("never writes a date the manager did not see: refreshes the item and asks again", async () => {
+                // The screen showed 11-16, but a later holiday moved the fresh date to 11-17.
+                const open = item({ recalculatedEnd: "2026-11-16" });
+                const s = makeService({ items: [open], recalculated: "2026-11-17" });
+
+                await expect(resolveFix(s, [open.id])).resolves.toEqual({
+                    fixed: 0,
+                    kept: 0,
+                    skipped: [{ itemId: open.id, code: "RECALCULATED_CHANGED" }],
+                });
+                expect(s.clientService.update).not.toHaveBeenCalled();
+                expect(s.repository.reclassifyOpenItem).toHaveBeenCalledWith(BRANCH, EVENT_ID, open.id, {
+                    category: "safe",
+                    reason: "no_sessions_after_date",
+                    recalculatedEnd: "2026-11-17",
+                });
+                // The item stays open for the manager's next confirmation.
+                expect(s.repository.closeOpenItem).not.toHaveBeenCalled();
+            });
+
+            it("the second attempt, now confirming the refreshed date, fixes it", async () => {
+                const refreshed = item({ recalculatedEnd: "2026-11-17" });
+                const s = makeService({ items: [refreshed], recalculated: "2026-11-17" });
+
+                await expect(resolveFix(s, [refreshed.id])).resolves.toEqual({ fixed: 1, kept: 0, skipped: [] });
+                expect(s.clientService.update).toHaveBeenCalledWith(BRANCH, 7, {
+                    endDate: "2026-11-17",
+                    expectedEndDate: "2026-11-13",
+                });
             });
         });
 

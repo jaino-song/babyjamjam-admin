@@ -5,6 +5,7 @@ import {
     ApplyReviewEventResult,
     HolidayChangeEventRecord,
     IHolidayReviewRepository,
+    OpenReviewItemRef,
     ReviewCandidateClient,
 } from "domain/repositories/holiday-review.repository.interface";
 import {
@@ -53,6 +54,8 @@ interface World {
     overrides?: Record<string, BranchHolidayOverrideRecord[]>;
     queue?: HolidayChangeEventRecord[];
     candidates?: Record<string, ReviewCandidateClient[]>;
+    /** Open items of EARLIER events, by client id. */
+    openItems?: OpenReviewItemRef[];
     activeBranches?: string[];
     holdsLease?: boolean;
 }
@@ -86,6 +89,9 @@ function makeProcessor(world: World = {}) {
             (world.overrides?.[branchId] ?? []).map(({ date, kind }) => ({ date, kind })),
         ),
         findReviewCandidates: jest.fn(async (branchId: string) => world.candidates?.[branchId] ?? []),
+        listOpenItemsForClients: jest.fn(async (_exceptEventId: string, clientIds: number[]) =>
+            (world.openItems ?? []).filter((item) => clientIds.includes(item.clientId)),
+        ),
         applyEventResult: jest.fn<Promise<ApplyReviewEventResult>, [ApplyReviewEventInput]>(
             async ({ eventId }) => {
                 const index = queue.findIndex((e) => e.id === eventId);
@@ -95,7 +101,11 @@ function makeProcessor(world: World = {}) {
         ),
     } satisfies Pick<
         IHolidayReviewRepository,
-        "listUnprocessedEvents" | "listBranchOverrides" | "findReviewCandidates" | "applyEventResult"
+        | "listUnprocessedEvents"
+        | "listBranchOverrides"
+        | "findReviewCandidates"
+        | "listOpenItemsForClients"
+        | "applyEventResult"
     >;
     const branches = {
         findAllActive: jest.fn(async () =>
@@ -138,6 +148,7 @@ describe("HolidayReviewProcessorService", () => {
             expect(repository.applyEventResult).toHaveBeenCalledWith({
                 eventId: "e1",
                 expectedUnprocessedEventIds: ["e1"],
+                assumedOpenItemIds: {},
                 drafts: [
                     {
                         clientId: 1,
@@ -145,11 +156,71 @@ describe("HolidayReviewProcessorService", () => {
                         storedEnd: STORED_END,
                         recalculatedEnd: "2026-11-16",
                         previousEnd: STORED_END,
+                        affectedFrom: "2026-11-10",
                         category: "safe",
                         reason: "no_sessions_after_date",
                     },
                 ],
             });
+        });
+
+        it("B1: a later event keeps the earlier change's date, so sessions since the first change still count", async () => {
+            // e1 (11-04) was risky because of the 11-04 session; e2 (11-11) replaces its open item.
+            const e2 = event({ id: "e2", date: "2026-11-11" });
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-04", "2026-11-11"],
+                queue: [e2],
+                openItems: [{ id: "item-e1", clientId: 1, affectedFrom: "2026-11-04" }],
+                candidates: {
+                    [BRANCH_A]: [
+                        candidate({ facts: { caseStatus: null, days: [{ date: "2026-11-04", locked: false }] } }),
+                    ],
+                },
+            });
+
+            await service.processDueEvents(NOW);
+
+            const input = repository.applyEventResult.mock.calls[0]![0];
+            expect(input.assumedOpenItemIds).toEqual({ 1: "item-e1" });
+            expect(input.drafts[0]).toMatchObject({
+                affectedFrom: "2026-11-04",
+                category: "risk",
+                reason: "session_on_or_after_date",
+            });
+        });
+
+        it("B1 negative control: with the event's own date alone the same client would be safe", async () => {
+            const e2 = event({ id: "e2", date: "2026-11-11" });
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-04", "2026-11-11"],
+                queue: [e2],
+                candidates: {
+                    [BRANCH_A]: [
+                        candidate({ facts: { caseStatus: null, days: [{ date: "2026-11-04", locked: false }] } }),
+                    ],
+                },
+            });
+
+            await service.processDueEvents(NOW);
+
+            expect(repository.applyEventResult.mock.calls[0]![0].drafts[0]).toMatchObject({
+                affectedFrom: "2026-11-11",
+                category: "safe",
+            });
+        });
+
+        it("B1: an open item with a LATER affectedFrom never moves the new item's date forward", async () => {
+            const e = event({ id: "e1", date: "2026-11-10" });
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [e],
+                openItems: [{ id: "item-x", clientId: 1, affectedFrom: "2026-11-20" }],
+                candidates: { [BRANCH_A]: [candidate()] },
+            });
+
+            await service.processDueEvents(NOW);
+
+            expect(repository.applyEventResult.mock.calls[0]![0].drafts[0]!.affectedFrom).toBe("2026-11-10");
         });
 
         it("targets every active branch for a public event and uses the CLIENT's branch id on each draft", async () => {
@@ -502,6 +573,34 @@ describe("HolidayReviewProcessorService", () => {
 
             expect(summary).toEqual({ processed: 0, stopped: true });
             expect(repository.applyEventResult).toHaveBeenCalledTimes(1);
+        });
+
+        it("stops, leaving the event for the next run, when a client's open item changed mid-processing", async () => {
+            const e1 = event({ id: "e1", date: "2026-11-10" });
+            const { service, repository } = makeProcessor({ queue: [e1] });
+            repository.applyEventResult.mockResolvedValueOnce({ status: "items_changed" });
+
+            await expect(service.processDueEvents(NOW)).resolves.toEqual({ processed: 0, stopped: true });
+        });
+
+        it("F1: lists the whole queue once, past the per-run cap, and every event sees all later ones", async () => {
+            const queue = Array.from({ length: 1001 }, (_, i) =>
+                event({ id: `e${String(i).padStart(4, "0")}`, date: "2026-11-10", createdAt: new Date(OLD.getTime() + i) }),
+            );
+            const { service, repository } = makeProcessor({ queue });
+
+            const summary = await service.processDueEvents(NOW);
+
+            // Progress: a capped run processes some events and is not a stop.
+            expect(summary.processed).toBeGreaterThan(0);
+            expect(summary.stopped).toBe(false);
+            expect(repository.listUnprocessedEvents).toHaveBeenCalledTimes(1);
+            const first = repository.applyEventResult.mock.calls[0]![0];
+            expect(first.expectedUnprocessedEventIds).toHaveLength(1001);
+            // The next run continues where this one stopped.
+            const second = await service.processDueEvents(NOW);
+            expect(second.processed).toBeGreaterThan(0);
+            expect(repository.applyEventResult.mock.calls.length).toBe(summary.processed + second.processed);
         });
 
         it("stops when the queue cannot be listed", async () => {

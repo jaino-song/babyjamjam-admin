@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS "end_date_review_item" (
     "client_id" INTEGER NOT NULL,
     "stored_end" DATE NOT NULL,
     "recalculated_end" DATE NOT NULL,
+    "affected_from" DATE NOT NULL,
     "category" VARCHAR(10) NOT NULL,
     "reason" VARCHAR(200),
     "status" VARCHAR(10) NOT NULL DEFAULT 'open',
@@ -76,6 +77,19 @@ CREATE TABLE IF NOT EXISTS "end_date_review_item" (
 
     CONSTRAINT "end_date_review_item_pkey" PRIMARY KEY ("id")
 );
+
+-- AlterTable
+-- affected_from: the earliest holiday-change date that explains this item (the event's own
+-- date, or the older of it and the open item it replaced). Session classification uses it
+-- so a later event cannot hide sessions recorded after an earlier change.
+-- Self-healing for a database created before the column existed: add, backfill from the
+-- event, then enforce NOT NULL.
+ALTER TABLE "end_date_review_item" ADD COLUMN IF NOT EXISTS "affected_from" DATE;
+UPDATE "end_date_review_item" AS i
+SET "affected_from" = e."date"
+FROM "holiday_change_event" AS e
+WHERE i."change_event_id" = e."id" AND i."affected_from" IS NULL;
+ALTER TABLE "end_date_review_item" ALTER COLUMN "affected_from" SET NOT NULL;
 
 -- CreateIndex
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_branch_holiday_override_branch_date" ON "branch_holiday_override"("branch_id", "date");

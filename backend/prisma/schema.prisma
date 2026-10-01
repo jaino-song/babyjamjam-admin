@@ -1687,6 +1687,7 @@ model end_date_review_item {
   clientId        Int                  @map("client_id")
   storedEnd       DateTime             @map("stored_end") @db.Date
   recalculatedEnd DateTime             @map("recalculated_end") @db.Date
+  affectedFrom    DateTime             @map("affected_from") @db.Date // Earliest change date behind this item; classification uses it, not the newest event's date.
   category        String               @db.VarChar(10)
   reason          String?              @db.VarChar(200)
   status          String               @default("open") @db.VarChar(10)

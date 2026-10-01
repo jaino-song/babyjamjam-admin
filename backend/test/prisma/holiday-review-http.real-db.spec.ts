@@ -130,6 +130,7 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
                 clientId,
                 storedEnd: d("2026-11-13"),
                 recalculatedEnd: d("2026-11-16"),
+                affectedFrom: d("2026-11-10"),
                 category: opts.category ?? "safe",
                 reason: opts.reason ?? (opts.category === "risk" ? "finalized" : "no_sessions_after_date"),
                 status: opts.status ?? "open",
