@@ -4036,38 +4036,6 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   color: hsl(var(--v3-text-muted));
 }
 
-[data-slot="auth-register-page"] .pw-strength {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  border-radius: 10px;
-  background: hsl(var(--v3-dim-white));
-  padding: 8px 12px;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
-}
-
-[data-slot="auth-register-page"] .pw-strength-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-[data-slot="auth-register-page"] .pw-strength-row.ok {
-  color: hsl(var(--v3-green));
-}
-
-[data-slot="auth-register-page"] .pw-strength-row .dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: hsl(var(--v3-border));
-}
-
-[data-slot="auth-register-page"] .pw-strength-row.ok .dot {
-  background: hsl(var(--v3-green));
-}
-
 [data-slot="auth-register-page"] .auth-actions {
   display: flex;
   gap: 8px;

@@ -23,7 +23,12 @@ import {
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
 import { formatIsoDateInput } from "@/lib/contracts/date-input";
-import { focusFirstInvalidField, type FieldSpec } from "@/lib/validations/field-message";
+import {
+  focusFirstInvalidField,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+} from "@/lib/validations/field-message";
 import { useLocale } from "@/providers/LocaleProvider";
 import type {
   ClientDraftDetail,
@@ -31,6 +36,9 @@ import type {
   Proposal,
 } from "@/lib/call-inbox/types";
 import { findEvidenceTurnIndex, transcriptTurnId, TranscriptView } from "./TranscriptView";
+
+/** Always-on caution for a proposal the model is unsure about; any error or hint replaces it. */
+const LOW_CONFIDENCE_SLOT: SlotMessage = { text: "⚠ 확신도 낮음", tone: "muted" };
 
 const REVIEW_BASE = "mobile_call-inbox_detail-sheet_stack_detail-page_review";
 
@@ -678,14 +686,19 @@ function ClientUpdateReview({
                       data-component={`${REVIEW_BASE}_client-update_${proposal.field}-field`}
                       htmlFor={inputIdFor(proposal.field)}
                       label={FIELD_LABELS[proposal.field] ?? proposal.field}
-                      message={fieldMessages.slot(proposal.field)}
+                      message={pickSlotMessage(
+                        fieldMessages.slot(proposal.field),
+                        isLow ? LOW_CONFIDENCE_SLOT : null,
+                      )}
                     />
                   </div>
                 ) : (
                   <span className="flex-1">{FIELD_LABELS[proposal.field] ?? proposal.field}</span>
                 )}
                 <div className="flex shrink-0 items-center gap-2">
-                  {isLow && <span className="font-bold text-amber-600">⚠ 확신도 낮음</span>}
+                  {isLow && !(isPending && !isBool) && (
+                    <span className="font-bold text-amber-600">{LOW_CONFIDENCE_SLOT.text}</span>
+                  )}
                   {isPending && (
                     <Switch
                       checked={isIncluded}

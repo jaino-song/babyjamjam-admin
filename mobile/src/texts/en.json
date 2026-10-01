@@ -282,6 +282,8 @@
       "start-date": "Start Date",
       "end-date": "End Date",
       "voucher-client": "Voucher Client",
+      "self-pay-client": "Self-pay Client",
+      "customer-type": "Customer Type",
       "care-center": "Postpartum Care Center",
       "breast-pump": "Breast Pump Rental",
       "error-name-required": "이름을 입력해 주세요",

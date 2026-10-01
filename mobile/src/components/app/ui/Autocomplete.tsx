@@ -4,14 +4,17 @@ import {
     useState,
     useMemo,
     useEffect,
+    useId,
     useRef,
     type ReactNode,
 } from "react";
 import { Check, X, Loader2, Play } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Label } from "@/components/ui/label";
+import type { SlotMessage } from "@/lib/validations/field-message";
 import { Input } from "@/components/app/v3";
+
+import { FieldLabelRow } from "./FieldLabelRow";
 
 const SOURCE_COMPONENT = "Autocomplete";
 
@@ -46,7 +49,13 @@ export interface AutocompleteProps<T> {
     label?: ReactNode;
     required?: boolean;
     error?: boolean;
-    helperText?: ReactNode;
+    /**
+     * The field's one error/hint/status message, shown at the right of the label row.
+     * Wins over `helperText` while it is set.
+     */
+    message?: SlotMessage | null;
+    /** Always-on guidance, shown in the same slot while `message` has nothing to say. */
+    helperText?: string;
     emptyMessage?: ReactNode;
     manualEntry?: AutocompleteManualEntry;
     disabled?: boolean;
@@ -72,6 +81,7 @@ export function Autocomplete<T>({
     label,
     required,
     error,
+    message,
     helperText,
     emptyMessage,
     manualEntry,
@@ -222,6 +232,11 @@ export function Autocomplete<T>({
     const addBtnDc = sub("add-button");
     const clearBtnDc = sub("clear");
     const resolvedInputId = inputId ?? name;
+    const slotMessage: SlotMessage | null =
+        message ?? (helperText ? { text: helperText, tone: error ? "err" : "muted" } : null);
+    const hasLabelRow = Boolean(label) || slotMessage !== null;
+    // Several autocompletes can share a `name`, so the slot needs an id of its own.
+    const slotId = useId();
 
     return (
         <div
@@ -232,19 +247,15 @@ export function Autocomplete<T>({
             data-disabled={disabled ? "true" : undefined}
             className={cn("space-y-2", className)}
         >
-            {label && (
-                <Label
+            {hasLabelRow && (
+                <FieldLabelRow
+                    data-component={dataComponent}
                     htmlFor={resolvedInputId}
-                    data-component={sub("label")}
-                    className={cn(error && "text-destructive")}
-                >
-                    {label}
-                    {required && (
-                        <span data-component={sub("required")} className="text-destructive ml-1">
-                            *
-                        </span>
-                    )}
-                </Label>
+                    label={label}
+                    required={Boolean(required)}
+                    message={slotMessage}
+                    messageId={slotId}
+                />
             )}
             <div ref={containerRef} data-component={sub("control")} className="relative">
                 <Input
@@ -266,6 +277,8 @@ export function Autocomplete<T>({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
+                    aria-describedby={hasLabelRow ? slotId : undefined}
+                    aria-invalid={error ? true : undefined}
                     data-component={inputDc}
                     data-slot="autocomplete-input"
                     data-state={isDropdownVisible ? "open" : "closed"}
@@ -469,17 +482,6 @@ export function Autocomplete<T>({
                 )}
             </div>
 
-            {helperText && (
-                <p
-                    data-component={sub("helper")}
-                    className={cn(
-                        "text-xs",
-                        error ? "text-destructive" : "text-muted-foreground"
-                    )}
-                >
-                    {helperText}
-                </p>
-            )}
         </div>
     );
 }

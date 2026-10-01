@@ -73,6 +73,7 @@ const FIELD_INPUT_IDS: Record<AccountField | ProfileField, string> = {
 };
 
 const ROLE_HELPER_COPY = "오너가 지점과 최종 권한을 배정합니다.";
+const PASSWORD_RULES_GUIDANCE = "8자 이상 대소문자·숫자·특수문자";
 
 /** Registered-code discriminator for the duplicate-phone failure. */
 function isPhoneDuplicateFailure(errorData: RegisterErrorData | undefined, normalized: NormalizedApiError): boolean {
@@ -153,6 +154,14 @@ export default function RegisterPage() {
       met: passwordStrength.requirements.some((rule) => rule.label === "특수문자 포함" && rule.met),
     },
   ];
+  // Password rules live in the label-row slot: the first unmet rule while typing,
+  // a confirmation once every rule is met, and the rule summary while empty.
+  const firstUnmetPasswordRule = passwordStrengthRows.find((rule) => !rule.met);
+  const passwordRuleSlot: SlotMessage = !formData.password
+    ? { text: PASSWORD_RULES_GUIDANCE, tone: "muted" }
+    : firstUnmetPasswordRule
+      ? { text: `${firstUnmetPasswordRule.label} 필요해요`, tone: "muted" }
+      : { text: "사용할 수 있는 비밀번호예요", tone: "ok" };
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
   const emailFormatError = getEmailFormatError(formData.email ?? "");
   const canShowEmailTrailing = Boolean(normalizedEmail) && !emailFormatError;
@@ -178,6 +187,7 @@ export default function RegisterPage() {
     password: pickSlotMessage(
       accountMessages.slot("password"),
       authErrorSlot("password", errors.password),
+      passwordRuleSlot,
     ),
     confirmPassword: pickSlotMessage(
       accountMessages.slot("confirmPassword"),
@@ -633,14 +643,6 @@ export default function RegisterPage() {
               disabled={isLoading}
               {...fieldProps("password", "register-password")}
             />
-            <div className="pw-strength" data-component={`${REGISTER_ACCOUNT_FORM}_password-field_strength`}>
-              {passwordStrengthRows.map((rule) => (
-                <div key={rule.label} className={`pw-strength-row ${rule.met ? "ok" : ""}`} data-component={`${REGISTER_ACCOUNT_FORM}_password-field_strength_row`}>
-                  <span className="dot" />
-                  {rule.label}
-                </div>
-              ))}
-            </div>
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_password-confirm-field`}>

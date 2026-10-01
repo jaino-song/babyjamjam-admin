@@ -695,6 +695,10 @@ export function ServiceRecordWizard({
         { label: "제공일자", rangeText: FIELD_COPY.serviceDateBefore },
     );
     const serviceDateFieldVisible = screen === "day" && !readOnly && !adminMode && !editing && pageIdx === 0;
+    // A date that differs from today is a caution about this field: it sits in the field's slot
+    // (below any error or format hint) while the field is on screen.
+    const serviceDateSlot: SlotMessage | null = serviceDateMessage
+        ?? (serviceDateFieldVisible && hasServiceDateMismatch ? hintMessage(FIELD_COPY.serviceDateMismatch) : null);
     const firstDayProblemId = (): string | null => {
         if (serviceDateFieldVisible && serviceDateBlocked) return SERVICE_DATE_INPUT_ID;
         for (const index of currentDayPage.items) {
@@ -1012,7 +1016,7 @@ export function ServiceRecordWizard({
                                     label="제공일자"
                                     htmlFor={SERVICE_DATE_INPUT_ID}
                                     slotId="service-record-date-helper"
-                                    message={serviceDateMessage}
+                                    message={serviceDateSlot}
                                 />
                                 {adminEditing && slots?.serviceDateEditor ? (
                                     slots.serviceDateEditor({
@@ -1042,7 +1046,7 @@ export function ServiceRecordWizard({
                                 )}
                             </div>
                         )}
-                        {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && (
+                        {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && !serviceDateFieldVisible && (
                             <div data-component={child("body_date-mismatch-notice")} data-slot="notice" className="notice">
                                 <span>서비스 제공일자({formatMonthDayKo(currentServiceDate)})가 오늘과 달라요. 한번 더 확인해 주세요.</span>
                             </div>

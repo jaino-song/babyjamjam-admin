@@ -19,6 +19,7 @@
   display: block;
   flex-shrink: 0;
   margin: 0;
+  white-space: nowrap;
   color: hsl(var(--v3-text-muted));
   font-size: 0.72rem;
   font-weight: 800;

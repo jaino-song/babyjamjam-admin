@@ -55,9 +55,10 @@ test("mother verifies her birthday and reaches the receipt image", async ({ page
     await expect(page.locator('[data-slot="lab-msg"]')).toHaveText("일치하지 않아요 · 남은 4회");
     await expect(page.getByLabel("산모님 생년월일")).toHaveAttribute("aria-invalid", "true");
     await expect(page.locator('[data-slot="err"][role="alert"]')).toHaveCount(0);
-    await expect(page.getByText("5회 연속 틀리면 30분 동안 확인이 잠깁니다", { exact: false })).toBeVisible();
 
     await page.getByLabel("산모님 생년월일").fill("19940315");
+    // Once the mismatch error clears, the lock rule returns as guidance in the same slot.
+    await expect(page.locator('[data-slot="lab-msg"]')).toHaveText("5회 틀리면 30분간 잠겨요");
     await page.getByRole("button", { name: "다시 확인하기" }).click();
     await expect(page.getByRole("img", { name: "김산모 산모님 본인부담금 영수증" })).toBeVisible();
     await expect(page.getByRole("link", { name: "이미지 저장" })).toHaveAttribute(

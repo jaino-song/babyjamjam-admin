@@ -774,7 +774,7 @@ describe("NewMessagePage", () => {
 
     const { rerender } = renderPage();
 
-    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없어요.")).not.toBeInTheDocument();
+    expect(receiverSlot()).not.toHaveTextContent("연락처가 없는 고객이에요");
 
     mockUseAllClients.mockReturnValue({
       data: [{ ...mockClients[0], phone: "" }],
@@ -786,7 +786,9 @@ describe("NewMessagePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없어요.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(receiverSlot()).toHaveTextContent("연락처가 없는 고객이에요");
+    });
   });
 
   it("does not re-add a deep-linked recipient the user removed when the client list refetches", async () => {
@@ -1100,15 +1102,18 @@ describe("NewMessagePage", () => {
     expect(submitButton).toBeDisabled();
     fireEvent.submit(container.querySelector("form")!);
 
-    expect(await screen.findByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없어요.")).toBeInTheDocument();
+    // The problem belongs to the template field, so it shows in that field's label-row slot.
+    await waitFor(() => {
+      expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
+    });
     expect(api.post).not.toHaveBeenCalledWith("/receipt-links/prepare", expect.anything());
     expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
   });
 
   it.each([
-    ["contract_not_signed", "고객이 계약서 서명을 완료해야 발송할 수 있습니다."],
-    ["pdf_unavailable", "계약서 PDF를 아직 불러올 수 없어요. 잠시 후 다시 시도해 주세요."],
-  ])("shows the %s preparation reason without submitting", async (reason, message) => {
+    ["contract_not_signed", "계약서 서명이 필요해요"],
+    ["pdf_unavailable", "계약서 PDF를 불러올 수 없어요"],
+  ])("shows the %s preparation reason in the receiver slot without submitting", async (reason, message) => {
     (api.post as jest.Mock).mockRejectedValue({ response: { data: { reason } } });
     renderPage();
 
@@ -1119,7 +1124,9 @@ describe("NewMessagePage", () => {
     fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
 
-    expect(await screen.findByText(message)).toBeVisible();
+    await waitFor(() => {
+      expect(receiverSlot()).toHaveTextContent(message);
+    });
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
     expect(api.post).not.toHaveBeenCalledWith("/receipt-links/send", expect.anything());
     expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
@@ -1618,6 +1625,41 @@ describe("NewMessagePage", () => {
         expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요");
       });
       expect(screen.queryByText("이미 추가된 수신자입니다.")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("body and variable slots", () => {
+    const bodySlot = () => document.getElementById("body-message") as HTMLElement;
+
+    it("keeps the unreplaced-variable hint in the body slot and clears it once none is left", async () => {
+      renderPage();
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "#{name} 산모님 안내" } });
+
+      expect(bodySlot()).toHaveTextContent("템플릿 변수가 남아 있어요");
+      expect(bodySlot()).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByLabelText("메시지 본문")).toHaveAttribute("aria-describedby", "body-message");
+      // The hint is a slot message only: no sr-only paragraph or top alert repeats it.
+      expect(screen.getAllByText("템플릿 변수가 남아 있어요")).toHaveLength(1);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "변수 없는 본문" } });
+      expect(bodySlot()).toBeEmptyDOMElement();
+    });
+
+    it("puts a failed send's problems in the field slots instead of a top alert", async () => {
+      renderPage();
+      await addManualRecipient("010-1234-5678");
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "" } });
+      expect(bodySlot()).toBeEmptyDOMElement();
+
+      // The send button is disabled while a problem exists, so the form is submitted directly (Enter key).
+      const form = screen.getByLabelText("메시지 본문").closest("form") as HTMLFormElement;
+      fireEvent.submit(form);
+
+      expect(bodySlot()).toHaveTextContent("본문을 입력해 주세요");
+      expect(screen.queryByText("메시지 본문을 입력해 주세요.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
     });
   });
 });

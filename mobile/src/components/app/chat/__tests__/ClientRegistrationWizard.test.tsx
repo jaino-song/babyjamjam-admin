@@ -212,4 +212,25 @@ describe("ClientRegistrationWizard field messages", () => {
             );
         });
     });
+
+    test("a voucher client pressing 다음 without a type gets the message in the type slot, not a top alert", () => {
+        render(<ClientRegistrationWizard />);
+
+        fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+        fireEvent.change(screen.getByLabelText("연락처"), { target: { value: "01012345678" } });
+        fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19580303" } });
+        fireEvent.change(screen.getByLabelText("주소"), { target: { value: "인천 연수구" } });
+        fireEvent.change(screen.getByLabelText("출산 예정일"), { target: { value: "20261120" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+        // Nothing is shown until the step is attempted.
+        expect(document.getElementById("voucherType-message")).toBeEmptyDOMElement();
+
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+        expect(document.getElementById("voucherType-message")).toHaveTextContent("유형을 선택해 주세요");
+        expect(document.getElementById("voucherType")).toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText("바우처 정보를 입력해주세요.")).not.toBeInTheDocument();
+    });
 });

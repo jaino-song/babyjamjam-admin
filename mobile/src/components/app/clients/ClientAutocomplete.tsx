@@ -11,6 +11,7 @@ import type { Client } from "@/lib/client/types";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 
+import type { SlotMessage } from "@/lib/validations/field-message";
 import { Autocomplete } from "@/components/app/ui/Autocomplete";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { ErrorFallback } from "@/components/app/ui/error-fallback";
@@ -28,6 +29,8 @@ interface ClientAutocompleteProps {
     label: string;
     required?: boolean;
     error?: boolean;
+    /** The field's one error/hint/status message (label-row slot); wins over `helperText`. */
+    message?: SlotMessage | null;
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
@@ -47,6 +50,7 @@ export function ClientAutocomplete({
     label,
     required = false,
     error = false,
+    message,
     helperText,
     excludeIds = [],
     allowManualEntry = false,
@@ -149,6 +153,7 @@ export function ClientAutocomplete({
                 label={label}
                 required={required}
                 error={error}
+                message={message}
                 helperText={helperText}
                 emptyMessage={t(locale, "contract-msg.no-client-found")}
                 manualEntry={

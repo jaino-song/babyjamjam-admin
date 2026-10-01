@@ -7,6 +7,7 @@ import NewClientPage from "./page";
 
 const mockCreateClient = jest.fn();
 const mockEmptyPrices: never[] = [];
+let mockVoucherPrices: unknown[] = mockEmptyPrices;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -30,7 +31,7 @@ jest.mock("@/hooks/useEmployees", () => ({
 jest.mock("@/hooks/useVoucherData", () => ({
   useAllVoucherPrices: () => ({ data: mockEmptyPrices, isLoading: false, isFetching: false }),
   useOutOfPocketPriceInfos: () => ({ data: mockEmptyPrices, isLoading: false, isError: false }),
-  useVoucherPriceInfos: () => ({ data: mockEmptyPrices, isLoading: false }),
+  useVoucherPriceInfos: () => ({ data: mockVoucherPrices, isLoading: false }),
   useVoucherYears: () => ({ data: mockEmptyPrices }),
 }));
 
@@ -80,6 +81,7 @@ const renderPage = async (step = 0) => {
 describe("mobile client wizard field messages", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockVoucherPrices = mockEmptyPrices;
     act(() => useClientWizardStore.getState().reset());
     (api.get as jest.Mock).mockResolvedValue({ data: { exists: false } });
   });
@@ -180,5 +182,50 @@ describe("mobile client wizard field messages", () => {
     fireEvent.click(screen.getByRole("button", { name: "등록" }));
     expect(field("endDate")).toHaveFocus();
     expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  describe("service period guidance", () => {
+    const GUIDANCE = "유형에 따라 기간이 달라져요";
+
+    it("keeps the voucher period guidance in the label-row slot and nothing below the select", async () => {
+      await renderPage(1);
+      act(() => useClientWizardStore.getState().setField("voucherClient", true));
+
+      const duration = field("duration");
+      expect(slotOf(duration)).toHaveTextContent(GUIDANCE);
+      expect(slotOf(duration)).toHaveAttribute("aria-live", "polite");
+      // The guidance exists exactly once: in the slot, not as a line under the select.
+      expect(screen.getAllByText(GUIDANCE)).toHaveLength(1);
+      const wrapper = duration.closest('[data-component$="duration-field"]') as HTMLElement;
+      expect(wrapper.querySelectorAll("p")).toHaveLength(0);
+    });
+
+    it("shows no guidance for a self-pay client", async () => {
+      await renderPage(1);
+
+      expect(slotOf(field("duration"))).toBeEmptyDOMElement();
+      expect(screen.queryByText(GUIDANCE)).not.toBeInTheDocument();
+    });
+
+    it("replaces the guidance with the required error on next, and restores it after a period is chosen", async () => {
+      mockVoucherPrices = [{ duration: 15, fullPrice: "1000000", grant: "800000", actualPrice: "200000" }];
+      await renderPage(1);
+      act(() => useClientWizardStore.getState().setField("voucherClient", true));
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(slotOf(field("type"))).toHaveTextContent("바우처 유형을 선택해 주세요");
+      expect(field("type")).toHaveAttribute("aria-invalid", "true");
+      expect(useClientWizardStore.getState().currentStep).toBe(1);
+
+      fireEvent.change(field("type"), { target: { value: "A가1" } });
+      expect(slotOf(field("duration"))).toHaveTextContent("서비스 기간을 선택해 주세요");
+      expect(slotOf(field("duration"))).not.toHaveTextContent(GUIDANCE);
+      expect(field("duration")).toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.change(field("duration"), { target: { value: "15" } });
+      expect(slotOf(field("duration"))).toHaveTextContent(GUIDANCE);
+      expect(field("duration")).not.toHaveAttribute("aria-invalid", "true");
+    });
   });
 });

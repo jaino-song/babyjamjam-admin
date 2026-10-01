@@ -18,6 +18,7 @@ import {
 
 const DATE_INPUT_ID = "service-schedule-change-date";
 const TOO_EARLY_MESSAGE = "현재 날짜 이후로 입력해 주세요";
+const DATE_GUIDANCE: SlotMessage = { text: "현재 날짜 이후만 가능해요", tone: "muted" };
 
 const DATE_SPEC: FieldSpec = { kind: "date", label: "서비스 제공 날짜", required: true };
 
@@ -63,7 +64,8 @@ export function ServiceScheduleChangeModal({
         (edited || fieldMessages.submitted) && isRealIsoDate(selectedDate) && !isPostponed
             ? { text: TOO_EARLY_MESSAGE, tone: "err" }
             : null;
-    const slot = pickSlotMessage(fieldMessages.slot("date"), tooEarlyMessage);
+    // Always-on guidance comes last: any error or format hint replaces it, and it returns once they clear.
+    const slot = pickSlotMessage(fieldMessages.slot("date"), tooEarlyMessage, DATE_GUIDANCE);
     const hasError = slot?.tone === "err";
     const dateBind = fieldMessages.bind("date");
 
@@ -85,7 +87,7 @@ export function ServiceScheduleChangeModal({
                 <>
                     <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
                     <br />
-                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다. 현재 날짜보다 이후 날짜를 선택해 주세요.</span>
+                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다.</span>
                 </>
             }
             isDescriptionVisuallyHidden={false}
