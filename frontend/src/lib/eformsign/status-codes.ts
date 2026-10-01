@@ -38,6 +38,7 @@ import {
   resolveContractDocStatusLabel,
   type ContractDocDisplayStatusLabel,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 export const COMPLETED_CODES = COMPLETED_STATUS_CODES;
 export const EXPIRED_CODES = EXPIRED_STATUS_CODES;
@@ -68,6 +69,29 @@ export function mapStatusToLabel(statusCode: EformsignStatusInput): DocumentStat
   return getEformsignStatusLabel(statusCode) as DocumentStatusLabel;
 }
 
+/**
+ * Display-only guard: a branch calendar only covers the years it loaded, and
+ * the shared review-window rule throws for an uncovered year. For labels that
+ * would crash a list, hand back `undefined` (the built-in calendar) when the
+ * calendar does not cover the end date's year or the year before it (the
+ * window opens one business day earlier, which can cross New Year).
+ */
+export function calendarForEndDate(
+  contractEndDate: string | null | undefined,
+  calendar: KrBusinessDayCalendar | undefined,
+): KrBusinessDayCalendar | undefined {
+  if (!calendar || !contractEndDate) return calendar;
+  const year = Number(/^(\d{4})/.exec(contractEndDate)?.[1]);
+  if (!Number.isInteger(year)) return calendar;
+  try {
+    calendar.assertSupportedYear(year);
+    calendar.assertSupportedYear(year - 1);
+    return calendar;
+  } catch {
+    return undefined;
+  }
+}
+
 type EformsignWorkflowStatus = {
   status_type?: string | null;
   step_type?: string | null;
@@ -87,6 +111,7 @@ export function mapDocStatusLabel(
   currentStatus: EformsignWorkflowStatus | null | undefined,
   contractEndDate?: string | null,
   displayStatus?: string | null,
+  calendar?: KrBusinessDayCalendar,
 ): DocumentStatusLabel {
   // The backend's serve-time display_status is authoritative when present.
   if (isContractDocDisplayStatus(displayStatus)) {
@@ -98,6 +123,7 @@ export function mapDocStatusLabel(
     category,
     currentStatus,
     contractEndDate: contractEndDate ?? null,
+    calendar: calendarForEndDate(contractEndDate, calendar),
   });
 }
 
@@ -188,6 +214,7 @@ export function foldContractStats(
     contract_end_date?: string | null;
     display_status?: string | null;
   }>,
+  calendar?: KrBusinessDayCalendar,
 ): ContractStatsBuckets {
   const buckets: ContractStatsBuckets = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
   for (const doc of docs) {
@@ -216,7 +243,11 @@ export function foldContractStats(
     // send the operator back to the button this change just removed.
     const isReviewDue = isContractDocDisplayStatus(doc.display_status)
       ? doc.display_status === "review"
-      : isContractReviewWindowOpen(doc.contract_end_date);
+      : isContractReviewWindowOpen(
+        doc.contract_end_date,
+        undefined,
+        calendarForEndDate(doc.contract_end_date, calendar),
+      );
     if (isReviewDue) buckets.reviewNeeded++;
     else buckets.signed++;
   }

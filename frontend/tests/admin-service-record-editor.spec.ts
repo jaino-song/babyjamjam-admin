@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
-import { isBusinessDayKr } from "../src/lib/date/business-days";
+import { isBusinessDayKr, KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 const LOCAL_ORIGIN = "http://127.0.0.1:3107";
 const CLIENT_ID = "42";
@@ -392,6 +392,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                 name: "Phase6 관리자",
                 email: "phase6@example.test",
                 role: "admin",
+                branchId: "branch-phase6",
                 branchName: "Phase6 격리 지점",
             });
         }
@@ -473,6 +474,15 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
         }
         unhandledApiRequests.push(`${method} ${pathname}`);
         return route.abort();
+    });
+
+    // Branch holiday calendar for the apps' business-day maths (built-in list, no branch changes).
+    await page.route("**/api/branches/*/holidays**", async (route) => {
+        const year = Number(new URL(route.request().url()).searchParams.get("year"));
+        const holidays = KR_BUILTIN_HOLIDAYS
+            .filter((date) => date.startsWith(`${year}-`))
+            .map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null }));
+        return json(route, 200, { year, revision: 1, supported: holidays.length > 0, synced: true, lastSyncedAt: null, holidays, inactiveOverrides: [] });
     });
 
     const evidence: MockEvidence = {

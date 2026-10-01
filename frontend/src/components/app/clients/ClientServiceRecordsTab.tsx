@@ -13,6 +13,8 @@ import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/service-record-schedule";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -1035,6 +1037,21 @@ function ServiceSessionsCard({
     onRefresh?: () => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions");
+    // Display-only: the built-in calendar stands in until the branch calendar loads.
+    const calendarYears = useMemo(() => {
+        const years = new Set<number>();
+        for (const value of [startDate, ...sessions.map((session) => session.serviceDate)]) {
+            const part = datePartOf(value);
+            // The following year too: expected dates can run past New Year.
+            if (part) {
+                const year = Number(part.slice(0, 4));
+                years.add(year);
+                years.add(year + 1);
+            }
+        }
+        return [...years];
+    }, [sessions, startDate]);
+    const { calendar } = useBusinessDayCalendar({ extraYears: calendarYears });
     const { activeSessions, outsideSessions } = useMemo(
         () => partitionSessionsByPeriod(
             startDate,
@@ -1049,10 +1066,11 @@ function ServiceSessionsCard({
             startDate,
             configuredSessions,
             activeSessions,
+            calendar,
             plannedSessions,
             hasAuthoritativeProjection,
         ),
-        [activeSessions, configuredSessions, hasAuthoritativeProjection, plannedSessions, startDate],
+        [activeSessions, calendar, configuredSessions, hasAuthoritativeProjection, plannedSessions, startDate],
     );
     const missingRecordAlertThreshold = useMemo(
         () => enableMissingRecordAlert ? getMissingRecordAlertThreshold(slots) : null,
@@ -1555,6 +1573,7 @@ function buildSessionSlots(
     startDate: string | null,
     configuredSessions: number,
     sessions: ServiceRecordSession[],
+    calendar: KrBusinessDayCalendar,
     plannedSessions?: ReadonlyArray<ServiceRecordPlannedSession>,
     hasAuthoritativeProjection = false,
 ): SessionSlot[] {
@@ -1570,7 +1589,7 @@ function buildSessionSlots(
             record,
             expectedDate: hasAuthoritativeProjection
                 ? plannedSession?.serviceDate ?? null
-                : getExpectedSessionDate(startDate, sessionIndex, sessions),
+                : getExpectedSessionDate(startDate, sessionIndex, sessions, calendar),
             plannedSession,
         };
     });
@@ -1658,8 +1677,9 @@ function getExpectedSessionDate(
     startDate: string | null,
     sessionIndex: number,
     sessions: ServiceRecordSession[],
+    calendar: KrBusinessDayCalendar,
 ): string | null {
-    return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions);
+    return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions, calendar);
 }
 
 function datePartOf(value: string | null): string | null {
