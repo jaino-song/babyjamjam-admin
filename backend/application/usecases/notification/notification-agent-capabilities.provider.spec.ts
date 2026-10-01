@@ -1,5 +1,17 @@
 import { NotificationAgentCapabilitiesProvider } from "./notification-agent-capabilities.provider";
 
+/**
+ * resolveNotificationTarget (BJJ-357 follow-up) now gates on
+ * userRepository.findApprovedByIdInBranch before trusting a membership/owner
+ * match. Tests that exercise inspect/revalidate/executeApprovedTarget need a
+ * fresh stub per test (never shared, to avoid cross-test mock leakage); tests
+ * that never reach resolveNotificationTarget (classifyOutcome, reconcile)
+ * pass `{} as never` since the constructor param is unused there.
+ */
+function userRepositoryStub(result: unknown) {
+    return { findApprovedByIdInBranch: jest.fn().mockResolvedValue(result) };
+}
+
 const context = {
     actionId: "action-1",
     sessionId: "session-1",
@@ -21,7 +33,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         owner: { name: "김대표", phone: null, email: "owner@example.com" },
     };
     it.each(["disabled", "no-subscriptions", "failed"])("classifies %s delivery as a failed action", (status) => {
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never, {} as never);
         const capability = provider.getCapabilities()[0]!;
 
         expect(capability.classifyOutcome?.({ status, subscriptions: 2, delivered: 1, failed: 1 })).toEqual(
@@ -30,7 +42,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
     });
 
     it.each(["partial", "uncertain"])("classifies %s delivery as uncertain", (status) => {
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never, {} as never);
         const capability = provider.getCapabilities()[0]!;
 
         expect(capability.classifyOutcome?.({ status, subscriptions: 3, delivered: 2, failed: 1 })).toEqual(
@@ -39,7 +51,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
     });
 
     it("classifies complete delivery as success", () => {
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, {} as never, {} as never);
         const capability = provider.getCapabilities()[0]!;
 
         expect(capability.classifyOutcome?.({ status: "delivered", subscriptions: 2, delivered: 2, failed: 0 })).toEqual({ status: "succeeded" });
@@ -50,7 +62,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             id: 9,
             data: { providerOutcome: { status: "partial", subscriptions: 2, delivered: 1, failed: 1 } },
         }) } };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never, {} as never);
         const capability = provider.getCapabilities()[0]!;
 
         await expect(capability.reconcile?.(context, {}, null)).resolves.toEqual({
@@ -61,7 +73,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
 
     it("keeps a notification without a persisted provider outcome uncertain", async () => {
         const prisma = { notification: { findFirst: jest.fn().mockResolvedValue({ id: 10, data: { agentActionId: "action-1" } }) } };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never, {} as never);
         const capability = provider.getCapabilities()[0]!;
 
         await expect(capability.reconcile?.(context, {}, null)).resolves.toEqual({
@@ -75,7 +87,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
         };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
 
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
@@ -93,7 +107,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
             branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
         };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
 
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
@@ -108,11 +124,62 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
         };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        // Approved so the rejection below is attributable to the membership/owner
+        // check, not the approval gate — that gate has its own tests further down.
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
 
         await expect(capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" }))
             .rejects.toThrow("outside the current branch");
+    });
+
+    it("rejects a pending (non-owner) branch member, same error path as a non-member (BJJ-357 follow-up)", async () => {
+        const prisma = {
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+        };
+        const userRepository = userRepositoryStub(null);
+        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never, userRepository as never);
+        const capability = provider.getCapabilities()[0]!;
+
+        await expect(capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" }))
+            .rejects.toThrow("outside the current branch");
+        expect(userRepository.findApprovedByIdInBranch).toHaveBeenCalledWith(targetUserId, context.principal.branchId);
+    });
+
+    it("rejects a rejected branch member, same error path as a non-member (BJJ-357 follow-up)", async () => {
+        const prisma = {
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+        };
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub(null) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+
+        await expect(capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" }))
+            .rejects.toThrow("outside the current branch");
+    });
+
+    it("resolves a pending-approval owner via the branch-owner fallback, matching the login rule (BJJ-357 follow-up)", async () => {
+        const prisma = {
+            user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+        };
+        // Owners bypass approvalStatus per the login rule (auth.service.ts /
+        // auth-session.service.ts assertUserApproved) — findApprovedByIdInBranch
+        // itself implements that OR, so a truthy result here simulates a
+        // pending-approval owner being let through.
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+
+        const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+
+        expect(inspection.targetSnapshot).toMatchObject({ userId: targetUserId, name: "김대표" });
     });
 
     it.each([
@@ -125,7 +192,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             user_branch: { findFirst: findMember },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
         };
-        const provider = new NotificationAgentCapabilitiesProvider({} as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider(
+            {} as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
 
@@ -144,7 +213,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         };
         prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
         const sendNotification = { executeWithOutcome: jest.fn() };
-        const provider = new NotificationAgentCapabilitiesProvider(sendNotification as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
         const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
 
@@ -168,7 +239,9 @@ describe("NotificationAgentCapabilitiesProvider", () => {
                 status: "delivered", notification: { id: 8 }, subscriptions: 1, delivered: 1, failed: 0,
             }),
         };
-        const provider = new NotificationAgentCapabilitiesProvider(sendNotification as never, prisma as never);
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
         const capability = provider.getCapabilities()[0]!;
         const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
 

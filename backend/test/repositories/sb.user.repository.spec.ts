@@ -366,7 +366,7 @@ describe("SbUserRepository", () => {
             return { findManyModel, findManyRepository };
         };
 
-        it("filters the prisma where-clause to approved users only", async () => {
+        it("filters the prisma where-clause to approved users or owners", async () => {
             // Arrange
             const { findManyModel, findManyRepository } = setup();
 
@@ -376,10 +376,19 @@ describe("SbUserRepository", () => {
             // Assert
             expect(findManyModel.findMany).toHaveBeenCalledWith({
                 where: {
-                    approvalStatus: "approved",
-                    OR: [
-                        { ownedBranches: { some: { id: "branch-1", isActive: true } } },
-                        { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
+                    AND: [
+                        {
+                            OR: [
+                                { approvalStatus: "approved" },
+                                { role: "owner" },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                                { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
+                            ],
+                        },
                     ],
                 },
             });
@@ -413,7 +422,7 @@ describe("SbUserRepository", () => {
             return { findFirstModel, findFirstRepository };
         };
 
-        it("filters the prisma where-clause to approved users and both membership branches", async () => {
+        it("filters the prisma where-clause to approved-or-owner users and both membership branches", async () => {
             // Arrange
             const { findFirstModel, findFirstRepository } = setup();
 
@@ -424,10 +433,19 @@ describe("SbUserRepository", () => {
             expect(findFirstModel.findFirst).toHaveBeenCalledWith({
                 where: {
                     id: "user-1",
-                    approvalStatus: "approved",
-                    OR: [
-                        { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
-                        { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                    AND: [
+                        {
+                            OR: [
+                                { approvalStatus: "approved" },
+                                { role: "owner" },
+                            ],
+                        },
+                        {
+                            OR: [
+                                { userBranches: { some: { branchId: "branch-1", branch: { isActive: true } } } },
+                                { ownedBranches: { some: { id: "branch-1", isActive: true } } },
+                            ],
+                        },
                     ],
                 },
             });
