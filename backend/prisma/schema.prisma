@@ -280,6 +280,7 @@ model client {
   messageTriggerJobs     message_trigger_job[]
   serviceRecordCase      service_record_case?
   receiptLinkTokens      receipt_link_token[]
+  endDateReviewItems     end_date_review_item[]
   serviceRecordRevisionDocumentStates service_record_revision_document_state[]
 
   @@unique([branchId, phoneNormalized], map: "client_branch_phone_normalized_key")
@@ -661,6 +662,9 @@ model branch {
   userBranches                  user_branch[]
   chatSessions                  chat_session[]
   receiptLinkTokens             receipt_link_token[]
+  holidayOverrides              branch_holiday_override[]
+  holidayChangeEvents           holiday_change_event[]
+  endDateReviewItems            end_date_review_item[]
 
   @@index([isActive], map: "idx_branch_is_active")
   @@index([ownerId], map: "idx_branch_owner")
@@ -1605,4 +1609,90 @@ model eformsign_webhook_event {
   @@index([documentId, createdAt], map: "idx_eformsign_webhook_event_document_created")
   @@index([outcome, createdAt], map: "idx_eformsign_webhook_event_outcome_created")
   @@index([createdAt], map: "idx_eformsign_webhook_event_created")
+}
+
+// Public-holiday calendar synced from KASI. A year counts as synced only when
+// its snapshot row exists; `revision` is the per-year import counter.
+model holiday_year_snapshot {
+  year        Int      @id
+  revision    Int
+  itemCount   Int      @map("item_count")
+  source      String   @db.VarChar(20)
+  fetchedAt   DateTime @map("fetched_at") @db.Timestamptz(6)
+  validatedAt DateTime @map("validated_at") @db.Timestamptz(6)
+}
+
+// Single-row counter (id is pinned to 1 by a CHECK in SQL) bumped on every
+// calendar change so caches can detect staleness.
+model holiday_calendar_revision {
+  id        Int      @id @default(1)
+  revision  BigInt   @default(0)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+}
+
+model public_holiday {
+  date      DateTime @id @db.Date
+  name      String   @db.VarChar(100)
+  source    String   @db.VarChar(20)
+  fetchedAt DateTime @map("fetched_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+}
+
+// Per-branch manual add/exclude of a holiday. `kind` is 'add' | 'exclude'
+// (CHECK in SQL); `name` is required for 'add' (enforced in the app).
+model branch_holiday_override {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId  String   @map("branch_id") @db.Uuid
+  date      DateTime @db.Date
+  kind      String   @db.VarChar(10)
+  name      String?  @db.VarChar(100)
+  createdBy String?  @map("created_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  branch    branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, date], map: "uq_branch_holiday_override_branch_date")
+}
+
+// Outbox of holiday changes. `branchId` null means a public-data change;
+// `change` is 'added' | 'removed' (CHECK in SQL).
+model holiday_change_event {
+  id          String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId    String?                 @map("branch_id") @db.Uuid
+  date        DateTime                @db.Date
+  change      String                  @db.VarChar(10)
+  name        String?                 @db.VarChar(100)
+  source      String                  @db.VarChar(20)
+  createdAt   DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  processedAt DateTime?               @map("processed_at") @db.Timestamptz(6)
+  branch      branch?                 @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  reviewItems end_date_review_item[]
+
+  @@index([processedAt, createdAt], map: "idx_holiday_change_event_processed_created")
+  @@index([branchId, createdAt], map: "idx_holiday_change_event_branch_created")
+}
+
+// Client service end dates affected by a holiday change, awaiting review.
+// `category` is 'safe' | 'risk'; `status` is 'open' | 'fixed' | 'kept' |
+// 'obsolete' (CHECKs in SQL).
+model end_date_review_item {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  changeEventId   String               @map("change_event_id") @db.Uuid
+  branchId        String               @map("branch_id") @db.Uuid
+  clientId        Int                  @map("client_id")
+  storedEnd       DateTime             @map("stored_end") @db.Date
+  recalculatedEnd DateTime             @map("recalculated_end") @db.Date
+  category        String               @db.VarChar(10)
+  reason          String?              @db.VarChar(200)
+  status          String               @default("open") @db.VarChar(10)
+  resolvedBy      String?              @map("resolved_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
+  resolvedAt      DateTime?            @map("resolved_at") @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  changeEvent     holiday_change_event @relation(fields: [changeEventId], references: [id], onDelete: Cascade)
+  branch          branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  client          client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([changeEventId, clientId], map: "uq_end_date_review_item_event_client")
+  @@index([branchId, clientId, status], map: "idx_end_date_review_item_branch_client_status")
+  @@index([branchId, status], map: "idx_end_date_review_item_branch_status")
 }
