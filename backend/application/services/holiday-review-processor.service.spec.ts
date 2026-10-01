@@ -93,7 +93,10 @@ function makeProcessor(world: World = {}) {
                 return { status: "applied", created: 0, obsoleted: 0 };
             },
         ),
-    } satisfies IHolidayReviewRepository;
+    } satisfies Pick<
+        IHolidayReviewRepository,
+        "listUnprocessedEvents" | "listBranchOverrides" | "findReviewCandidates" | "applyEventResult"
+    >;
     const branches = {
         findAllActive: jest.fn(async () =>
             (world.activeBranches ?? [BRANCH_A, BRANCH_B]).map((id) => ({ id, name: id })),
@@ -101,7 +104,8 @@ function makeProcessor(world: World = {}) {
     };
     const lease = { holdsLease: jest.fn(() => world.holdsLease ?? true) };
     const service = new HolidayReviewProcessorService(
-        repository,
+        // The processor only uses the processing-side methods.
+        repository as unknown as IHolidayReviewRepository,
         calendarService,
         branches,
         lease as never,
