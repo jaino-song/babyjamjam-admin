@@ -23,6 +23,19 @@ interface NotificationEmailTemplateContext {
     ctaLabel: string;
 }
 
+/**
+ * Delivery mode for the manual "send"/"broadcast" service methods.
+ * - "await" (default): current behaviour — the call resolves only after push and
+ *   email delivery finish. Schedulers, triggers and test-broadcast rely on this.
+ * - "background": resolves as soon as the in-app notification row is stored; push
+ *   and email delivery continue afterwards, their failures caught and logged, never
+ *   surfaced to the caller. Used by the manual "send"/"broadcast" HTTP endpoints so
+ *   a large branch does not exceed client timeouts.
+ */
+export interface NotificationDeliveryOptions {
+    deliveryMode?: "await" | "background";
+}
+
 export interface DailyDigestNotificationItem {
     title: string;
     body: string;
@@ -57,6 +70,7 @@ export class NotificationService {
     private readonly logger = new Logger(NotificationService.name);
     private emailSendQueue: Promise<void> = Promise.resolve();
     private nextEmailSendAt = 0;
+    private readonly backgroundDeliveries = new Set<Promise<void>>();
 
     constructor(
         private readonly subscribePushUsecase: SubscribePushUsecase,
@@ -154,6 +168,33 @@ export class NotificationService {
         });
     }
 
+    /**
+     * Runs background delivery (push + email) for a manual send/broadcast made with
+     * `deliveryMode: "background"`. The task must never reject the caller: any error
+     * is caught and logged here, same style as the awaited-path catches above.
+     */
+    private runInBackground(task: () => Promise<void>, context: string): void {
+        const settled = task().catch((error: unknown) => {
+            this.logger.error(
+                `Background notification delivery failed (${context})`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        });
+        this.backgroundDeliveries.add(settled);
+        void settled.finally(() => {
+            this.backgroundDeliveries.delete(settled);
+        });
+    }
+
+    /**
+     * Test/ops hook: resolves once every background delivery kicked off so far has
+     * settled. Not used on any request path — background delivery is deliberately
+     * not awaited there.
+     */
+    async whenBackgroundDeliveryIdle(): Promise<void> {
+        await Promise.allSettled(Array.from(this.backgroundDeliveries));
+    }
+
     private async hasExistingNotification(
         branchid: string,
         userId: string,
@@ -200,8 +241,22 @@ export class NotificationService {
         title: string,
         body: string,
         data?: Record<string, unknown>,
+        options?: NotificationDeliveryOptions,
     ): Promise<NotificationEntity> {
         const user = await this.requireBranchUser(branchid, userId);
+
+        if (options?.deliveryMode === "background") {
+            const savedNotification = await this.sendNotificationUsecase.createNotificationRecord(
+                branchid,
+                { userId, title, body, data },
+            );
+            this.runInBackground(async () => {
+                await this.sendNotificationUsecase.deliverNotification(branchid, savedNotification);
+                await this.sendEmailNotificationToUser(userId, title, body, user);
+            }, `send to user ${userId} in branch ${branchid}`);
+            return savedNotification;
+        }
+
         const notification = await this.sendNotificationUsecase.execute(branchid, { userId, title, body, data });
         await this.sendEmailNotificationToUser(userId, title, body, user);
         return notification;
@@ -225,6 +280,7 @@ export class NotificationService {
         title: string,
         body: string,
         data?: Record<string, unknown>,
+        options?: NotificationDeliveryOptions,
     ): Promise<{ sent: number; failed: number }> {
         const users = await this.userRepository.findNotificationRecipientsByBranchId(branchId);
         const uniqueUsers = Array.from(new Map(users.map((user) => [user.id, user])).values());
@@ -232,10 +288,25 @@ export class NotificationService {
             return { sent: 0, failed: 0 };
         }
 
+        const background = options?.deliveryMode === "background";
+
         const results = await Promise.allSettled(uniqueUsers.map(async (user) => {
-            const notification = await this.requireBranchUser(branchId, user.id);
+            const branchUser = await this.requireBranchUser(branchId, user.id);
+
+            if (background) {
+                const savedNotification = await this.sendNotificationUsecase.createNotificationRecord(
+                    branchId,
+                    { userId: user.id, title, body, data },
+                );
+                this.runInBackground(async () => {
+                    await this.sendNotificationUsecase.deliverNotification(branchId, savedNotification);
+                    await this.sendEmailNotificationToUser(user.id, title, body, branchUser);
+                }, `broadcast to user ${user.id} in branch ${branchId}`);
+                return;
+            }
+
             await this.sendNotificationUsecase.execute(branchId, { userId: user.id, title, body, data });
-            await this.sendEmailNotificationToUser(user.id, title, body, notification);
+            await this.sendEmailNotificationToUser(user.id, title, body, branchUser);
         }));
 
         let sent = 0;
