@@ -13,6 +13,7 @@ export interface AuthUser {
     profileImage?: string;
     role?: string;
     branchRole?: string | null;
+    branchId?: string | null;
     branchName?: string | null;
     branchSlug?: string | null;
 }
@@ -39,6 +40,7 @@ const E2E_USER: AuthUser = {
     profileImage: '',
     role: 'admin',
     branchRole: 'admin',
+    branchId: 'e2e-branch',
     branchName: '테스트 지점',
 };
 

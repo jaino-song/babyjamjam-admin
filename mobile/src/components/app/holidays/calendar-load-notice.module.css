@@ -1,0 +1,22 @@
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.message {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.helper_err {
+  color: hsl(var(--v3-burgundy));
+  font-weight: 700;
+}
+
+.helper_muted {
+  color: hsl(var(--v3-text-muted));
+}
