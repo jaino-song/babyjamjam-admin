@@ -273,7 +273,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 planAutomationImpact: async (context, rawInput, taskId) => {
                     if (!this.automationImpact) throw new Error("Automation planning unavailable");
                     const input = CreateClientSchema.parse(rawInput);
-                    const values = normalizeClientCreateInput(input);
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const values = normalizeClientCreateInput(input, calendar);
                     return this.automationImpact.planClientWrite(context.principal.branchId,
                         { kind: "create", taskId, values: this.automationValues(values) });
                 },
@@ -317,7 +318,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 execute: async (context, rawInput) => {
                     const input = CreateClientSchema.parse(rawInput);
                     assertAgentClientPhone(input.phone);
-                    const write = normalizeAgentClientWrite(() => normalizeClientCreateInput(input));
+                    // SAVED computation: decides whether the write is accepted and what is persisted.
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const write = normalizeAgentClientWrite(() => normalizeClientCreateInput(input, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, write);
                     try {
                         if (context.taskAutomation) {
@@ -355,7 +358,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing || !input.targetVersion || clientAgentTargetVersion(existing) !== input.targetVersion) {
                         throw new Error("Automation target unavailable");
                     }
-                    const values = normalizeClientUpdateInput(existing, input);
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const values = normalizeClientUpdateInput(existing, input, calendar);
                     return this.automationImpact.planClientWrite(context.principal.branchId,
                         { kind: "update", clientId: input.id, values: this.automationValues(values) });
                 },
@@ -377,7 +381,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     assertAgentClientPhone(input.phone);
                     const existing = await this.findClient.execute(context.principal.branchId, input.id);
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
-                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, input));
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, input, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
@@ -409,7 +414,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                         clientId: existing.id,
@@ -438,7 +444,8 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     if (!existing) throw new AgentActionCertainFailureError("Client no longer exists");
                     const { id, targetVersion, ...updates } = input;
                     void targetVersion;
-                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates));
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId, { fresh: true });
+                    const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
                         const result = context.taskAutomation

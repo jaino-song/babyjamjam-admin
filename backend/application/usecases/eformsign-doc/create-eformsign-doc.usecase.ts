@@ -110,18 +110,21 @@ export class CreateEformsignDocUsecase {
             try {
                 const client = linkedClient ?? await this.clientRepository.findById(branchid, clientId);
                 if (client) {
+                    // SAVED computation: the client update re-derives its duration.
+                    const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
                     if (params.clientTargetVersion) {
                         const linked = await this.clientRepository.updateIfTargetVersion(
                             branchid,
                             client.id,
                             params.clientTargetVersion,
                             { eDocId: params.documentId },
+                            calendar,
                         );
                         if (!linked) {
                             throw new Error("Client changed before contract link could be persisted");
                         }
                     } else {
-                        client.update({ eDocId: params.documentId });
+                        client.update({ eDocId: params.documentId }, calendar);
                         await this.clientRepository.update(branchid, client);
                     }
                     this.logger.log(`Linked document ${params.documentId} to client ${client.id}`);

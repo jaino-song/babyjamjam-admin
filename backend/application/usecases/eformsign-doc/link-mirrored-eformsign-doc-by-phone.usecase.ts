@@ -721,10 +721,15 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         // one; the date-derived count is only a fallback for
                         // the completed contracts whose payload has none.
                         let duration = candidate.duration;
+                        // SAVED computation: the derived duration is persisted
+                        // on the client created below, for the branch it is
+                        // created in.
+                        const calendar = await this.holidayCalendar.forBranch(creationBranchId, { fresh: true });
                         try {
                             const derivedDuration = deriveClientDuration(
                                 candidate.startDate,
                                 candidate.endDate,
+                                calendar,
                             );
                             if (candidate.duration !== null && candidate.duration !== undefined) {
                                 assertClientDurationMatchesDates(candidate.duration, derivedDuration);

@@ -23,7 +23,14 @@ import { SystemSettingService } from "../../application/services/system-setting.
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+
+/** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
+const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
+    [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra],
+    { supportedYears: [2026], version: "branch-test" },
+);
 
 describe("ClientService", () => {
     // ============================================
@@ -265,6 +272,7 @@ describe("ClientService", () => {
     let configService: ReturnType<typeof createMockConfigService>;
     let documentSnapshotService: ReturnType<typeof createMockDocumentSnapshotService>;
     let linkMirroredDocumentByPhoneUsecase: ReturnType<typeof createMockLinkMirroredDocumentByPhoneUsecase>;
+    let holidayCalendar: ReturnType<typeof createHolidayCalendarStub>;
 
     beforeEach(() => {
         createClientUsecase = createMockCreateClientUsecase();
@@ -286,6 +294,7 @@ describe("ClientService", () => {
         configService = createMockConfigService();
         documentSnapshotService = createMockDocumentSnapshotService();
         linkMirroredDocumentByPhoneUsecase = createMockLinkMirroredDocumentByPhoneUsecase();
+        holidayCalendar = createHolidayCalendarStub();
 
         service = new ClientService(
             createClientUsecase as unknown as CreateClientUsecase,
@@ -299,7 +308,7 @@ describe("ClientService", () => {
             systemSettingService as unknown as SystemSettingService,
             documentSnapshotService as unknown as EformsignDocumentSnapshotService,
             messageAutomationIntentService as unknown as MessageAutomationIntentService,
-            createHolidayCalendarStub(), triggerService as unknown as MessageTriggerService,
+            holidayCalendar, triggerService as unknown as MessageTriggerService,
             serviceRecordLinkService as unknown as ServiceRecordLinkService,
             serviceRecordLifecycleService as unknown as ServiceRecordLifecycleService,
             configService as unknown as ConfigService,
@@ -404,6 +413,18 @@ describe("ClientService", () => {
                 })).resolves.toBe(client);
 
                 expect(createdDuration()).toBe(15);
+            });
+
+            it("derives the duration from the branch calendar, loaded fresh", async () => {
+                // The branch adds 2026-08-26 off, so the same period holds 14 sessions, not 15.
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-08-26"]));
+                const client = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(client);
+
+                await service.create(branchId, { ...baseParams, ...servicePeriod, duration: null });
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+                expect(createdDuration()).toBe(14);
             });
 
             it("derives the duration when the caller omits it entirely", async () => {
@@ -2133,6 +2154,24 @@ describe("ClientService", () => {
                 expect(prismaService.client.updateMany).not.toHaveBeenCalled();
             });
 
+            it("validates the duration against the branch calendar, loaded fresh, and reuses it in the locked re-check", async () => {
+                // The branch adds 2024-03-05 off, so 2024-01-01..2024-06-01 holds 101 sessions, not 102.
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+                    [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+                    { supportedYears: [2024], version: "branch-test" },
+                ));
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await expect(service.update(branchId, 1, { duration: 102 }))
+                    .rejects.toMatchObject({
+                        status: 400,
+                        response: clientProblemResponse("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", "서비스 기간은 1일 이상 101일 이하여야 합니다. (시작일~종료일 영업일 기준)"),
+                    });
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
             it("rejects a non-null duration when a date patch cannot derive a complete period", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
@@ -3349,6 +3388,16 @@ describe("ClientService", () => {
                 expect(await actionRequiredFor(client)).toBeNull();
             });
 
+            it("counts the send window with the branch calendar", async () => {
+                // 2026-03-26 is 7 business days out, so no send alert; a branch day off on
+                // 2026-03-20 pulls it to 6 and the alert appears.
+                const client = createClient("2026-03-26", null);
+                expect(await actionRequiredFor(client)).toBeNull();
+
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-03-20"]));
+                expect(await actionRequiredFor(client)).toEqual({ reason: "발송 필요", priority: 3 });
+            });
+
             it("counts the window in business days, not calendar days", async () => {
                 // 2026-03-22 is 5 calendar days out but only 3 business days.
                 const client = createClient("2026-03-22", null);
@@ -3494,6 +3543,26 @@ describe("ClientService", () => {
             expect(alerts).toEqual([
                 expect.objectContaining({ reason: "발송 필요", priority: 3 }),
             ]);
+        });
+
+        it("uses one branch calendar for both the scan cutoff and the per-client decision", async () => {
+            const lteOf = (): Date => {
+                const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+                return where.OR[1].startDate.lte as Date;
+            };
+            const client = alertClient({ eDocId: null, startDate: new Date("2026-03-26T00:00:00.000Z") });
+            prismaService.client.findMany.mockResolvedValue([client]);
+
+            // 2026-03-26 is 7 business days out: beyond both the cutoff and the threshold.
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
+            const builtinCutoff = lteOf();
+
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-03-20"]));
+            const alerts = await service.getActionRequiredAlerts(branchId);
+
+            expect(alerts).toEqual([expect.objectContaining({ reason: "발송 필요", priority: 3 })]);
+            expect(lteOf().getTime()).toBeGreaterThan(builtinCutoff.getTime());
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
         });
 
         it("reports 발송 필요 when no document has been sent", async () => {

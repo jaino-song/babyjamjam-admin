@@ -131,7 +131,9 @@ export class SyncClientEndDateUsecase {
             if (options.persist) {
                 await options.persist(target);
             } else {
-                client.update({ endDate });
+                // SAVED computation: the end date drives the persisted duration.
+                const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+                client.update({ endDate }, calendar);
                 await this.clientRepository.update(branchId, client);
             }
 

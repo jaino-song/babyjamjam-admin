@@ -3,10 +3,11 @@ import { ConflictException } from "@nestjs/common";
 
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { ClientWriteAgentCapabilitiesProvider } from "./client-write-agent-capabilities.provider";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../../test/utils/holiday-calendar.stub";
 
 describe("ClientWriteAgentCapabilitiesProvider", () => {
-    function setup() {
+    function setup(holidayCalendar = createHolidayCalendarStub()) {
         const createClient = { execute: jest.fn().mockResolvedValue({ id: 1, name: "홍길동" }) };
         const updateClient = {
             execute: jest.fn().mockResolvedValue({ id: 1, name: "홍길동" }),
@@ -61,11 +62,12 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            createHolidayCalendarStub(), voucherServiceSelection as never,
+            holidayCalendar, voucherServiceSelection as never,
             triggerService as never,
             messageAutomationIntentService as never,
         );
         return {
+            holidayCalendar,
             createClient,
             updateClient,
             findClient,
@@ -230,6 +232,28 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(transaction.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ id: "action-a", capability: "clients.create" }),
         }));
+    });
+
+    it("validates client writes against the branch calendar, loaded fresh", async () => {
+        // The built-in calendar gives 2024-01-01..2024-06-01 102 business days; the branch adds 2024-03-05 off.
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+            { supportedYears: [2024], version: "branch-test" },
+        ));
+        const { capabilities, updateClient } = setup(holidayCalendar);
+        const capability = capabilities.find((entry) => entry.meta.name === "clients.update")!;
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+
+        await expect(capability.execute(context, { id: 1, duration: 102 })).rejects.toThrow("1일 이상 101일 이하");
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-a", { fresh: true });
+        expect(updateClient.execute).not.toHaveBeenCalled();
+
+        await capability.execute(context, { id: 1, duration: 101 });
+        expect(updateClient.execute).toHaveBeenCalledTimes(1);
     });
 
     it("does not report a created client when the action receipt cannot be persisted", async () => {
