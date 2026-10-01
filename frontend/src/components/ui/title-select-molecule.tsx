@@ -11,6 +11,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import {
+  FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+  FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
+  FieldMessageText,
+} from "@/components/app/ui/field-message";
 
 export interface TitleSelectOption {
   value: string;
@@ -27,7 +32,13 @@ export interface TitleSelectMoleculeProps {
   options: TitleSelectOption[];
   disabled?: boolean;
   required?: boolean;
+  /**
+   * The field's message. It renders in the label-row slot (right of the label,
+   * one line, cut with an ellipsis); nothing ever renders below the control.
+   */
   helperText?: React.ReactNode;
+  /** "error" (default) for a problem; "hint" for static guidance. */
+  helperTone?: "error" | "hint";
   helperTextClassName?: string;
   helperTextId?: string;
   containerClassName?: string;
@@ -52,6 +63,7 @@ export function TitleSelectMolecule({
   disabled = false,
   required = false,
   helperText,
+  helperTone = "error",
   helperTextClassName,
   helperTextId,
   containerClassName,
@@ -74,11 +86,24 @@ export function TitleSelectMolecule({
       className={cn("flex flex-col gap-2", containerClassName)}
       data-component={dataComponent}
     >
-      <div className={cn("flex items-center justify-between gap-2", labelRowClassName)}>
-        <Label htmlFor={fieldId} className={labelClassName}>
+      <div
+        className={cn(
+          "flex items-center justify-between gap-2",
+          FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+          labelRowClassName,
+        )}
+      >
+        <Label htmlFor={fieldId} className={cn("shrink-0 whitespace-nowrap", labelClassName)}>
           {label}
           {required && <span className="ml-1 text-destructive">*</span>}
         </Label>
+        {helperText ? (
+          <div className={cn("flex items-center", FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME)}>
+            <FieldMessageText id={helperElementId} tone={helperTone} className={helperTextClassName}>
+              {helperText}
+            </FieldMessageText>
+          </div>
+        ) : null}
       </div>
       <Select
         value={value}
@@ -111,14 +136,6 @@ export function TitleSelectMolecule({
           ))}
         </SelectContent>
       </Select>
-      {helperText ? (
-        <p
-          id={helperElementId}
-          className={cn("text-xs text-destructive", helperTextClassName)}
-        >
-          {helperText}
-        </p>
-      ) : null}
     </div>
   );
 }

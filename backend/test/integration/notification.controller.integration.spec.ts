@@ -105,6 +105,74 @@ describe("NotificationController", () => {
             "test-agent",
         );
     });
+
+    it("sends a manual notification with background delivery mode (BJJ-356)", async () => {
+        const notification = { id: 1, title: "t", body: "b", data: null, sentAt: new Date(), readAt: null, isRead: () => false };
+        const notificationService = {
+            sendNotification: jest.fn().mockResolvedValue(notification),
+        };
+        const controller = new NotificationController(
+            notificationService as unknown as NotificationService,
+            { get: jest.fn() } as unknown as ConfigService,
+        );
+
+        await controller.sendNotification(
+            { branchId: "branch-a" },
+            { userId: "user-b", title: "t", body: "b" },
+        );
+
+        expect(notificationService.sendNotification).toHaveBeenCalledWith(
+            "branch-a",
+            "user-b",
+            "t",
+            "b",
+            undefined,
+            { deliveryMode: "background", requireApprovedRecipient: true },
+        );
+    });
+
+    it("broadcasts a manual notification with background delivery mode (BJJ-356)", async () => {
+        const notificationService = {
+            broadcastNotification: jest.fn().mockResolvedValue({ sent: 2, failed: 0 }),
+        };
+        const controller = new NotificationController(
+            notificationService as unknown as NotificationService,
+            { get: jest.fn() } as unknown as ConfigService,
+        );
+
+        await expect(controller.broadcastNotification(
+            { branchId: "branch-a" },
+            { title: "t", body: "b" },
+        )).resolves.toEqual({ sent: 2, failed: 0 });
+
+        expect(notificationService.broadcastNotification).toHaveBeenCalledWith(
+            "branch-a",
+            "t",
+            "b",
+            undefined,
+            { deliveryMode: "background" },
+        );
+    });
+
+    it("keeps the development test-broadcast endpoint on the default awaited delivery mode", async () => {
+        const notificationService = {
+            broadcastNotification: jest.fn().mockResolvedValue({ sent: 0, failed: 0 }),
+        };
+        const configService = {
+            get: jest.fn().mockReturnValue("development"),
+        };
+        const controller = new NotificationController(
+            notificationService as unknown as NotificationService,
+            configService as unknown as ConfigService,
+        );
+
+        await controller.testBroadcast({ branchId: "branch-a" });
+
+        const [, , , , options] = notificationService.broadcastNotification.mock.calls[0] as unknown as [
+            string, string, string, Record<string, unknown> | undefined, unknown,
+        ];
+        expect(options).toBeUndefined();
+    });
 });
 
 describe("GET /notifications/recipients (HTTP integration)", () => {

@@ -34,7 +34,7 @@ import { getGlintUiScaleForWindow } from "@/components/app/v3/useGlintUiScale";
 import { ClientFormDialog } from "./ClientFormDialog";
 
 export interface ClientAutocompleteLabelMessage {
-    tone: "hint" | "error";
+    tone: "hint" | "error" | "ok";
     text: string;
 }
 
@@ -47,6 +47,11 @@ interface ClientAutocompleteProps {
     label: string;
     required?: boolean;
     error?: boolean;
+    /**
+     * The field's message for the label-row slot. It is the error text while
+     * `error` is set; otherwise static guidance that yields to `labelMessage`.
+     * Nothing renders below the trigger.
+     */
     helperText?: string;
     placeholder?: string;
     excludeIds?: number[];
@@ -58,9 +63,8 @@ interface ClientAutocompleteProps {
     searchMode?: "all" | "phone";
     disabled?: boolean;
     /**
-     * Opt-in field message shown at the right end of the label row. Passing the
-     * prop (even `null`) reserves a one-line slot that never changes the layout;
-     * an error also marks the combobox invalid. Omit it for the classic layout.
+     * Field message shown at the right end of the label row, in a one-line slot
+     * that never changes the layout; an error also marks the combobox invalid.
      */
     labelMessage?: ClientAutocompleteLabelMessage | null;
     /** Called when the dropdown opens or closes, so callers can track "left the field". */
@@ -94,8 +98,17 @@ export function ClientAutocomplete({
     const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
     const allowsInlineManualValue = typeof onManualValueChange === "function";
     const labelMessageId = useId();
-    const hasLabelMessageSlot = labelMessage !== undefined;
-    const hasLabelMessageError = labelMessage?.tone === "error";
+    const helperMessage: ClientAutocompleteLabelMessage | null = helperText
+        ? { tone: error ? "error" : "hint", text: helperText }
+        : null;
+    // Error first, then the caller's hint or status, then static guidance.
+    const slotMessage = [
+        labelMessage?.tone === "error" ? labelMessage : null,
+        helperMessage?.tone === "error" ? helperMessage : null,
+        labelMessage,
+        helperMessage,
+    ].find((candidate) => candidate != null) ?? null;
+    const hasLabelMessageError = slotMessage?.tone === "error";
 
     // Track input value for display synchronization
     const [inputValue, setInputValue] = useState("");
@@ -251,8 +264,7 @@ export function ClientAutocomplete({
     const labelElement = (
         <Label
             className={cn(
-                "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
-                hasLabelMessageSlot && "shrink-0",
+                "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
                 error && "text-destructive",
             )}
         >
@@ -266,26 +278,22 @@ export function ClientAutocomplete({
             data-component={dataComponent}
             className={cn("space-y-2", containerClassName)}
         >
-            {hasLabelMessageSlot ? (
-                <div
-                    data-component={`${dataComponent}_label-row`}
-                    className="flex h-[1lh] min-w-0 items-center gap-2 text-[calc(12px*var(--glint-ui-scale,1))] leading-[1.3]"
-                >
-                    {labelElement}
-                    {labelMessage ? (
-                        <FieldMessageText
-                            id={labelMessageId}
-                            tone={labelMessage.tone}
-                            data-component={`${dataComponent}_label-row_message`}
-                            className={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
-                        >
-                            {labelMessage.text}
-                        </FieldMessageText>
-                    ) : null}
-                </div>
-            ) : (
-                labelElement
-            )}
+            <div
+                data-component={`${dataComponent}_label-row`}
+                className="flex h-[1lh] min-w-0 items-center gap-2 text-[calc(12px*var(--glint-ui-scale,1))] leading-[1.3]"
+            >
+                {labelElement}
+                {slotMessage ? (
+                    <FieldMessageText
+                        id={labelMessageId}
+                        tone={slotMessage.tone}
+                        data-component={`${dataComponent}_label-row_message`}
+                        className={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
+                    >
+                        {slotMessage.text}
+                    </FieldMessageText>
+                ) : null}
+            </div>
             <Popover
                 open={disabled ? false : isOpen}
                 onOpenChange={(open) => {
@@ -303,7 +311,7 @@ export function ClientAutocomplete({
                             aria-expanded={disabled ? false : isOpen}
                             disabled={disabled}
                             aria-invalid={hasLabelMessageError ? true : undefined}
-                            aria-describedby={labelMessage ? labelMessageId : undefined}
+                            aria-describedby={slotMessage ? labelMessageId : undefined}
                             data-component={`${dataComponent}_input`}
                             className={cn(
                                 V3_INPUT_CONTROL_CLASS_NAME,
@@ -462,11 +470,6 @@ export function ClientAutocomplete({
                     </Command>
                 </PopoverContent>
             </Popover>
-            {helperText && (
-                <p className={cn("text-sm", error ? "text-destructive" : "text-muted-foreground")}>
-                    {helperText}
-                </p>
-            )}
 
             {isRegistrationDialogOpen ? (
                 <ClientFormDialog

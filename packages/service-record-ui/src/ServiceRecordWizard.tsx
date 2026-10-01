@@ -695,6 +695,10 @@ export function ServiceRecordWizard({
         { label: "제공일자", rangeText: FIELD_COPY.serviceDateBefore },
     );
     const serviceDateFieldVisible = screen === "day" && !readOnly && !adminMode && !editing && pageIdx === 0;
+    // A date that differs from today is a caution about this field: it sits in the field's slot
+    // (below any error or format hint) while the field is on screen.
+    const serviceDateSlot: SlotMessage | null = serviceDateMessage
+        ?? (serviceDateFieldVisible && hasServiceDateMismatch ? hintMessage(FIELD_COPY.serviceDateMismatch) : null);
     const firstDayProblemId = (): string | null => {
         if (serviceDateFieldVisible && serviceDateBlocked) return SERVICE_DATE_INPUT_ID;
         for (const index of currentDayPage.items) {
@@ -1012,39 +1016,38 @@ export function ServiceRecordWizard({
                                     label="제공일자"
                                     htmlFor={SERVICE_DATE_INPUT_ID}
                                     slotId="service-record-date-helper"
-                                    message={serviceDateMessage}
+                                    message={serviceDateSlot}
                                 />
-                                {adminEditing && slots?.serviceDateEditor ? (
-                                    slots.serviceDateEditor({
-                                        "data-component": child("body_service-date-editor"),
-                                        sessionIndex: day,
-                                        serviceDate: currentServiceDate,
-                                        disabled: busy,
-                                        onOpen: () => onOpenServiceDateEditor?.(day),
-                                    })
-                                ) : (
-                                    <TextInput
-                                        id={SERVICE_DATE_INPUT_ID}
-                                        data-component={child("body_service-date-field_date-input")}
-                                        aria-describedby="service-record-date-helper"
-                                        aria-invalid={serviceDateMessage?.tone === "error" ? "true" : undefined}
-                                        type="text"
-                                        inputMode="numeric"
-                                        autoComplete="off"
-                                        maxLength={10}
-                                        placeholder={SERVICE_DATE_PLACEHOLDER}
-                                        className="dateinput"
-                                        value={serviceDateValue}
-                                        onFocus={() => setServiceDateFocused(true)}
-                                        onBlur={handleServiceDateBlur}
-                                        onChange={(event) => handleServiceDateInput(event.target.value)}
-                                    />
-                                )}
+                                <TextInput
+                                    id={SERVICE_DATE_INPUT_ID}
+                                    data-component={child("body_service-date-field_date-input")}
+                                    aria-describedby="service-record-date-helper"
+                                    aria-invalid={serviceDateMessage?.tone === "error" ? "true" : undefined}
+                                    type="text"
+                                    inputMode="numeric"
+                                    autoComplete="off"
+                                    maxLength={10}
+                                    placeholder={SERVICE_DATE_PLACEHOLDER}
+                                    className="dateinput"
+                                    value={serviceDateValue}
+                                    onFocus={() => setServiceDateFocused(true)}
+                                    onBlur={handleServiceDateBlur}
+                                    onChange={(event) => handleServiceDateInput(event.target.value)}
+                                />
                             </div>
                         )}
-                        {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && (
-                            <div data-component={child("body_date-mismatch-notice")} data-slot="notice" className="notice">
-                                <span>서비스 제공일자({formatMonthDayKo(currentServiceDate)})가 오늘과 달라요. 한번 더 확인해 주세요.</span>
+                        {/* Where no date field is on the page (later pages, admin edit) the date's caution still lives in a field slot: a compact read-only row. */}
+                        {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && !serviceDateFieldVisible && (
+                            <div data-component={child("body_service-date-readonly")} data-slot="fld" className="fld">
+                                <FieldLabelRow
+                                    dataComponent={child("body_service-date-readonly_date")}
+                                    label="서비스 제공일자"
+                                    slotId="service-record-date-readonly-helper"
+                                    message={hintMessage(FIELD_COPY.serviceDateMismatch)}
+                                />
+                                <div data-component={child("body_service-date-readonly_value")} data-slot="ro" className="ro">
+                                    <b>{currentServiceDate}</b>
+                                </div>
                             </div>
                         )}
                         <div data-component={child("body_day-title")} data-slot="step-title" className="step-title">{currentDayPage.title}</div>

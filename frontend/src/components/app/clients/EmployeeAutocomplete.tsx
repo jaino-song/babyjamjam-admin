@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, type ReactNode, type RefObject } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Check, ChevronsUpDown, UserPlus, X, Loader2, Play } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -10,6 +10,10 @@ import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
+import {
+    FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
+    FieldMessageText,
+} from "@/components/app/ui/field-message";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
@@ -41,10 +45,15 @@ interface EmployeeAutocompleteProps {
     error?: boolean;
     /** Space-separated ids describing the trigger, e.g. linked field error entries. */
     describedBy?: string;
-    /** Optional hint rendered at the right end of the label row. */
+    /** Optional hint or status rendered at the right end of the label row. */
     labelTrailing?: ReactNode;
     /** Optional parent-owned ref bound to the trigger button so callers can focus it on field errors. */
     triggerButtonRef?: RefObject<HTMLButtonElement | null>;
+    /**
+     * The field's message for the label-row slot. It is the error text while
+     * `error` is set (and then replaces `labelTrailing`); otherwise it is static
+     * guidance that yields to `labelTrailing`. Nothing renders below the trigger.
+     */
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
@@ -84,6 +93,7 @@ export function EmployeeAutocomplete({
     "data-testid": dataTestId,
 }: EmployeeAutocompleteProps) {
     const locale = useLocale();
+    const helperIdBase = useId();
     const { data: employees, isLoading, refetch } = useEmployees({
         refetchOnMount: refreshOnMount ? "always" : true,
     });
@@ -220,7 +230,7 @@ export function EmployeeAutocomplete({
     const labelNode = label ? (
         <Label
             className={cn(
-                "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+                "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
                 error && "text-destructive",
             )}
         >
@@ -228,7 +238,21 @@ export function EmployeeAutocomplete({
             {required && <span className="text-destructive ml-1">*</span>}
         </Label>
     ) : null;
-
+    const helperTextId = `${helperIdBase}-helper`;
+    const helperNode = helperText ? (
+        <FieldMessageText
+            id={helperTextId}
+            tone={error ? "error" : "hint"}
+            data-component={`${dataComponent}_label-row_message`}
+        >
+            {helperText}
+        </FieldMessageText>
+    ) : null;
+    const slotNode = error && helperNode ? helperNode : labelTrailing ?? helperNode;
+    const slotShowsHelper = Boolean(helperNode) && slotNode === helperNode;
+    const triggerDescribedBy = [describedBy, slotShowsHelper ? helperTextId : undefined]
+        .filter(Boolean)
+        .join(" ") || undefined;
     return (
         <div
             data-component={dataComponent}
@@ -236,22 +260,20 @@ export function EmployeeAutocomplete({
             data-testid={dataTestId ?? "employee-autocomplete"}
         >
             {label && (
-                labelTrailing ? (
-                    <div
-                        data-component={`${dataComponent}_label-row`}
-                        className="flex min-w-0 items-center justify-between gap-2"
-                    >
-                        {labelNode}
+                <div
+                    data-component={`${dataComponent}_label-row`}
+                    className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-[calc(12px*var(--glint-ui-scale,1))] leading-[1.3]"
+                >
+                    {labelNode}
+                    {slotNode ? (
                         <div
                             data-component={`${dataComponent}_label-trailing`}
-                            className="ml-auto min-w-0 text-right"
+                            className={cn("flex items-center", FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME)}
                         >
-                            {labelTrailing}
+                            {slotNode}
                         </div>
-                    </div>
-                ) : (
-                    labelNode
-                )
+                    ) : null}
+                </div>
             )}
             <Popover open={isOpen} onOpenChange={handleOpenChange}>
                 <div className="relative">
@@ -263,7 +285,7 @@ export function EmployeeAutocomplete({
                             aria-label={label}
                             aria-expanded={isOpen}
                             aria-invalid={error || undefined}
-                            aria-describedby={describedBy}
+                            aria-describedby={triggerDescribedBy}
                             data-component={`${dataComponent}_input`}
                             className={cn(
                                 V3_INPUT_CONTROL_CLASS_NAME,
@@ -416,12 +438,6 @@ export function EmployeeAutocomplete({
                     </Command>
                 </PopoverContent>
             </Popover>
-
-            {helperText && (
-                <p className={cn("text-xs", error ? "text-destructive" : "text-muted-foreground")}>
-                    {helperText}
-                </p>
-            )}
 
             {isRegistrationDialogOpen ? (
                 <EmployeeFormDialog

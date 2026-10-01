@@ -1,7 +1,6 @@
 import * as React from "react";
 import { TitleTextInputMolecule } from "@/components/ui/title-text-input-molecule";
 import { cn } from "@/lib/utils";
-import { InlineFieldError } from "@/components/auth/inline-field-error";
 import { AUTH_FIELD_CONTROL_CLASS_NAME } from "@/components/auth/field-styles";
 import {
   FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
@@ -11,15 +10,14 @@ import {
 
 interface FormFieldProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "error"> {
   label: string;
+  /** A problem with the field. It shows in the label-row slot, never below the input. */
   error?: string;
-  hideErrorMessage?: boolean;
+  /** Informational hint for the slot; it shows only while the field has no message of its own. */
   labelTrailing?: React.ReactNode;
-  errorDisplay?: "below" | "inline";
   /**
-   * Opt-in single message slot at the right end of the label row: one label
-   * line tall, cut with an ellipsis when it does not fit. Passing the prop
-   * (even as `null`) switches the field to this mode: `error` and
-   * `errorDisplay` are ignored and nothing renders below the input.
+   * The field's one message for the label-row slot: one label line tall, cut
+   * with an ellipsis when it does not fit. When given (even as `null`) it takes
+   * the place of `error`.
    */
   message?: { tone: "hint" | "error" | "ok"; text: string } | null;
   "data-component"?: string;
@@ -30,9 +28,7 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
     {
       label,
       error,
-      hideErrorMessage = false,
       labelTrailing,
-      errorDisplay = "below",
       message,
       id,
       className,
@@ -45,36 +41,17 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
   ) => {
     const fieldId = id || label.toLowerCase().replace(/\s+/g, "-");
     const errorId = `${fieldId}-error`;
-    const usesMessageSlot = message !== undefined;
-    const hasMessageError = message?.tone === "error";
-    const shouldShowInlineError = errorDisplay === "inline";
-    const inlineError =
-      shouldShowInlineError ? (
-        <InlineFieldError
-          id={errorId}
-          // Callers pass copy already normalized through the problem
-          // contract; no legacy string adapter re-processing here.
-          message={error ?? undefined}
-          reserveSpace
-        />
-      ) : undefined;
-    const trailingContent = usesMessageSlot
-      ? message
-        ? (
-            <FieldMessageText id={errorId} tone={message.tone} data-component="desktop_auth_form-field_message">
-              {message.text}
-            </FieldMessageText>
-          )
-        : labelTrailing
-      : shouldShowInlineError
-        ? labelTrailing ? (
-            <div className="flex items-center gap-2">
-              {labelTrailing}
-              {inlineError}
-            </div>
-          ) : inlineError
-        : labelTrailing;
-    const hasError = usesMessageSlot ? hasMessageError : !!error;
+    // Callers pass copy already normalized through the problem contract; no
+    // legacy string adapter re-processing here.
+    const resolved = message !== undefined ? message : error ? { tone: "error" as const, text: error } : null;
+    const hasError = resolved?.tone === "error";
+    const trailingContent = resolved
+      ? (
+          <FieldMessageText id={errorId} tone={resolved.tone} data-component="desktop_auth_form-field_message">
+            {resolved.text}
+          </FieldMessageText>
+        )
+      : labelTrailing;
 
     return (
       <TitleTextInputMolecule
@@ -85,19 +62,16 @@ export const FormField = React.forwardRef<HTMLInputElement, FormFieldProps>(
         value={value}
         onChange={onChange}
         error={hasError}
-        helperText={!usesMessageSlot && error && !hideErrorMessage && !shouldShowInlineError ? error : undefined}
-        helperTextClassName="text-sm animate-fade-in"
-        helperTextId={errorId}
         containerClassName="gap-2"
         inputClassName={cn(AUTH_FIELD_CONTROL_CLASS_NAME, className)}
-        labelRowClassName={usesMessageSlot ? FIELD_MESSAGE_LABEL_ROW_CLASS_NAME : undefined}
+        labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
         labelTrailing={trailingContent}
-        labelTrailingClassName={usesMessageSlot ? FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME : undefined}
+        labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
         dataComponent="desktop_auth_form-field"
         inputDataComponent={dataComponent}
         labelRowDataComponent="desktop_auth_form-field_label-row"
-        labelTrailingDataComponent={shouldShowInlineError || trailingContent ? "desktop_auth_form-field_label-row_trailing" : undefined}
-        aria-describedby={usesMessageSlot ? (message ? errorId : undefined) : error ? errorId : undefined}
+        labelTrailingDataComponent={trailingContent ? "desktop_auth_form-field_label-row_trailing" : undefined}
+        aria-describedby={resolved ? errorId : undefined}
         aria-invalid={hasError}
       />
     );

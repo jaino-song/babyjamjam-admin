@@ -183,7 +183,8 @@ async function renderPreparedServiceEndNotice() {
   fireEvent.click(await screen.findByText("박서연"));
 
   const sendButton = screen.getByRole("button", { name: "즉시 발송" });
-  await waitFor(() => expect(sendButton).toBeEnabled());
+  // The button is always pressable; the receiver slot clears once the receipt link is prepared.
+  await waitFor(() => expect(receiverSlot()).toBeEmptyDOMElement());
   return sendButton;
 }
 
@@ -774,7 +775,7 @@ describe("NewMessagePage", () => {
 
     const { rerender } = renderPage();
 
-    expect(screen.queryByText("선택한 고객에 등록된 연락처가 없어요.")).not.toBeInTheDocument();
+    expect(receiverSlot()).not.toHaveTextContent("연락처가 없는 고객이에요");
 
     mockUseAllClients.mockReturnValue({
       data: [{ ...mockClients[0], phone: "" }],
@@ -786,7 +787,9 @@ describe("NewMessagePage", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByText("선택한 고객에 등록된 연락처가 없어요.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(receiverSlot()).toHaveTextContent("연락처가 없는 고객이에요");
+    });
   });
 
   it("does not re-add a deep-linked recipient the user removed when the client list refetches", async () => {
@@ -914,16 +917,40 @@ describe("NewMessagePage", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("disables immediate send until a recipient is selected", async () => {
+  it("keeps immediate send pressable and explains the missing recipient in its slot when pressed", async () => {
     renderPage();
 
-    // The disabled direction alone would also pass for an unconditionally
-    // disabled button, so pin the enabled state once a recipient exists.
-    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    expect(sendButton).toBeEnabled();
+    expect(receiverSlot()).toBeEmptyDOMElement();
+
+    // Pressing the button (not submitting the form) is what reveals the reason.
+    fireEvent.click(sendButton);
+
+    expect(receiverSlot()).toHaveTextContent("수신자를 추가해 주세요");
+    expect(api.post).not.toHaveBeenCalled();
+    expect(sendButton).toBeEnabled();
+    // The first problem takes the focus.
+    expect(document.activeElement).toBe(document.getElementById("receiver"));
+    expect(document.getElementById("receiver")).toHaveAttribute("aria-describedby", receiverSlot().id);
 
     await addManualRecipient("010-1234-5678");
 
+    expect(receiverSlot()).toBeEmptyDOMElement();
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+  });
+
+  it("reveals a body problem in the body slot and focuses it when pressed", async () => {
+    renderPage();
+    await addManualRecipient("010-1234-5678");
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+
+    const bodySlot = document.getElementById("body-message");
+    expect(bodySlot).toHaveTextContent("본문을 입력해 주세요");
+    expect(document.activeElement).toBe(document.getElementById("body"));
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it("keeps the send page accessible but disables immediate send without approval", () => {
@@ -1094,33 +1121,41 @@ describe("NewMessagePage", () => {
     });
     mockUseSystemTemplates.mockReturnValue(query);
 
-    const { container } = renderPage();
+    renderPage();
     const submitButton = screen.getByRole("button", { name: "즉시 발송" });
 
-    expect(submitButton).toBeDisabled();
-    fireEvent.submit(container.querySelector("form")!);
+    expect(submitButton).toBeEnabled();
+    fireEvent.click(submitButton);
 
-    expect(await screen.findByText("지점 기본 템플릿을 불러오는 중이라 발송할 수 없어요.")).toBeInTheDocument();
+    // The problem belongs to the template field, so it shows in that field's label-row slot.
+    await waitFor(() => {
+      expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
+    });
     expect(api.post).not.toHaveBeenCalledWith("/receipt-links/prepare", expect.anything());
     expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
   });
 
   it.each([
-    ["contract_not_signed", "고객이 계약서 서명을 완료해야 발송할 수 있습니다."],
-    ["pdf_unavailable", "계약서 PDF를 아직 불러올 수 없어요. 잠시 후 다시 시도해 주세요."],
-  ])("shows the %s preparation reason without submitting", async (reason, message) => {
+    ["contract_not_signed", "계약서 서명이 필요해요"],
+    ["pdf_unavailable", "계약서 PDF를 불러올 수 없어요"],
+  ])("shows the %s preparation reason in the receiver slot without submitting", async (reason, message) => {
     (api.post as jest.Mock).mockRejectedValue({ response: { data: { reason } } });
     renderPage();
 
     await openTemplateSelect();
     fireEvent.click(screen.getByRole("option", { name: "서비스 종료 안내" }));
     const recipientNameInput = screen.getByLabelText(/산모님 성함/);
+    expect(recipientNameInput).toHaveAttribute("aria-describedby", "recipient-name-message");
+    expect(document.getElementById("recipient-name-message")).toBeInTheDocument();
     fireEvent.focus(recipientNameInput);
     fireEvent.change(recipientNameInput, { target: { value: "박서연" } });
     fireEvent.click(await screen.findByText("박서연"));
 
-    expect(await screen.findByText(message)).toBeVisible();
-    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    await waitFor(() => {
+      expect(receiverSlot()).toHaveTextContent(message);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
+    expect(receiverSlot()).toHaveTextContent(message);
     expect(api.post).not.toHaveBeenCalledWith("/receipt-links/send", expect.anything());
     expect(api.post).not.toHaveBeenCalledWith("/message-deliveries/sms", expect.anything());
   });
@@ -1219,7 +1254,7 @@ describe("NewMessagePage", () => {
     fireEvent.click(await screen.findByText("박서연"));
 
     const sendButton = screen.getByRole("button", { name: "즉시 발송" });
-    await waitFor(() => expect(sendButton).toBeEnabled());
+    await waitFor(() => expect(receiverSlot()).toBeEmptyDOMElement());
     fireEvent.click(sendButton);
 
     expect(await screen.findByText("산모 정보가 변경되었습니다. 산모를 다시 선택해 주세요")).toBeInTheDocument();
@@ -1618,6 +1653,41 @@ describe("NewMessagePage", () => {
         expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요");
       });
       expect(screen.queryByText("이미 추가된 수신자입니다.")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("body and variable slots", () => {
+    const bodySlot = () => document.getElementById("body-message") as HTMLElement;
+
+    it("keeps the unreplaced-variable hint in the body slot and clears it once none is left", async () => {
+      renderPage();
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "#{name} 산모님 안내" } });
+
+      expect(bodySlot()).toHaveTextContent("템플릿 변수가 남아 있어요");
+      expect(bodySlot()).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByLabelText("메시지 본문")).toHaveAttribute("aria-describedby", "body-message");
+      // The hint is a slot message only: no sr-only paragraph or top alert repeats it.
+      expect(screen.getAllByText("템플릿 변수가 남아 있어요")).toHaveLength(1);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "변수 없는 본문" } });
+      expect(bodySlot()).toBeEmptyDOMElement();
+    });
+
+    it("puts a failed send's problems in the field slots instead of a top alert", async () => {
+      renderPage();
+      await addManualRecipient("010-1234-5678");
+      fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "" } });
+      expect(bodySlot()).toBeEmptyDOMElement();
+
+      // The send button is disabled while a problem exists, so the form is submitted directly (Enter key).
+      const form = screen.getByLabelText("메시지 본문").closest("form") as HTMLFormElement;
+      fireEvent.submit(form);
+
+      expect(bodySlot()).toHaveTextContent("본문을 입력해 주세요");
+      expect(screen.queryByText("메시지 본문을 입력해 주세요.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
     });
   });
 });

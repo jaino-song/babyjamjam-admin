@@ -28,7 +28,7 @@ import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { useCreateClient } from "@/hooks/useClients";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
-import { focusFirstInvalidField, type FieldSpec } from "@/lib/validations/field-message";
+import { focusFirstInvalidField, type FieldSpec, type SlotMessage } from "@/lib/validations/field-message";
 import { useLocale } from "@/providers/LocaleProvider";
 import type { CreateClientDto } from "@/lib/client/types";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
@@ -95,6 +95,8 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submitError, setSubmitError] = useState<string | null>(null);
+    // True once 다음/제출 was pressed with the voucher type or period still missing.
+    const [voucherAttempted, setVoucherAttempted] = useState(false);
 
     const isVoucherInfoComplete =
         resolvedVoucherYear !== null &&
@@ -118,20 +120,27 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
     });
     const isBasicsValid = basicsMessages.invalidFields(BASICS_FIELD_ORDER).length === 0;
 
-    const canGoNext = useMemo(() => {
-        if (activeStep === 0) {
-            // Step 1 stays pressable: pressing it with a problem shows every message.
-            return true;
-        }
-        if (activeStep === 1) {
-            if (!voucherClient) return true;
-            return isVoucherInfoComplete;
-        }
-        return true;
-    }, [activeStep, voucherClient, isVoucherInfoComplete]);
+    const voucherYearMessage: SlotMessage | null = voucherAttempted && resolvedVoucherYear === null
+        ? { text: "연도를 선택해 주세요", tone: "err" }
+        : null;
+    const voucherTypeMessage: SlotMessage | null = voucherAttempted && !voucherType
+        ? { text: "유형을 선택해 주세요", tone: "err" }
+        : null;
+    // A period is picked but its price row has no amounts: say so instead of leaving 다음 a silent no-op.
+    const isVoucherPriceMissing =
+        Boolean(voucherType) && Boolean(voucherDuration) && (!fullPrice.trim() || !grant.trim() || !actualPrice.trim());
+    const voucherDurationMessage: SlotMessage | null = voucherAttempted && voucherType && !voucherDuration
+        ? { text: "기간을 선택해 주세요", tone: "err" }
+        : isVoucherPriceMissing
+            ? { text: "요금 정보가 없어요", tone: "err" }
+            : null;
 
     const handleNext = () => {
-        if (!canGoNext) return;
+        if (activeStep === 1 && voucherClient && !isVoucherInfoComplete) {
+            // Pressing it with a problem shows the message in the field's own slot.
+            setVoucherAttempted(true);
+            return;
+        }
         if (activeStep === 0) {
             basicsMessages.markSubmitted();
             const invalid = basicsMessages.invalidFields(BASICS_FIELD_ORDER);
@@ -183,7 +192,8 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
         }
 
         if (voucherClient && !isVoucherInfoComplete) {
-            setSubmitError("바우처 정보를 입력해주세요.");
+            setVoucherAttempted(true);
+            setActiveStep(1);
             return;
         }
 
@@ -335,26 +345,32 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 {/* Step 2: Voucher Info */}
                 {activeStep === 1 && (
                     <div className="grid gap-4">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="voucherClient"
-                                checked={voucherClient}
-                                onCheckedChange={(checked) => setVoucherClient(checked === true)}
-                            />
-                            <Label htmlFor="voucherClient">바우처 대상</Label>
+                        <div className="space-y-2" data-component={`${WIZARD_BASE}_steps_customer-type-field`}>
+                            <FieldLabelRow data-component={`${WIZARD_BASE}_steps_customer-type-field`} htmlFor="customerType" label="고객 유형" message={null} />
+                            <div id="customerType" role="group" aria-describedby={fieldMessageId("customerType")} className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="voucherClient"
+                                    checked={voucherClient}
+                                    onCheckedChange={(checked) => {
+                                        setVoucherClient(checked === true);
+                                        setVoucherAttempted(false);
+                                    }}
+                                />
+                                <Label htmlFor="voucherClient">바우처 대상</Label>
+                            </div>
                         </div>
 
                         {voucherClient && (
                             <>
 	                                <div className="flex gap-4 items-center flex-wrap">
 	                                    <div className="space-y-2 min-w-[140px]">
-	                                        <Label>바우처 연도</Label>
+	                                        <FieldLabelRow data-component={`${WIZARD_BASE}_steps_voucher-year-field`} htmlFor="voucherYear" label="바우처 연도" message={voucherYearMessage} />
 	                                        <Select
 	                                            value={resolvedVoucherYear?.toString() ?? ""}
 	                                            onValueChange={handleVoucherYearChange}
 	                                            disabled={isVoucherYearsLoading}
 	                                        >
-	                                            <SelectTrigger className="w-[140px]" aria-label="바우처 연도">
+	                                            <SelectTrigger id="voucherYear" className="w-[140px]" aria-describedby={fieldMessageId("voucherYear")}>
 	                                                <SelectValue placeholder="연도 선택" />
 	                                            </SelectTrigger>
 	                                            <SelectContent>
@@ -369,13 +385,13 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                                 </div>
 
 	                                <div className="space-y-2">
-	                                    <Label>바우처 유형</Label>
+	                                    <FieldLabelRow data-component={`${WIZARD_BASE}_steps_voucher-type-field`} htmlFor="voucherType" label="바우처 유형" message={voucherTypeMessage} />
 	                                    <Select
 	                                        value={voucherType}
 	                                        onValueChange={handleVoucherTypeChange}
 	                                        disabled={resolvedVoucherYear === null}
 	                                    >
-	                                        <SelectTrigger className="w-full" aria-label="바우처 유형">
+	                                        <SelectTrigger id="voucherType" className="w-full" aria-invalid={voucherTypeMessage ? true : undefined} aria-describedby={fieldMessageId("voucherType")}>
 	                                            <SelectValue placeholder="유형 선택" />
 	                                        </SelectTrigger>
 	                                        <SelectContent>
@@ -395,13 +411,13 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
                                 {voucherType && (
 	                                    <div className="space-y-2">
-	                                        <Label>기간</Label>
+	                                        <FieldLabelRow data-component={`${WIZARD_BASE}_steps_voucher-duration-field`} htmlFor="voucherDuration" label="기간" message={voucherDurationMessage} />
 	                                        <Select
 	                                            value={voucherDuration}
 	                                            onValueChange={handleVoucherDurationChange}
 	                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
 	                                        >
-	                                            <SelectTrigger className="w-full" aria-label="기간">
+	                                            <SelectTrigger id="voucherDuration" className="w-full" aria-invalid={voucherDurationMessage ? true : undefined} aria-describedby={fieldMessageId("voucherDuration")}>
 	                                                <SelectValue placeholder="기간 선택" />
 	                                            </SelectTrigger>
 	                                            <SelectContent>
@@ -444,22 +460,25 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
                 {/* Step 3: Settings */}
                 {activeStep === 2 && (
-                    <div className="grid gap-3">
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="careCenter"
-                                checked={careCenter}
-                                onCheckedChange={(checked) => setCareCenter(checked === true)}
-                            />
-                            <Label htmlFor="careCenter">조리원 여부</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                            <Checkbox
-                                id="breastPump"
-                                checked={breastPump}
-                                onCheckedChange={(checked) => setBreastPump(checked === true)}
-                            />
-                            <Label htmlFor="breastPump">유축기</Label>
+                    <div className="space-y-2" data-component={`${WIZARD_BASE}_steps_options-field`}>
+                        <FieldLabelRow data-component={`${WIZARD_BASE}_steps_options-field`} htmlFor="options" label="추가 옵션" message={null} />
+                        <div id="options" role="group" aria-describedby={fieldMessageId("options")} className="grid gap-3">
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="careCenter"
+                                    checked={careCenter}
+                                    onCheckedChange={(checked) => setCareCenter(checked === true)}
+                                />
+                                <Label htmlFor="careCenter">조리원 여부</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                                <Checkbox
+                                    id="breastPump"
+                                    checked={breastPump}
+                                    onCheckedChange={(checked) => setBreastPump(checked === true)}
+                                />
+                                <Label htmlFor="breastPump">유축기</Label>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -484,7 +503,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 {activeStep < steps.length - 1 ? (
                     <Button
                         onClick={handleNext}
-                        disabled={!canGoNext || isSubmitting}
+                        disabled={isSubmitting}
                     >
                         다음
                     </Button>

@@ -142,8 +142,24 @@ export function OnboardingForm(props: OnboardingFormProps) {
       </div>
       {serverError && <div className="auth-server-error" role="alert">{serverError}</div>}
       <form className="auth-form" onSubmit={submit}>
-        <input className="auth-input" value={props.email ?? ""} disabled aria-label="이메일" />
-        <input className="auth-input" value={props.name ?? ""} disabled aria-label="이름" />
+        <div className="auth-input-group">
+          <FieldLabelRow
+            data-component={`${KAKAO_ONBOARDING_BASE}_email-field`}
+            htmlFor="onboarding-email"
+            label="이메일"
+            message={null}
+          />
+          <input id="onboarding-email" className="auth-input" value={props.email ?? ""} disabled aria-describedby={fieldMessageId("onboarding-email")} />
+        </div>
+        <div className="auth-input-group">
+          <FieldLabelRow
+            data-component={`${KAKAO_ONBOARDING_BASE}_name-field`}
+            htmlFor="onboarding-name"
+            label="이름"
+            message={null}
+          />
+          <input id="onboarding-name" className="auth-input" value={props.name ?? ""} disabled aria-describedby={fieldMessageId("onboarding-name")} />
+        </div>
         <div className="auth-input-group">
           <FieldLabelRow
             data-component={`${KAKAO_ONBOARDING_BASE}_phone-field`}

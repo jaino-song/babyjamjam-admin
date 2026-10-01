@@ -401,6 +401,8 @@ export interface FormSwitchRowProps extends Omit<React.HTMLAttributes<HTMLDivEle
   onToggle: () => void;
   disabled?: boolean;
   buttonAriaLabel: string;
+  /** Id of the message (e.g. in the field's label-row slot) that describes the switch. */
+  buttonDescribedBy?: string;
   copyDataComponent?: string;
   titleDataComponent?: string;
   descriptionDataComponent?: string;
@@ -417,6 +419,7 @@ function FormSwitchRow({
   onToggle,
   disabled = false,
   buttonAriaLabel,
+  buttonDescribedBy,
   copyDataComponent,
   titleDataComponent,
   descriptionDataComponent,
@@ -461,6 +464,7 @@ function FormSwitchRow({
         checked={checked}
         onCheckedChange={onToggle}
         aria-label={buttonAriaLabel}
+        aria-describedby={buttonDescribedBy}
         disabled={disabled}
       />
     </div>

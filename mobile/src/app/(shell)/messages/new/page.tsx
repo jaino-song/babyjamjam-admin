@@ -53,6 +53,7 @@ import {
 } from "@/lib/phone";
 import {
   describeReceiptLinkError,
+  describeReceiptLinkSlotCopy,
   RECEIPT_LINK_REASON_MESSAGES,
 } from "@/lib/receipt-link";
 import "@/components/app/mobile-redesign/redesign.css";
@@ -124,13 +125,36 @@ const SMS_BYTE_LIMIT = 90;
 const MAX_LMS_TITLE_BYTES = 44;
 const MAX_RECIPIENTS = 50;
 const RECIPIENT_REQUIRED_MESSAGE = "수신자를 선택하거나 전화번호를 Enter로 추가해 주세요.";
-const DUPLICATE_RECIPIENT_MESSAGE = "이미 추가된 수신자입니다.";
 // One-line copy for the receiver field's label-row slot.
 const DUPLICATE_RECIPIENT_SLOT_COPY = "이미 추가된 수신자예요";
 const RECIPIENT_LIMIT_SLOT_COPY = `수신자는 최대 ${MAX_RECIPIENTS}명까지예요`;
+const RECIPIENT_FORMAT_MESSAGE = "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
+const RECIPIENT_FORMAT_SHORT = "010-1234-5678 형식";
+// One-line copy for the receiver slot when a picked client has no phone number.
+const CLIENT_WITHOUT_PHONE_SLOT_COPY = "연락처가 없는 고객이에요";
+const VARIABLE_HINT_SLOT_COPY = "템플릿 변수가 남아 있어요";
 const RECEIVER_LABEL = "휴대 전화번호";
 const RECEIVER_SPEC: FieldSpec = { kind: "phone", label: RECEIVER_LABEL };
-const CLIENT_WITHOUT_PHONE_MESSAGE = "선택한 고객에 등록된 연락처가 없습니다.";
+// A problem that stops a send, and the field whose label-row slot reports it.
+interface ValidationIssue {
+  field: "template" | "receiver" | "body" | "form" | { variable: string };
+  message: string;
+  /** One-line copy for that field's slot. */
+  short: string;
+}
+
+// The price-info template fills several variables from a few selects; a missing
+// one is reported on the select that sets it.
+const PRICE_INFO_ROW_BY_VARIABLE: Readonly<Record<string, "type" | "duration" | "bankAccount">> = {
+  type: "type",
+  duration: "duration",
+  weeks: "duration",
+  fullPrice: "duration",
+  grant: "duration",
+  actualPrice: "duration",
+  bankName: "bankAccount",
+  accNum: "bankAccount",
+};
 const DEFAULT_LMS_TITLE = "안내";
 const SMS_HISTORY_HREF = "/messages/history";
 const INVALID_SMS_RESPONSE_MESSAGE = "SMS_SEND_RESPONSE_INVALID";
@@ -816,7 +840,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   // A problem found when a typed number is added with Enter. It belongs to the
   // text it was found for, so it shows in the receiver field's label-row slot
   // until the input changes.
-  const [receiverEntry, setReceiverEntry] = useState<{ message: SlotMessage; receiver: string } | null>(null);
+  const [receiverEntry, setReceiverEntry] = useState<{ message: SlotMessage; receiver: string } | null>(
+    initialClient && !initialClientPhone
+      ? { message: { text: CLIENT_WITHOUT_PHONE_SLOT_COPY, tone: "err" }, receiver: "" }
+      : null,
+  );
   const receiverEntryError = receiverEntry && receiverEntry.receiver === receiver ? receiverEntry.message : null;
   const setReceiverEntryError = (message: SlotMessage) => setReceiverEntry({ message, receiver });
   const [recipientNameInputValue, setRecipientNameInputValue] = useState("");
@@ -830,9 +858,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   });
   const [priceInfoVoucherYear, setPriceInfoVoucherYear] = useState(DEFAULT_PRICE_INFO_YEAR);
   const [priceInfoArea, setPriceInfoArea] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(
-    initialClient && !initialClientPhone ? CLIENT_WITHOUT_PHONE_MESSAGE : null,
-  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // True once a send was attempted while something still stopped it; reveals each field's problem in its slot.
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [sendError, setSendError] = useState<NormalizedApiError | null>(null);
   const [sendRetryFingerprint, setSendRetryFingerprint] = useState<string | null>(null);
   const [sendOutcomeLocked, setSendOutcomeLocked] = useState(false);
@@ -863,7 +891,10 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       });
     } else {
       queueMicrotask(() => {
-        setErrorMessage((prev) => prev ?? CLIENT_WITHOUT_PHONE_MESSAGE);
+        setReceiverEntry((prev) => prev ?? {
+          message: { text: CLIENT_WITHOUT_PHONE_SLOT_COPY, tone: "err" },
+          receiver: "",
+        });
       });
     }
 
@@ -1146,10 +1177,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     specs: isReceiverPhoneInput && !/[,+]/.test(receiver) ? { receiver: RECEIVER_SPEC } : {},
     locale,
   });
-  const receiverSlot = isServiceEndNoticeSelected
-    ? null
-    : pickSlotMessage(receiverEntryError, receiverMessages.slot("receiver"));
-  const receiverHasError = receiverSlot?.tone === "err";
   const renderedTemplateVariables = useMemo(() => {
     if (selectedTemplate.id === SERVICE_END_NOTICE_TEMPLATE_ID) {
       return selectedTemplateVariables.filter(
@@ -1312,21 +1339,50 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     return { fullPrice, grant, actualPrice, bankName, accNum };
   }, [isPriceInfoTemplateSelected, templateVariableValues]);
 
-  const validationError = useMemo(() => {
-    if (templateReadinessError) return templateReadinessError;
-    if (!receiverPayload) return RECIPIENT_REQUIRED_MESSAGE;
-    if (!PHONE_REGEX.test(receiverPayload)) return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
-    if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
-      return "수신자 연락처 형식이 올바르지 않아요. (숫자, '-', ',' 만 허용)";
+  // The first thing that stops a send, and the field it belongs to. Each field
+  // shows its own problem in its label-row slot (`short` is the one-line copy
+  // for that slot); only "form" problems have no field to sit in.
+  const validationIssue = useMemo((): ValidationIssue | null => {
+    if (templateReadinessError) {
+      return { field: "template", message: templateReadinessError, short: "템플릿을 불러오는 중이에요" };
     }
-    if (recipientCount > MAX_RECIPIENTS) return `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`;
+    if (!receiverPayload) {
+      return { field: "receiver", message: RECIPIENT_REQUIRED_MESSAGE, short: "수신자를 추가해 주세요" };
+    }
+    if (!PHONE_REGEX.test(receiverPayload)) {
+      return { field: "receiver", message: RECIPIENT_FORMAT_MESSAGE, short: RECIPIENT_FORMAT_SHORT };
+    }
+    if (splitRecipientPhones(receiverPayload).some((phone) => !SINGLE_PHONE_REGEX.test(phone))) {
+      return { field: "receiver", message: RECIPIENT_FORMAT_MESSAGE, short: RECIPIENT_FORMAT_SHORT };
+    }
+    if (recipientCount > MAX_RECIPIENTS) {
+      return {
+        field: "receiver",
+        message: `수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`,
+        short: RECIPIENT_LIMIT_SLOT_COPY,
+      };
+    }
     if (isServiceEndNoticeSelected && serviceEndSelectionKey === null) {
-      return "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.";
+      return {
+        field: "receiver",
+        message: "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.",
+        short: "산모님 한 명을 선택해 주세요",
+      };
     }
     if (selectedTemplateDeliveryMode === "service-feedback-link") {
-      return "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.";
+      return {
+        field: "template",
+        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
+        short: "기록지 화면에서 보내 주세요",
+      };
     }
-    if (isServiceEndNoticeSelected && receiptLinkPreparationError) return receiptLinkPreparationError;
+    if (isServiceEndNoticeSelected && receiptLinkPreparationError) {
+      return {
+        field: "receiver",
+        message: receiptLinkPreparationError,
+        short: describeReceiptLinkSlotCopy(receiptLinkPreparationError),
+      };
+    }
     if (
       isServiceEndNoticeSelected
       && (
@@ -1336,14 +1392,30 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         || receiptLinkPreparation.recipientPhone !== serviceEndRecipientPhone
       )
     ) {
-      return "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.";
+      return {
+        field: "receiver",
+        message: "영수증 링크를 준비하고 있어요. 잠시 후 다시 시도해 주세요.",
+        short: "영수증 링크를 준비하고 있어요",
+      };
     }
     const missingVariable = selectedTemplateVariables.find(
       (variable) => variable.required && !templateVariableValues[variable.key]?.trim(),
     );
-    if (missingVariable) return `${missingVariable.label} 입력이 필요합니다.`;
-    if (!body.trim()) return "메시지 본문을 입력해 주세요.";
-    if (body.length > MAX_BODY) return `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`;
+    if (missingVariable) {
+      return {
+        field: { variable: missingVariable.key },
+        message: `${missingVariable.label} 입력이 필요합니다.`,
+        short: "입력해 주세요",
+      };
+    }
+    if (!body.trim()) return { field: "body", message: "메시지 본문을 입력해 주세요.", short: "본문을 입력해 주세요" };
+    if (body.length > MAX_BODY) {
+      return {
+        field: "body",
+        message: `본문은 최대 ${MAX_BODY}자까지 입력할 수 있습니다.`,
+        short: `최대 ${MAX_BODY}자`,
+      };
+    }
     return null;
   }, [
     body,
@@ -1361,6 +1433,41 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     templateReadinessError,
     templateVariableValues,
   ]);
+  const validationError = validationIssue?.message ?? null;
+
+  // A service-end notice shows its problems as soon as they exist (its form is
+  // otherwise read-only); every other template waits for a blocked send.
+  const showValidationIssues = isServiceEndNoticeSelected || submitAttempted;
+  const variableSlotKey = (key: string): string =>
+    (selectedTemplate.id === PRICE_INFO_TEMPLATE_ID ? PRICE_INFO_ROW_BY_VARIABLE[key] : undefined) ?? key;
+  const renderedVariableKeys = new Set<string>([
+    ...renderedTemplateVariables.map((variable) => variable.key),
+    ...(recipientNameVariable && !isServiceEndNoticeSelected ? ["name"] : []),
+    ...(selectedTemplate.id === PRICE_INFO_TEMPLATE_ID ? ["type", "duration", "bankAccount"] : []),
+  ]);
+  const issueField = validationIssue?.field;
+  const issueHasSlot = issueField === undefined
+    || (typeof issueField === "string"
+      ? issueField !== "form"
+      : renderedVariableKeys.has(variableSlotKey(issueField.variable)));
+  // The slot message for `field`: a field name, or a rendered template-variable key.
+  const issueSlot = (field: string): SlotMessage | null => {
+    if (!showValidationIssues || !validationIssue || !issueHasSlot) return null;
+    const target = validationIssue.field;
+    const matches = typeof target === "string" ? target === field : variableSlotKey(target.variable) === field;
+    return matches ? { text: validationIssue.short, tone: "err" } : null;
+  };
+  const receiverSlot = pickSlotMessage(
+    receiverEntryError,
+    isServiceEndNoticeSelected ? null : receiverMessages.slot("receiver"),
+    issueSlot("receiver"),
+  );
+  const receiverHasError = receiverSlot?.tone === "err";
+  const templateSlot = issueSlot("template");
+  const bodySlot = pickSlotMessage(
+    issueSlot("body"),
+    showVariableHint ? { text: VARIABLE_HINT_SLOT_COPY, tone: "muted" } : null,
+  );
 
   const sendMutation = useMutation<SendResponse, unknown, void>({
     mutationFn: async () => {
@@ -1444,7 +1551,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     },
   });
 
-  const addRecipientChips = (nextRecipients: RecipientChip[], options: { reportDuplicateInSlot?: boolean } = {}) => {
+  const addRecipientChips = (nextRecipients: RecipientChip[]) => {
     const existingPhoneSet = new Set(recipients.map((recipient) => normalizeKoreanPhoneDigits(recipient.phone)));
     const filteredRecipients = nextRecipients.filter((recipient) => {
       const normalizedPhone = normalizeKoreanPhoneDigits(recipient.phone);
@@ -1457,11 +1564,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     });
 
     if (filteredRecipients.length === 0) {
-      if (options.reportDuplicateInSlot) {
-        setReceiverEntryError({ text: DUPLICATE_RECIPIENT_SLOT_COPY, tone: "err" });
-      } else {
-        setErrorMessage(getUserErrorMessage(DUPLICATE_RECIPIENT_MESSAGE));
-      }
+      setReceiverEntryError({ text: DUPLICATE_RECIPIENT_SLOT_COPY, tone: "err" });
       return false;
     }
 
@@ -1478,13 +1581,12 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
     const normalizedPhone = normalizeKoreanPhoneDigits(client.phone);
     if (!normalizedPhone) {
-      setErrorMessage(getUserErrorMessage(CLIENT_WITHOUT_PHONE_MESSAGE));
+      setReceiverEntryError({ text: CLIENT_WITHOUT_PHONE_SLOT_COPY, tone: "err" });
       return;
     }
 
     if (!isServiceEndNoticeSelected && recipients.length >= MAX_RECIPIENTS) {
-      setErrorMessage(getUserErrorMessage(`수신자는 한 번에 최대 ${MAX_RECIPIENTS}명까지 선택할 수 있습니다.`));
-
+      setReceiverEntryError({ text: RECIPIENT_LIMIT_SLOT_COPY, tone: "err" });
       return;
     }
 
@@ -1588,7 +1690,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         initial: "수",
         tone: "orange",
       })),
-      { reportDuplicateInSlot: true },
     );
   };
 
@@ -1694,6 +1795,29 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     });
   };
 
+  // Moves the caret to the field whose slot now explains why nothing was sent.
+  const focusIssueField = (issue: ValidationIssue) => {
+    const target = issue.field;
+    if (target === "form") return;
+    let elementIds: string[];
+    if (target === "template") {
+      elementIds = ["template-select"];
+    } else if (typeof target === "string") {
+      elementIds = [target];
+    } else {
+      const slotKey = variableSlotKey(target.variable);
+      elementIds = slotKey === "name"
+        ? ["recipient-name", getVariableInputId("name")]
+        : slotKey === "type" || slotKey === "duration" || slotKey === "bankAccount"
+          ? [`price-info-${slotKey === "bankAccount" ? "bank-account" : slotKey}`]
+          : [getVariableInputId(slotKey)];
+    }
+    const element = elementIds.map((id) => document.getElementById(id)).find(Boolean);
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    element.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (needsSenderApproval || isSenderApprovalLoading) {
@@ -1707,7 +1831,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     }
 
     if (validationError) {
-      if (validationError) setErrorMessage(getUserErrorMessage(validationError));
+      // Each problem is shown in its own field's slot; the first one gets the focus.
+      setSubmitAttempted(true);
+      if (validationIssue && issueHasSlot) focusIssueField(validationIssue);
       return;
     }
 
@@ -1743,10 +1869,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   };
 
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
-    ?? (isServiceEndNoticeSelected ? validationError : null);
+    ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
 
+  // A field problem does not disable the button: pressing it is what shows the
+  // problem in its slot. Only a send that is already running or settled does.
   const isSubmitDisabled =
-    Boolean(validationError) ||
     sendMutation.isPending ||
     isSenderApprovalLoading ||
     needsSenderApproval ||
@@ -1817,9 +1944,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
               >
                 <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template" className={styles.formCardSection}>
                   <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template_row" className={styles.formSection}>
-                    <label id="template-select-label" htmlFor="template-select" className={styles.formLabel}>
-                      템플릿 선택 <span className={styles.required}>*</span>
-                    </label>
+                    <FieldLabelRow
+                      data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template_row"
+                      htmlFor="template-select"
+                      label="템플릿 선택"
+                      required
+                      message={templateSlot}
+                    />
                     <Select
                       value={selectedTemplate.id}
                       onValueChange={(value) => {
@@ -1830,7 +1961,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                       <SelectTrigger
                         id="template-select"
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template_row_select"
-                        aria-labelledby="template-select-label"
+                        aria-invalid={templateSlot ? true : undefined}
+                        aria-describedby={fieldMessageId("template-select")}
                         className={styles.templateSelectTrigger}
                       >
                         <SelectValue placeholder="템플릿 선택" />
@@ -1852,10 +1984,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                 <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient" className={styles.formCardSection}>
                   {recipientNameVariable ? (
                     <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row" className={styles.formSection}>
-                      <label htmlFor="recipient-name" className={styles.formLabel}>
-                        산모님 성함
-                        {recipientNameVariable.required ? <span className={styles.required}>*</span> : null}
-                      </label>
+                      <FieldLabelRow
+                        data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row"
+                        htmlFor="recipient-name"
+                        label="산모님 성함"
+                        required={recipientNameVariable.required}
+                        message={issueSlot("name")}
+                      />
                       <ClientAutocomplete
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
                         inputId="recipient-name"
@@ -1870,6 +2005,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         }}
                         placeholder="산모님 성함"
                         label=""
+                        ariaDescribedBy={fieldMessageId("recipient-name")}
                       />
                     </div>
                   ) : null}
@@ -1921,6 +2057,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         onInputValueChange={setReceiver}
                         placeholder="010-1234-5678"
                         label=""
+                        ariaDescribedBy={fieldMessageId("receiver")}
                         allowManualEntry
                         manualEntryLabel="입력한 번호 추가"
                         manualEntryDescription="전화번호를 입력한 뒤 Enter로 수신자에 추가합니다"
@@ -1959,12 +2096,17 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           data-template-variable-key={variable.key}
                           className={styles.formSection}
                         >
-                          <label htmlFor={inputId} className={styles.formLabel}>
-                            {variable.label}
-                            {variable.required ? <span className={styles.required}>*</span> : null}
-                          </label>
+                          <FieldLabelRow
+                            data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_row"
+                            htmlFor={inputId}
+                            label={variable.label}
+                            required={variable.required}
+                            message={issueSlot(variable.key)}
+                          />
                           <Input
                             id={inputId}
+                            aria-invalid={issueSlot(variable.key) ? true : undefined}
+                            aria-describedby={fieldMessageId(inputId)}
                             data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_row_input"
                             data-template-variable-key={variable.key}
                             inputMode={getVariableInputMode(variable)}
@@ -1985,16 +2127,21 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           data-template-variable-key="type"
                           className={styles.formSection}
                         >
-                          <label id="price-info-type-label" className={styles.formLabel}>
-                            바우처 유형 <span className={styles.required}>*</span>
-                          </label>
+                          <FieldLabelRow
+                            data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row"
+                            htmlFor="price-info-type"
+                            label="바우처 유형"
+                            required
+                            message={issueSlot("type")}
+                          />
                           <Select
                             value={templateVariableValues.type ?? ""}
                             onValueChange={handlePriceInfoTypeChange}
                           >
                             <SelectTrigger
                               data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_type-select"
-                              aria-labelledby="price-info-type-label"
+                              id="price-info-type"
+                              aria-describedby={fieldMessageId("price-info-type")}
                               className={styles.variableSelectTrigger}
                             >
                               {templateVariableValues.type ? (
@@ -2028,9 +2175,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           data-template-variable-key="duration"
                           className={styles.formSection}
                         >
-                          <label id="price-info-duration-label" className={styles.formLabel}>
-                            서비스 기간 <span className={styles.required}>*</span>
-                          </label>
+                          <FieldLabelRow
+                            data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row"
+                            htmlFor="price-info-duration"
+                            label="서비스 기간"
+                            required
+                            message={issueSlot("duration")}
+                          />
                           <Select
                             value={templateVariableValues.duration ?? ""}
                             onValueChange={handlePriceInfoDurationChange}
@@ -2038,7 +2189,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           >
                             <SelectTrigger
                               data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_duration-select"
-                              aria-labelledby="price-info-duration-label"
+                              id="price-info-duration"
+                              aria-describedby={fieldMessageId("price-info-duration")}
                               className={styles.variableSelectTrigger}
                             >
                               {templateVariableValues.duration ? (
@@ -2068,9 +2220,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           data-template-variable-key="bankAccount"
                           className={styles.formSection}
                         >
-                          <label id="price-info-bank-account-label" className={styles.formLabel}>
-                            지역 <span className={styles.required}>*</span>
-                          </label>
+                          <FieldLabelRow
+                            data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row"
+                            htmlFor="price-info-bank-account"
+                            label="지역"
+                            required
+                            message={issueSlot("bankAccount")}
+                          />
                           <Select
                             value={priceInfoArea}
                             onValueChange={handlePriceInfoAreaChange}
@@ -2078,7 +2234,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           >
                             <SelectTrigger
                               data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_bank-account-select"
-                              aria-labelledby="price-info-bank-account-label"
+                              id="price-info-bank-account"
+                              aria-describedby={fieldMessageId("price-info-bank-account")}
                               className={styles.variableSelectTrigger}
                             >
                               {priceInfoArea ? (
@@ -2108,16 +2265,21 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                           data-template-variable-key="voucherYear"
                           className={styles.formSection}
                         >
-                          <label id="price-info-year-label" className={styles.formLabel}>
-                            바우처 연도 <span className={styles.required}>*</span>
-                          </label>
+                          <FieldLabelRow
+                            data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row"
+                            htmlFor="price-info-year"
+                            label="바우처 연도"
+                            required
+                            message={null}
+                          />
                           <Select
                             value={String(priceInfoVoucherYear)}
                             onValueChange={handlePriceInfoYearChange}
                           >
                             <SelectTrigger
                               data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_year-select"
-                              aria-labelledby="price-info-year-label"
+                              id="price-info-year"
+                              aria-describedby={fieldMessageId("price-info-year")}
                               className={styles.variableSelectTrigger}
                             >
                               <SelectValue placeholder="바우처 연도" />
@@ -2171,9 +2333,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                 <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body" className={styles.formCardSection}>
                   <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row" className={styles.formSection}>
                     <div data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row_header" className={styles.formSectionHeader}>
-                      <label htmlFor="body" className={styles.formLabel}>
-                        메시지 본문
-                      </label>
+                      <div className={styles.formSectionLabel}>
+                        <FieldLabelRow
+                          data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row"
+                          htmlFor="body"
+                          label="메시지 본문"
+                          message={bodySlot}
+                        />
+                      </div>
                       <button
                         type="button"
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row_header_copy"
@@ -2187,17 +2354,13 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                       data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row_field"
                       inputId="body"
                       ariaLabel="메시지 본문"
+                      ariaDescribedBy={fieldMessageId("body")}
                       value={body}
                       maxLength={MAX_BODY}
                       onChange={setBodyOverride}
                       className={styles.messageField}
                       textareaClassName={styles.messageFieldTextarea}
                     />
-                    {showVariableHint ? (
-                      <p data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_message-body_row_hint" className={styles.screenReaderNote}>
-                        템플릿 변수가 포함되어 있습니다.
-                      </p>
-                    ) : null}
                   </div>
                 </div>
               </div>
