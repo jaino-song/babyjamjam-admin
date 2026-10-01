@@ -23,7 +23,7 @@ import { SystemSettingService } from "../../application/services/system-setting.
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
-import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "../../domain/utils/business-days";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 /** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
@@ -380,6 +380,7 @@ describe("ClientService", () => {
                 branchId,
                 expect.objectContaining({ phone: null }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
         });
 
@@ -454,7 +455,7 @@ describe("ClientService", () => {
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(branchId, expect.objectContaining({
                     duration: 15, startDate: new Date("2026-08-26"), endDate: new Date("2026-09-14"),
                     allowBusinessDayMismatch: true,
-                }), expect.anything());
+                }), expect.anything(), KR_BUILTIN_CALENDAR);
             });
 
             it("still rejects a supplied duration that exceeds the business-day count", async () => {
@@ -519,6 +520,7 @@ describe("ClientService", () => {
                         workAddress: "123 Main St",
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
@@ -612,6 +614,7 @@ describe("ClientService", () => {
                         address: "123 Main St",
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(result).toBe(mockClient);
@@ -650,6 +653,7 @@ describe("ClientService", () => {
                     careCenter: null,
                 }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
         });
 
@@ -1200,6 +1204,7 @@ describe("ClientService", () => {
                 branchId,
                 expect.objectContaining({ suppressGreetingSms: expectedSuppressed }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
             expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
@@ -1285,6 +1290,7 @@ describe("ClientService", () => {
                         secondaryEmployeeId: 6,
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
@@ -1354,6 +1360,7 @@ describe("ClientService", () => {
                 expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
                     existingClient.id,
                     prismaService,
+                    KR_BUILTIN_CALENDAR,
                 );
             });
 
@@ -1704,6 +1711,7 @@ describe("ClientService", () => {
                     branchId,
                     expect.objectContaining({ suppressGreetingSms: expectedSuppress }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                     branchId,
@@ -1792,6 +1800,25 @@ describe("ClientService", () => {
                     data: expect.objectContaining({ name: "New Name", address: "New Address" }),
                 }));
                 expect(result).toBe(existingClient);
+            });
+
+            it("loads the branch calendar before the transaction and hands it to the lifecycle repair", async () => {
+                const calendar = createKrBusinessDayCalendar(
+                    [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+                    { supportedYears: [2024], version: "branch-test" },
+                );
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await service.update(branchId, existingClient.id, { name: "새 고객 이름" });
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                    .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                    existingClient.id, expect.anything(), calendar,
+                );
             });
 
             it("should refresh assignment jobs when the client name changes", async () => {
@@ -3680,6 +3707,102 @@ describe("ClientService", () => {
     });
 
     // ============================================
+    // The branch calendar is a saved computation, read ONCE and before the
+    // owning transaction opens (a second pooled connection held while client
+    // rows are locked starves the direct route's five-connection pool).
+    // ============================================
+    describe("branch calendar read before the owning transaction", () => {
+        const createParams = {
+            name: "New Client",
+            address: "123 Main St",
+            phone: "010-1234-5678",
+            startDate: "2026-08-26",
+            endDate: "2026-09-14",
+            careCenter: false,
+            voucherClient: true,
+            breastPump: false,
+            reuseExistingClient: true,
+        };
+
+        function loadedBeforeTransaction() {
+            const forBranchOrder = (holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!;
+            const transactionOrder = (prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!;
+            expect(forBranchOrder).toBeLessThan(transactionOrder);
+        }
+
+        it("create without an employee reads the calendar once and passes it to the usecase and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            await service.create(branchId, createParams);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                mockClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("create with an employee reads the calendar once and passes it to the usecase and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            createClientUsecase.executeWithInitialSchedule.mockResolvedValue({ client: mockClient, scheduleId: 10 });
+
+            await service.create(branchId, { ...createParams, primaryEmployeeId: 5 });
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            loadedBeforeTransaction();
+            expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
+                branchId, expect.anything(), expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                mockClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("terminateService loads the calendar before the transaction and passes it to the update", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+            updateClientUsecase.execute.mockResolvedValue(createClientEntity());
+            prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+            await service.terminateService(branchId, 1, "Client requested");
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(updateClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, 1, expect.anything(), expect.anything(), calendar,
+            );
+        });
+
+        it("completeReplacement loads the calendar before the transaction and passes it to the update and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(mockClient);
+            updateClientUsecase.execute.mockResolvedValue(mockClient);
+            clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
+
+            await service.completeReplacement(branchId, 1);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(updateClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, 1, expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+        });
+    });
+
+    // ============================================
     // terminateService
     // ============================================
     describe("terminateService", () => {
@@ -3704,7 +3827,7 @@ describe("ClientService", () => {
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: "terminated",
                     endDate: expect.any(Date),
-                }, expect.anything());
+                }, expect.anything(), KR_BUILTIN_CALENDAR);
                 expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
                     where: { clientId: 1, branchId, replaced: false, terminatedAt: null },
                     data: { terminatedAt: expect.any(Date) },
@@ -3730,7 +3853,7 @@ describe("ClientService", () => {
                 // Assert
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
-                }), expect.anything());
+                }), expect.anything(), KR_BUILTIN_CALENDAR);
             });
 
             it("should sync client trigger rules with includePast=false", async () => {
@@ -4355,7 +4478,7 @@ describe("ClientService", () => {
                 // Should compute status (active since we're between start and end dates)
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: expect.stringMatching(/active|waiting|completed/),
-                }, expect.anything());
+                }, expect.anything(), KR_BUILTIN_CALENDAR);
             });
         });
 

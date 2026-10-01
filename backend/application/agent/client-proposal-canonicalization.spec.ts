@@ -3,6 +3,7 @@ import { ActionCoordinatorService } from "./action-coordinator.service";
 import { AgentRuntimeService } from "./agent-runtime.service";
 import { ClientWriteAgentCapabilitiesProvider } from "application/usecases/client/client-write-agent-capabilities.provider";
 import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease.mock";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../test/utils/holiday-calendar.stub";
 
 const principal = {
@@ -256,6 +257,7 @@ describe("client proposal pricing canonicalization", () => {
                 "branch-a",
                 expect.objectContaining(scenario.expectedPricing),
                 setup.transaction,
+                KR_BUILTIN_CALENDAR,
             );
             setup.prisma.agent_action.findFirst.mockResolvedValue({
                 effectReceipt: {
@@ -276,6 +278,7 @@ describe("client proposal pricing canonicalization", () => {
                 expect.objectContaining(scenario.expectedPricing),
                 action.targetVersion,
                 setup.transaction,
+                KR_BUILTIN_CALENDAR,
             );
             Object.assign(setup.existing, scenario.expectedPricing);
             await expect(capability.reconcile!(context, canonical, null)).resolves.toEqual(expect.objectContaining({ status: "succeeded" }));

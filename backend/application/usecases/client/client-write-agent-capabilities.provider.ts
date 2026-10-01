@@ -42,6 +42,7 @@ import { MessageTriggerService } from "application/services/message-trigger.serv
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort, type ClientAutomationWriteValues } from "domain/ports/client-automation-impact.port";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 const DateOnlyInput = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
     const parsed = new Date(`${value}T00:00:00Z`);
@@ -324,11 +325,11 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, null, write);
                     try {
                         if (context.taskAutomation) {
-                            return await this.executeTaskClientMutation(context, "clients.create", write);
+                            return await this.executeTaskClientMutation(context, "clients.create", write, undefined, calendar);
                         }
                         return await this.prisma.$transaction(async (transaction) => {
-                            const client = await this.createClient.execute(context.principal.branchId, write, transaction);
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                            const client = await this.createClient.execute(context.principal.branchId, write, transaction, calendar);
+                            await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
                             const result = { id: client.id, name: client.name, status: "created" };
                             await recordAgentActionEffect(transaction, context, "clients.create", "client", client.id, result);
                             return result;
@@ -424,8 +425,14 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         duration: parsedUpdates.duration,
                     });
                     try {
-                        const client = await this.updateClient.execute(context.principal.branchId, id, parsedUpdates);
-                        await this.serviceRecordLifecycleService.ensureForClient(client.id);
+                        const client = await this.updateClient.execute(
+                            context.principal.branchId,
+                            id,
+                            parsedUpdates,
+                            undefined,
+                            calendar,
+                        );
+                        await this.serviceRecordLifecycleService.ensureForClient(client.id, undefined, calendar);
                         await this.refreshEmployeeAssignmentJobsAfterProfileChange(
                             context.principal.branchId,
                             client.id,
@@ -449,7 +456,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
                         const result = context.taskAutomation
-                            ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion)
+                            ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion, calendar)
                             : await this.prisma.$transaction(async (transaction) => {
                                 await validateClientServicePeriod(this.serviceRecordLifecycleService, {
                                     clientId: existing.id,
@@ -463,8 +470,9 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     parsedUpdates,
                                     expectedTargetVersion,
                                     transaction,
+                                    calendar,
                                 );
-                                await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                                await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
                                 const result = { id: client.id, name: client.name, status: "updated" };
                                 await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
                                 return result;
@@ -520,12 +528,15 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
      * record store owns the branch lock, CAS receipt, append-only authority,
      * and terminal evidence. This callback performs only the customer write
      * and lifecycle repair; intent staging stays in the same transaction.
+     * `calendar` is the branch calendar the caller read before this
+     * transaction opens; it must not be read inside the transaction.
      */
     private async executeTaskClientMutation(
         context: AgentContext,
         capability: "clients.create" | "clients.update",
         updates: ClientAutomationWriteValues,
         expectedTargetVersion?: string,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<Record<string, unknown>> {
         const artifact = context.taskAutomation;
         const records = this.automationRecords;
@@ -551,6 +562,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             context.principal.branchId,
                             updates as unknown as Parameters<CreateClientUsecase["execute"]>[1],
                             transaction,
+                            calendar,
                         );
                     } else {
                         if (!artifact.targetClientId || !expectedTargetVersion) {
@@ -568,9 +580,10 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             updates as unknown as Parameters<UpdateClientUsecase["executeApprovedTarget"]>[2],
                             expectedTargetVersion,
                             transaction,
+                            calendar,
                         );
                     }
-                    await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction);
+                    await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
                     committedClientId = client.id;
                     const committed = await transaction.client.findFirst({
                         where: { id: client.id, branchId: context.principal.branchId },

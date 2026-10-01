@@ -642,10 +642,14 @@ export class ScheduleChangeService {
         let branchIdForSync: string | null = null;
         let clientIdForSync: number | null = null;
 
+        // A caller without a branch can match no request: answer with the
+        // same 404 the lookup gives, before any calendar is loaded.
+        if (!tenant.branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+
         // Saved: approval persists shifted dates, so read the calendar fresh
         // before the transaction opens. The request lookup below is pinned to
         // this same branch.
-        const calendar = await this.holidayCalendar.forBranch(tenant.branchId ?? "", { fresh: true });
+        const calendar = await this.holidayCalendar.forBranch(tenant.branchId, { fresh: true });
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {

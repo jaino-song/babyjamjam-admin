@@ -241,6 +241,29 @@ describe("UpdateClientUsecase", () => {
                 expect(builtin.duration).toBe(4);
             });
 
+            it("should use a calendar passed by the caller instead of reading one", async () => {
+                const holidayCalendar = createHolidayCalendarStub();
+                const branchUsecase = new UpdateClientUsecase(mockRepository, holidayCalendar);
+                const calendar = branchCalendar2026(["2026-05-07"]);
+                mockRepository.setData([ClientFactory.create({ id: 1, ...extendedPeriod })]);
+
+                // Four sessions fit the built-in calendar but not the passed branch calendar.
+                await expect(branchUsecase.execute(
+                    branchId, 1, { endDate: new Date("2026-05-08"), duration: 4 }, undefined, calendar,
+                )).rejects.toThrow("서비스 기간은 1일 이상 3일 이하여야 합니다.");
+
+                const updateIfTargetVersion = jest.spyOn(mockRepository, "updateIfTargetVersion")
+                    .mockResolvedValue(ClientFactory.create({ id: 1 }));
+                await branchUsecase.executeApprovedTarget(
+                    branchId, 1, { endDate: new Date("2026-05-08") }, "version-1", undefined, calendar,
+                );
+
+                expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+                expect(updateIfTargetVersion).toHaveBeenCalledWith(
+                    branchId, 1, "version-1", { endDate: new Date("2026-05-08") }, calendar, undefined,
+                );
+            });
+
             it("should hand the fresh branch calendar to the locked approved-target write", async () => {
                 const calendar = branchCalendar2026(["2026-05-07"]);
                 const holidayCalendar = createHolidayCalendarStub();

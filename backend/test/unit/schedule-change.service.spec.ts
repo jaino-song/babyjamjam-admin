@@ -1163,6 +1163,15 @@ describe("ScheduleChangeService", () => {
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
         });
 
+        it("approve answers 404 before loading any calendar when the caller has no branch", async () => {
+            await expectNotFoundCode(
+                () => service.approve("request-1", { userId: tenant.userId }),
+                "RESOURCE_NOT_FOUND",
+            );
+            expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+            expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
         it("applyAdminChange rejects a branch holiday as the new date, reading the calendar fresh first", async () => {
             useBranchHoliday("2026-07-23");
 
