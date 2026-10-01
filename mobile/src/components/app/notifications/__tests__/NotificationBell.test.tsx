@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NotificationBell } from '../NotificationBell';
 import type { Notification } from '@/hooks/usePushNotification';
 
@@ -170,7 +170,7 @@ describe('NotificationBell', () => {
 
     fireEvent.click(screen.getByTestId('notification-item-unread'));
 
-    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(1);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(1, expect.objectContaining({ onError: expect.any(Function) }));
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
@@ -232,7 +232,7 @@ describe('NotificationBell', () => {
 
     fireEvent.click(item);
 
-    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(3);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(3, expect.objectContaining({ onError: expect.any(Function) }));
     // mockNotificationWithoutUrl.isRead never flips (markAsRead is mocked),
     // so this proves openedNotificationIds — not server isRead — drives the dot.
     expect(item.querySelector('[data-slot="unread-dot"]')).toBeNull();
@@ -478,7 +478,7 @@ describe('NotificationBell', () => {
 
     fireEvent.click(item);
 
-    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7, expect.objectContaining({ onError: expect.any(Function) }));
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByTestId('notification-popover')).toBeVisible();
@@ -609,6 +609,87 @@ describe('NotificationBell', () => {
     const reopenedItem = screen.getByTestId('notification-item-unread');
     expect(reopenedItem).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('truncate');
+  });
+
+  it('does not truncate the title of an expanded notification, and truncates it collapsed', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    const title = screen.getByText(mockLongBodyNotificationWithoutUrl.title);
+
+    // Collapsed: truncated.
+    expect(title).toHaveClass('truncate');
+    expect(title).not.toHaveClass('break-words');
+
+    fireEvent.click(item);
+
+    // Expanded: wraps instead of truncating.
+    expect(title).not.toHaveClass('truncate');
+    expect(title).toHaveClass('break-words');
+
+    // Negative control: reverting to an unconditional `truncate` class
+    // would make this assertion fail.
+  });
+
+  it('restores the unread dot when markAsRead fails', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+
+    fireEvent.click(item);
+
+    // Optimistically removed on tap.
+    expect(item.querySelector('[data-slot="unread-dot"]')).toBeNull();
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
+    const [, opts] = mockMarkAsReadMutate.mock.calls[0];
+    expect(typeof opts?.onError).toBe('function');
+
+    // Simulate the mutation failing.
+    act(() => {
+      opts.onError();
+    });
+
+    // Negative control: without wiring onError to undo openedNotificationIds,
+    // the dot would stay gone and this assertion would fail.
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+  });
+
+  it('gives the unread body pl-4 and loses it after a tap', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    const body = screen.getByText(mockNotificationWithoutUrl.body);
+    expect(body).toHaveClass('pl-4');
+
+    fireEvent.click(item);
+
+    expect(body).not.toHaveClass('pl-4');
   });
 
   it('still closes the popover and navigates for a notification with a url (unaffected by expand behaviour)', async () => {

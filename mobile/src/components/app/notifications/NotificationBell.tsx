@@ -199,7 +199,15 @@ export function NotificationBell({
     const handleNotificationClick = (notification: Notification) => {
         if (!notification.isRead) {
             setOpenedNotificationIds((previous) => new Set(previous).add(notification.id));
-            markAsRead.mutate(notification.id);
+            markAsRead.mutate(notification.id, {
+                onError: () => {
+                    setOpenedNotificationIds((previous) => {
+                        const next = new Set(previous);
+                        next.delete(notification.id);
+                        return next;
+                    });
+                },
+            });
         }
 
         if (notification.data?.url) {
@@ -436,18 +444,18 @@ export function NotificationBell({
                                             `}
                                         >
                                             <div className="flex justify-between items-center">
-                                                <p className="flex min-w-0 items-center gap-2 text-sm font-bold">
+                                                <p className="flex min-w-0 flex-1 items-start gap-2 text-sm font-bold">
                                                     {showsUnread && (
                                                         <>
                                                             <span
                                                                 data-slot="unread-dot"
                                                                 aria-hidden="true"
-                                                                className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                                                                className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary"
                                                             />
                                                             <span className="sr-only">읽지 않음</span>
                                                         </>
                                                     )}
-                                                    <span className="truncate">{notification.title}</span>
+                                                    <span className={isExpanded ? 'break-words' : 'truncate'}>{notification.title}</span>
                                                 </p>
                                                 <span className="text-xs ml-2 shrink-0 text-muted-foreground">
                                                     {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
