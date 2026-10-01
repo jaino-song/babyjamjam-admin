@@ -37,6 +37,9 @@ function makeService() {
         findOverride: jest
             .fn<Promise<BranchHolidayOverrideRecord | null>, [string, string]>()
             .mockResolvedValue(null),
+        findOverrideByDate: jest
+            .fn<Promise<BranchHolidayOverrideRecord | null>, [string, string]>()
+            .mockResolvedValue(null),
         insertOverride: jest
             .fn<Promise<BranchHolidayOverrideRecord>, [CreateHolidayOverrideData]>()
             .mockImplementation(async (data) => savedRecord({ date: data.date, kind: data.kind, name: data.name })),
@@ -109,26 +112,40 @@ describe("HolidayOverrideService.createOverride", () => {
 
     it("excludes a public holiday: copies the public name and writes a 'removed' event", async () => {
         const { service, tx } = makeService();
-        tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "개천절" });
+        tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "한글날" });
 
-        await service.createOverride(BRANCH, USER, { date: "2026-10-03", kind: "exclude" });
+        await service.createOverride(BRANCH, USER, { date: "2026-10-09", kind: "exclude" });
 
-        expect(tx.insertOverride).toHaveBeenCalledWith(expect.objectContaining({ kind: "exclude", name: "개천절" }));
+        expect(tx.insertOverride).toHaveBeenCalledWith(expect.objectContaining({ kind: "exclude", name: "한글날" }));
         expect(tx.insertBranchChangeEvent).toHaveBeenCalledWith({
             branchId: BRANCH,
-            date: "2026-10-03",
+            date: "2026-10-09",
             change: "removed",
-            name: "개천절",
+            name: "한글날",
         });
     });
 
     it("keeps a supplied name on exclude", async () => {
         const { service, tx } = makeService();
-        tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "개천절" });
+        tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "한글날" });
 
-        await service.createOverride(BRANCH, null, { date: "2026-10-03", kind: "exclude", name: "근무일" });
+        await service.createOverride(BRANCH, null, { date: "2026-10-09", kind: "exclude", name: "근무일" });
 
         expect(tx.insertOverride).toHaveBeenCalledWith(expect.objectContaining({ name: "근무일", createdBy: null }));
+    });
+
+    it("KST midnight: at 2026-09-30T15:30:00Z (already 2026-10-01 in Korea) 2026-10-01 is accepted and 2026-09-30 is rejected", async () => {
+        jest.setSystemTime(new Date("2026-09-30T15:30:00.000Z"));
+        const { service } = makeService();
+
+        await expect(
+            service.createOverride(BRANCH, USER, { date: "2026-10-01", kind: "add", name: "오늘" }),
+        ).resolves.toMatchObject({ kind: "add" });
+        expectProblem(
+            await rejection(service.createOverride(BRANCH, USER, { date: "2026-09-30", kind: "add", name: "어제" })),
+            409,
+            "HOLIDAY_DATE_IN_PAST",
+        );
     });
 
     it("accepts today (KST) as the date", async () => {
@@ -203,6 +220,22 @@ describe("HolidayOverrideService.createOverride", () => {
         expect(tx.insertOverride).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ["Saturday", "2026-10-03"],
+        ["Sunday", "2026-10-04"],
+    ])("HOLIDAY_NOT_WEEKDAY (400) when excluding a %s, even one that is a public holiday", async (_label, date) => {
+        const { service, tx } = makeService();
+        tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "개천절" });
+
+        expectProblem(
+            await rejection(service.createOverride(BRANCH, USER, { date, kind: "exclude" })),
+            400,
+            "HOLIDAY_NOT_WEEKDAY",
+        );
+        expect(tx.insertOverride).not.toHaveBeenCalled();
+        expect(tx.insertBranchChangeEvent).not.toHaveBeenCalled();
+    });
+
     it("HOLIDAY_NOT_PUBLIC (409) when excluding a date that is not a public holiday", async () => {
         const { service } = makeService();
 
@@ -211,6 +244,65 @@ describe("HolidayOverrideService.createOverride", () => {
             409,
             "HOLIDAY_NOT_PUBLIC",
         );
+    });
+
+    describe("an override already exists on the date", () => {
+        it("replaces an ineffective exclude (date no longer public) when adding: deletes it with no event of its own, then inserts and writes one 'added' event", async () => {
+            const { service, tx } = makeService();
+            const stale = savedRecord({ id: "stale-1", kind: "exclude", date: "2026-12-24", name: "옛 공휴일" });
+            tx.findOverrideByDate.mockResolvedValue(stale);
+            tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: null });
+
+            await service.createOverride(BRANCH, USER, { date: "2026-12-24", kind: "add", name: "임시 휴무" });
+
+            expect(tx.findOverrideByDate).toHaveBeenCalledWith(BRANCH, "2026-12-24");
+            expect(tx.deleteOverride).toHaveBeenCalledWith("stale-1", BRANCH);
+            expect(tx.insertOverride).toHaveBeenCalledWith(expect.objectContaining({ kind: "add", date: "2026-12-24" }));
+            expect(tx.deleteOverride.mock.invocationCallOrder[0]).toBeLessThan(tx.insertOverride.mock.invocationCallOrder[0]!);
+            expect(tx.insertBranchChangeEvent).toHaveBeenCalledTimes(1);
+            expect(tx.insertBranchChangeEvent).toHaveBeenCalledWith(expect.objectContaining({ change: "added" }));
+        });
+
+        it("replaces an ineffective add (date now public) when excluding", async () => {
+            const { service, tx } = makeService();
+            tx.findOverrideByDate.mockResolvedValue(savedRecord({ id: "stale-2", kind: "add", date: "2026-10-09" }));
+            tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "한글날" });
+
+            await service.createOverride(BRANCH, USER, { date: "2026-10-09", kind: "exclude" });
+
+            expect(tx.deleteOverride).toHaveBeenCalledWith("stale-2", BRANCH);
+            expect(tx.insertOverride).toHaveBeenCalledWith(expect.objectContaining({ kind: "exclude", name: "한글날" }));
+            expect(tx.insertBranchChangeEvent).toHaveBeenCalledTimes(1);
+            expect(tx.insertBranchChangeEvent).toHaveBeenCalledWith(expect.objectContaining({ change: "removed" }));
+        });
+
+        it("HOLIDAY_OVERRIDE_EXISTS (409) for an effective add on a non-public date, and leaves it alone", async () => {
+            const { service, tx } = makeService();
+            tx.findOverrideByDate.mockResolvedValue(savedRecord({ kind: "add", date: "2026-12-24" }));
+
+            expectProblem(
+                await rejection(service.createOverride(BRANCH, USER, { date: "2026-12-24", kind: "add", name: "또" })),
+                409,
+                "HOLIDAY_OVERRIDE_EXISTS",
+            );
+            expect(tx.deleteOverride).not.toHaveBeenCalled();
+            expect(tx.insertOverride).not.toHaveBeenCalled();
+        });
+
+        it("HOLIDAY_OVERRIDE_EXISTS (409) for an effective exclude on a public date, and leaves it alone", async () => {
+            const { service, tx } = makeService();
+            tx.findOverrideByDate.mockResolvedValue(savedRecord({ kind: "exclude", date: "2026-10-09" }));
+            tx.lookupPublicHoliday.mockResolvedValue({ yearSupported: true, publicName: "한글날" });
+
+            expectProblem(
+                await rejection(service.createOverride(BRANCH, USER, { date: "2026-10-09", kind: "exclude" })),
+                409,
+                "HOLIDAY_OVERRIDE_EXISTS",
+            );
+            expect(tx.deleteOverride).not.toHaveBeenCalled();
+            expect(tx.insertOverride).not.toHaveBeenCalled();
+            expect(tx.insertBranchChangeEvent).not.toHaveBeenCalled();
+        });
     });
 
     it("HOLIDAY_OVERRIDE_EXISTS (409) when the repository reports the unique violation", async () => {
@@ -284,6 +376,19 @@ describe("HolidayOverrideService.deleteOverride", () => {
 
         expect(tx.deleteOverride).toHaveBeenCalledTimes(2);
         expect(tx.insertBranchChangeEvent).not.toHaveBeenCalled();
+    });
+
+    it("KST midnight: at 2026-09-30T15:30:00Z an override on 2026-10-01 can be deleted, one on 2026-09-30 cannot", async () => {
+        jest.setSystemTime(new Date("2026-09-30T15:30:00.000Z"));
+        const { service, tx } = makeService();
+
+        tx.findOverride.mockResolvedValue(savedRecord({ kind: "add", date: "2026-10-01" }));
+        await expect(service.deleteOverride(BRANCH, OVERRIDE_ID)).resolves.toBeUndefined();
+        expect(tx.deleteOverride).toHaveBeenCalledTimes(1);
+
+        tx.findOverride.mockResolvedValue(savedRecord({ kind: "add", date: "2026-09-30" }));
+        expectProblem(await rejection(service.deleteOverride(BRANCH, OVERRIDE_ID)), 409, "HOLIDAY_DATE_IN_PAST");
+        expect(tx.deleteOverride).toHaveBeenCalledTimes(1);
     });
 
     it("404 RESOURCE_NOT_FOUND for a missing or other branch's override", async () => {

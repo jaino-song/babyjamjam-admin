@@ -27,10 +27,18 @@ export interface BranchHolidayOverrideRecord {
     createdAt: Date;
 }
 
-export interface HolidayPublicCalendarData {
+/**
+ * One consistent read of everything a branch calendar is built from. All of it
+ * comes from a single repeatable-read transaction, so `revision` is the
+ * revision the rest of the data was read at.
+ */
+export interface HolidayCalendarReadData {
+    revision: number;
     snapshots: HolidaySnapshotRecord[];
     /** Every `public_holiday` row, regardless of whether its year has a snapshot. */
     holidays: PublicHolidayRecord[];
+    /** The branch's overrides (explicit `branchId` filter). */
+    overrides: BranchHolidayOverrideRecord[];
 }
 
 export interface HolidayPublicLookup {
@@ -78,6 +86,8 @@ export interface IHolidayOverrideTransaction {
     /** Reads the effective public/built-in state of a date inside the transaction. */
     lookupPublicHoliday(date: string): Promise<HolidayPublicLookup>;
     findOverride(id: string, branchId: string): Promise<BranchHolidayOverrideRecord | null>;
+    /** The branch's override on a date, if any (the unique key is branch + date). */
+    findOverrideByDate(branchId: string, date: string): Promise<BranchHolidayOverrideRecord | null>;
     /** @throws HolidayOverrideConflictError when the branch already has an override on that date. */
     insertOverride(data: CreateHolidayOverrideData): Promise<BranchHolidayOverrideRecord>;
     /** Returns false when no row with that id exists for the branch. */
@@ -88,9 +98,13 @@ export interface IHolidayOverrideTransaction {
 export interface IHolidayCalendarRepository {
     /** Current `holiday_calendar_revision.revision` (0 when the row is missing). */
     readRevision(): Promise<number>;
-    readPublicCalendar(): Promise<HolidayPublicCalendarData>;
-    /** Always filters by the explicit `branchId`. */
-    readBranchOverrides(branchId: string): Promise<BranchHolidayOverrideRecord[]>;
+    /**
+     * Revision, snapshots, public holidays and the branch's overrides read in ONE
+     * repeatable-read transaction. Overrides are always filtered by the explicit `branchId`.
+     */
+    readCalendar(branchId: string): Promise<HolidayCalendarReadData>;
+    /** Latest successful validation time of a year's snapshot, read directly (never revision-cached). */
+    readSnapshotValidatedAt(year: number): Promise<Date | null>;
     /**
      * Runs `operation` in one transaction whose first statement increments the
      * calendar revision. The result of the operation is returned after commit.

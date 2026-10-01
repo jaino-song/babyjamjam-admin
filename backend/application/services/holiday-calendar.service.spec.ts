@@ -33,8 +33,15 @@ function makeService(initial: Partial<FakeState> = {}) {
     const state: FakeState = { revision: 1, snapshots: [], holidays: [], overrides: {}, ...initial };
     const repository = {
         readRevision: jest.fn(async () => state.revision),
-        readPublicCalendar: jest.fn(async () => ({ snapshots: state.snapshots, holidays: state.holidays })),
-        readBranchOverrides: jest.fn(async (branchId: string) => state.overrides[branchId] ?? []),
+        readCalendar: jest.fn(async (branchId: string) => ({
+            revision: state.revision,
+            snapshots: state.snapshots,
+            holidays: state.holidays,
+            overrides: state.overrides[branchId] ?? [],
+        })),
+        readSnapshotValidatedAt: jest.fn(
+            async (year: number) => state.snapshots.find((snapshot) => snapshot.year === year)?.validatedAt ?? null,
+        ),
         withOverrideTransaction: jest.fn(),
     } satisfies IHolidayCalendarRepository;
     const service = new HolidayCalendarService(repository);
@@ -131,7 +138,7 @@ describe("HolidayCalendarService caching", () => {
         const second = await service.forBranch(BRANCH_A);
 
         expect(second).toBe(first);
-        expect(repository.readBranchOverrides).toHaveBeenCalledTimes(1);
+        expect(repository.readCalendar).toHaveBeenCalledTimes(1);
         expect(repository.readRevision).toHaveBeenCalledTimes(1);
     });
 
@@ -142,9 +149,9 @@ describe("HolidayCalendarService caching", () => {
         const b = await service.forBranch(BRANCH_B);
 
         expect(a).not.toBe(b);
-        expect(repository.readBranchOverrides).toHaveBeenCalledTimes(2);
-        expect(repository.readBranchOverrides).toHaveBeenCalledWith(BRANCH_A);
-        expect(repository.readBranchOverrides).toHaveBeenCalledWith(BRANCH_B);
+        expect(repository.readCalendar).toHaveBeenCalledTimes(2);
+        expect(repository.readCalendar).toHaveBeenCalledWith(BRANCH_A);
+        expect(repository.readCalendar).toHaveBeenCalledWith(BRANCH_B);
     });
 
     it("keeps the cached revision for 30s, then rebuilds once the revision changed", async () => {
@@ -176,7 +183,7 @@ describe("HolidayCalendarService caching", () => {
 
         expect(await service.forBranch(BRANCH_A)).toBe(first);
         expect(repository.readRevision).toHaveBeenCalledTimes(2);
-        expect(repository.readBranchOverrides).toHaveBeenCalledTimes(1);
+        expect(repository.readCalendar).toHaveBeenCalledTimes(1);
     });
 
     it("fresh bypasses the 30s revision cache", async () => {
@@ -210,9 +217,28 @@ describe("HolidayCalendarService caching", () => {
         expect(calendar.version).toContain("-r5-");
     });
 
+    it("a revision read that straddles invalidateRevisionCache() does not repopulate the cache", async () => {
+        const { service, repository } = makeService();
+        let release!: (value: number) => void;
+        repository.readRevision.mockImplementationOnce(
+            () => new Promise<number>((resolve) => { release = resolve; }),
+        );
+
+        const inFlight = service.forBranch(BRANCH_A);
+        service.invalidateRevisionCache(); // an override committed while the read was in flight
+        release(1); // the read returns the pre-write revision
+        await inFlight;
+
+        repository.readRevision.mockClear();
+        await service.forBranch(BRANCH_A);
+
+        // The stale value was not cached, so the next call asks the repository again.
+        expect(repository.readRevision).toHaveBeenCalledTimes(1);
+    });
+
     it("does not cache a failed build", async () => {
         const { service, repository } = makeService();
-        repository.readBranchOverrides.mockRejectedValueOnce(new Error("db down"));
+        repository.readCalendar.mockRejectedValueOnce(new Error("db down"));
 
         await expect(service.forBranch(BRANCH_A)).rejects.toThrow("db down");
         const calendar = await service.forBranch(BRANCH_A);
@@ -245,6 +271,7 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
                 { date: "2026-10-03", name: "개천절", source: "public", excluded: false, overrideId: null },
                 { date: "2026-10-09", name: "한글날", source: "public", excluded: false, overrideId: null },
             ],
+            inactiveOverrides: [],
         });
     });
 
@@ -270,6 +297,7 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
             synced: false,
             lastSyncedAt: null,
             holidays: [],
+            inactiveOverrides: [],
         });
     });
 
@@ -293,14 +321,15 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
         ]);
     });
 
-    it("omits an exclude whose date is no longer public and an add the public data now covers", async () => {
+    it("hides an exclude whose date is no longer public and an add the public data now covers, listing both as inactive (sorted by date)", async () => {
         const { service } = makeService({
             snapshots: [SNAPSHOT_2026],
             holidays: [{ date: "2026-10-09", name: "한글날" }],
             overrides: {
                 [BRANCH_A]: [
-                    override({ date: "2026-10-03", kind: "exclude", name: "개천절" }),
-                    override({ date: "2026-10-09", kind: "add", name: "dup" }),
+                    override({ id: "add-dup", date: "2026-10-09", kind: "add", name: "dup" }),
+                    override({ id: "ex-gone", date: "2026-10-03", kind: "exclude", name: "개천절" }),
+                    override({ id: "other-year", date: "2027-03-02", kind: "exclude", name: "다른 해" }),
                 ],
             },
         });
@@ -310,6 +339,96 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
         expect(result.holidays).toEqual([
             { date: "2026-10-09", name: "한글날", source: "public", excluded: false, overrideId: null },
         ]);
+        expect(result.inactiveOverrides).toEqual([
+            { id: "ex-gone", date: "2026-10-03", kind: "exclude", name: "개천절" },
+            { id: "add-dup", date: "2026-10-09", kind: "add", name: "dup" },
+        ]);
+    });
+
+    it("does not list effective overrides as inactive", async () => {
+        const { service } = makeService({
+            snapshots: [SNAPSHOT_2026],
+            holidays: [{ date: "2026-10-03", name: "개천절" }],
+            overrides: {
+                [BRANCH_A]: [
+                    override({ id: "ex-1", date: "2026-10-03", kind: "exclude", name: "개천절" }),
+                    override({ id: "add-1", date: "2026-12-24", kind: "add", name: "임시 휴무" }),
+                ],
+            },
+        });
+
+        const result = await service.getEffectiveYear(BRANCH_A, 2026);
+
+        expect(result.inactiveOverrides).toEqual([]);
+    });
+
+    it("stale-exclude resurrection: a sync drops the excluded date (exclude goes inactive), a later sync re-adds it (exclude applies again, visible as active)", async () => {
+        // 2026-10-09 (한글날) is a Friday, so the exclude has a visible effect on business days.
+        const exclude = override({ id: "ex-1", date: "2026-10-09", kind: "exclude", name: "한글날" });
+        const { service, state } = makeService({
+            revision: 1,
+            snapshots: [SNAPSHOT_2026],
+            holidays: [{ date: "2026-10-03", name: "개천절" }, { date: "2026-10-09", name: "한글날" }],
+            overrides: { [BRANCH_A]: [exclude] },
+        });
+
+        const active = await service.getEffectiveYear(BRANCH_A, 2026, { fresh: true });
+        expect(active.holidays).toContainEqual(
+            { date: "2026-10-09", name: "한글날", source: "public", excluded: true, overrideId: "ex-1" },
+        );
+        expect(active.inactiveOverrides).toEqual([]);
+        expect((await service.forBranch(BRANCH_A)).isBusinessDay("2026-10-09")).toBe(true);
+
+        // Sync drops 10-09: the exclude has nothing to exclude and moves to the inactive list.
+        state.revision = 2;
+        state.holidays = [{ date: "2026-10-03", name: "개천절" }];
+        const dropped = await service.getEffectiveYear(BRANCH_A, 2026, { fresh: true });
+        expect(dropped.holidays.map((h) => h.date)).toEqual(["2026-10-03"]);
+        expect(dropped.inactiveOverrides).toEqual([
+            { id: "ex-1", date: "2026-10-09", kind: "exclude", name: "한글날" },
+        ]);
+        expect((await service.forBranch(BRANCH_A, { fresh: true })).isBusinessDay("2026-10-09")).toBe(true);
+
+        // Sync re-adds 10-09: the standing exclude applies again and is an active, excluded row.
+        state.revision = 3;
+        state.holidays = [{ date: "2026-10-03", name: "개천절" }, { date: "2026-10-09", name: "한글날" }];
+        const resurrected = await service.getEffectiveYear(BRANCH_A, 2026, { fresh: true });
+        expect(resurrected.holidays).toContainEqual(
+            { date: "2026-10-09", name: "한글날", source: "public", excluded: true, overrideId: "ex-1" },
+        );
+        expect(resurrected.inactiveOverrides).toEqual([]);
+        expect((await service.forBranch(BRANCH_A, { fresh: true })).isBusinessDay("2026-10-09")).toBe(true);
+    });
+
+    it("lastSyncedAt follows the latest validation even when the revision (and the cached model) did not change", async () => {
+        const { service, state } = makeService({ revision: 1, snapshots: [SNAPSHOT_2026] });
+
+        const first = await service.getEffectiveYear(BRANCH_A, 2026);
+        expect(first.lastSyncedAt).toBe("2026-10-01T04:00:00.000Z");
+
+        // A no-change sync refreshes validatedAt without bumping the revision.
+        state.snapshots = [{ year: 2026, validatedAt: new Date("2026-10-02T04:00:00.000Z") }];
+        const second = await service.getEffectiveYear(BRANCH_A, 2026);
+
+        expect(second.revision).toBe(1);
+        expect(second.lastSyncedAt).toBe("2026-10-02T04:00:00.000Z");
+    });
+
+    it("labels the model with the revision read together with its data, not the cheap revision lookup", async () => {
+        const { service, repository, state } = makeService({ revision: 5, snapshots: [SNAPSHOT_2026] });
+        // The revision-only read returns 5, but by the time the transaction ran the calendar was at 6.
+        repository.readCalendar.mockImplementationOnce(async () => ({
+            revision: 6,
+            snapshots: state.snapshots,
+            holidays: [],
+            overrides: [],
+        }));
+
+        const calendar = await service.forBranch(BRANCH_A);
+        const year = await service.getEffectiveYear(BRANCH_A, 2026);
+
+        expect(calendar.version).toBe("kr-db-r6-baaaaaaaa");
+        expect(year.revision).toBe(6);
     });
 
     it("does not show another branch's overrides and honours fresh", async () => {
@@ -321,7 +440,7 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
         const result = await service.getEffectiveYear(BRANCH_A, 2026, { fresh: true });
 
         expect(result.holidays).toEqual([]);
-        expect(repository.readBranchOverrides).toHaveBeenCalledWith(BRANCH_A);
-        expect(repository.readBranchOverrides).not.toHaveBeenCalledWith(BRANCH_B);
+        expect(repository.readCalendar).toHaveBeenCalledWith(BRANCH_A);
+        expect(repository.readCalendar).not.toHaveBeenCalledWith(BRANCH_B);
     });
 });

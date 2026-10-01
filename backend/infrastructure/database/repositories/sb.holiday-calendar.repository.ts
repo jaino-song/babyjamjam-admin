@@ -8,7 +8,7 @@ import {
     HolidayBranchChangeData,
     HolidayOverrideConflictError,
     HolidayOverrideKind,
-    HolidayPublicCalendarData,
+    HolidayCalendarReadData,
     HolidayPublicLookup,
     IHolidayCalendarRepository,
     IHolidayOverrideTransaction,
@@ -65,29 +65,44 @@ export class SbHolidayCalendarRepository implements IHolidayCalendarRepository {
         return row ? Number(row.revision) : 0;
     }
 
-    async readPublicCalendar(): Promise<HolidayPublicCalendarData> {
-        const [snapshots, holidays] = await Promise.all([
-            this.prisma.holiday_year_snapshot.findMany({
-                select: { year: true, validatedAt: true },
-                orderBy: { year: "asc" },
-            }),
-            this.prisma.public_holiday.findMany({
-                select: { date: true, name: true },
-                orderBy: { date: "asc" },
-            }),
-        ]);
-        return {
-            snapshots: snapshots.map((row) => ({ year: row.year, validatedAt: row.validatedAt })),
-            holidays: holidays.map((row) => ({ date: fromDbDate(row.date), name: row.name })),
-        };
+    async readCalendar(branchId: string): Promise<HolidayCalendarReadData> {
+        // One repeatable-read snapshot: the revision is read first, inside the same
+        // transaction, so it labels exactly the data read after it.
+        return this.prisma.$transaction(
+            async (tx) => {
+                const revisionRow = await tx.holiday_calendar_revision.findUnique({ where: { id: 1 } });
+                const snapshots = await tx.holiday_year_snapshot.findMany({
+                    select: { year: true, validatedAt: true },
+                    orderBy: { year: "asc" },
+                });
+                const holidays = await tx.public_holiday.findMany({
+                    select: { date: true, name: true },
+                    orderBy: { date: "asc" },
+                });
+                const overrides = await tx.branch_holiday_override.findMany({
+                    where: { branchId },
+                    orderBy: { date: "asc" },
+                });
+                return {
+                    revision: revisionRow ? Number(revisionRow.revision) : 0,
+                    snapshots: snapshots.map((row) => ({ year: row.year, validatedAt: row.validatedAt })),
+                    holidays: holidays.map((row) => ({ date: fromDbDate(row.date), name: row.name })),
+                    overrides: overrides.map(toOverrideRecord),
+                };
+            },
+            {
+                isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+                timeout: OVERRIDE_TRANSACTION_TIMEOUT_MS,
+            },
+        );
     }
 
-    async readBranchOverrides(branchId: string): Promise<BranchHolidayOverrideRecord[]> {
-        const rows = await this.prisma.branch_holiday_override.findMany({
-            where: { branchId },
-            orderBy: { date: "asc" },
+    async readSnapshotValidatedAt(year: number): Promise<Date | null> {
+        const row = await this.prisma.holiday_year_snapshot.findUnique({
+            where: { year },
+            select: { validatedAt: true },
         });
-        return rows.map(toOverrideRecord);
+        return row ? row.validatedAt : null;
     }
 
     async withOverrideTransaction<T>(operation: (tx: IHolidayOverrideTransaction) => Promise<T>): Promise<T> {
@@ -145,6 +160,11 @@ export class SbHolidayCalendarRepository implements IHolidayCalendarRepository {
                     }
                     throw error;
                 }
+            },
+
+            findOverrideByDate: async (branchId: string, date: string) => {
+                const row = await tx.branch_holiday_override.findFirst({ where: { branchId, date: toDbDate(date) } });
+                return row ? toOverrideRecord(row) : null;
             },
 
             deleteOverride: async (id: string, branchId: string) => {

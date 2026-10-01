@@ -83,8 +83,21 @@ export class HolidayOverrideService {
                     if (isWeekend(date)) throw holidayProblem("HOLIDAY_NOT_WEEKDAY");
                     storedName = name;
                 } else {
+                    // Excluding a weekend changes nothing, even when a public holiday falls on it.
+                    if (isWeekend(date)) throw holidayProblem("HOLIDAY_NOT_WEEKDAY");
                     if (lookup.publicName === null) throw holidayProblem("HOLIDAY_NOT_PUBLIC");
                     storedName = name.length > 0 ? name : lookup.publicName;
+                }
+
+                const existing = await tx.findOverrideByDate(branchId, date);
+                if (existing) {
+                    // The unique (branch, date) key would otherwise leave a hidden, ineffective
+                    // override blocking the date forever. It changes nothing, so replacing it
+                    // writes no change event; an effective one is a real conflict.
+                    const effective = existing.kind === "add" ? lookup.publicName === null : lookup.publicName !== null;
+                    if (effective) throw holidayProblem("HOLIDAY_OVERRIDE_EXISTS");
+                    const removed = await tx.deleteOverride(existing.id, branchId);
+                    if (!removed) throw holidayProblem("HOLIDAY_OVERRIDE_EXISTS");
                 }
 
                 const record = await tx.insertOverride({ branchId, date, kind, name: storedName, createdBy });

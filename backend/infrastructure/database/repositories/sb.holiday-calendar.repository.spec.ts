@@ -20,10 +20,20 @@ function makeHarness() {
         });
 
     const tx = {
-        holiday_calendar_revision: { update: record("revision.update", { revision: 8n }) },
-        holiday_year_snapshot: { findUnique: record<unknown>("snapshot.findUnique", null) },
-        public_holiday: { findUnique: record<unknown>("public.findUnique", null) },
+        holiday_calendar_revision: {
+            update: record("revision.update", { revision: 8n }),
+            findUnique: record<unknown>("revision.findUnique", { id: 1, revision: 41n }),
+        },
+        holiday_year_snapshot: {
+            findUnique: record<unknown>("snapshot.findUnique", null),
+            findMany: record<unknown>("snapshot.findMany", []),
+        },
+        public_holiday: {
+            findUnique: record<unknown>("public.findUnique", null),
+            findMany: record<unknown>("public.findMany", []),
+        },
         branch_holiday_override: {
+            findMany: record<unknown>("override.findMany", []),
             findFirst: record<unknown>("override.findFirst", null),
             create: record<unknown>("override.create", {
                 id: OVERRIDE_ID,
@@ -40,12 +50,10 @@ function makeHarness() {
     };
     const prisma = {
         $transaction: jest
-            .fn<Promise<unknown>, [(client: typeof tx) => Promise<unknown>, { timeout: number }?]>()
+            .fn<Promise<unknown>, [(client: typeof tx) => Promise<unknown>, { timeout: number; isolationLevel?: unknown }?]>()
             .mockImplementation(async (fn) => fn(tx)),
         holiday_calendar_revision: { findUnique: jest.fn() },
-        holiday_year_snapshot: { findMany: jest.fn() },
-        public_holiday: { findMany: jest.fn() },
-        branch_holiday_override: { findMany: jest.fn() },
+        holiday_year_snapshot: { findUnique: jest.fn() },
     };
     const repository = new SbHolidayCalendarRepository(prisma as never);
     return { repository, prisma, tx, calls };
@@ -62,23 +70,14 @@ describe("SbHolidayCalendarRepository reads", () => {
         await expect(repository.readRevision()).resolves.toBe(0);
     });
 
-    it("reads snapshot years and public rows as ISO dates", async () => {
-        const { repository, prisma } = makeHarness();
+    it("reads revision, snapshots, public rows and the branch's overrides in ONE repeatable-read transaction, revision first", async () => {
+        const { repository, prisma, tx } = makeHarness();
         const validatedAt = new Date("2026-10-01T04:00:00.000Z");
-        prisma.holiday_year_snapshot.findMany.mockResolvedValue([{ year: 2026, validatedAt }]);
-        prisma.public_holiday.findMany.mockResolvedValue([
+        tx.holiday_year_snapshot.findMany.mockResolvedValue([{ year: 2026, validatedAt }]);
+        tx.public_holiday.findMany.mockResolvedValue([
             { date: new Date("2026-10-03T00:00:00.000Z"), name: "개천절" },
         ]);
-
-        await expect(repository.readPublicCalendar()).resolves.toEqual({
-            snapshots: [{ year: 2026, validatedAt }],
-            holidays: [{ date: "2026-10-03", name: "개천절" }],
-        });
-    });
-
-    it("filters overrides by the explicit branch id", async () => {
-        const { repository, prisma } = makeHarness();
-        prisma.branch_holiday_override.findMany.mockResolvedValue([
+        tx.branch_holiday_override.findMany.mockResolvedValue([
             {
                 id: OVERRIDE_ID,
                 branchId: BRANCH,
@@ -90,12 +89,52 @@ describe("SbHolidayCalendarRepository reads", () => {
             },
         ]);
 
-        const rows = await repository.readBranchOverrides(BRANCH);
+        const data = await repository.readCalendar(BRANCH);
 
-        expect(prisma.branch_holiday_override.findMany).toHaveBeenCalledWith(
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+            isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+            timeout: 15000,
+        });
+        const revisionRead = tx.holiday_calendar_revision.findUnique.mock.invocationCallOrder[0]!;
+        for (const read of [
+            tx.holiday_year_snapshot.findMany,
+            tx.public_holiday.findMany,
+            tx.branch_holiday_override.findMany,
+        ]) {
+            expect(read).toHaveBeenCalledTimes(1);
+            expect(read.mock.invocationCallOrder[0]).toBeGreaterThan(revisionRead);
+        }
+        expect(data.revision).toBe(41);
+        expect(data.snapshots).toEqual([{ year: 2026, validatedAt }]);
+        expect(data.holidays).toEqual([{ date: "2026-10-03", name: "개천절" }]);
+        expect(data.overrides).toEqual([expect.objectContaining({ id: OVERRIDE_ID, date: "2026-12-24", kind: "exclude" })]);
+    });
+
+    it("filters overrides by the explicit branch id and labels the data revision 0 without a revision row", async () => {
+        const { repository, tx } = makeHarness();
+        tx.holiday_calendar_revision.findUnique.mockResolvedValue(null);
+
+        const data = await repository.readCalendar(BRANCH);
+
+        expect(tx.branch_holiday_override.findMany).toHaveBeenCalledWith(
             expect.objectContaining({ where: { branchId: BRANCH } }),
         );
-        expect(rows).toEqual([expect.objectContaining({ id: OVERRIDE_ID, date: "2026-12-24", kind: "exclude" })]);
+        expect(data.revision).toBe(0);
+    });
+
+    it("reads a snapshot's validatedAt directly (null without a snapshot)", async () => {
+        const { repository, prisma } = makeHarness();
+        const validatedAt = new Date("2026-10-01T04:00:00.000Z");
+        prisma.holiday_year_snapshot.findUnique.mockResolvedValueOnce({ validatedAt });
+        await expect(repository.readSnapshotValidatedAt(2026)).resolves.toBe(validatedAt);
+        expect(prisma.holiday_year_snapshot.findUnique).toHaveBeenCalledWith({
+            where: { year: 2026 },
+            select: { validatedAt: true },
+        });
+
+        prisma.holiday_year_snapshot.findUnique.mockResolvedValueOnce(null);
+        await expect(repository.readSnapshotValidatedAt(2090)).resolves.toBeNull();
     });
 });
 
@@ -243,6 +282,16 @@ describe("SbHolidayCalendarRepository.withOverrideTransaction", () => {
 
             expect(harness.tx.branch_holiday_override.findFirst).toHaveBeenCalledWith({
                 where: { id: OVERRIDE_ID, branchId: BRANCH },
+            });
+        });
+
+        it("looks an override up by branch and date (UTC midnight)", async () => {
+            const harness = makeHarness();
+
+            await expect(withOps(harness, (ops) => ops.findOverrideByDate(BRANCH, "2026-12-24"))).resolves.toBeNull();
+
+            expect(harness.tx.branch_holiday_override.findFirst).toHaveBeenCalledWith({
+                where: { branchId: BRANCH, date: new Date("2026-12-24T00:00:00.000Z") },
             });
         });
 

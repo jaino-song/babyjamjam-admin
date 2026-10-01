@@ -4,6 +4,7 @@ import {
     BUILTIN_PUBLIC_HOLIDAY_NAME,
     BranchHolidayOverrideRecord,
     HOLIDAY_CALENDAR_REPOSITORY,
+    HolidayOverrideKind,
     IHolidayCalendarRepository,
 } from "domain/repositories/holiday-calendar.repository.interface";
 import {
@@ -31,6 +32,14 @@ export interface EffectiveHoliday {
     overrideId: string | null;
 }
 
+/** An override that currently changes nothing (its date's public status moved under it). */
+export interface InactiveHolidayOverride {
+    id: string;
+    date: string;
+    kind: HolidayOverrideKind;
+    name: string | null;
+}
+
 export interface EffectiveHolidayYear {
     year: number;
     revision: number;
@@ -38,6 +47,12 @@ export interface EffectiveHolidayYear {
     synced: boolean;
     lastSyncedAt: string | null;
     holidays: EffectiveHoliday[];
+    /**
+     * Overrides hidden from `holidays` because they no longer have effect: an
+     * `add` on a date that is now public, or an `exclude` on a date that is no
+     * longer public. Listed so the UI can offer to delete them.
+     */
+    inactiveOverrides: InactiveHolidayOverride[];
 }
 
 interface PublicEntry {
@@ -71,6 +86,8 @@ function yearOf(iso: string): number {
 @Injectable()
 export class HolidayCalendarService {
     private revisionCache: { value: number; readAt: number } | null = null;
+    /** Bumped by every invalidation so a revision read that straddles one cannot repopulate the cache. */
+    private generation = 0;
     private readonly models = new Map<string, { revision: number; model: Promise<BranchCalendarModel> }>();
 
     constructor(
@@ -88,12 +105,23 @@ export class HolidayCalendarService {
         opts: HolidayCalendarOptions = {},
     ): Promise<EffectiveHolidayYear> {
         const model = await this.modelFor(branchId, opts);
-        const validatedAt = model.snapshotValidatedAt.get(year) ?? null;
-        const synced = validatedAt !== null;
+        const modelValidatedAt = model.snapshotValidatedAt.get(year) ?? null;
+        const synced = modelValidatedAt !== null;
         const supported = synced || BUILTIN_YEARS.includes(year);
         if (!supported) {
-            return { year, revision: model.revision, supported: false, synced: false, lastSyncedAt: null, holidays: [] };
+            return {
+                year,
+                revision: model.revision,
+                supported: false,
+                synced: false,
+                lastSyncedAt: null,
+                holidays: [],
+                inactiveOverrides: [],
+            };
         }
+        // A sync that changes nothing refreshes validatedAt without bumping the revision, so
+        // the revision-keyed model's copy goes stale; read the timestamp itself every time.
+        const validatedAt = synced ? ((await this.repository.readSnapshotValidatedAt(year)) ?? modelValidatedAt) : null;
 
         const excludedByDate = new Map<string, BranchHolidayOverrideRecord>();
         const holidays: EffectiveHoliday[] = [];
@@ -112,10 +140,22 @@ export class HolidayCalendarService {
                 overrideId: exclusion ? exclusion.id : null,
             });
         }
+        const inactiveOverrides: InactiveHolidayOverride[] = [];
         for (const override of model.overrides) {
-            if (override.kind !== "add" || yearOf(override.date) !== year) continue;
+            if (yearOf(override.date) !== year) continue;
+            const isPublic = model.publicByDate.has(override.date);
+            if (override.kind === "exclude") {
+                // Active excludes were listed with the public rows above.
+                if (!isPublic) {
+                    inactiveOverrides.push({ id: override.id, date: override.date, kind: "exclude", name: override.name });
+                }
+                continue;
+            }
             // A later sync may have made the date public; public wins, the add is redundant.
-            if (model.publicByDate.has(override.date)) continue;
+            if (isPublic) {
+                inactiveOverrides.push({ id: override.id, date: override.date, kind: "add", name: override.name });
+                continue;
+            }
             holidays.push({
                 date: override.date,
                 name: override.name ?? "",
@@ -124,7 +164,9 @@ export class HolidayCalendarService {
                 overrideId: override.id,
             });
         }
-        holidays.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        const byDate = (a: { date: string }, b: { date: string }) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+        holidays.sort(byDate);
+        inactiveOverrides.sort(byDate);
 
         return {
             year,
@@ -133,6 +175,7 @@ export class HolidayCalendarService {
             synced,
             lastSyncedAt: validatedAt ? validatedAt.toISOString() : null,
             holidays,
+            inactiveOverrides,
         };
     }
 
@@ -141,6 +184,7 @@ export class HolidayCalendarService {
      * this so the next read in this process sees the new revision at once.
      */
     invalidateRevisionCache(): void {
+        this.generation += 1;
         this.revisionCache = null;
     }
 
@@ -150,38 +194,42 @@ export class HolidayCalendarService {
         if (!fresh && cached && now - cached.readAt < HOLIDAY_REVISION_CACHE_TTL_MS) {
             return cached.value;
         }
+        const generation = this.generation;
         const value = await this.repository.readRevision();
-        this.revisionCache = { value, readAt: Date.now() };
+        // An invalidation that landed while this read was in flight means the value may
+        // predate the write that triggered it; use it for this call but do not cache it.
+        if (generation === this.generation) this.revisionCache = { value, readAt: Date.now() };
         return value;
     }
 
     private async modelFor(branchId: string, opts: HolidayCalendarOptions): Promise<BranchCalendarModel> {
         const revision = await this.currentRevision(opts.fresh === true);
         const cached = this.models.get(branchId);
-        if (cached && cached.revision === revision) return cached.model;
+        // A model read at a newer revision than the one just looked up is still valid.
+        if (cached && cached.revision >= revision) return cached.model;
 
-        // The revision was read before the data below, so the data is at least as
-        // new as the label it is cached under; a newer revision rebuilds it.
-        const model = this.buildModel(branchId, revision);
-        const entry = { revision, model };
+        const entry = { revision, model: undefined as unknown as Promise<BranchCalendarModel> };
+        // The model is labelled with the revision read inside the same transaction as its
+        // data, so the cache key is never older or newer than what it holds.
+        entry.model = this.buildModel(branchId).then((model) => {
+            entry.revision = model.revision;
+            return model;
+        });
         this.models.set(branchId, entry);
-        model.catch(() => {
+        entry.model.catch(() => {
             if (this.models.get(branchId) === entry) this.models.delete(branchId);
         });
-        return model;
+        return entry.model;
     }
 
-    private async buildModel(branchId: string, revision: number): Promise<BranchCalendarModel> {
-        const [publicData, overrides] = await Promise.all([
-            this.repository.readPublicCalendar(),
-            this.repository.readBranchOverrides(branchId),
-        ]);
+    private async buildModel(branchId: string): Promise<BranchCalendarModel> {
+        const { revision, snapshots, holidays: publicRows, overrides } = await this.repository.readCalendar(branchId);
 
         const snapshotValidatedAt = new Map<number, Date>();
-        for (const snapshot of publicData.snapshots) snapshotValidatedAt.set(snapshot.year, snapshot.validatedAt);
+        for (const snapshot of snapshots) snapshotValidatedAt.set(snapshot.year, snapshot.validatedAt);
 
         const publicByDate = new Map<string, PublicEntry>();
-        for (const holiday of publicData.holidays) {
+        for (const holiday of publicRows) {
             if (!snapshotValidatedAt.has(yearOf(holiday.date))) continue;
             publicByDate.set(holiday.date, { name: holiday.name, source: "public" });
         }

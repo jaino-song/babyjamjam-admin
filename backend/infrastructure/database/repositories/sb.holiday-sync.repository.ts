@@ -74,17 +74,34 @@ export class SbHolidaySyncRepository implements IHolidaySyncRepository {
         const removedDates = previous === null ? [] : [...previous.keys()].filter((date) => !next.has(date)).sort();
 
         if (snapshot && addedDates.length === 0 && removedDates.length === 0) {
-            // Same date set: refresh timestamps only (and any renamed holiday); no revision bump.
-            for (const row of existingRows) {
+            const renamed = existingRows.filter((row) => {
                 const name = next.get(fromDbDate(row.date));
-                if (name !== undefined && name !== row.name) {
-                    await tx.public_holiday.update({ where: { date: row.date }, data: { name, fetchedAt: now } });
-                }
+                return name !== undefined && name !== row.name;
+            });
+            // Same date set: refresh timestamps (and any renamed holiday). Business-day
+            // results cannot change, so there are no change events; but readers cache the
+            // calendar by revision, so a rename must still bump it or they never see it.
+            for (const row of renamed) {
+                await tx.public_holiday.update({
+                    where: { date: row.date },
+                    data: { name: next.get(fromDbDate(row.date)), fetchedAt: now },
+                });
             }
             await tx.public_holiday.updateMany({ where: { date: yearRange }, data: { fetchedAt: now } });
+            let revision: number | undefined;
+            if (renamed.length > 0) {
+                const bumped = await tx.holiday_calendar_revision.update({
+                    where: { id: 1 },
+                    data: { revision: { increment: 1 } },
+                    select: { revision: true },
+                });
+                revision = Number(bumped.revision);
+            }
             await tx.holiday_year_snapshot.update({
                 where: { year },
-                data: { fetchedAt: now, validatedAt: now },
+                data: revision === undefined
+                    ? { fetchedAt: now, validatedAt: now }
+                    : { revision, fetchedAt: now, validatedAt: now },
             });
             return { status: "unchanged", added: 0, removed: 0 };
         }
