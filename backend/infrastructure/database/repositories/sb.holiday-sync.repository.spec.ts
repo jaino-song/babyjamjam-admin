@@ -188,25 +188,39 @@ describe("SbHolidaySyncRepository", () => {
         expect(refresh.where).toEqual({ year: 2026 });
         expect(refresh.data.fetchedAt).toBeInstanceOf(Date);
         expect(refresh.data.validatedAt).toBeInstanceOf(Date);
+        expect(refresh.data).not.toHaveProperty("revision");
     });
 
-    it("no date diff but a renamed holiday updates the name without a revision bump", async () => {
+    it("no date diff but a renamed holiday updates the name AND bumps the revision (readers cache by revision), without change events", async () => {
         const h = createHarness({
             snapshot: { year: 2026 },
-            rows: [{ date: utc("2026-01-01"), name: "신정" }],
+            rows: [{ date: utc("2026-01-01"), name: "신정" }, { date: utc("2026-03-01"), name: "삼일절" }],
             revision: 4n,
         });
         const result = await h.repository.applyYearSync({
             year: 2026,
-            items: [{ date: "2026-01-01", name: "1월1일" }],
-            rawCount: 1,
+            items: [{ date: "2026-01-01", name: "1월1일" }, { date: "2026-03-01", name: "삼일절" }],
+            rawCount: 2,
         });
-        expect(result.status).toBe("unchanged");
+        expect(result).toEqual({ status: "unchanged", added: 0, removed: 0 });
+        expect(h.tx.public_holiday.update).toHaveBeenCalledTimes(1);
         expect(h.tx.public_holiday.update).toHaveBeenCalledWith({
             where: { date: utc("2026-01-01") },
             data: { name: "1월1일", fetchedAt: expect.any(Date) },
         });
-        expect(h.tx.holiday_calendar_revision.update).not.toHaveBeenCalled();
+        expect(h.tx.holiday_calendar_revision.update).toHaveBeenCalledTimes(1);
+        expect(h.tx.holiday_calendar_revision.update).toHaveBeenCalledWith({
+            where: { id: 1 },
+            data: { revision: { increment: 1 } },
+            select: { revision: true },
+        });
+        expect(h.tx.holiday_year_snapshot.update).toHaveBeenCalledWith({
+            where: { year: 2026 },
+            data: { revision: 5, fetchedAt: expect.any(Date), validatedAt: expect.any(Date) },
+        });
+        expect(h.tx.holiday_change_event.createMany).not.toHaveBeenCalled();
+        expect(h.tx.public_holiday.deleteMany).not.toHaveBeenCalled();
+        expect(h.tx.holiday_year_snapshot.upsert).not.toHaveBeenCalled();
     });
 
     it("first sync with identical dates still writes rows, snapshot and a revision bump (year becomes synced)", async () => {
