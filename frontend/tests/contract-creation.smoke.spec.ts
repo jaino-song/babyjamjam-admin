@@ -185,10 +185,9 @@ async function fillContractDates(page: Page): Promise<void> {
   const endDate = addDays(startDate, 14);
   const paymentDate = addDays(startDate, 3);
 
-  const inputs = page.getByPlaceholder("YYYY-MM-DD");
-  await inputs.nth(0).fill(formatIsoDate(startDate));
-  await inputs.nth(1).fill(formatIsoDate(endDate));
-  await inputs.nth(2).fill(formatIsoDate(paymentDate));
+  await page.locator('[data-component="desktop_contracts_creation_form_start-date-input"]').fill(formatIsoDate(startDate));
+  await page.locator('[data-component="desktop_contracts_creation_form_end-date-input"]').fill(formatIsoDate(endDate));
+  await page.locator('[data-component="desktop_contracts_creation_form_payment-date-input"]').fill(formatIsoDate(paymentDate));
 }
 
 async function waitForContractsListReady(page: Page): Promise<void> {

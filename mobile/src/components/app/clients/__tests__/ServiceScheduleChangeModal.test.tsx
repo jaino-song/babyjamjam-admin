@@ -3,6 +3,13 @@ import userEvent from "@testing-library/user-event";
 
 import { ServiceScheduleChangeModal } from "../ServiceScheduleChangeModal";
 
+const slotOf = (field: HTMLElement) =>
+    document.getElementById(field.getAttribute("aria-describedby") ?? "") as HTMLElement;
+
+beforeAll(() => {
+    Element.prototype.scrollIntoView = jest.fn();
+});
+
 describe("ServiceScheduleChangeModal", () => {
     const defaultProps = {
         "data-component": "mobile_clients_detail-sheet_stack_detail-page_content_schedule-change-modal",
@@ -17,14 +24,72 @@ describe("ServiceScheduleChangeModal", () => {
         onSubmit: jest.fn(),
     };
 
-    it("requires a date later than the current service date", () => {
+    it("types the date as text digits with an example placeholder", () => {
         render(<ServiceScheduleChangeModal {...defaultProps} />);
 
         expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toBeInTheDocument();
         expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toHaveAttribute("type", "text");
         expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toHaveAttribute("inputmode", "numeric");
-        expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toHaveAttribute("placeholder", "YYYY-MM-DD");
-        expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+        expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toHaveAttribute("placeholder", "2026-12-01");
+        expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toHaveAttribute("maxlength", "10");
+    });
+
+    it("shows nothing on first load even while the prefilled date is not yet a postponement", () => {
+        render(<ServiceScheduleChangeModal {...defaultProps} />);
+
+        const input = screen.getByLabelText("3회차 서비스 제공 날짜");
+        expect(slotOf(input)).toBeEmptyDOMElement();
+        expect(slotOf(input)).toHaveAttribute("aria-live", "polite");
+        expect(input).not.toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("hints while the date is incomplete and errors once the field is left", () => {
+        render(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2026-07" />);
+        const input = screen.getByLabelText("3회차 서비스 제공 날짜");
+
+        fireEvent.focus(input);
+        expect(slotOf(input)).toHaveTextContent("YYYY-MM-DD 형식");
+        expect(slotOf(input)).not.toHaveTextContent("입력해 주세요");
+
+        fireEvent.blur(input);
+        expect(slotOf(input)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
+        expect(input).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("says so in the slot when the typed date is not after the current service date", () => {
+        render(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2026-07-19" />);
+        const input = screen.getByLabelText("3회차 서비스 제공 날짜");
+
+        fireEvent.blur(input);
+
+        expect(slotOf(input)).toHaveTextContent("현재 날짜 이후로 입력해 주세요");
+        expect(input).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("reports a date that does not exist", () => {
+        render(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2026-02-30" />);
+
+        expect(slotOf(screen.getByLabelText("3회차 서비스 제공 날짜"))).toHaveTextContent("존재하지 않는 날짜예요");
+    });
+
+    it("keeps the button pressable; pressing it with a problem shows the message and does not submit", async () => {
+        const user = userEvent.setup();
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...defaultProps} onSubmit={onSubmit} />);
+
+        await user.click(screen.getByRole("button", { name: "일정 변경" }));
+
+        const input = screen.getByLabelText("3회차 서비스 제공 날짜");
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(slotOf(input)).toHaveTextContent("현재 날짜 이후로 입력해 주세요");
+        expect(input).toHaveFocus();
+    });
+
+    it("calls a cleared prefilled date required", () => {
+        const { rerender } = render(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2026-07-25" />);
+        rerender(<ServiceScheduleChangeModal {...defaultProps} selectedDate="" />);
+
+        expect(slotOf(screen.getByLabelText("3회차 서비스 제공 날짜"))).toHaveTextContent("서비스 제공 날짜를 입력해 주세요");
     });
 
     it("formats a typed date without opening a native date picker", () => {

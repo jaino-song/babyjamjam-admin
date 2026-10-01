@@ -2,13 +2,27 @@
 
 import { useEffect, useId, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
+import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
 
-import { FormHelperText } from "@/components/app/ui/form-section";
+import {
+  FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+  FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
+  FieldMessageText,
+} from "@/components/app/ui/field-message";
+import { isUnchangedRegisteredPhone } from "@/components/app/contracts/contract-field-messages";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import { toFieldMessageView, type FieldMessageView } from "@/lib/forms/field-message-text";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { useLocale } from "@/providers/LocaleProvider";
 import { TitleTextInputMolecule } from "./TitleTextInputMolecule";
 
 const PHONE_REGEX = /^[0-9-]*$/;
 const PHONE_FORMAT_ERROR_MESSAGE = "숫자만 입력할 수 있습니다";
+
+export interface ContactInputMessage {
+  tone: "hint" | "error";
+  text: string;
+}
 
 interface ContactInputProps {
   phone: string;
@@ -21,15 +35,30 @@ interface ContactInputProps {
   containerClassName?: string;
   inputClassName?: string;
   labelClassName?: string;
-  /** Optional hint rendered at the right end of the label row. */
+  /**
+   * Informational hint for the right end of the label row. It shows only while
+   * the field has no error or format hint of its own.
+   */
   labelTrailing?: ReactNode;
   /** Id of the element inside `labelTrailing`, linked to the input only while that element is shown. */
   labelTrailingId?: string;
-  /**
-   * Where the format error renders. "below" (default) keeps it under the input;
-   * "label-row" shows it in red in the label row, replacing `labelTrailing` while it applies.
-   */
+  /** @deprecated Every message renders in the label row; kept so existing callers still type-check. */
   errorPlacement?: "below" | "label-row";
+  /**
+   * Form-level flag: the user already tried to submit, so a required field that
+   * is still empty (or incomplete) shows its message.
+   */
+  submitted?: boolean;
+  /**
+   * A stored number the form accepts as it is (a registered client's legacy
+   * phone). While the field equals it (by digits) no format hint or error shows.
+   */
+  acceptedPhone?: string | null;
+  /**
+   * A message the parent wants in the same slot. It competes with the field's
+   * own messages by priority: error, then hint, then `labelTrailing`.
+   */
+  externalMessage?: ContactInputMessage | null;
 }
 
 export const ContactInput = ({
@@ -45,12 +74,26 @@ export const ContactInput = ({
   labelClassName,
   labelTrailing,
   labelTrailingId,
-  errorPlacement = "below",
+  submitted = false,
+  acceptedPhone = null,
+  externalMessage = null,
 }: ContactInputProps) => {
-  const [error, setError] = useState(false);
-  const errorId = useId();
+  const locale = useLocale();
+  const [hasRejectedInput, setHasRejectedInput] = useState(false);
+  const fields = useFieldInputStates<"phone">();
+  const messageId = useId();
   const formattedPhone = formatKoreanPhoneNumber(phone);
-  const isErrorInLabelRow = errorPlacement === "label-row";
+  // Whether the field currently holds a value it knows about (typed or passed
+  // in). An empty `phone` while this is set means the parent cleared it, not the
+  // user, so the field starts over instead of reporting "required".
+  const [hasKnownValue, setHasKnownValue] = useState(phone !== "");
+  if (phone !== "" && !hasKnownValue) {
+    setHasKnownValue(true);
+  } else if (phone === "" && hasKnownValue) {
+    setHasKnownValue(false);
+    fields.reset();
+    setHasRejectedInput(false);
+  }
 
   useEffect(() => {
     if (phone && formattedPhone !== phone) {
@@ -62,14 +105,33 @@ export const ContactInput = ({
     const value = e.target.value;
 
     if (PHONE_REGEX.test(value)) {
-      setPhone(formatKoreanPhoneNumber(value));
-      setError(false);
+      const nextPhone = formatKoreanPhoneNumber(value);
+      fields.onChange("phone", formattedPhone, nextPhone);
+      setHasKnownValue(nextPhone !== "");
+      setPhone(nextPhone);
+      setHasRejectedInput(false);
     } else {
-      setError(true);
+      setHasRejectedInput(true);
     }
   };
 
-  const showLabelRowError = isErrorInLabelRow && error;
+  const isAcceptedPhone = isUnchangedRegisteredPhone(formattedPhone, acceptedPhone);
+  const fieldMessage = isAcceptedPhone
+    ? null
+    : toFieldMessageView(
+        locale,
+        resolveFieldMessage("phone", fields.stateOf("phone", formattedPhone), { required, submitted }),
+        label,
+      );
+  const candidates: Array<FieldMessageView | null> = [
+    hasRejectedInput ? { tone: "error", text: PHONE_FORMAT_ERROR_MESSAGE } : null,
+    fieldMessage?.tone === "error" ? fieldMessage : null,
+    externalMessage?.tone === "error" ? externalMessage : null,
+    fieldMessage?.tone === "hint" ? fieldMessage : null,
+    externalMessage?.tone === "hint" ? externalMessage : null,
+  ];
+  const message = disabled ? null : candidates.find((candidate) => candidate !== null) ?? null;
+  const hasError = message?.tone === "error";
 
   return (
     <TitleTextInputMolecule
@@ -80,29 +142,24 @@ export const ContactInput = ({
       placeholder={placeholder}
       required={required}
       disabled={disabled}
-      error={error}
-      helperText={error && !isErrorInLabelRow ? PHONE_FORMAT_ERROR_MESSAGE : undefined}
+      error={hasError}
       containerClassName={containerClassName}
       inputClassName={inputClassName}
       labelClassName={labelClassName}
+      labelRowClassName={FIELD_MESSAGE_LABEL_ROW_CLASS_NAME}
+      labelTrailingClassName={FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME}
       labelTrailing={
-        showLabelRowError ? (
-          <FormHelperText
-            id={errorId}
-            tone="error"
-            data-component={`${dataComponent}_error`}
-            data-slot="field-error-message"
-            className="m-0 text-right"
-            aria-live="polite"
-          >
-            {PHONE_FORMAT_ERROR_MESSAGE}
-          </FormHelperText>
+        message ? (
+          <FieldMessageText id={messageId} tone={message.tone} data-component={`${dataComponent}_helper`}>
+            {message.text}
+          </FieldMessageText>
         ) : (
           labelTrailing
         )
       }
-      aria-invalid={isErrorInLabelRow && error ? true : undefined}
-      aria-describedby={showLabelRowError ? errorId : labelTrailing ? labelTrailingId : undefined}
+      aria-invalid={hasError ? true : undefined}
+      aria-describedby={message ? messageId : labelTrailing ? labelTrailingId : undefined}
+      {...fields.focusProps("phone", formattedPhone)}
     />
   );
 };

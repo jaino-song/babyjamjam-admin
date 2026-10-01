@@ -15,6 +15,12 @@
 .srec .center{display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center}
 .srec .step-title{font-size:18px;font-weight:750;margin:6px 0;letter-spacing:-.3px}
 .srec .lab{display:block;font-size:13.5px;font-weight:700;margin-bottom:8px}
+/* one-line label row: label on the left, the field's single message slot on the right */
+.srec .lab-row{display:flex;align-items:center;gap:8px;min-width:0;height:1lh;margin-bottom:8px;font-size:13.5px;line-height:1.3}
+.srec .lab-row .lab{display:block;flex-shrink:0;margin:0;font-size:13.5px;font-weight:700;line-height:1.3}
+.srec .lab-msg{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;color:var(--muted);font-size:12px;font-weight:700;line-height:1.2}
+.srec .lab-msg.hint{color:var(--muted)}
+.srec .lab-msg.error{color:#9f234c}
 .srec .fld{margin-bottom:16px;padding-bottom:14px;border-bottom:1px dashed var(--line)}
 .srec .fld:last-of-type{border-bottom:0}
 .srec .in,.srec .ta{width:100%;border:1.5px solid var(--line);border-radius:12px;padding:13px 14px;font-size:15px;outline:none;background:#fff;color:var(--ink)}

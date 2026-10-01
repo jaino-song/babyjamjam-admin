@@ -140,6 +140,11 @@ function renderPage() {
   );
 }
 
+/** The receiver field's single message slot, in its label row. */
+function receiverSlot(): HTMLElement {
+  return document.getElementById("receiver-message") as HTMLElement;
+}
+
 async function addManualRecipient(value: string) {
   const receiverInput = screen.getByLabelText(/휴대 전화번호/);
 
@@ -449,7 +454,7 @@ describe("NewMessagePage", () => {
       `${FORM_CARD_CONTENT}_recipient`,
       `${FORM_CARD_CONTENT}_message-body`,
     ]);
-    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute("placeholder", "010-0000-0000");
+    expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute("placeholder", "010-1234-5678");
     expect(screen.getByLabelText(/휴대 전화번호/)).toHaveAttribute(
       "data-component",
       `${FORM_CARD_CONTENT}_recipient_row_autocomplete_input`,
@@ -820,7 +825,11 @@ describe("NewMessagePage", () => {
     fireEvent.change(receiverInput, { target: { value: tooManyRecipients } });
     fireEvent.keyDown(receiverInput, { key: "Enter" });
 
-    expect(await screen.findByText("수신자는 한 번에 최대 50명까지 선택할 수 있어요.")).toBeInTheDocument();
+    // The limit is a problem with the receiver field, so it shows in that field's label-row slot.
+    await waitFor(() => {
+      expect(receiverSlot()).toHaveTextContent("수신자는 최대 50명까지예요");
+    });
+    expect(screen.queryByText("수신자는 한 번에 최대 50명까지 선택할 수 있어요.")).not.toBeInTheDocument();
     expect(api.post).not.toHaveBeenCalled();
   });
 
@@ -834,7 +843,10 @@ describe("NewMessagePage", () => {
       fireEvent.change(receiverInput, { target: { value } });
       fireEvent.keyDown(receiverInput, { key: "Enter" });
 
-      expect(await screen.findByText("기존 고객이 없으면 올바른 전화번호를 입력한 뒤 Enter를 눌러 추가해 주세요.")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(receiverSlot()).toHaveTextContent("010-1234-5678로 입력해 주세요");
+      });
+      expect(screen.queryByText(/기존 고객이 없으면/)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /수신자 제거/ })).not.toBeInTheDocument();
       expect(api.post).not.toHaveBeenCalled();
     },
@@ -1526,6 +1538,86 @@ describe("NewMessagePage", () => {
           title: "인사 메시지",
         }),
       );
+    });
+  });
+
+  describe("receiver field messages", () => {
+    const selectPriceInfoTemplate = async () => {
+      renderPage();
+      await openTemplateSelect();
+      fireEvent.click(screen.getByRole("option", { name: "금액 및 계좌번호" }));
+      await waitFor(() => {
+        expect(screen.getByLabelText(/산모님 성함/)).toBeInTheDocument();
+      });
+      // The client-name template swaps the search box for a plain phone input.
+      return screen.getByLabelText(/휴대 전화번호/);
+    };
+
+    it("shows nothing in the slot on first render and uses the example placeholder", () => {
+      renderPage();
+
+      expect(receiverSlot()).toBeEmptyDOMElement();
+      expect(receiverSlot()).toHaveAttribute("aria-live", "polite");
+      expect(screen.getByLabelText(/휴대 전화번호/)).not.toHaveAttribute("aria-invalid", "true");
+      expect(screen.queryByText(/YYYY-MM-DD|YYMMDD/)).not.toBeInTheDocument();
+    });
+
+    it("points the plain phone input at its slot for assistive technology", async () => {
+      const receiverInput = await selectPriceInfoTemplate();
+
+      expect(receiverInput).toHaveAttribute("aria-describedby", "receiver-message");
+      expect(receiverInput).toHaveAttribute("placeholder", "010-1234-5678");
+      expect(receiverSlot()).toBeEmptyDOMElement();
+    });
+
+    it("hints while a number is typed, then reports the format error after leaving it", async () => {
+      const receiverInput = await selectPriceInfoTemplate();
+
+      fireEvent.focus(receiverInput);
+      fireEvent.change(receiverInput, { target: { value: "0101234" } });
+      expect(receiverInput).toHaveValue("010-1234");
+      expect(receiverSlot()).toHaveTextContent("010-1234-5678 형식");
+      expect(receiverSlot()).not.toHaveTextContent("입력해 주세요");
+      expect(receiverInput).not.toHaveAttribute("aria-invalid", "true");
+
+      fireEvent.blur(receiverInput);
+      expect(receiverSlot()).toHaveTextContent("010-1234-5678로 입력해 주세요");
+      expect(receiverInput).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("auto-hyphenates a typed number and clears the message once it is complete", async () => {
+      const receiverInput = await selectPriceInfoTemplate();
+
+      fireEvent.focus(receiverInput);
+      fireEvent.change(receiverInput, { target: { value: "01012345678" } });
+      expect(receiverInput).toHaveValue("010-1234-5678");
+      expect(receiverSlot()).toBeEmptyDOMElement();
+    });
+
+    it("asks for the number in the slot when Enter is pressed on an empty input", async () => {
+      const receiverInput = await selectPriceInfoTemplate();
+
+      fireEvent.keyDown(receiverInput, { key: "Enter" });
+
+      expect(receiverSlot()).toHaveTextContent("휴대 전화번호를 입력해 주세요");
+      fireEvent.change(receiverInput, { target: { value: "010" } });
+      expect(receiverSlot()).not.toHaveTextContent("휴대 전화번호를 입력해 주세요");
+    });
+
+    it("reports a duplicate recipient in the slot instead of the top alert", async () => {
+      renderPage();
+      await addManualRecipient("010-1234-5678");
+
+      const receiverInput = screen.getByLabelText(/휴대 전화번호/);
+      fireEvent.focus(receiverInput);
+      fireEvent.change(receiverInput, { target: { value: "010-1234-5678" } });
+      fireEvent.keyDown(receiverInput, { key: "Enter" });
+
+      // The search box adds a typed number after a short delay.
+      await waitFor(() => {
+        expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요");
+      });
+      expect(screen.queryByText("이미 추가된 수신자입니다.")).not.toBeInTheDocument();
     });
   });
 });

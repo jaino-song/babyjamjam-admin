@@ -195,6 +195,10 @@ function errorIn(fieldName: string): HTMLElement | null {
   return labelRow(fieldName).querySelector('[data-slot="field-error-message"]');
 }
 
+function formatHintIn(fieldName: string): HTMLElement | null {
+  return labelRow(fieldName).querySelector('[data-slot="field-hint-message"]');
+}
+
 const PHONE_FIELD = "mobile_contracts-new_client_phone-field";
 const BIRTHDAY_FIELD = "mobile_contracts-new_client_birthday-field";
 const ADDRESS_FIELD = "mobile_contracts-new_client_address-field";
@@ -260,7 +264,7 @@ describe("mobile contract form - registered-value hints and stored placeholders"
     fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
     const hint = hintIn(PHONE_FIELD);
     expect(hint).toHaveTextContent(DIFF_HINT);
-    expect(hint).toHaveClass("helper_ok");
+    expect(hint).toHaveClass("tone_ok");
     expect(phoneInput()).toHaveAttribute("aria-describedby", hint?.id);
 
     fireEvent.change(phoneInput(), { target: { value: "01055556666" } });
@@ -330,63 +334,86 @@ describe("mobile contract form - registered-value hints and stored placeholders"
     await renderOnStep(3);
 
     expect(hintIn(START_FIELD)).toBeNull();
-    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "260911" } });
+    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "20260911" } });
     expect(hintIn(START_FIELD)).toHaveTextContent(DIFF_HINT);
     expect(hintIn(END_FIELD)).not.toBeNull();
 
     fireEvent.change(screen.getByLabelText(/종료일/), { target: { value: "" } });
     expect(hintIn(END_FIELD)).toBeNull();
-    expect(screen.getByLabelText(/종료일/)).toHaveAttribute(
-      "placeholder",
-      `${STORED_END.slice(2, 4)}${STORED_END.slice(5, 7)}${STORED_END.slice(8, 10)}`,
-    );
+    expect(screen.getByLabelText(/종료일/)).toHaveAttribute("placeholder", STORED_END);
   });
 });
 
 describe("mobile contract form - validation messages share the label-row slot", () => {
-  it("swaps the green end-date hint for the red format error and back, without role=alert", async () => {
+  it("swaps the green end-date hint for the grey format hint, then the red error after leaving, without role=alert", async () => {
     await renderOnStep(3);
     const endInput = screen.getByLabelText(/종료일/);
 
-    fireEvent.change(endInput, { target: { value: "260930" } });
+    fireEvent.change(endInput, { target: { value: "20260930" } });
+    expect(endInput).toHaveValue("2026-09-30");
     expect(hintIn(END_FIELD)).not.toBeNull();
     expect(errorIn(END_FIELD)).toBeNull();
 
+    fireEvent.focus(endInput);
     fireEvent.change(endInput, { target: { value: "2609" } });
+    expect(formatHintIn(END_FIELD)).toHaveTextContent("YYYY-MM-DD 형식");
+    expect(errorIn(END_FIELD)).toBeNull();
+    expect(endInput).not.toHaveAttribute("aria-invalid");
+
+    fireEvent.blur(endInput);
     const error = errorIn(END_FIELD);
-    expect(error).toHaveTextContent("종료일은 6자리(YYMMDD) 형식의 유효한 날짜를 입력해 주세요.");
-    expect(error).toHaveClass("helper_err");
+    expect(error).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
+    expect(error).toHaveClass("tone_error");
     expect(error).toHaveAttribute("data-testid", "contract-creation-date-range-error");
     expect(error).not.toHaveAttribute("role");
     expect(error).toHaveAttribute("aria-live", "polite");
     expect(hintIn(END_FIELD)).toBeNull();
+    expect(formatHintIn(END_FIELD)).toBeNull();
     expect(endInput).toHaveAttribute("aria-invalid", "true");
     expect(endInput).toHaveAttribute("aria-describedby", error?.id);
     expect(screen.queryByRole("alert")).toBeNull();
 
-    fireEvent.change(endInput, { target: { value: "260930" } });
+    fireEvent.change(endInput, { target: { value: "20260930" } });
     expect(errorIn(END_FIELD)).toBeNull();
     expect(hintIn(END_FIELD)).not.toBeNull();
     expect(endInput).not.toHaveAttribute("aria-invalid");
   });
 
-  it("shows the birthday format error in red instead of the hint, and the hint again once valid", async () => {
+  it("shows a grey format hint while the birthday is being typed and the red error once it is left", async () => {
     await renderOnStep(0);
     const birthday = input("card_birthday-input");
 
-    fireEvent.change(birthday, { target: { value: "1958-04-04" } });
+    fireEvent.change(birthday, { target: { value: "19580404" } });
+    expect(birthday).toHaveValue("1958-04-04");
     expect(hintIn(BIRTHDAY_FIELD)).not.toBeNull();
 
-    fireEvent.change(birthday, { target: { value: "1958-13" } });
+    fireEvent.focus(birthday);
+    fireEvent.change(birthday, { target: { value: "195813" } });
+    expect(birthday).toHaveValue("1958-13");
+    expect(formatHintIn(BIRTHDAY_FIELD)).toHaveTextContent("YYYY-MM-DD 형식");
+    expect(errorIn(BIRTHDAY_FIELD)).toBeNull();
+
+    fireEvent.blur(birthday);
     const error = errorIn(BIRTHDAY_FIELD);
-    expect(error).toHaveTextContent("생년월일을 YYYY-MM-DD 형식으로 입력해 주세요");
+    expect(error).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
     expect(hintIn(BIRTHDAY_FIELD)).toBeNull();
     expect(birthday).toHaveAttribute("aria-invalid", "true");
     expect(birthday).toHaveAttribute("aria-describedby", error?.id);
 
-    fireEvent.change(birthday, { target: { value: "1958-04-04" } });
+    fireEvent.change(birthday, { target: { value: "19580404" } });
     expect(errorIn(BIRTHDAY_FIELD)).toBeNull();
     expect(hintIn(BIRTHDAY_FIELD)).not.toBeNull();
+  });
+
+  it("rejects a birthday that does not exist or lies in the future with a short message", async () => {
+    await renderOnStep(0);
+    const birthday = input("card_birthday-input");
+
+    fireEvent.change(birthday, { target: { value: "19580231" } });
+    expect(errorIn(BIRTHDAY_FIELD)).toHaveTextContent("존재하지 않는 날짜예요");
+
+    fireEvent.change(birthday, { target: { value: "29990101" } });
+    expect(errorIn(BIRTHDAY_FIELD)).toHaveTextContent("미래 날짜는 입력할 수 없어요");
   });
 });
 
@@ -465,7 +492,7 @@ describe("mobile contract form - confirm before writing form edits back to the c
     await renderOnStep(0);
     fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
     next(); next(); next();
-    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "260911" } });
+    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "20260911" } });
     submit();
 
     const dialog = await screen.findByRole("dialog", { name: DIFF_TITLE });
@@ -565,7 +592,7 @@ describe("mobile contract form - confirm before writing form edits back to the c
       target: { value: "5" },
     });
     next();
-    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "260910" } });
+    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "20260910" } });
     submit();
 
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
@@ -674,7 +701,7 @@ describe("mobile contract form - entering with a prefilled store (client detail)
     fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
     fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
     next(); next(); next();
-    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "260911" } });
+    fireEvent.change(screen.getByLabelText(/시작일/), { target: { value: "20260911" } });
     submit();
 
     fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));

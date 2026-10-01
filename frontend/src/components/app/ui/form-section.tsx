@@ -138,14 +138,14 @@ function FormField({
     <Label
       data-component={labelDataComponent ?? sub("label")}
       htmlFor={htmlFor}
-      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "font-semibold text-v3-text-muted")}
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </Label>
   ) : (
     <div
       data-component={labelDataComponent ?? sub("label")}
-      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "font-semibold text-v3-text-muted")}
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </div>

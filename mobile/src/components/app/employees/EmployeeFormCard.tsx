@@ -1,10 +1,11 @@
 "use client";
-import { formatBirthdayInput } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
 import { ChevronDown } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
+import type { SlotMessage } from "@/lib/validations/field-message";
 import { cn } from "@/lib/utils";
 import { DEFAULT_EMPLOYEE_GRADE, EMPLOYEE_GRADES } from "@/features/employees/grade";
 import { Switch } from "@/components/ui/switch";
@@ -26,45 +27,96 @@ export interface EmployeeFormCardData {
   birthday: string;
 }
 
-export interface EmployeeFormCardTouched {
-  phone: boolean;
-  workArea: boolean;
-}
+export type EmployeeFormCardField = "name" | "phone" | "birthday";
 
-type PhoneHelperTone = "ok" | "err" | "pending";
+/** The one message each field shows in the top-right of its label row. */
+export interface EmployeeFormCardMessages {
+  name?: SlotMessage | null;
+  phone?: SlotMessage | null;
+  birthday?: SlotMessage | null;
+  workArea?: SlotMessage | null;
+}
 
 interface EmployeeFormCardProps {
   /** Caller-context canonical base, e.g. `mobile_employees_form-dialog_card`. */
   "data-component": string;
   formData: EmployeeFormCardData;
-  touched: EmployeeFormCardTouched;
-  isPhoneValid: boolean;
-  hasPhoneError?: boolean;
-  phoneHelperMessage?: string | null;
-  phoneHelperTone?: PhoneHelperTone | null;
-  isWorkAreaValid: boolean;
+  messages: EmployeeFormCardMessages;
   disabled?: boolean;
   assignmentLabel?: string;
   assignmentDescription?: string;
   onChange: <K extends keyof EmployeeFormCardData>(field: K, value: EmployeeFormCardData[K]) => void;
-  onPhoneBlur: () => void;
+  onFieldFocus: (field: EmployeeFormCardField) => void;
+  onFieldBlur: (field: EmployeeFormCardField) => void;
   onWorkAreaTouched: () => void;
+}
+
+interface FieldLabelRowProps {
+  "data-component": string;
+  htmlFor?: string;
+  label: string;
+  required?: boolean;
+  message?: SlotMessage | null;
+  messageId: string;
+}
+
+/**
+ * Label plus the field's single message slot. The row is one label line tall
+ * (see .labelRow), so a message can never change the layout; it is cut with an
+ * ellipsis instead. The live region stays mounted so updates are announced.
+ */
+function FieldLabelRow({
+  "data-component": dataComponent,
+  htmlFor,
+  label,
+  required = false,
+  message,
+  messageId,
+}: FieldLabelRowProps) {
+  const labelContent = (
+    <>
+      {label}
+      {required ? <span className={styles.required}>*</span> : null}
+    </>
+  );
+
+  return (
+    <div className={styles.labelRow} data-component={`${dataComponent}_label-row`}>
+      {htmlFor ? (
+        <label className={styles.label} htmlFor={htmlFor}>
+          {labelContent}
+        </label>
+      ) : (
+        <div className={styles.label}>{labelContent}</div>
+      )}
+      <span
+        id={messageId}
+        className={cn(
+          styles.inlineHelper,
+          message?.tone === "ok" && styles.inlineHelperOk,
+          message?.tone === "err" && styles.inlineHelperErr,
+          message?.tone === "pending" && styles.inlineHelperPending,
+        )}
+        aria-live="polite"
+        data-component={`${dataComponent}_helper`}
+      >
+        {message?.tone === "ok" ? "✓ " : null}
+        {message?.text}
+      </span>
+    </div>
+  );
 }
 
 export function EmployeeFormCard({
   "data-component": dataComponent,
   formData,
-  touched,
-  isPhoneValid,
-  hasPhoneError = false,
-  phoneHelperMessage,
-  phoneHelperTone,
-  isWorkAreaValid,
+  messages,
   disabled = false,
   assignmentLabel,
   assignmentDescription = "등록 완료 후 선택값으로 자동 입력됩니다",
   onChange,
-  onPhoneBlur,
+  onFieldFocus,
+  onFieldBlur,
   onWorkAreaTouched,
 }: EmployeeFormCardProps) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
@@ -81,9 +133,6 @@ export function EmployeeFormCard({
 
     setField("workArea", nextAreas);
   };
-  const phoneRequiredMessage = touched.phone && !isPhoneValid ? t(locale, "employees.form.phone-required") : null;
-  const visiblePhoneHelperMessage = phoneRequiredMessage ?? phoneHelperMessage;
-  const visiblePhoneHelperTone = phoneRequiredMessage ? "err" : phoneHelperTone;
 
   return (
     <div className={styles.cardStack} data-component={dataComponent}>
@@ -103,67 +152,73 @@ export function EmployeeFormCard({
         </div>
 
         <div className={styles.field} data-component={sub("section-basic_field-name")}>
-          <label className={styles.label} htmlFor="employee-form-name">
-            {t(locale, "employees.form.name")}
-            <span className={styles.required}>*</span>
-          </label>
+          <FieldLabelRow
+            data-component={sub("section-basic_field-name")}
+            htmlFor="employee-form-name"
+            label={t(locale, "employees.form.name")}
+            required
+            message={messages.name}
+            messageId="employee-form-name-message"
+          />
           <input
             id="employee-form-name"
-            className={styles.control}
+            className={cn(styles.control, messages.name?.tone === "err" && styles.controlError)}
             value={formData.name}
             onChange={(event) => setField("name", event.target.value)}
+            onFocus={() => onFieldFocus("name")}
+            onBlur={() => onFieldBlur("name")}
             placeholder="홍길동"
+            aria-invalid={messages.name?.tone === "err"}
+            aria-describedby="employee-form-name-message"
             disabled={disabled}
           />
         </div>
 
         <div className={styles.field} data-component={sub("section-basic_field-phone")}>
-          <div className={styles.labelRow} data-component={sub("section-basic_field-phone_label-row")}>
-            <label className={styles.label} htmlFor="employee-form-phone">
-              {t(locale, "employees.form.phone")}
-              <span className={styles.required}>*</span>
-            </label>
-            {visiblePhoneHelperMessage ? (
-              <span
-                className={cn(
-                  styles.inlineHelper,
-                  visiblePhoneHelperTone === "ok" && styles.inlineHelperOk,
-                  visiblePhoneHelperTone === "err" && styles.inlineHelperErr,
-                  visiblePhoneHelperTone === "pending" && styles.inlineHelperPending,
-                )}
-                data-component={sub("section-basic_field-phone_helper")}
-              >
-                {visiblePhoneHelperTone === "ok" ? "✓ " : null}
-                {visiblePhoneHelperMessage}
-              </span>
-            ) : null}
-          </div>
+          <FieldLabelRow
+            data-component={sub("section-basic_field-phone")}
+            htmlFor="employee-form-phone"
+            label={t(locale, "employees.form.phone")}
+            required
+            message={messages.phone}
+            messageId="employee-form-phone-message"
+          />
           <input
             id="employee-form-phone"
-            className={cn(styles.control, (hasPhoneError || (touched.phone && !isPhoneValid)) && styles.controlError)}
+            className={cn(styles.control, messages.phone?.tone === "err" && styles.controlError)}
             value={formatKoreanPhoneNumber(formData.phone)}
             onChange={(event) => setField("phone", normalizeKoreanPhoneDigits(event.target.value))}
-            onBlur={onPhoneBlur}
+            onFocus={() => onFieldFocus("phone")}
+            onBlur={() => onFieldBlur("phone")}
             placeholder="010-1234-5678"
             maxLength={20}
             inputMode="tel"
-            aria-invalid={hasPhoneError || (touched.phone && !isPhoneValid)}
+            aria-invalid={messages.phone?.tone === "err"}
+            aria-describedby="employee-form-phone-message"
             disabled={disabled}
           />
         </div>
 
         <div className={styles.field} data-component={sub("section-basic_field-birthday")}>
-          <label className={styles.label} htmlFor="employee-form-birthday">
-            생년월일
-          </label>
+          <FieldLabelRow
+            data-component={sub("section-basic_field-birthday")}
+            htmlFor="employee-form-birthday"
+            label="생년월일"
+            message={messages.birthday}
+            messageId="employee-form-birthday-message"
+          />
           <input
             id="employee-form-birthday"
-            className={styles.control}
+            className={cn(styles.control, messages.birthday?.tone === "err" && styles.controlError)}
             value={formData.birthday}
-            onChange={(event) => setField("birthday", formatBirthdayInput(event.target.value))}
-            placeholder="YYYY-MM-DD"
+            onChange={(event) => setField("birthday", formatIsoDateInput(event.target.value))}
+            onFocus={() => onFieldFocus("birthday")}
+            onBlur={() => onFieldBlur("birthday")}
+            placeholder="1958-03-03"
             maxLength={10}
             inputMode="numeric"
+            aria-invalid={messages.birthday?.tone === "err"}
+            aria-describedby="employee-form-birthday-message"
             disabled={disabled}
           />
         </div>
@@ -197,14 +252,19 @@ export function EmployeeFormCard({
           </div>
         </div>
 
-        <div className={styles.field}>
-          <div className={styles.label}>
-            {t(locale, "employees.form.work-area")}
-            <span className={styles.required}>*</span>
-          </div>
+        <div className={styles.field} data-component={sub("section-work_field-work-area")}>
+          <FieldLabelRow
+            data-component={sub("section-work_field-work-area")}
+            label={t(locale, "employees.form.work-area")}
+            required
+            message={messages.workArea}
+            messageId="employee-form-work-area-message"
+          />
           <div
+            id="employee-form-work-area"
             className={styles.chipGrid}
             data-component={sub("section-work_field-work-area_options")}
+            aria-describedby="employee-form-work-area-message"
             onBlur={onWorkAreaTouched}
           >
             {WORK_AREAS.map((area) => {
@@ -224,9 +284,6 @@ export function EmployeeFormCard({
               );
             })}
           </div>
-          {touched.workArea && !isWorkAreaValid ? (
-            <p className={styles.errorText}>{t(locale, "employees.form.work-area-required")}</p>
-          ) : null}
         </div>
 
         <div className={styles.field} data-component={sub("section-work_field-open-status")}>

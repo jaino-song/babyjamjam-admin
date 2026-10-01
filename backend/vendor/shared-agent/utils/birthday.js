@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.formatBirthdayInput = void 0;
 exports.formatBirthdayYYMMDD = formatBirthdayYYMMDD;
 exports.normalizeContractBirthday = normalizeContractBirthday;
 exports.normalizeBirthdayIsoDate = normalizeBirthdayIsoDate;
 exports.isValidBirthdayIsoDate = isValidBirthdayIsoDate;
-exports.formatBirthdayInput = formatBirthdayInput;
+const date_input_1 = require("./date-input");
 function isValidCalendarDate(year, month, day) {
     if (month < 1 || month > 12 || day < 1 || day > 31)
         return false;
@@ -88,11 +89,4 @@ function isValidBirthdayIsoDate(raw, now = new Date()) {
     return /^\d{4}-\d{2}-\d{2}$/.test(raw) && normalizeBirthdayIsoDate(raw, now) === raw;
 }
 /** 입력 중에는 일부 값도 유지하고, 여덟 자리 숫자에 날짜 구분자를 붙인다. */
-function formatBirthdayInput(value) {
-    const digits = value.replace(/\D/g, "").slice(0, 8);
-    if (digits.length <= 4)
-        return digits;
-    if (digits.length <= 6)
-        return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
-}
+exports.formatBirthdayInput = date_input_1.formatIsoDateInput;

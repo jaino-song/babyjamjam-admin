@@ -78,11 +78,28 @@ describe("service record input policy", () => {
         expect(isServiceRecordHeaderComplete({ ...validHeader, babyBirth: "2026-06-" })).toBe(false);
         expect(isServiceRecordHeaderComplete({ ...validHeader, deliveryType: "기타" })).toBe(false);
     });
+    it("keeps every header message short enough for the one-line slot", () => {
+        const samples: Array<[Parameters<typeof getServiceRecordHeaderFieldError>[0], unknown]> = [
+            ["momName", "이 예지"], ["momName", ""], ["momBirth", "1999"], ["momBirth", "1990-02-30"], ["momBirth", "2026-10-01"],
+            ["babyBirth", ""], ["deliveryType", ""], ["deliveryType", "기타"], ["babyWeight", "0"], ["babyWeight", ""], ["momName", 3],
+        ];
+        for (const [key, value] of samples) {
+            const message = getServiceRecordHeaderFieldError(key, value, NOW, { required: true });
+            expect(message).not.toBeNull();
+            expect(message!.length).toBeLessThanOrEqual(23);
+        }
+        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("YYYY-MM-DD로 입력해 주세요");
+        expect(getServiceRecordHeaderFieldError("momBirth", "2026-10-01", NOW)).toBe("미래 날짜는 입력할 수 없어요");
+        expect(getServiceRecordHeaderFieldError("momBirth", "1990-02-30", NOW)).toBe("존재하지 않는 날짜예요");
+        expect(getServiceRecordHeaderFieldError("babyBirth", "", NOW, { required: true })).toBe("신생아 출생일자를 입력해 주세요");
+        expect(getServiceRecordHeaderFieldError("deliveryType", "", NOW, { required: true })).toBe("분만형태를 선택해 주세요");
+    });
     it("keeps existing numeric boundaries without inventing clinical limits", () => {
         expect(getServiceRecordNumericFieldError("meals_meal", "0")).toBeNull();
-        expect(getServiceRecordNumericFieldError("meals_meal", "-1")).not.toBeNull();
-        expect(getServiceRecordNumericFieldError("meals_meal", "1.5")).toContain("소수점 없이");
+        expect(getServiceRecordNumericFieldError("meals_meal", "-1")).toBe("0 이상으로 입력해 주세요");
+        expect(getServiceRecordNumericFieldError("meals_meal", "abc")).toBe("숫자만 입력해 주세요");
+        expect(getServiceRecordNumericFieldError("meals_meal", "1.5")).toBe("정수로 입력해 주세요");
         expect(getServiceRecordNumericFieldError("temperature_temp", "36.5")).toBeNull();
-        expect(getServiceRecordNumericFieldError("temperature_temp", "36.55")).toContain("소수점 첫째");
+        expect(getServiceRecordNumericFieldError("temperature_temp", "36.55")).toBe("소수점 한 자리까지 (예: 36.5)");
     });
 });

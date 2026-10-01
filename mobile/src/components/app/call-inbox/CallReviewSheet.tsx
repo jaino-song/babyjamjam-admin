@@ -1,12 +1,12 @@
 "use client";
-import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 import { useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import {
   MobileDetailActions,
   MobileDetailHeader,
@@ -20,8 +20,11 @@ import {
   useDiscardDraft,
   usePatchDraft,
 } from "@/hooks/useCallInbox";
+import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
 import { formatIsoDateInput } from "@/lib/contracts/date-input";
+import { focusFirstInvalidField, type FieldSpec } from "@/lib/validations/field-message";
+import { useLocale } from "@/providers/LocaleProvider";
 import type {
   ClientDraftDetail,
   ClientDraftListItem,
@@ -101,8 +104,25 @@ const TEXT_FIELDS = [
 
 const INPUT_HINTS: Record<string, { inputMode: "numeric"; maxLength: number; placeholder: string }> = {
   phone: { inputMode: "numeric", maxLength: 13, placeholder: "010-1234-5678" },
-  date: { inputMode: "numeric", maxLength: 10, placeholder: "YYYY-MM-DD" },
+  date: { inputMode: "numeric", maxLength: 10, placeholder: "2026-11-20" },
 };
+
+// Realistic example dates, so the field shows the shape without format text.
+const DATE_PLACEHOLDERS: Record<string, string> = {
+  dueDate: "2026-11-20",
+  birthDate: "2026-11-20",
+  birthday: "1958-03-03",
+  startDate: "2026-12-01",
+  endDate: "2026-12-19",
+};
+
+function inputHintsFor(field: string) {
+  const hints = INPUT_HINTS[FIELD_KIND[field] ?? ""];
+  if (!hints) return undefined;
+  return { ...hints, placeholder: DATE_PLACEHOLDERS[field] ?? hints.placeholder };
+}
+
+const inputIdFor = (field: string): string => `review-${field}`;
 
 const TOGGLE_FIELDS = [
   { field: "careCenter", label: FIELD_LABELS.careCenter },
@@ -124,6 +144,25 @@ function formatFieldValue(field: string, value: string): string {
   if (kind === "phone") return formatPhoneNumber(value);
   if (kind === "date") return formatIsoDateInput(value);
   return value;
+}
+
+/**
+ * What a reviewer-editable field is checked against, or nothing for fields
+ * (address, duration, ...) that only need to hold whatever was heard.
+ */
+function specFor(field: string, startDate?: string): FieldSpec | undefined {
+  const kind = FIELD_KIND[field];
+  const label = FIELD_LABELS[field] ?? field;
+  if (field === "name") return { kind: "text", label, required: true };
+  if (kind === "phone") return { kind: "phone", label };
+  if (kind === "date") {
+    return {
+      kind: field === "birthday" ? "birthday" : "date",
+      label,
+      dateRange: field === "endDate" && startDate ? { notBefore: startDate } : undefined,
+    };
+  }
+  return undefined;
 }
 
 function proposalFor(proposals: Proposal[], field: string): Proposal | undefined {
@@ -315,6 +354,18 @@ function NewClientReview({
   const isPending = draft.status === "PENDING";
   const busy = confirmDraft.isPending || discardDraft.isPending;
 
+  const locale = useLocale();
+  const fieldMessages = useFieldMessages<string>({
+    values: fields,
+    // A draft that is already reviewed is read-only, so it has nothing to validate.
+    specs: isPending
+      ? Object.fromEntries(
+          TEXT_FIELDS.map(({ field }) => [field, specFor(field, fields.startDate)]),
+        )
+      : {},
+    locale,
+  });
+
   const handleDiscard = async () => {
     try {
       await discardDraft.mutateAsync({});
@@ -326,15 +377,14 @@ function NewClientReview({
   };
 
   const handleConfirm = async () => {
+    // Each problem is shown in its own field's message slot; take the reviewer to the first one.
+    fieldMessages.markSubmitted();
+    const invalidFields = fieldMessages.invalidFields(TEXT_FIELDS.map(({ field }) => field));
+    if (invalidFields.length > 0) {
+      focusFirstInvalidField(invalidFields.map(inputIdFor));
+      return;
+    }
     const name = fields.name?.trim() ?? "";
-    if (!name) {
-      toast({ title: "산모명을 입력해 주세요", variant: "destructive" });
-      return;
-    }
-    if (fields.birthday && !isValidBirthdayIsoDate(fields.birthday)) {
-      toast({ title: "생년월일을 YYYY-MM-DD 형식으로 입력해 주세요", variant: "destructive" });
-      return;
-    }
     const durationRaw = fields.duration?.trim() ?? "";
     const durationParsed = durationRaw ? Number(durationRaw) : NaN;
     try {
@@ -382,17 +432,22 @@ function NewClientReview({
 
       <div className="flex flex-col gap-3">
         <div className="text-[0.75rem] font-bold text-v3-text-muted">추출된 고객 정보 — 수정 후 등록</div>
-        {TEXT_FIELDS.map(({ field, type, kind }) => {
+        {TEXT_FIELDS.map(({ field, type }) => {
           const proposal = proposalFor(proposals, field);
           const isLow = proposal?.confidence === "low";
-          const hints = INPUT_HINTS[kind];
+          const hints = inputHintsFor(field);
+          const slot = fieldMessages.slot(field);
+          const hasError = slot?.tone === "err";
           return (
             <div key={field} className="flex flex-col gap-1">
-              <Label htmlFor={`review-${field}`} className="text-[0.72rem] text-v3-text-muted">
-                {FIELD_LABELS[field]}
-              </Label>
+              <FieldLabelRow
+                data-component={`${REVIEW_BASE}_new-client_${field}-field`}
+                htmlFor={inputIdFor(field)}
+                label={FIELD_LABELS[field]}
+                message={slot}
+              />
               <Input
-                id={`review-${field}`}
+                id={inputIdFor(field)}
                 type={type}
                 value={fields[field] ?? ""}
                 disabled={!isPending}
@@ -400,6 +455,10 @@ function NewClientReview({
                 maxLength={hints?.maxLength}
                 placeholder={hints?.placeholder}
                 onChange={(e) => setField(field, formatFieldValue(field, e.target.value))}
+                {...fieldMessages.bind(field)}
+                error={hasError}
+                aria-invalid={hasError ? true : undefined}
+                aria-describedby={fieldMessageId(inputIdFor(field))}
                 className={isLow ? "border-amber-400 bg-amber-50" : undefined}
               />
               <EvidenceChip proposal={proposal} transcript={draft.callRecord.transcript} onJump={jump} />
@@ -495,6 +554,21 @@ function ClientUpdateReview({
   const includedCount = proposals.filter((p) => included[p.field]).length;
   const busy = confirmDraft.isPending || discardDraft.isPending;
 
+  // Only included, reviewer-editable rows are checked; an excluded row is not applied.
+  const locale = useLocale();
+  const editableFields = proposals
+    .filter((p) => typeof p.value !== "boolean" && (included[p.field] ?? true))
+    .map((p) => p.field);
+  const fieldMessages = useFieldMessages<string>({
+    values: editedValues,
+    specs: isPending
+      ? Object.fromEntries(
+          editableFields.map((field) => [field, specFor(field, editedValues.startDate)]),
+        )
+      : {},
+    locale,
+  });
+
   const handleDiscard = async () => {
     try {
       await discardDraft.mutateAsync({});
@@ -506,6 +580,14 @@ function ClientUpdateReview({
   };
 
   const handleApply = async () => {
+    // Each problem is shown in its own row's message slot; take the reviewer to the first one.
+    fieldMessages.markSubmitted();
+    const invalidFields = fieldMessages.invalidFields(editableFields);
+    if (invalidFields.length > 0) {
+      focusFirstInvalidField(invalidFields.map(inputIdFor));
+      return;
+    }
+
     const changes: Record<string, string | number | boolean | null> = {};
     for (const proposal of proposals) {
       if (!included[proposal.field]) continue;
@@ -515,10 +597,6 @@ function ClientUpdateReview({
       } else {
         const raw = editedValues[proposal.field] ?? "";
         if (proposal.field === "birthday") {
-          if (raw && !isValidBirthdayIsoDate(raw)) {
-            toast({ title: "생년월일을 YYYY-MM-DD 형식으로 입력해 주세요", variant: "destructive" });
-            return;
-          }
           changes.birthday = raw || null;
           continue;
         }
@@ -593,9 +671,20 @@ function ClientUpdateReview({
               className={`rounded-xl border p-3 ${isIncluded ? "border-v3-border" : "border-v3-border opacity-50"}`}
               data-component={`${REVIEW_BASE}_client-update_diff-row`}
             >
-              <div className="mb-1 flex items-center justify-between text-[0.72rem] text-v3-text-muted">
-                <span>{FIELD_LABELS[proposal.field] ?? proposal.field}</span>
-                <div className="flex items-center gap-2">
+              <div className="mb-1 flex items-center gap-2 text-[0.72rem] text-v3-text-muted">
+                {isPending && !isBool ? (
+                  <div className="min-w-0 flex-1">
+                    <FieldLabelRow
+                      data-component={`${REVIEW_BASE}_client-update_${proposal.field}-field`}
+                      htmlFor={inputIdFor(proposal.field)}
+                      label={FIELD_LABELS[proposal.field] ?? proposal.field}
+                      message={fieldMessages.slot(proposal.field)}
+                    />
+                  </div>
+                ) : (
+                  <span className="flex-1">{FIELD_LABELS[proposal.field] ?? proposal.field}</span>
+                )}
+                <div className="flex shrink-0 items-center gap-2">
                   {isLow && <span className="font-bold text-amber-600">⚠ 확신도 낮음</span>}
                   {isPending && (
                     <Switch
@@ -616,20 +705,24 @@ function ClientUpdateReview({
               )}
               {isPending && !isBool ? (
                 <Input
+                  id={inputIdFor(proposal.field)}
                   type={proposal.field === "phone" ? "tel" : "text"}
                   value={editedValues[proposal.field] ?? ""}
                   disabled={!isIncluded}
-                  inputMode={INPUT_HINTS[FIELD_KIND[proposal.field] ?? ""]?.inputMode}
-                  maxLength={INPUT_HINTS[FIELD_KIND[proposal.field] ?? ""]?.maxLength}
-                  placeholder={INPUT_HINTS[FIELD_KIND[proposal.field] ?? ""]?.placeholder}
+                  inputMode={inputHintsFor(proposal.field)?.inputMode}
+                  maxLength={inputHintsFor(proposal.field)?.maxLength}
+                  placeholder={inputHintsFor(proposal.field)?.placeholder}
                   onChange={(e) =>
                     setEditedValues((prev) => ({
                       ...prev,
                       [proposal.field]: formatFieldValue(proposal.field, e.target.value),
                     }))
                   }
+                  {...fieldMessages.bind(proposal.field)}
+                  error={fieldMessages.slot(proposal.field)?.tone === "err"}
+                  aria-invalid={fieldMessages.slot(proposal.field)?.tone === "err" ? true : undefined}
+                  aria-describedby={fieldMessageId(inputIdFor(proposal.field))}
                   className="text-[0.85rem]"
-                  aria-label={FIELD_LABELS[proposal.field] ?? proposal.field}
                 />
               ) : isPending && isBool ? (
                 <div className="flex items-center gap-2 text-[0.85rem]">

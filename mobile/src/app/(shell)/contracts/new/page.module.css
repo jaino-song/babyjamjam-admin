@@ -223,37 +223,9 @@
   gap: 10px;
 }
 
-.formLabelRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 2px 8px;
-}
-
-/* 라벨 줄 오른쪽 메시지. 좁으면 라벨 아래로 내려가되 라벨 줄 안에서 오른쪽에 붙어요. */
-.formLabelRow > .formHelper,
-.formCardTitleMessage .formHelper {
-  min-width: 0;
-  margin-left: auto;
-  text-align: right;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
 .formCardTitleMessage {
   margin-left: auto;
   min-width: 0;
-}
-
-.formLabel {
-  display: block;
-  margin: 0;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .requiredMark {
@@ -288,30 +260,6 @@
   cursor: not-allowed;
   background: hsl(220 20% 97%);
   opacity: 0.55;
-}
-
-.formHelper {
-  margin: 0;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
-}
-
-.helper_ok {
-  color: hsl(var(--v3-green));
-  font-weight: 600;
-}
-
-.helper_err {
-  color: hsl(var(--v3-burgundy));
-  font-weight: 600;
-}
-
-.helper_pending {
-  color: hsl(var(--v3-primary));
-}
-
-.helper_muted {
-  color: hsl(var(--v3-text-muted));
 }
 
 .selectWrap {

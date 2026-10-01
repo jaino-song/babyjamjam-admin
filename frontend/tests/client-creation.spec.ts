@@ -66,9 +66,9 @@ test.describe('Client Creation Flow', () => {
             const submitButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /등록|생성|create|저장|save/i });
             await submitButton.click();
 
-            // Should show error alert
-            const errorAlert = page.locator('[data-testid="client-form-dialog"]').locator('[role="alert"]');
-            await expect(errorAlert).toBeVisible({ timeout: 3000 });
+            // Field problems are shown in each field's label-row slot (top-right), not in a top alert
+            const fieldErrors = page.locator('[data-testid="client-form-dialog"]').locator('[data-slot="field-error-message"]');
+            await expect(fieldErrors.first()).toBeVisible({ timeout: 3000 });
         });
 
         test('should validate required fields one by one', async ({ page }) => {
@@ -81,9 +81,9 @@ test.describe('Client Creation Flow', () => {
             const submitButton = dialog.getByRole('button', { name: /등록|생성|create/i });
             await submitButton.click();
 
-            // Should still show error (other fields missing)
-            const errorAlert = dialog.locator('[role="alert"]');
-            await expect(errorAlert).toBeVisible({ timeout: 3000 });
+            // Should still show a field error (other fields missing)
+            const fieldErrors = dialog.locator('[data-slot="field-error-message"]');
+            await expect(fieldErrors.first()).toBeVisible({ timeout: 3000 });
         });
     });
 
@@ -105,19 +105,19 @@ test.describe('Client Creation Flow', () => {
             await expect(nameInput).toHaveValue('홍길동');
         });
 
-        test('should format birthday as YYMMDD', async ({ page }) => {
+        test('should format birthday as YYYY-MM-DD', async ({ page }) => {
             const dialog = page.locator('[data-testid="client-form-dialog"]');
 
-            // Find birthday input (usually has placeholder YYMMDD)
-            const birthdayInput = dialog.locator('input[placeholder*="YYMMDD"], input').nth(1);
+            // Birthday is typed as digits; hyphens are inserted automatically.
+            const birthdayInput = dialog.locator('input[placeholder="1958-03-03"]');
 
-            await birthdayInput.fill('900515');
-            await expect(birthdayInput).toHaveValue('900515');
-
-            // Should not accept more than 6 characters
             await birthdayInput.fill('19900515');
+            await expect(birthdayInput).toHaveValue('1990-05-15');
+
+            // Should not accept more than 10 characters (YYYY-MM-DD)
+            await birthdayInput.fill('199005151234');
             const value = await birthdayInput.inputValue();
-            expect(value.length).toBeLessThanOrEqual(6);
+            expect(value.length).toBeLessThanOrEqual(10);
         });
 
         test('should format phone number as XXX-XXXX-XXXX', async ({ page }) => {
@@ -368,12 +368,9 @@ test.describe('Client Creation Flow', () => {
         test('should accept start date input', async ({ page }) => {
             const dialog = page.locator('[data-testid="client-form-dialog"]');
 
-            // Find date inputs
-            const dateInputs = dialog.locator('input[type="date"]');
-
-            // Fill start date
-            const startDateInput = dateInputs.first();
-            await startDateInput.fill('2025-02-01');
+            // Dates are typed as YYYY-MM-DD in auto-hyphenated text inputs
+            const startDateInput = dialog.locator('input[placeholder="2026-12-01"]');
+            await startDateInput.fill('20250201');
 
             await expect(startDateInput).toHaveValue('2025-02-01');
         });
@@ -381,12 +378,8 @@ test.describe('Client Creation Flow', () => {
         test('should accept end date input', async ({ page }) => {
             const dialog = page.locator('[data-testid="client-form-dialog"]');
 
-            // Find date inputs
-            const dateInputs = dialog.locator('input[type="date"]');
-
-            // Fill end date
-            const endDateInput = dateInputs.nth(1);
-            await endDateInput.fill('2025-03-31');
+            const endDateInput = dialog.locator('input[placeholder="2026-12-19"]');
+            await endDateInput.fill('20250331');
 
             await expect(endDateInput).toHaveValue('2025-03-31');
         });
@@ -490,7 +483,7 @@ test.describe('Complete Client Creation Flow', () => {
         // Fill basic info
         const inputs = dialog.locator('input[type="text"]');
         await inputs.first().fill('테스트 산모'); // name
-        await inputs.nth(1).fill('900515'); // birthday
+        await inputs.nth(1).fill('19900515'); // birthday (typed as digits, formatted to YYYY-MM-DD)
         await inputs.nth(2).fill('01012345678'); // phone
         await inputs.nth(3).fill('인천시 연수구'); // address
 
@@ -522,9 +515,8 @@ test.describe('Complete Client Creation Flow', () => {
         await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
 
         // Fill dates
-        const dateInputs = dialog.locator('input[type="date"]');
-        await dateInputs.first().fill('2025-02-01');
-        await dateInputs.nth(1).fill('2025-03-31');
+        await dialog.locator('input[placeholder="2026-12-01"]').fill('20250201');
+        await dialog.locator('input[placeholder="2026-12-19"]').fill('20250331');
 
         // Note: Actual submission would create data, so we skip in E2E test
         // If needed, add: await submitButton.click();

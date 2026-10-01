@@ -238,7 +238,10 @@ describe("mobile client wizard mutation error presentation", () => {
     expect(nameInput).toHaveValue(initialForm.name);
     expect(nameInput).toHaveFocus();
     expect(nameInput).toHaveAttribute("aria-invalid", "true");
-    expect(nameInput).toHaveAttribute("aria-describedby", "mobile_clients-new_screen_root_error-summary_item-0");
+    expect(nameInput).toHaveAttribute(
+      "aria-describedby",
+      "name-message mobile_clients-new_screen_root_error-summary_item-0",
+    );
     expect(getPhoneInput()).toHaveAttribute("aria-invalid", "true");
     expect(getPhoneInput()).toHaveValue(initialForm.phone);
   });

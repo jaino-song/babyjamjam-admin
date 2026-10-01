@@ -370,7 +370,6 @@
       "section-flags": "추가 옵션",
       "name": "이름",
       "birthday": "생년월일",
-      "birthday-helper": "YYYY-MM-DD 형식 (예: 1958-03-03)",
       "due-date": "출산 예정일",
       "birth-date": "출산일",
       "phone": "연락처",
@@ -398,11 +397,9 @@
       "error-name-required": "이름을 입력해 주세요.",
       "error-birthday-required": "생년월일을 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
       "error-due-date-required": "출산 예정일을 입력해 주세요.",
-      "error-due-date-invalid": "출산 예정일을 YYYY-MM-DD 형식의 올바른 날짜로 입력해 주세요.",
-      "error-birth-date-invalid": "출산일을 YYYY-MM-DD 형식의 올바른 날짜로 입력해 주세요.",
       "error-address-required": "주소를 입력해 주세요.",
       "error-phone-required": "연락처를 입력해 주세요.",
-      "error-phone-duplicate": "이미 등록된 연락처 이에요.",
+      "error-phone-duplicate": "이미 등록된 연락처예요",
       "error-employee-required": "주 담당 인력을 선택해 주세요.",
       "error-type-required": "바우처 유형을 선택해 주세요.",
       "error-duration-required": "서비스 기간을 선택해 주세요.",
@@ -466,9 +463,8 @@
       "open-to-next-work": "다음 배정 가능 여부",
       "registered-date": "등록일",
       "registered-date-unknown": "알 수 없음",
-      "phone-required": "연락처를 입력해 주세요",
       "work-area-required": "근무 지역을 선택해 주세요",
-      "error-phone-duplicate": "이미 등록된 연락처예요. 제공인력 목록에서 연락처로 검색해 주세요.",
+      "error-phone-duplicate": "이미 등록된 연락처예요",
       "error-create-failed": "제공인력 등록에 실패했어요. 다시 시도해 주세요.",
       "error-update-failed": "제공인력 정보 수정에 실패했어요. 다시 시도해 주세요.",
       "error-save-failed": "저장에 실패했어요. 다시 시도해 주세요.",
@@ -569,6 +565,20 @@
       "endpoint": "알림 엔드포인트",
       "kakao_id": "카카오 ID",
       "year_type_duration": "연도/유형/기간"
+    }
+  },
+  "form": {
+    "validation": {
+      "required": "{label} 입력해 주세요",
+      "phone-format-hint": "010-1234-5678 형식",
+      "phone-format": "010-1234-5678로 입력해 주세요",
+      "date-format-hint": "YYYY-MM-DD 형식",
+      "date-format": "YYYY-MM-DD로 입력해 주세요",
+      "date-invalid": "존재하지 않는 날짜예요",
+      "date-range": "종료일은 시작일 이후여야 해요",
+      "date-not-before": "{date} 이후로 입력해 주세요",
+      "birthday-future": "미래 날짜는 입력할 수 없어요",
+      "phone-checking": "중복 확인 중이에요"
     }
   }
 }

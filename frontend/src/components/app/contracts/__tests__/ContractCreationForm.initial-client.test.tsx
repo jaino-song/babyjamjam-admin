@@ -258,7 +258,7 @@ describe("ContractCreationForm — initialClient mode", () => {
 
     // Spot-check the rendered DOM reflects the same values.
     expect(screen.getByRole("combobox", { name: "산모님 성함" })).toHaveTextContent(clientA.name);
-    expect(screen.getByLabelText("출산일")).toHaveValue("260820");
+    expect(screen.getByLabelText("출산일")).toHaveValue("2026-08-20");
   });
 
   it("disables the client selector trigger when initialClient is provided", () => {
@@ -304,7 +304,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(state.paymentDate).toBe("");
   });
 
-  it("carries a typed YYMMDD 출산일 through to the update-client mutation as an ISO birthDate", async () => {
+  it("carries a typed YYYYMMDD 출산일 through to the update-client mutation as an ISO birthDate", async () => {
     seedValidContract({ birthDate: "" });
 
     const queryClient = new QueryClient({
@@ -321,10 +321,9 @@ describe("ContractCreationForm — initialClient mode", () => {
 
     const { rerender } = render(<Wrapper activeStep={0} />);
 
-    // 출산일 (delivery date) is a near-term date, so the YYMMDD input's "YY"
-    // maps to 20YY (see parseYymmddInputToIso) — "26" -> 2026, not 1926.
-    fireEvent.change(screen.getByLabelText("출산일"), { target: { value: "260805" } });
-    expect(screen.getByLabelText("출산일")).toHaveValue("260805");
+    // 출산일 (delivery date) is typed as digits and shown as YYYY-MM-DD.
+    fireEvent.change(screen.getByLabelText("출산일"), { target: { value: "20260805" } });
+    expect(screen.getByLabelText("출산일")).toHaveValue("2026-08-05");
 
     // Same component instance (same key/position) — local birthDateInput
     // state survives the step jump, exactly like the wizard's own stepper.
