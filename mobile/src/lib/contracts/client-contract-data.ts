@@ -2,7 +2,7 @@ import dayjs from "dayjs";
 
 import type { Employee } from "@/hooks/useEmployees";
 import type { AreaTemplate } from "@/hooks/useVoucherData";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import type { Client } from "@/lib/client/types";
 import type { ContractDataDto } from "@/services/api";
 
@@ -19,6 +19,8 @@ export interface BuildClientContractDataParams {
   client: Client;
   employees: readonly Employee[];
   areaTemplates: readonly AreaTemplate[];
+  /** The branch calendar; the saved end date must not fall back to the built-in list. */
+  calendar: KrBusinessDayCalendar;
 }
 
 export interface BuiltClientContractData {
@@ -97,6 +99,7 @@ export function buildClientContractData({
   client,
   employees,
   areaTemplates,
+  calendar,
 }: BuildClientContractDataParams): BuiltClientContractData {
   const customerName = requireText(client.name, "고객 이름");
   const customerContact = requireText(client.phone, "고객 연락처");
@@ -111,7 +114,7 @@ export function buildClientContractData({
   }
 
   const startDate = requireDate(client.startDate, "서비스 시작일");
-  const endDate = normalizeIsoDate(client.endDate) || calcEndDateBusinessDays(startDate, Number(voucherDuration));
+  const endDate = normalizeIsoDate(client.endDate) || calendar.calcEndDateBusinessDays(startDate, Number(voucherDuration));
   if (!endDate) {
     throw new Error("서비스 종료일 정보가 없습니다.");
   }

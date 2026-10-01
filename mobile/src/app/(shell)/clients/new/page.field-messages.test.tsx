@@ -8,6 +8,8 @@ import NewClientPage from "./page";
 const mockCreateClient = jest.fn();
 const mockEmptyPrices: never[] = [];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

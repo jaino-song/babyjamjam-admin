@@ -2,7 +2,13 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { ChangeEvent } from "react";
 
 import type { Client } from "@/lib/client/types";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { useBusinessDayCalendar, type UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
+import {
+  calcEndDateBusinessDays,
+  createKrBusinessDayCalendar,
+  getKoreanHolidays,
+  KR_BUILTIN_CALENDAR,
+} from "@/lib/date/business-days";
 import { useFormStore } from "@/stores/form-store";
 
 const mockPush = jest.fn();
@@ -49,6 +55,8 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     ...overrides,
   } as Client;
 }
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -738,5 +746,108 @@ describe("mobile contract form - entering with a prefilled store (client detail)
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mobile contract form - branch holiday calendar", () => {
+  const mockedCalendarHook = jest.mocked(useBusinessDayCalendar);
+  // The branch closes Friday 2026-09-11, inside the stored client's 5-business-day period.
+  const branchCalendar = (version: string) =>
+    createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-09-11"], {
+      version,
+      supportedYears: [2026],
+    });
+  const BRANCH_CALENDAR = branchCalendar("kr-db-branch");
+  const BRANCH_END = BRANCH_CALENDAR.calcEndDateBusinessDays(STORED_START, 5);
+
+  const calendarResult = (overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult => {
+    const calendar = overrides.calendar ?? BRANCH_CALENDAR;
+    return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+  };
+  const endDateInput = () => input("period-card_end-date-input");
+
+  async function renderOnPeriodStep() {
+    const { default: ContractCreationPage } = await import("./page");
+    const view = render(<ContractCreationPage />);
+    const rerender = () => view.rerender(<ContractCreationPage />);
+    selectStoredClient();
+    for (let i = 0; i < 3; i += 1) next();
+    return { rerender };
+  }
+
+  beforeEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult());
+  });
+
+  afterEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+  });
+
+  it("moves the calculated end date by the branch-added holiday", async () => {
+    expect(BRANCH_END).not.toBe(STORED_END);
+
+    await renderOnPeriodStep();
+
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_END));
+  });
+
+  it("calculates the end date once when the calendar becomes ready, not while it loads", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR }));
+    const { rerender } = await renderOnPeriodStep();
+
+    expect(endDateInput()).toHaveValue(STORED_END);
+    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+
+    mockedCalendarHook.mockReturnValue(calendarResult());
+    rerender();
+
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_END));
+  });
+
+  it("keeps a manual end date when the calendar reloads without the dates changing", async () => {
+    const { rerender } = await renderOnPeriodStep();
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_END));
+
+    fireEvent.change(endDateInput(), { target: { value: "2026-10-30" } });
+    expect(endDateInput()).toHaveValue("2026-10-30");
+
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false }));
+    rerender();
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: branchCalendar("kr-db-branch-2") }));
+    rerender();
+
+    expect(endDateInput()).toHaveValue("2026-10-30");
+  });
+
+  it("disables 계약서 생성 and does not submit until the calendar is ready", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR }));
+    const { rerender } = await renderOnPeriodStep();
+
+    const submitButton = screen.getByRole("button", { name: "계약서 생성" });
+    expect(submitButton).toBeDisabled();
+    fireEvent.click(submitButton);
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+
+    mockedCalendarHook.mockReturnValue(calendarResult());
+    rerender();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+  });
+
+  it("shows the no-branch notice next to the period and blocks submitting", async () => {
+    mockedCalendarHook.mockReturnValue(
+      calendarResult({ ready: false, error: "no-branch", calendar: KR_BUILTIN_CALENDAR }),
+    );
+    await renderOnPeriodStep();
+
+    expect(screen.getByText("지점을 선택한 뒤 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeDisabled();
+  });
+
+  it("asks the calendar hook for the years of the form dates", async () => {
+    await renderOnPeriodStep();
+
+    const lastCall = mockedCalendarHook.mock.calls.at(-1)?.[0];
+    expect(lastCall?.extraYears).toEqual(expect.arrayContaining([2026, 2027]));
   });
 });

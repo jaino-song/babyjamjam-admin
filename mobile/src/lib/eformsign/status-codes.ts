@@ -23,6 +23,7 @@ import {
   resolveContractDocStatusLabel,
   type ContractDocDisplayStatusLabel,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 export {
   DELETED_STATUS_CODES,
@@ -82,6 +83,7 @@ export function mapDocStatusLabel(
   currentStatus: EformsignWorkflowStatus | null | undefined,
   contractEndDate?: string | null,
   displayStatus?: string | null,
+  calendar?: KrBusinessDayCalendar,
 ): DocumentStatusLabel {
   // The backend's serve-time display_status is authoritative when present.
   if (isContractDocDisplayStatus(displayStatus)) {
@@ -89,11 +91,14 @@ export function mapDocStatusLabel(
   }
   const category = getStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
-  return resolveContractDocStatusLabel({
-    category,
-    currentStatus,
-    contractEndDate: contractEndDate ?? null,
-  });
+  const params = { category, currentStatus, contractEndDate: contractEndDate ?? null };
+  if (!calendar) return resolveContractDocStatusLabel(params);
+  try {
+    return resolveContractDocStatusLabel({ ...params, calendar });
+  } catch {
+    // Display-only: an end-date year the branch calendar did not load reads on the built-in list.
+    return resolveContractDocStatusLabel(params);
+  }
 }
 
 // Filter types for API calls

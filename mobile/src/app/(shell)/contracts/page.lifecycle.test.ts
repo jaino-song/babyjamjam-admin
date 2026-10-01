@@ -141,7 +141,7 @@ describe("mobile contracts action lifecycle", () => {
       "...(isServiceRecord ||\n                  !isContractReceiptSendable({\n                    displayStatus: doc.display_status,",
     );
     expect(source).toContain(
-      "contractEndDate: doc.contract_end_date,\n                  })\n                    ? []\n                    : [",
+      "contractEndDate: doc.contract_end_date,\n                    calendar,\n                  })\n                    ? []\n                    : [",
     );
     expect(source).toContain('label: "영수증 문자 발송",');
   });

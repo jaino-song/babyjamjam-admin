@@ -1,3 +1,4 @@
+import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import {
   getServiceDateDurationCheck,
   getServiceDateDurationPeriodKey,
@@ -5,7 +6,7 @@ import {
 
 describe("getServiceDateDurationCheck", () => {
   it("detects the 15-session versus four-business-day period without changing either value", () => {
-    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-08", 15);
+    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-08", 15, KR_BUILTIN_CALENDAR);
 
     expect(result.businessDays).toBe(4);
     expect(result.hasMismatch).toBe(true);
@@ -15,16 +16,28 @@ describe("getServiceDateDurationCheck", () => {
   });
 
   it("does not request confirmation for a matching business-day period", () => {
-    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-23", 15);
+    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-23", 15, KR_BUILTIN_CALENDAR);
 
     expect(result.businessDays).toBe(15);
     expect(result.hasMismatch).toBe(false);
   });
 
   it.each([0, -1, 1.5, null])("does not treat %s as an allowed positive duration", (duration) => {
-    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-08", duration);
+    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-08", duration, KR_BUILTIN_CALENDAR);
 
     expect(result.hasMismatch).toBe(false);
+  });
+
+  it("counts a branch-added holiday as a non-business day", () => {
+    const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-09-10"], {
+      version: "kr-db-test",
+      supportedYears: [2026],
+    });
+
+    const result = getServiceDateDurationCheck("2026-09-03", "2026-09-23", 15, branchCalendar);
+
+    expect(result.businessDays).toBe(14);
+    expect(result.hasMismatch).toBe(true);
   });
 
   it("uses a distinct confirmation key whenever the period changes", () => {
