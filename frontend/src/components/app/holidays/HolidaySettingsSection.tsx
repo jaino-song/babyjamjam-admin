@@ -22,6 +22,7 @@ import { HolidayAddForm } from "./HolidayAddForm";
 import { HolidayInactiveOverrides } from "./HolidayInactiveOverrides";
 import { HolidayList } from "./HolidayList";
 import { HolidaySyncStrip } from "./HolidaySyncStrip";
+import { HolidayReviewCards } from "./review/HolidayReviewCards";
 import { formatHolidayDate } from "./holiday-format";
 
 const SOURCE_COMPONENT = "HolidaySettingsSection";
@@ -176,7 +177,7 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
             onSync={() => syncMutation.mutate()}
           />
 
-          <div data-slot="holiday-review-cards" />
+          <HolidayReviewCards branchId={branchId} />
 
           <div data-component={`${DATA_COMPONENT}_toolbar`} className="flex flex-wrap items-center justify-between gap-3">
             <div role="tablist" aria-label="연도" data-component={`${DATA_COMPONENT}_toolbar_year-tabs`} className="flex gap-1.5">
