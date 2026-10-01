@@ -45,3 +45,42 @@ describe("SettingsPage call-ingest-token section gating", () => {
     expect(falsyArm).toBeGreaterThan(truthyArm);
   });
 });
+
+// Source-level assertions for the "알림 보내기" tab (BJJ-355), matching the
+// call-ingest-tokens gating tests above: the page has no render harness here.
+describe("SettingsPage send-notification tab gating", () => {
+  it("offers the send-notification tab in the nav only to branch managers", () => {
+    expect(source).toContain(
+      'import { SendNotificationBranchRequired } from "@/components/app/notifications/SendNotificationBranchRequired"',
+    );
+    expect(source).toContain(
+      'import { SendNotificationSection } from "@/components/app/notifications/SendNotificationSection"',
+    );
+    expect(source).toContain(
+      "const navSections = canManageBranchSettings\n    ? [...BASE_NAV_SECTIONS, ...BRANCH_MANAGER_NAV_SECTIONS]",
+    );
+    expect(source).toContain('id: "send-notification"');
+    expect(source).toContain('label: "알림 보내기"');
+    // A plain user (canManageBranchSettings === false) never gets
+    // BRANCH_MANAGER_NAV_SECTIONS merged in, so the "알림 보내기" nav entry -
+    // and thus the send-notification section - is unreachable for them.
+    expect(source).not.toContain('BASE_NAV_SECTIONS, "send-notification"');
+  });
+
+  it("renders the section only with a resolved branch, and explains itself without one", () => {
+    expect(source).toContain('activeSection === "send-notification" && canManageBranchSettings');
+    // key={branchId} forces a remount (and thus a draft reset) on branch
+    // switch — see SendNotificationSection's own key={branchId} contract.
+    expect(source).toContain("<SendNotificationSection key={branchId} branchId={branchId} />");
+    expect(source).toContain("<SendNotificationBranchRequired />");
+
+    // Pin which arm is which, the same way the call-ingest-tokens test above
+    // guards against an inverted ternary.
+    const gate = source.slice(source.indexOf('activeSection === "send-notification" && canManageBranchSettings'));
+    const truthyArm = gate.indexOf("<SendNotificationSection key={branchId} branchId={branchId} />");
+    const falsyArm = gate.indexOf("<SendNotificationBranchRequired />");
+    expect(gate).toContain("branchId ? (");
+    expect(truthyArm).toBeGreaterThan(-1);
+    expect(falsyArm).toBeGreaterThan(truthyArm);
+  });
+});
