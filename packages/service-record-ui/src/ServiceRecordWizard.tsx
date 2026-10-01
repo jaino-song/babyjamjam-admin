@@ -1036,10 +1036,18 @@ export function ServiceRecordWizard({
                                 />
                             </div>
                         )}
-                        {/* The one page-level caution: shown only where no date field is on the page (later pages), since there is no slot for it to sit in. */}
+                        {/* Where no date field is on the page (later pages, admin edit) the date's caution still lives in a field slot: a compact read-only row. */}
                         {!readOnly && (!editing || adminMode) && hasServiceDateMismatch && !serviceDateFieldVisible && (
-                            <div data-component={child("body_date-mismatch-notice")} data-slot="notice" className="notice">
-                                <span>서비스 제공일자({formatMonthDayKo(currentServiceDate)})가 오늘과 달라요. 한번 더 확인해 주세요.</span>
+                            <div data-component={child("body_service-date-readonly")} data-slot="fld" className="fld">
+                                <FieldLabelRow
+                                    dataComponent={child("body_service-date-readonly_date")}
+                                    label="서비스 제공일자"
+                                    slotId="service-record-date-readonly-helper"
+                                    message={hintMessage(FIELD_COPY.serviceDateMismatch)}
+                                />
+                                <div data-component={child("body_service-date-readonly_value")} data-slot="ro" className="ro">
+                                    <b>{currentServiceDate}</b>
+                                </div>
                             </div>
                         )}
                         <div data-component={child("body_day-title")} data-slot="step-title" className="step-title">{currentDayPage.title}</div>

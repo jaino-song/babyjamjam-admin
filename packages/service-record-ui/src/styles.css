@@ -28,6 +28,7 @@
 .srec .ta{min-height:84px;resize:vertical}
 .srec .err{color:#c2456e;font-size:13px;margin:8px 0 0}
 .srec .ro{display:flex;justify-content:space-between;font-size:13px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px;background:#f9fbfe}
+.srec .fld>.ro{margin-bottom:0}
 .srec .opts{display:flex;flex-wrap:wrap;gap:8px}
 .srec .opt{display:flex;align-items:center;gap:9px;border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;font-size:14.5px;background:#fff;cursor:pointer;color:var(--ink)}
 .srec .opt .box{width:20px;height:20px;border-radius:6px;border:2px solid #c4cdda;flex:0 0 auto;display:grid;place-items:center;font-size:12px;color:#fff}

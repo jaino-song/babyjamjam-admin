@@ -222,23 +222,19 @@ describe("mobile client wizard field messages", () => {
       expect(screen.queryByText(GUIDANCE)).not.toBeInTheDocument();
     });
 
-    it("replaces the guidance with the required error on next, and restores it after a period is chosen", async () => {
-      mockVoucherPrices = [{ duration: 15, fullPrice: "1000000", grant: "800000", actualPrice: "200000" }];
+    it("keeps the guidance when 다음 is pressed with no type or period, and shows no required error", async () => {
       await renderPage(1);
       act(() => useClientWizardStore.getState().setField("voucherClient", true));
 
       fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
-      expect(slotOf(field("type"))).toHaveTextContent("바우처 유형을 선택해 주세요");
-      expect(field("type")).toHaveAttribute("aria-invalid", "true");
-      expect(useClientWizardStore.getState().currentStep).toBe(1);
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+      expect(screen.queryByText("바우처 유형을 선택해 주세요")).not.toBeInTheDocument();
+      expect(screen.queryByText("서비스 기간을 선택해 주세요")).not.toBeInTheDocument();
 
-      fireEvent.change(field("type"), { target: { value: "A가1" } });
-      expect(slotOf(field("duration"))).toHaveTextContent("서비스 기간을 선택해 주세요");
-      expect(slotOf(field("duration"))).not.toHaveTextContent(GUIDANCE);
-      expect(field("duration")).toHaveAttribute("aria-invalid", "true");
-
-      fireEvent.change(field("duration"), { target: { value: "15" } });
+      act(() => useClientWizardStore.getState().setCurrentStep(1));
+      expect(slotOf(field("type"))).toBeEmptyDOMElement();
+      expect(field("type")).not.toHaveAttribute("aria-invalid", "true");
       expect(slotOf(field("duration"))).toHaveTextContent(GUIDANCE);
       expect(field("duration")).not.toHaveAttribute("aria-invalid", "true");
     });
@@ -258,6 +254,18 @@ describe("mobile client wizard field messages", () => {
       fireEvent.click(screen.getByRole("button", { name: "다음" }));
 
       expect(useClientWizardStore.getState().currentStep).toBe(2);
+    });
+
+    it("lets a voucher client with no type or period move on and shows no required error", async () => {
+      mockVoucherPrices = PRICES;
+      await renderPage(1);
+      setForm({ voucherClient: true });
+
+      fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+      expect(useClientWizardStore.getState().currentStep).toBe(2);
+      expect(screen.queryByText("바우처 유형을 선택해 주세요")).not.toBeInTheDocument();
+      expect(screen.queryByText("서비스 기간을 선택해 주세요")).not.toBeInTheDocument();
     });
 
     it("lets a complete voucher client move on", async () => {
@@ -315,38 +323,30 @@ describe("mobile client wizard field messages", () => {
       );
     });
 
-    it("shows a failed voucher price lookup in the period slot instead of the required error", async () => {
+    it("shows a failed voucher price lookup in the period slot", async () => {
       mockVoucherPricesError = true;
       await renderPage(1);
       setForm({ voucherClient: true, type: "A가1" });
 
       expect(slotOf(field("duration"))).toHaveTextContent("요금 정보를 불러오지 못했어요");
       expect(field("duration")).toBeDisabled();
-
-      fireEvent.click(screen.getByRole("button", { name: "다음" }));
-
-      expect(slotOf(field("duration"))).toHaveTextContent("요금 정보를 불러오지 못했어요");
-      expect(slotOf(field("duration"))).not.toHaveTextContent("서비스 기간을 선택해 주세요");
-      expect(useClientWizardStore.getState().currentStep).toBe(1);
+      expect(field("duration")).toHaveAttribute("aria-invalid", "true");
     });
 
-    it("does not call a period missing while its prices are still loading", async () => {
+    it("shows no error in the period slot while its prices are still loading", async () => {
       mockVoucherPricesLoading = true;
       await renderPage(1);
       setForm({ voucherClient: true, type: "A가1" });
 
-      fireEvent.click(screen.getByRole("button", { name: "다음" }));
-
       expect(slotOf(field("duration"))).not.toHaveTextContent("서비스 기간을 선택해 주세요");
       expect(field("duration")).not.toHaveAttribute("aria-invalid", "true");
-      expect(useClientWizardStore.getState().currentStep).toBe(1);
     });
 
-    it("forgets a blocked next press when the customer type changes", async () => {
+    it("keeps the guidance after the customer type changes", async () => {
       await renderPage(1);
       setForm({ voucherClient: true });
       fireEvent.click(screen.getByRole("button", { name: "다음" }));
-      expect(slotOf(field("type"))).toHaveTextContent("바우처 유형을 선택해 주세요");
+      act(() => useClientWizardStore.getState().setCurrentStep(1));
 
       fireEvent.click(screen.getByRole("tab", { name: "자부담 고객" }));
       fireEvent.click(screen.getByRole("tab", { name: "바우처 고객" }));
