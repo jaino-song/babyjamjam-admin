@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { EmployeeFormDialog } from "../EmployeeFormDialog";
 
 const mockCreateEmployeeMutateAsync = jest.fn();
@@ -113,23 +114,33 @@ describe("EmployeeFormDialog API errors", () => {
     const submitButton = await fillRequiredFields();
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText("이름: 필수 항목이에요.")).toBeInTheDocument();
-    expect(screen.getByText("연락처: 입력 형식이 올바르지 않아요.")).toBeInTheDocument();
+    const nameInput = screen.getByLabelText(/이름/);
+    const phoneInput = screen.getByLabelText(/연락처/);
+    expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByText("입력 형식이 올바르지 않아요.")).toHaveAttribute("data-slot", "field-error-message");
+    // Field errors live in their field's slot, not in the summary list.
+    expect(screen.queryByText("이름: 필수 항목이에요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("연락처: 입력 형식이 올바르지 않아요.")).not.toBeInTheDocument();
+    // Errors that map to no visible field and the request id stay in the summary.
     expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
     expect(screen.getByText("입력 항목: 허용 범위를 벗어난 값이에요.")).toBeInTheDocument();
     expect(screen.queryByText(/internalTenantId/)).not.toBeInTheDocument();
 
-    const nameInput = screen.getByLabelText(/이름/);
-    const phoneInput = screen.getByLabelText(/연락처/);
     expect(nameInput).toHaveValue("김관리");
     expect(nameInput).toHaveAttribute("aria-invalid", "true");
-    expect(nameInput.getAttribute("aria-describedby")).toContain(
-      "desktop_employees_form-dialog_error_0",
-    );
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
-    expect(phoneInput.getAttribute("aria-describedby")).toContain(
-      "desktop_employees_form-dialog_error_1",
-    );
+    const nameMessageId = nameInput.getAttribute("aria-describedby");
+    expect(nameMessageId).toBeTruthy();
+    expect(document.getElementById(nameMessageId as string)).toHaveTextContent("필수 항목이에요.");
+    expectNoFieldMessageBelowControl(document.body);
+
+    // Editing a field clears its server error and nothing else.
+    fireEvent.change(nameInput, { target: { value: "김관리자" } });
+    expect(screen.queryByText("필수 항목이에요.")).not.toBeInTheDocument();
+    expect(nameInput).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("입력 형식이 올바르지 않아요.")).toBeInTheDocument();
+    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
   });
 
   it("shows the catalog message for a problem 409 duplicate", async () => {

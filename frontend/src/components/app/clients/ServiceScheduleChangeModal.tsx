@@ -7,7 +7,7 @@ import { FieldMessageText } from "@/components/app/ui/field-message";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Input } from "@/components/ui/input";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
-import { toFieldMessageView, type FieldMessageView } from "@/lib/forms/field-message-text";
+import { toFieldMessageView, withGuidance, type FieldMessageView } from "@/lib/forms/field-message-text";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
 
@@ -25,6 +25,8 @@ interface ServiceScheduleChangeModalProps {
 
 const DATE_INPUT_ID = "service-schedule-change-date";
 const DATE_MESSAGE_ID = `${DATE_INPUT_ID}-message`;
+/** Static guidance for the date field; it sits in the label-row slot until an error or hint replaces it. */
+const DATE_GUIDANCE = "현재 날짜 이후로 선택해 주세요";
 
 export function ServiceScheduleChangeModal({
     open,
@@ -51,9 +53,12 @@ export function ServiceScheduleChangeModal({
         resolveFieldMessage("date", fields.stateOf("date", selectedDate), { required: true }),
         label,
     );
-    const message: FieldMessageView | null = isBeforeMinimum
-        ? { tone: "error", text: t(locale, "form.validation.date-not-before").replace("{date}", minimumDate) }
-        : formatMessage;
+    const message: FieldMessageView | null = withGuidance(
+        isBeforeMinimum
+            ? { tone: "error", text: t(locale, "form.validation.date-not-before").replace("{date}", minimumDate) }
+            : formatMessage,
+        DATE_GUIDANCE,
+    );
     const hasError = message?.tone === "error";
 
     return (
@@ -68,7 +73,7 @@ export function ServiceScheduleChangeModal({
                 <>
                     <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
                     <br />
-                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다. 현재 날짜보다 이후 날짜를 선택해 주세요.</span>
+                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다.</span>
                 </>
             }
             isDescriptionVisuallyHidden={false}
@@ -86,7 +91,7 @@ export function ServiceScheduleChangeModal({
                 >
                     <label
                         htmlFor={DATE_INPUT_ID}
-                        className="shrink-0 font-medium text-v3-text-primary"
+                        className="shrink-0 whitespace-nowrap font-medium text-v3-text-primary"
                     >
                         {label}
                     </label>

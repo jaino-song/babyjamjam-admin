@@ -690,6 +690,12 @@ export function TemplateSendForm({
       : null;
   })();
 
+  // The recipient name field explains a missing name in its own label row too.
+  const recipientNameMessage: ClientAutocompleteLabelMessage | null =
+    requiresRecipientName && !recipientName && rejectedSubmitCount > 0
+      ? { tone: "error", text: "산모님 성함을 입력해 주세요" }
+      : null;
+
   const phoneAutocompleteField = (
     <ClientAutocomplete
       data-component="desktop_messages_sections_template-send-form_phone-autocomplete"
@@ -1076,11 +1082,10 @@ export function TemplateSendForm({
 
     if (validationMessage) {
       setRejectedSubmitCount((count) => count + 1);
-      // A recipient phone problem is explained by the phone field's own message;
+      // A recipient name or phone problem is explained by that field's own message;
       // the top alert stays for problems that belong to no single field.
-      const isPhoneFieldProblem = (!requiresRecipientName || Boolean(recipientName))
-        && validationMessage === recipientValidationMessage;
-      setFeedback(isPhoneFieldProblem ? null : { tone: "error", message: validationMessage });
+      const isRecipientFieldProblem = validationMessage === recipientValidationMessage;
+      setFeedback(isRecipientFieldProblem ? null : { tone: "error", message: validationMessage });
       if (isPreparedLinkDelivery) {
         toast({ variant: "destructive", description: validationMessage });
       }
@@ -1232,6 +1237,7 @@ export function TemplateSendForm({
                     placeholder="새로 입력 또는 기존 고객 선택"
                     manualValue={name}
                     onManualValueChange={handleManualRecipientNameChange}
+                    labelMessage={recipientNameMessage}
                   />
                 </TemplateFieldGridItem>
 

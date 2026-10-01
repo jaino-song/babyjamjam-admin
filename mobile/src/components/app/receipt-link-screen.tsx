@@ -35,6 +35,7 @@ type BirthdaySlotMessage = { tone: "hint" | "error"; text: string };
 const BIRTHDAY_LABEL = "산모님 생년월일";
 const BIRTHDAY_INPUT_ID = "receipt-birthday";
 const BIRTHDAY_FORMAT_ERROR = "YYYY-MM-DD로 입력해 주세요";
+const BIRTHDAY_LOCK_GUIDANCE = "5회 틀리면 30분간 잠겨요";
 
 function birthdayMessageText(message: FieldMessage): string {
     switch (message.code) {
@@ -325,6 +326,17 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
             text: rejection.kind === "mismatch" ? `일치하지 않아요 · 남은 ${rejection.remaining}회` : BIRTHDAY_FORMAT_ERROR,
         };
     }
+    // Once an attempt has been used (or the check is locked) the lock rule is always
+    // on hand in the same slot; any hint or error replaces it and it returns after.
+    const lockRuleVisible = screen.kind === "locked"
+        || (screen.kind === "verify" && screen.remainingAttempts < MAX_ATTEMPTS);
+    // After a failed attempt the guidance keeps both facts in view: how many tries
+    // are left and what happens when they run out.
+    const lockGuidance = screen.kind === "verify"
+        ? `남은 ${screen.remainingAttempts}회 · 틀리면 30분 잠겨요`
+        : BIRTHDAY_LOCK_GUIDANCE;
+    const birthdaySlot: BirthdaySlotMessage | null = birthdayMessage
+        ?? (lockRuleVisible ? { tone: "hint", text: lockGuidance } : null);
     const birthdaySlotId = "receipt-birthday-helper";
 
     const stepNumber = screen.kind === "image" ? "2단계" : "1단계";
@@ -417,13 +429,13 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                             </label>
                             <span
                                 id={birthdaySlotId}
-                                className={`lab-msg${birthdayMessage ? ` ${birthdayMessage.tone}` : ""}`}
+                                className={`lab-msg${birthdaySlot ? ` ${birthdaySlot.tone}` : ""}`}
                                 data-component="mobile_receipt_public-page_body_verify_birthday-input_helper"
                                 data-slot="lab-msg"
                                 aria-live="polite"
-                                title={birthdayMessage?.text}
+                                title={birthdaySlot?.text}
                             >
-                                {birthdayMessage?.text}
+                                {birthdaySlot?.text}
                             </span>
                         </div>
                         <input
@@ -464,13 +476,6 @@ export function ReceiptLinkScreen({ token }: ReceiptLinkScreenProps) {
                                 ? "다시 확인하기"
                                 : "확인하기"}
                         </button>
-                        {screen.kind === "locked" ||
-                        (screen.kind === "verify" && screen.remainingAttempts < MAX_ATTEMPTS) ? (
-                            <p className="rcpt-warn" data-slot="warning">
-                                5회 연속 틀리면 30분 동안 확인이 잠깁니다. 계약서에 적힌 산모님 생년월일과 같은지 확인해
-                                주세요.
-                            </p>
-                        ) : null}
                     </section>
                 ) : null}
 
@@ -598,7 +603,6 @@ function Styles() {
 .srec .rcpt-btn-icon{display:flex;align-items:center;justify-content:center;gap:6px}
 .srec .rcpt-icon{width:18px;height:18px;flex-shrink:0}
 .srec .rcpt-icon-clock{width:28px;height:28px;color:var(--muted);margin-bottom:8px}
-.srec .rcpt-warn{margin:14px 0 0;padding:12px 14px;border-radius:12px;background:#fdf1f5;color:#c2456e;font-size:13px}
 .srec .rcpt-img-frame{position:relative;width:100%;min-width:100%;min-height:min(568px,calc((100vw - 76px)*297/210));aspect-ratio:210/297;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#f7f8fa}
 .srec .rcpt-img-loading{position:absolute;inset:0;z-index:1;display:grid;place-items:center}
 .srec .rcpt-img-error{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;background:#f7f8fa}

@@ -93,8 +93,6 @@ const VOUCHER_TYPE_SELECT_OPTIONS = Object.entries(voucherOptions.voucherOptions
 );
 const VOUCHER_TYPE_OPTIONS = VOUCHER_TYPE_SELECT_OPTIONS.flatMap((group) => group.options);
 
-type HelperTone = "muted" | "ok" | "err" | "pending";
-
 type WizardValidatedField = "name" | "phone" | "birthday" | "dueDate" | "birthDate" | "address" | "startDate" | "endDate";
 
 // DOM order of the validated fields per wizard step; the first invalid one is focused.
@@ -116,21 +114,20 @@ function Field({
   htmlFor,
   required,
   children,
-  slot,
-  helper,
-  helperTone = "muted",
+  slot = null,
+  guidance,
 }: {
   "data-component": string;
   label: ReactNode;
   htmlFor?: string;
   required?: boolean;
   children: ReactNode;
-  /** The field's one validation message, shown top-right in the label row. `null` = nothing to show yet. */
+  /** The field's one error/hint/status message. Wins over `guidance` while it is set. */
   slot?: SlotMessage | null;
-  /** Explanatory note below a non-validated field (e.g. a select). */
-  helper?: ReactNode;
-  helperTone?: HelperTone;
+  /** Always-on explanation of the field; shown only while `slot` has nothing to say. */
+  guidance?: string;
 }) {
+  const shown: SlotMessage | null = slot ?? (guidance ? { text: guidance, tone: "muted" } : null);
   return (
     <div className={styles.formRow} data-component={dataComponent}>
       <div className={styles.formFieldHeader} data-component={`${dataComponent}_header`}>
@@ -138,27 +135,17 @@ function Field({
           {label}
           {required ? <span className={styles.requiredMark}>*</span> : null}
         </label>
-        {slot !== undefined ? (
-          <span
-            id={htmlFor ? `${htmlFor}-message` : undefined}
-            className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[slot?.tone ?? "muted"])}
-            aria-live="polite"
-            data-component={`${dataComponent}_helper`}
-          >
-            {slot?.tone === "ok" ? "✓ " : null}
-            {slot?.text}
-          </span>
-        ) : null}
-      </div>
-      {children}
-      {helper ? (
-        <div
-          className={cn(styles.formHelper, styles[`helper_${helperTone}`])}
+        <span
+          id={htmlFor ? `${htmlFor}-message` : undefined}
+          className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[shown?.tone ?? "muted"])}
+          aria-live="polite"
           data-component={`${dataComponent}_helper`}
         >
-          {helper}
-        </div>
-      ) : null}
+          {shown?.tone === "ok" ? "✓ " : null}
+          {shown?.text}
+        </span>
+      </div>
+      {children}
     </div>
   );
 }
@@ -312,6 +299,8 @@ export default function NewClientPage() {
   } | null>(null);
   const [errorState, setErrorState] = useState<NormalizedApiError | null>(null);
   const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
+  // True once 다음 was pressed on the service step with a voucher type/period still missing.
+  const [serviceStepAttempted, setServiceStepAttempted] = useState(false);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
@@ -385,6 +374,7 @@ export default function NewClientPage() {
     setHasUnknownMutationOutcome(false);
     reset();
     resetFieldMessages();
+    setServiceStepAttempted(false);
   }, [formSessionKey, reset, resetFieldMessages]);
 
   useEffect(() => {
@@ -412,6 +402,7 @@ export default function NewClientPage() {
     setPendingDurationConfirmation(null);
     reset();
     resetFieldMessages();
+    setServiceStepAttempted(false);
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
     if (prefillClient.birthday !== undefined) setField("birthday", normalizeBirthdayIsoDate(prefillClient.birthday) ?? prefillClient.birthday);
@@ -644,7 +635,11 @@ export default function NewClientPage() {
     };
   }, [phoneDigits, isUsingOriginalPhone]);
 
-  const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(
+  const {
+    data: voucherPriceInfos,
+    isLoading: isPriceLoading,
+    isError: isVoucherPriceError,
+  } = useVoucherPriceInfos(
     store.type || "",
     resolvedVoucherYear,
   );
@@ -681,6 +676,15 @@ export default function NewClientPage() {
     return matchedDuration !== undefined && Number.isFinite(matchedDuration) ? matchedDuration : null;
   }, [hasValidStoreDuration, store.actualPrice, store.fullPrice, store.grant, store.voucherClient, voucherPriceInfos]);
   const effectiveDuration = hasValidStoreDuration ? store.duration : inferredDurationFromPrices;
+  // A duration the client already carries (an edit, or a prefill) counts as chosen
+  // even when it is no longer on the current price list: it stays in the select
+  // and in the payload until the user picks another one. A type/year/customer-type
+  // change clears it, so it can never be a stale leftover.
+  const storedDuration = store.duration != null && store.duration > 0 ? store.duration : null;
+  const chosenDuration = effectiveDuration ?? storedDuration;
+  // Prices of the picked voucher type: still loading, or failed (no period can be picked).
+  const isVoucherPricePending = store.voucherClient && Boolean(store.type) && isPriceLoading;
+  const isVoucherPriceUnavailable = store.voucherClient && Boolean(store.type) && isVoucherPriceError;
 
   const serviceDateDurationCheck = useMemo(
     () => getServiceDateDurationCheck(
@@ -700,22 +704,28 @@ export default function NewClientPage() {
   }, [effectiveDuration, outOfPocketPriceInfos, store.voucherClient, voucherPriceInfos]);
 
   const durationOptions = useMemo(() => {
-    if (!store.voucherClient) {
-      return (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
+    const options = store.voucherClient
+      ? availableDurations.map((duration) => ({
+        value: String(duration),
+        label: `${duration}일`,
+      }))
+      : (outOfPocketPriceInfos ?? []).map((priceInfo) => ({
         value: String(priceInfo.duration),
         label: formatOutOfPocketDurationLabel(priceInfo.duration),
       }));
+    // Keep the client's stored period selectable so the select can show it.
+    if (storedDuration !== null && !options.some((option) => option.value === String(storedDuration))) {
+      options.push({
+        value: String(storedDuration),
+        label: store.voucherClient ? `${storedDuration}일` : formatOutOfPocketDurationLabel(storedDuration),
+      });
     }
-
-    return availableDurations.map((duration) => ({
-      value: String(duration),
-      label: `${duration}일`,
-    }));
-  }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
+    return options;
+  }, [availableDurations, outOfPocketPriceInfos, storedDuration, store.voucherClient]);
 
   const arePriceInputsLocked = store.voucherClient
-    ? !store.type || !effectiveDuration || isPriceLoading
-    : !effectiveDuration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
+    ? !store.type || !chosenDuration || isPriceLoading
+    : !chosenDuration || isOutOfPocketPriceLoading || isOutOfPocketPriceError;
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
@@ -818,6 +828,7 @@ export default function NewClientPage() {
     hasUserEditedServicePeriodRef.current = true;
     setPricesManuallyEdited(false);
     setField("voucherClient", voucherClient);
+    setServiceStepAttempted(false);
     setField("type", "");
     setField("duration", null);
     setField("fullPrice", "");
@@ -848,7 +859,8 @@ export default function NewClientPage() {
 
         return true;
       case 1:
-        return true;
+        // A voucher client needs its voucher type and period to be priced.
+        return !store.voucherClient || (Boolean(store.type) && Boolean(chosenDuration));
       case 2:
         return fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[2]).length === 0;
       case 3:
@@ -864,6 +876,11 @@ export default function NewClientPage() {
     // Each problem is already shown in its own field's message slot; reveal them
     // all and take the user to the first one. Only the failed duplicate-check
     // request (which belongs to no single field) is reported as a toast.
+    if (step === 1) {
+      setServiceStepAttempted(true);
+      focusFirstInvalidField([store.type ? "duration" : "type"]);
+      return false;
+    }
     fieldMessages.markSubmitted();
     const invalidFields = fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[step] ?? []);
     if (invalidFields.length > 0) {
@@ -914,7 +931,7 @@ export default function NewClientPage() {
         primaryEmployeeId: store.primaryEmployeeId,
         secondaryEmployeeId: store.secondaryEmployeeId,
         type: store.voucherClient ? store.type || null : null,
-        duration: effectiveDuration || null,
+        duration: chosenDuration || null,
         ...durationConfirmation,
         ...(confirmedUnavailableEmployeeIds
           ? { confirmedUnavailableEmployeeIds }
@@ -1037,6 +1054,20 @@ export default function NewClientPage() {
   ): boolean => slot?.tone === "err" || fieldErrorMessageIds[field].length > 0;
   const describedBy = (field: WizardValidatedField): string =>
     [`${field}-message`, ...fieldErrorMessageIds[field]].join(" ");
+  // Voucher type/period are only ever wrong after 다음 was pressed with one missing.
+  const typeMessage: SlotMessage | null = serviceStepAttempted && store.voucherClient && !store.type
+    ? { text: t(locale, "clients.form.error-type-required"), tone: "err" }
+    : null;
+  const durationMessage = pickSlotMessage(
+    // A failed price lookup is its own problem, not a missing choice; and nothing is
+    // "missing" while the prices that fill the select are still on their way.
+    (store.voucherClient ? isVoucherPriceUnavailable : isOutOfPocketPriceError)
+      ? { text: "요금 정보를 불러오지 못했어요", tone: "err" }
+      : null,
+    serviceStepAttempted && store.voucherClient && !chosenDuration && !isVoucherPricePending
+      ? { text: t(locale, "clients.form.error-duration-required"), tone: "err" }
+      : null,
+  );
 
   useEffect(() => {
     if (!errorState) return;
@@ -1298,11 +1329,8 @@ export default function NewClientPage() {
               {activeStep === 1 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card">
-                      <div
-                        id="voucherClient"
-                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field"
-                        className="flex justify-center pb-3"
-                      >
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field" label="고객 유형" htmlFor="voucherClient">
+                      <div id="voucherClient" className="flex justify-center pb-3">
                         <TogglePill
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_customer-type-field_toggle"
                         value={store.voucherClient}
@@ -1317,6 +1345,7 @@ export default function NewClientPage() {
                         aria-describedby={fieldErrorMessageIds.voucherClient.join(" ") || undefined}
                       />
                     </div>
+                    </Field>
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_card-title">
                       {store.voucherClient ? "바우처" : "자부담"}
                     </div>
@@ -1329,7 +1358,7 @@ export default function NewClientPage() {
                         options={voucherYearOptions}
                       />
                     </Field> : null}
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형" htmlFor="type">
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형" htmlFor="type" slot={typeMessage}>
                       <FormNativeSelect
                         id="type"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field_select-wrap"
@@ -1339,27 +1368,28 @@ export default function NewClientPage() {
                           { value: "", label: "선택하세요" },
                           ...VOUCHER_TYPE_SELECT_OPTIONS,
                         ]}
-                        aria-invalid={fieldErrorMessageIds.type.length > 0}
-                        aria-describedby={fieldErrorMessageIds.type.join(" ") || undefined}
+                        aria-invalid={typeMessage !== null || fieldErrorMessageIds.type.length > 0}
+                        aria-describedby={["type-message", ...fieldErrorMessageIds.type].join(" ")}
                       />
                     </Field> : null}
                     <Field
                       data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field"
                       label="기간"
                       htmlFor="duration"
-                      helper={store.voucherClient ? "바우처 유형에 따라 선택 가능한 기간이 달라집니다." : undefined}
+                      slot={durationMessage}
+                      guidance={store.voucherClient ? "유형에 따라 기간이 달라져요" : undefined}
                     >
                       <FormNativeSelect
                         id="duration"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_duration-field_select-wrap"
-                        value={effectiveDuration?.toString() || ""}
+                        value={chosenDuration?.toString() || ""}
                         onValueChange={(value) => {
                           hasUserEditedServicePeriodRef.current = true;
                           setField("duration", value ? Number(value) : null);
                           setPricesManuallyEdited(false);
                         }}
                         disabled={store.voucherClient
-                          ? !store.type || isPriceLoading
+                          ? !store.type || isPriceLoading || isVoucherPriceUnavailable
                           : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
                         hideIcon={store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading}
                         className={(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading)
@@ -1372,18 +1402,10 @@ export default function NewClientPage() {
                           { value: "", label: "선택하세요" },
                           ...durationOptions,
                         ]}
-                        aria-invalid={fieldErrorMessageIds.duration.length > 0}
-                        aria-describedby={fieldErrorMessageIds.duration.join(" ") || undefined}
+                        aria-invalid={durationMessage?.tone === "err" || fieldErrorMessageIds.duration.length > 0}
+                        aria-describedby={["duration-message", ...fieldErrorMessageIds.duration].join(" ")}
                       />
                     </Field>
-                    {!store.voucherClient && isOutOfPocketPriceError ? (
-                      <div
-                        className={cn(styles.formHelper, styles.helper_err)}
-                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_out-of-pocket-price-error"
-                      >
-                        자부담 요금 정보를 불러오지 못했습니다.
-                      </div>
-                    ) : null}
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_employee-card">
@@ -1491,8 +1513,8 @@ export default function NewClientPage() {
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_options-card">
-                    <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_options-card_card-title">추가 옵션</div>
-                    <div className={styles.toggleChipRow} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_options-card_option-chips">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_options-card_options-field" label="추가 옵션">
+                    <div className={styles.toggleChipRow} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_options-card_options-field_option-chips">
                       {([
                         { key: "careCenter" as const, label: "조리원 이용" },
                         { key: "breastPump" as const, label: "유축기 대여" },
@@ -1509,6 +1531,7 @@ export default function NewClientPage() {
                         </button>
                       ))}
                     </div>
+                    </Field>
                   </div>
                 </>
               ) : null}
@@ -1516,17 +1539,17 @@ export default function NewClientPage() {
               {activeStep === 2 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card">
-                    <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_card-title">계약 상태</div>
-                    <FormNativeSelect
-                      id="serviceStatus"
-                      aria-label="계약 상태"
-                      data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
-                      value={store.serviceStatus}
-                      onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
-                      options={SERVICE_STATUS_OPTIONS}
-                      aria-invalid={fieldErrorMessageIds.serviceStatus.length > 0}
-                      aria-describedby={fieldErrorMessageIds.serviceStatus.join(" ") || undefined}
-                    />
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_status-field" label="계약 상태" htmlFor="serviceStatus">
+                      <FormNativeSelect
+                        id="serviceStatus"
+                        data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
+                        value={store.serviceStatus}
+                        onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
+                        options={SERVICE_STATUS_OPTIONS}
+                        aria-invalid={fieldErrorMessageIds.serviceStatus.length > 0}
+                        aria-describedby={["serviceStatus-message", ...fieldErrorMessageIds.serviceStatus].join(" ")}
+                      />
+                    </Field>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">

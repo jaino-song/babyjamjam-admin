@@ -14,6 +14,7 @@ export const FIELD_COPY = {
     dateError: "YYYY-MM-DD로 입력해 주세요",
     dateInvalid: "존재하지 않는 날짜예요",
     serviceDateBefore: "이전 날짜는 선택할 수 없어요",
+    serviceDateMismatch: "오늘과 다른 날짜예요",
     multiHint: "여러 개 선택 가능",
     stoolColor: "변 색깔·상태를 적어 주세요",
     paymentConfirm: "결제 확인을 눌러 주세요",

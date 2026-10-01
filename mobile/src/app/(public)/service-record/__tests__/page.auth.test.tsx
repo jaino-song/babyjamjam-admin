@@ -335,8 +335,9 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "기록 시작" }));
 
-        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]'))
-            .toHaveTextContent("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+        // The warning lives in the date field's own label-row slot, not in a separate notice.
+        expect(document.getElementById("service-record-date-helper")).toHaveTextContent("오늘과 다른 날짜예요");
+        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]')).toBeNull();
         expect(screen.getAllByRole("button", { name: /이상없음/ })[0]).toBeEnabled();
         expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
     });

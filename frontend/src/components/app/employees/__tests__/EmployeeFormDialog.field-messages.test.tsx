@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { api } from "@/lib/api/client";
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { EmployeeFormDialog } from "../EmployeeFormDialog";
 
 const mockCreateEmployeeMutateAsync = jest.fn();
@@ -64,10 +65,14 @@ describe("EmployeeFormDialog inline field messages", () => {
     mockCreateEmployeeMutateAsync.mockReset();
   });
 
-  it("shows no field message on first render", async () => {
+  it("shows only the open-status guidance on first render, in the slot and not below the switch", async () => {
     await openDialog();
 
-    expect(document.querySelectorAll(FIELD_MESSAGE_SELECTOR)).toHaveLength(0);
+    const messages = Array.from(document.querySelectorAll(FIELD_MESSAGE_SELECTOR));
+    expect(messages.map((message) => message.textContent)).toEqual(["배정 후보에 표시돼요"]);
+    expect(messages[0]).toHaveAttribute("data-slot", "field-message");
+    expect(messages[0].id).toBe("employee-form-open-status-guidance");
+    expectNoFieldMessageBelowControl(document.body);
     expect(screen.getByLabelText("생년월일")).toHaveAttribute("placeholder", "1958-03-03");
   });
 

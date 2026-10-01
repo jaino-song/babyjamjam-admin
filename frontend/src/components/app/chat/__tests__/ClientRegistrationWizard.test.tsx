@@ -1,4 +1,5 @@
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { ClientRegistrationWizard } from "../ClientRegistrationWizard";
 
 const mockCreateClientMutateAsync = jest.fn();
@@ -632,8 +633,15 @@ describe("ClientRegistrationWizard", () => {
         );
 
         expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
-        expect(screen.getByText("제공인력 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."))
-            .toBeInTheDocument();
+        // The failure sits in the provider row's label-row slot, not in an alert below the form.
+        const lookupMessage = screen.getByText("제공인력 정보를 불러오지 못했어요");
+        expect(lookupMessage).toHaveAttribute("data-slot", "field-error-message");
+        expect(lookupMessage.closest('[data-component$="employee-lookup-field"]')).toContainElement(
+            screen.getByRole("button", { name: "다시 시도" }),
+        );
+        expect(screen.getByLabelText("제공인력")).toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expectNoFieldMessageBelowControl(document.body);
         expect(screen.queryByRole("checkbox", { name: "바우처 대상" }))
             .not.toBeInTheDocument();
         expect(screen.queryByLabelText("제공인력 이름")).not.toBeInTheDocument();
@@ -668,6 +676,7 @@ describe("ClientRegistrationWizard", () => {
             expect(mockRefetchEmployees).toHaveBeenCalledTimes(1);
         });
         expect(screen.getByRole("button", { name: "재시도 중..." })).toBeDisabled();
+        expect(screen.getByText("다시 확인하고 있어요")).toHaveAttribute("data-slot", "field-message");
         expect(nextButton).toBeDisabled();
 
         // The refetch remains in progress even after the query's next state is available.

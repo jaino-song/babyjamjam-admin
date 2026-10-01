@@ -10,6 +10,7 @@ import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { cn } from "@/lib/utils";
+import type { SlotMessage } from "@/lib/validations/field-message";
 import { Autocomplete } from "@/components/app/ui/Autocomplete";
 
 function stripCityPrefix(area: string): string {
@@ -26,6 +27,8 @@ interface EmployeeAutocompleteProps {
     label: string;
     required?: boolean;
     error?: boolean;
+    /** The field's one error/hint/status message (label-row slot); wins over `helperText`. */
+    message?: SlotMessage | null;
     helperText?: string;
     excludeIds?: number[];
     allowManualEntry?: boolean;
@@ -47,6 +50,7 @@ export function EmployeeAutocomplete({
     label,
     required = false,
     error = false,
+    message,
     helperText,
     excludeIds = [],
     allowManualEntry = false,
@@ -135,6 +139,7 @@ export function EmployeeAutocomplete({
                 label={label}
                 required={required}
                 error={error}
+                message={message}
                 helperText={helperText}
                 emptyMessage={t(locale, "clients.form.no-employee-found")}
                 manualEntry={

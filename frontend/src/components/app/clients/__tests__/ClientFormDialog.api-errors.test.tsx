@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { useState } from "react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
+import { expectNoFieldMessageBelowControl, getFieldMessages } from "@/test-utils/field-message-slot";
 import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
 
 jest.mock("next/navigation", () => ({
@@ -42,24 +43,34 @@ jest.mock("../EmployeeAutocomplete", () => ({
     label,
     error,
     describedBy,
+    helperText,
     triggerButtonRef,
   }: {
     label: string;
     error?: boolean;
     describedBy?: string;
+    helperText?: string;
     triggerButtonRef?: { current: HTMLButtonElement | null };
   }) => (
-    <button
-      ref={triggerButtonRef}
-      type="button"
-      role="combobox"
-      aria-expanded={false}
-      aria-controls="employee-autocomplete-options"
-      data-testid="employee-autocomplete"
-      aria-label={label}
-      aria-invalid={error || undefined}
-      aria-describedby={describedBy}
-    />
+    <div>
+      <div>
+        <span>{label}</span>
+        {helperText ? (
+          <span data-slot={error ? "field-error-message" : "field-message"}>{helperText}</span>
+        ) : null}
+      </div>
+      <button
+        ref={triggerButtonRef}
+        type="button"
+        role="combobox"
+        aria-expanded={false}
+        aria-controls="employee-autocomplete-options"
+        data-testid="employee-autocomplete"
+        aria-label={label}
+        aria-invalid={error || undefined}
+        aria-describedby={describedBy}
+      />
+    </div>
   ),
 }));
 
@@ -120,28 +131,39 @@ describe("ClientFormDialog API errors", () => {
     await waitFor(() => expect(submitButton).toBeEnabled());
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText("이름: 필수 항목이에요.")).toBeInTheDocument();
-    expect(screen.getByText("연락처: 입력 형식이 올바르지 않아요.")).toBeInTheDocument();
+    const nameInput = screen.getByLabelText(/이름/);
+    const phoneInput = screen.getByLabelText(/연락처/);
+    expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByText("입력 형식이 올바르지 않아요.")).toHaveAttribute("data-slot", "field-error-message");
+    // Field errors live in their field's slot, not in the summary list.
+    expect(screen.queryByText("이름: 필수 항목이에요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("연락처: 입력 형식이 올바르지 않아요.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /이름: / })).not.toBeInTheDocument();
+    // Errors that map to no visible field and the request id stay in the summary.
     expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
     expect(screen.getByText("입력 항목: 허용 범위를 벗어난 값이에요.")).toBeInTheDocument();
     expect(screen.queryByText(/internalTenantId/)).not.toBeInTheDocument();
 
-    const nameInput = screen.getByLabelText(/이름/);
-    const phoneInput = screen.getByLabelText(/연락처/);
     expect(nameInput).toHaveValue("홍길동");
     expect(phoneInput).toHaveValue("010-1234-5678");
     expect(nameInput).toHaveAttribute("aria-invalid", "true");
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");
-    expect(nameInput.getAttribute("aria-describedby")).toContain("desktop_clients_form-dialog_error_0");
-    expect(phoneInput.getAttribute("aria-describedby")).toContain("desktop_clients_form-dialog_error_1");
+    const nameMessageId = nameInput.getAttribute("aria-describedby");
+    expect(nameMessageId).toBeTruthy();
+    expect(document.getElementById(nameMessageId as string)).toHaveTextContent("필수 항목이에요.");
+    expectNoFieldMessageBelowControl(document.body);
 
-    fireEvent.click(screen.getByRole("button", { name: "이름: 필수 항목이에요." }));
-    expect(document.activeElement).toBe(nameInput);
-    fireEvent.click(screen.getByRole("button", { name: "연락처: 입력 형식이 올바르지 않아요." }));
-    expect(document.activeElement).toBe(phoneInput);
+    // Editing a field clears its server error and nothing else.
+    fireEvent.change(nameInput, { target: { value: "김길동" } });
+    expect(screen.queryByText("필수 항목이에요.")).not.toBeInTheDocument();
+    expect(nameInput).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("입력 형식이 올바르지 않아요.")).toBeInTheDocument();
+    expect(phoneInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
   });
 
-  it("moves panel field errors to step zero and focuses linked inputs", async () => {    const requestId = "req-bjj-319-panel";
+  it("moves panel field errors to step zero and shows them in the field slots", async () => {
+    const requestId = "req-bjj-319-panel";
     const problem = createProblemDetails({
       code: "VALIDATION_FAILED",
       requestId,
@@ -179,15 +201,22 @@ describe("ClientFormDialog API errors", () => {
     await waitFor(() => expect(submitButton).toBeEnabled());
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText("이름: 필수 항목이에요.")).toBeInTheDocument();
+    expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByText("입력 형식이 올바르지 않아요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByText(`요청 ID: ${requestId}`)).toBeInTheDocument();
     expect(screen.getByLabelText(/이름/)).toHaveValue("홍길동");
     expect(screen.getByLabelText(/연락처/)).toHaveValue("01012345678");
-
-    fireEvent.click(screen.getByRole("button", { name: "연락처: 입력 형식이 올바르지 않아요." }));
-    expect(document.activeElement).toBe(screen.getByLabelText(/연락처/));
+    expect(screen.getByLabelText(/이름/)).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText(/연락처/)).toHaveAttribute("aria-invalid", "true");
+    expect(
+      getFieldMessages(document.body)
+        .filter((message) => message.dataset.slot === "field-error-message")
+        .map((message) => message.textContent),
+    ).toEqual(["필수 항목이에요.", "입력 형식이 올바르지 않아요."]);
+    expectNoFieldMessageBelowControl(document.body);
   });
 
-  it("surfaces a primary-employee pointer error on the employee field and focuses it from the summary", async () => {
+  it("surfaces a primary-employee pointer error in the employee field slot", async () => {
     const problem = createProblemDetails({
       code: "VALIDATION_FAILED",
       requestId: "req-bjj-319-employee-field",
@@ -206,14 +235,15 @@ describe("ClientFormDialog API errors", () => {
     await waitFor(() => expect(submitButton).toBeEnabled());
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText("주 담당 인력: 필수 항목이에요.")).toBeInTheDocument();
+    expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.queryByText("주 담당 인력: 필수 항목이에요.")).not.toBeInTheDocument();
+    expect(screen.getByText("요청 ID: req-bjj-319-employee-field")).toBeInTheDocument();
     const [primaryTrigger, secondaryTrigger] = screen.getAllByTestId("employee-autocomplete");
     expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
     expect(secondaryTrigger).not.toHaveAttribute("aria-invalid");
-    expect(primaryTrigger.getAttribute("aria-describedby")).toContain("desktop_clients_form-dialog_error_0");
-
-    fireEvent.click(screen.getByRole("button", { name: "주 담당 인력: 필수 항목이에요." }));
-    expect(document.activeElement).toBe(primaryTrigger);
+    expect(primaryTrigger.parentElement).toHaveTextContent("필수 항목이에요.");
+    expect(secondaryTrigger.parentElement).not.toHaveTextContent("필수 항목이에요.");
+    expectNoFieldMessageBelowControl(document.body);
   });
 
   it("shows the assignment eligibility catalog detail at form level without field linkage", async () => {
@@ -246,7 +276,7 @@ describe("ClientFormDialog API errors", () => {
     }
   });
 
-  it("moves panel employee-field errors to the assignment step and focuses the primary trigger", async () => {
+  it("moves panel employee-field errors to the assignment step and shows them in the primary slot", async () => {
     const problem = createProblemDetails({
       code: "VALIDATION_FAILED",
       requestId: "req-bjj-319-panel-employee",
@@ -281,12 +311,12 @@ describe("ClientFormDialog API errors", () => {
     await waitFor(() => expect(submitButton).toBeEnabled());
     fireEvent.click(submitButton);
 
-    expect(await screen.findByText("주 담당 인력: 필수 항목이에요.")).toBeInTheDocument();
+    expect(await screen.findByText("필수 항목이에요.")).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.queryByText("주 담당 인력: 필수 항목이에요.")).not.toBeInTheDocument();
     const [primaryTrigger] = screen.getAllByTestId("employee-autocomplete");
     expect(primaryTrigger).toHaveAttribute("aria-invalid", "true");
-
-    fireEvent.click(screen.getByRole("button", { name: "주 담당 인력: 필수 항목이에요." }));
-    await waitFor(() => expect(document.activeElement).toBe(primaryTrigger));
+    expect(primaryTrigger.parentElement).toHaveTextContent("필수 항목이에요.");
+    expectNoFieldMessageBelowControl(document.body);
   });
 
   it.each([
