@@ -279,6 +279,8 @@ export default function ContractCreationPage() {
   // cleared (never left stale), a notice is shown and submitting is blocked until it is resolved.
   const [endDateUnsupported, setEndDateUnsupported] = useState(false);
   const endDateCalcInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
+  // The (startDate, duration) a picked client's stored end date was filled with; no recalculation while they stay the same.
+  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } =
     useVoucherPriceInfos(voucherType || "", voucherYear || 0);
@@ -585,6 +587,15 @@ export default function ContractCreationPage() {
       || previousInputs.startDate !== startDate
       || previousInputs.voucherDuration !== voucherDuration;
     if (!inputsChanged && !endDateCalcSkippedRef.current) return;
+    const kept = keptEndDateInputsRef.current;
+    if (kept) {
+      if (kept.startDate === startDate && kept.voucherDuration === voucherDuration) {
+        endDateCalcSkippedRef.current = false;
+        setEndDateUnsupported(false);
+        return;
+      }
+      keptEndDateInputsRef.current = null;
+    }
     if (!startDate || !voucherDuration) {
       endDateCalcSkippedRef.current = false;
       setEndDateUnsupported(false);
@@ -675,6 +686,7 @@ export default function ContractCreationPage() {
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
+    keptEndDateInputsRef.current = null;
     setLoadedClientBaseline(selectedClientId !== null && client
       ? { ...buildLoadedBaseline(client), id: selectedClientId }
       : null);
@@ -703,6 +715,14 @@ export default function ContractCreationPage() {
       if (client.endDate) {
         setEndDate(normalizeIsoDate(client.endDate));
         setEndDateUnsupported(false);
+        if (client.startDate && client.duration) {
+          // Show the stored end date as-is; only a start/duration edit recalculates it.
+          keptEndDateInputsRef.current = {
+            startDate: normalizeIsoDate(client.startDate),
+            voucherDuration: client.duration.toString(),
+          };
+          endDateCalcSkippedRef.current = false;
+        }
       }
       if (client.primaryEmployee && employees) {
         const primaryEmp = employees.find((e) => e.id === client.primaryEmployee?.id);

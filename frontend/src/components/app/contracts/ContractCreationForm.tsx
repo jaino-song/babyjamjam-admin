@@ -759,6 +759,8 @@ export const ContractCreationForm = ({
   } = useBusinessDayCalendar({ extraYears: getContractCalendarYears(startDate, endDate) });
   // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요.
   const pendingAutoEndDateRef = useRef(false);
+  // 기존 고객을 골라 저장된 종료일을 그대로 채웠을 때의 (시작일, 기간). 이 값이 그대로인 동안에는 종료일을 다시 계산하지 않아요.
+  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
   // 자동 계산이 달력이 지원하지 않는 연도에 닿아 종료일을 계산하지 못했는지. 이전 종료일을 남기지 않고 비운 채 안내해요.
   const [isEndDateUnsupported, setIsEndDateUnsupported] = useState(false);
 
@@ -815,6 +817,16 @@ export const ContractCreationForm = ({
   applyAutoEndDateRef.current = applyAutoEndDate;
 
   useEffect(() => {
+    // 저장된 종료일을 채운 직후에는 그 시작일·기간 그대로이므로 계산하지 않아요. 둘 중 하나를 고치면 그때부터 다시 계산해요.
+    const kept = keptEndDateInputsRef.current;
+    if (kept) {
+      if (kept.startDate === startDate && kept.voucherDuration === voucherDuration) {
+        pendingAutoEndDateRef.current = false;
+        setIsEndDateUnsupported(false);
+        return;
+      }
+      keptEndDateInputsRef.current = null;
+    }
     if (!startDate || !voucherDuration) {
       setIsEndDateUnsupported(false);
       return;
@@ -960,6 +972,7 @@ export const ContractCreationForm = ({
       }
       : null;
     loadedClientBaselineRef.current = nextBaseline;
+    keptEndDateInputsRef.current = null;
     setRegisteredBaseline(nextBaseline);
     setClientId(selectedClientId);
     resetEmployeeFields();
@@ -999,6 +1012,11 @@ export const ContractCreationForm = ({
       if (clientEndDate) {
         setEndDate(clientEndDate);
         setIsEndDateUnsupported(false);
+        if (clientStartDate && client.duration) {
+          // 저장된 종료일을 그대로 보여줘요. 시작일이나 기간을 고칠 때만 다시 계산해요.
+          keptEndDateInputsRef.current = { startDate: clientStartDate, voucherDuration: client.duration.toString() };
+          pendingAutoEndDateRef.current = false;
+        }
       }
 
       if (client.primaryEmployee && employees) {
