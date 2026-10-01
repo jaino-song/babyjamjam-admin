@@ -11,6 +11,7 @@ import {
 } from "application/utils/eformsign-list-doc-from-mirror";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
+import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 function createMirrorDocument(overrides: {
@@ -278,6 +279,45 @@ describe("EformsignMirrorListService", () => {
         expect(repository.findContractEndDatesByDocumentIds).toHaveBeenCalledWith(["doc-review"]);
         expect(byId.get("doc-review")).toMatchObject({ contract_end_date: "2026-08-07" });
         expect(byId.get("doc-waiting")).not.toHaveProperty("contract_end_date");
+    });
+
+    it("filters by display status against the branch calendar, fetched once for the request", async () => {
+        // End date Fri 2026-08-07, "today" Wed 2026-08-05 (KST). On the built-in calendar the
+        // review window opens Thu 8/6, so the row is 서명 완료; a branch holiday on 8/6 moves
+        // the window to Wed 8/5, so the same row is 검토 필요 for that branch.
+        const branchCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        repository.findAllVisibleInMirror.mockResolvedValue([
+            createMirrorDocument({
+                documentId: "doc-review",
+                statusType: "070",
+                stepType: "06",
+                stepName: "제공기관 확인",
+                clientId: 7,
+            }),
+        ]);
+        repository.findContractEndDatesByDocumentIds.mockResolvedValue(
+            new Map([["doc-review", "2026-08-07"]]),
+        );
+
+        jest.useFakeTimers({ now: new Date("2026-08-05T03:00:00.000Z") });
+        try {
+            const builtin = await service.buildList(createQuery({ displayStatus: "review" }));
+            const stub = createHolidayCalendarStub();
+            (stub.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+            const branchService = new EformsignMirrorListService(repository as never, stub);
+            const branch = await branchService.buildList(createQuery({ displayStatus: "review" }));
+            const branchSigned = await branchService.buildList(createQuery({ displayStatus: "signed" }));
+
+            expect(builtin.documents).toEqual([]);
+            expect(branch.documents.map((document) => document.id)).toEqual(["doc-review"]);
+            expect(branchSigned.documents).toEqual([]);
+            expect(stub.forBranch).toHaveBeenCalledTimes(2);
+            expect(stub.forBranch).toHaveBeenCalledWith("branch-1");
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("leaves provider-review documents bare when no end date is recoverable", async () => {

@@ -3,7 +3,11 @@ import {
     resolveEformsignDocDisplayStatus,
 } from "application/utils/eformsign-doc-display-status";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
-import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import {
+    createKrBusinessDayCalendar,
+    KR_BUILTIN_HOLIDAYS,
+    UnsupportedKoreanHolidayYearError,
+} from "domain/utils/business-days";
 
 /**
  * Parity pin: these fixtures mirror
@@ -68,6 +72,68 @@ describe("isContractReviewWindowOpen (backend copy)", () => {
             .toThrow(UnsupportedKoreanHolidayYearError);
         expect(() => isContractReviewWindowOpen("2028-01-01", kstNoon("2027-12-31")))
             .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+});
+
+/**
+ * Mirrors "isContractReviewWindowOpen with an explicit calendar" in
+ * packages/shared/src/constants/eformsign-doc-status.test.ts.
+ */
+describe("isContractReviewWindowOpen with an explicit calendar (backend copy)", () => {
+    const builtinCalendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+        supportedYears: [2024, 2025, 2026, 2027],
+    });
+
+    it("gives the same results as the default for the built-in calendar, incl. right after a holiday", () => {
+        const cases: Array<[string, string]> = [
+            ["2026-08-18", "2026-08-13"],
+            ["2026-08-18", "2026-08-14"],
+            ["2026-03-03", "2026-02-27"],
+            ["2026-03-03", "2026-03-02"],
+            ["2026-08-07", "2026-08-05"],
+            ["2026-08-07", "2026-08-06"],
+            ["2026-08-08", "2026-08-07"],
+        ];
+        for (const [end, today] of cases) {
+            expect(isContractReviewWindowOpen(end, kstNoon(today), builtinCalendar))
+                .toBe(isContractReviewWindowOpen(end, kstNoon(today)));
+        }
+    });
+
+    it("moves the window when the calendar has an extra holiday", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        // 2026-08-07 (Fri) end: default opens Thu 8/6; with 8/6 a holiday it opens Wed 8/5.
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"))).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"), custom)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-04"), custom)).toBe(false);
+    });
+
+    it("moves the window the other way when the branch removed a built-in holiday", () => {
+        // Branch excluded 광복절 대체휴일 (2026-08-17): Tuesday 8/18 now opens on Monday 8/17.
+        const withoutHoliday = createKrBusinessDayCalendar(
+            KR_BUILTIN_HOLIDAYS.filter((date) => date !== "2026-08-17"),
+            { supportedYears: [2026] },
+        );
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"), withoutHoliday)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-17"), withoutHoliday)).toBe(true);
+    });
+
+    it("fails closed when the calendar does not support the end-date year", () => {
+        const only2026 = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, { supportedYears: [2026] });
+        expect(() => isContractReviewWindowOpen("2027-03-02", kstNoon("2027-03-01"), only2026))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+
+    it("passes the calendar through resolveEformsignDocDisplayStatus", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        const doc = reviewStepDoc("2026-08-07");
+        expect(resolveEformsignDocDisplayStatus(doc, kstNoon("2026-08-05"))).toBe("signed");
+        expect(resolveEformsignDocDisplayStatus(doc, kstNoon("2026-08-05"), custom)).toBe("review");
     });
 });
 

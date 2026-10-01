@@ -40,6 +40,8 @@ export class FindEformsignDocsByClientIdUsecase {
                 docs.map((doc) => doc.documentId),
             )
             : new Map<string, string>();
+        // Display only, for the request's own branch: the cached calendar, fetched once for all rows.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
         return docs.map((doc) => {
             const contractEndDate = endDates.get(doc.documentId) ?? null;
             return {
@@ -53,7 +55,7 @@ export class FindEformsignDocsByClientIdUsecase {
                         step_name: doc.stepName,
                     },
                     ...(contractEndDate ? { contract_end_date: contractEndDate } : {}),
-                }),
+                }, new Date(), calendar),
             };
         });
     }

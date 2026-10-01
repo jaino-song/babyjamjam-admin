@@ -9,7 +9,6 @@ import {
     toEformsignDocumentDetail,
 } from "application/utils/eformsign-contract-client-candidate";
 import { normalizePhone } from "application/utils/normalize-phone";
-import { countBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
@@ -52,7 +51,8 @@ type VoucherSelectionSkip =
     | "fewer-than-two-amounts"
     | "no-matching-price-row"
     | "ambiguous-price-rows"
-    | "invalid-price-row-duration";
+    | "invalid-price-row-duration"
+    | "no-branch";
 
 interface VoucherSelectionOutcome {
     selection: { type: string; duration: number } | null;
@@ -113,7 +113,7 @@ export class GetContractClientCandidateUsecase {
             secondary: employeeIds.secondaryEmployeeId !== null,
         };
         const voucherOutcome = candidate
-            ? await this.resolveVoucherSelection(candidate, resolvedProvider.primary)
+            ? await this.resolveVoucherSelection(candidate, resolvedProvider.primary, branchId)
             : null;
         if (!candidate) {
             this.logger.warn(
@@ -262,6 +262,7 @@ export class GetContractClientCandidateUsecase {
     private async resolveVoucherSelection(
         candidate: EformsignContractClientPrefillCandidate,
         hasResolvedPrimaryProvider = false,
+        branchId?: string,
     ): Promise<VoucherSelectionOutcome> {
         // Year and amount count are computed before the guards so every
         // outcome, including the early ones, can report them to the log.
@@ -275,8 +276,13 @@ export class GetContractClientCandidateUsecase {
         if (!year) return { ...base, skipped: "no-service-period" };
         if (amounts.length < 2) return { ...base, skipped: "fewer-than-two-amounts" };
 
-        const businessDayDuration = candidate.startDate && candidate.endDate
-            ? countBusinessDaysKr(
+        // The count below is the branch's own business days, so there is no honest answer
+        // without a branch. Skip the backfill rather than count against another calendar.
+        // Display-only prefill (the registration form is reviewed and submitted by a person),
+        // so the cached calendar is enough.
+        if (candidate.startDate && candidate.endDate && !branchId) return { ...base, skipped: "no-branch" };
+        const businessDayDuration = candidate.startDate && candidate.endDate && branchId
+            ? (await this.holidayCalendar.forBranch(branchId)).countBusinessDays(
                 candidate.startDate.toISOString().slice(0, 10),
                 candidate.endDate.toISOString().slice(0, 10),
             )

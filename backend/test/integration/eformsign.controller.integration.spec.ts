@@ -23,6 +23,7 @@ import { EformsignTemplateScopeService } from "application/services/eformsign-te
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createKrBusinessDayCalendar, isoDateInKorea } from "domain/utils/business-days";
 import {
     EformsignApiError,
     extractEformsignVendorCode,
@@ -1332,8 +1333,10 @@ describe("EformsignController (Integration)", () => {
         // 제공기록지 티어 설정(ConfigService). 테스트가 두 값을 직접 제어한다.
         let areaTemplateFindAll: jest.Mock;
         let templateScopeConfigGet: jest.Mock;
+        let mirrorCalendarStub: ReturnType<typeof createHolidayCalendarStub>;
 
         beforeEach(async () => {
+            mirrorCalendarStub = createHolidayCalendarStub();
             mirrorRepository.findAllVisibleInMirror.mockResolvedValue([]);
             mirrorRepository.findAllVisibleInMirrorForHeadquarters.mockResolvedValue([]);
             areaTemplateFindAll = jest.fn().mockResolvedValue([]);
@@ -1341,7 +1344,7 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
-                    { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
+                    { provide: HolidayCalendarService, useValue: mirrorCalendarStub },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                     { provide: EformsignService, useValue: eformsignService },
                     {
@@ -1661,6 +1664,51 @@ describe("EformsignController (Integration)", () => {
                 ["claimed-review", "review"],
                 ["unclaimed-review", "unassigned"],
             ]);
+        });
+
+        it("stamps and filters display_status on the request branch's calendar, fetched once per request", async () => {
+            // No dependence on the real date: both calendars are weekends-only and cover the
+            // current and next year. T is today (KST), D1/D2 the next two business days.
+            const kstToday = isoDateInKorea();
+            const thisYear = Number(kstToday.slice(0, 4));
+            const supportedYears = [thisYear, thisYear + 1, thisYear + 2];
+            const plain = createKrBusinessDayCalendar([], { supportedYears });
+            const d1 = plain.shiftBusinessDays(kstToday, 1);
+            const d2 = plain.shiftBusinessDays(kstToday, 2);
+            // End date D2: without a holiday the review window opens on D1 (still closed today,
+            // 서명 완료); the branch closes on D1, so it opens on the business day before — today
+            // or earlier — and the same document reads 검토 필요 for that branch.
+            const branchCalendar = createKrBusinessDayCalendar([d1], { supportedYears });
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "doc-window",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+            ]);
+            mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map([["doc-window", d2]]));
+
+            (mirrorCalendarStub.forBranch as jest.Mock).mockResolvedValue(plain);
+            const closed = await request(mirrorApp.getHttpServer()).get("/api/documents");
+            (mirrorCalendarStub.forBranch as jest.Mock).mockClear();
+            (mirrorCalendarStub.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+            const open = await request(mirrorApp.getHttpServer()).get("/api/documents");
+            const openFiltered = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=review");
+            const closedFilteredOut = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=signed");
+
+            expect(closed.body.documents.map((doc: { display_status: string }) => doc.display_status))
+                .toEqual(["signed"]);
+            expect(open.body.documents.map((doc: { display_status: string }) => doc.display_status))
+                .toEqual(["review"]);
+            expect(openFiltered.body.documents.map((doc: { id: string }) => doc.id)).toEqual(["doc-window"]);
+            expect(closedFilteredOut.body.documents).toEqual([]);
+            // One calendar read per request, never per row.
+            expect(mirrorCalendarStub.forBranch).toHaveBeenCalledTimes(3);
+            expect(mirrorCalendarStub.forBranch).toHaveBeenCalledWith("branch-1");
+            mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map());
         });
 
         it("rejects unsupported display-status filters", async () => {
