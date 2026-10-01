@@ -284,7 +284,6 @@ export function OnboardingForm({
                     options={REGISTERABLE_ROLE_OPTIONS}
                     placeholder="요청할 권한을 선택해주세요"
                     error={errors.role}
-                    errorDisplay="inline"
                     disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_role-field"
                 />

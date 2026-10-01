@@ -205,7 +205,7 @@ describe("ContractCreationForm — contract template query states", () => {
 
     renderForm();
 
-    expect(screen.getByText("계약서 유형을 불러오는 중입니다...")).toBeInTheDocument();
+    expect(screen.getByText("계약서 유형을 불러오는 중이에요")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
     expect(screen.getByTestId("contract-creation-next")).toBeDisabled();
   });
@@ -215,7 +215,7 @@ describe("ContractCreationForm — contract template query states", () => {
 
     renderForm();
 
-    expect(screen.getByText(/설정된 계약서 유형이 없습니다/)).toBeInTheDocument();
+    expect(screen.getByText("설정된 계약서 유형이 없어요")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
     expect(screen.getByTestId("contract-creation-next")).toBeDisabled();
   });
@@ -230,7 +230,7 @@ describe("ContractCreationForm — contract template query states", () => {
 
     renderForm();
 
-    expect(screen.getByText(/계약서 유형을 불러오지 못했습니다/)).toBeInTheDocument();
+    expect(screen.getByText("계약서 유형을 불러오지 못했어요")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
     expect(screen.getByTestId("contract-creation-next")).toBeDisabled();
 
@@ -290,7 +290,7 @@ describe("ContractCreationForm — contract template query states", () => {
       await waitFor(() => {
         expect(screen.getByRole("combobox", { name: "계약서 선택" })).toBeDisabled();
       });
-      expect(screen.getByText(/(계약서 유형을 불러오지 못했습니다|설정된 계약서 유형이 없습니다)/)).toBeInTheDocument();
+      expect(screen.getByText(/(계약서 유형을 불러오지 못했어요|설정된 계약서 유형이 없어요)/)).toBeInTheDocument();
       expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
       expect(mockUpdateClientMutateAsync).toHaveBeenCalledTimes(1);
       expect(mockCreateClientMutateAsync).not.toHaveBeenCalled();

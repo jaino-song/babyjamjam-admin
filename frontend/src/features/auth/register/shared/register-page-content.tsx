@@ -11,15 +11,17 @@ import {
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
-import { PasswordRequirements } from "@/components/auth/password-requirements";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
+  PASSWORD_GUIDANCE,
+  getPasswordRequirementMessage,
   resolveElevenDigitPhoneMessage,
   toFieldMessageView,
+  withGuidance,
   type FieldMessageView,
 } from "@/lib/forms/field-message-text";
 import { t } from "@/lib/i18n/translations";
@@ -34,7 +36,6 @@ import {
 const REGISTER_CARD_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-register-title']]:!text-[1.72rem] md:[&_[data-component='auth-register-title']]:!text-[1.5rem] [&_[data-component='auth-register-subtitle']]:!max-w-[30ch] [&_[data-component='auth-register-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-register-subtitle']]:!text-[0.76rem]";
 const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-bold md:text-[0.77rem]";
 const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
-const REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME = "justify-center [&_li]:text-[0.78rem] [&_svg]:h-3.5 [&_svg]:w-3.5";
 const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
 const PHONE_DUPLICATE_AVAILABLE_MESSAGE = "등록 가능한 번호입니다.";
@@ -294,7 +295,15 @@ function RegisterStepFields({
       emailLinkableMessage ? { tone: "ok", text: emailLinkableMessage } : null,
     ),
     name: pickFieldMessage(resolveRuleMessage("name", "text"), errorMessage(errors.name)),
-    password: pickFieldMessage(resolveRuleMessage("password", "text"), errorMessage(errors.password)),
+    // Error, then what is still missing while typing, then the static guidance.
+    password: withGuidance(
+      pickFieldMessage(
+        resolveRuleMessage("password", "text"),
+        errorMessage(errors.password),
+        getPasswordRequirementMessage(valueOf("password"), passwordStrength.requirements),
+      ),
+      PASSWORD_GUIDANCE,
+    ),
     confirmPassword: pickFieldMessage(
       resolveRuleMessage("confirmPassword", "text"),
       errorMessage(errors.confirmPassword),
@@ -365,22 +374,6 @@ function RegisterStepFields({
             autoComplete="new-password"
             data-component="desktop_auth_register_step-fields_password-field"
           />
-
-          <div
-            data-component="desktop_auth_register_step-fields_password-requirements-wrap"
-            className={cn(
-              "grid overflow-hidden transition-[grid-template-rows,opacity,margin] duration-300 ease-out",
-              formData.password ? "mt-0 grid-rows-[1fr] opacity-100" : "mt-[-6px] grid-rows-[0fr] opacity-0",
-            )}
-          >
-            <div data-component="desktop_auth_register_step-fields_password-requirements-wrap_inner" className="overflow-hidden">
-              <PasswordRequirements
-                requirements={passwordStrength.requirements}
-                orientation="horizontal"
-                className={REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME}
-              />
-            </div>
-          </div>
 
           <FormField
             label="비밀번호 확인"

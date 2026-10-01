@@ -41,7 +41,8 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { FieldMessageText } from "@/components/app/ui/field-message";
+import { FormField as AppFormField, FormNativeSelect } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
@@ -597,8 +598,19 @@ export default function NewClientPage() {
                 ]}
               />
             </div>}
-            <div data-component="desktop_clients-new_service_step_grid_duration-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.duration")}</label>
+            <AppFormField
+              data-component="desktop_clients-new_service_step_grid_duration-field"
+              label={t(locale, "clients.form.duration")}
+              labelAccessory={!store.voucherClient && isOutOfPocketPriceError ? (
+                <FieldMessageText
+                  id="clients-new-duration-message"
+                  tone="error"
+                  data-component="desktop_clients-new_service_step_grid_duration-field_message"
+                >
+                  자부담 요금을 불러오지 못했어요
+                </FieldMessageText>
+              ) : null}
+            >
               <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap" className="relative">
                 <FormNativeSelect
                   className={cn(SELECT_CLS, (store.voucherClient
@@ -612,6 +624,7 @@ export default function NewClientPage() {
                   disabled={store.voucherClient
                     ? !store.type || isPriceLoading
                     : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
+                  aria-describedby={!store.voucherClient && isOutOfPocketPriceError ? "clients-new-duration-message" : undefined}
                   options={[
                     { value: "", label: "선택하세요" },
                     ...durationOptions,
@@ -623,13 +636,8 @@ export default function NewClientPage() {
                   </div>
                 )}
               </div>
-            </div>
+            </AppFormField>
           </div>
-          {!store.voucherClient && isOutOfPocketPriceError && (
-            <p data-component="desktop_clients-new_service_step_out-of-pocket-price-error" className="text-xs font-semibold text-v3-burgundy">
-              자부담 요금 정보를 불러오지 못했습니다.
-            </p>
-          )}
 
           <div data-component="desktop_clients-new_service_step_employee-grid" className={GRID_CLS}>
             <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field" className="flex flex-col gap-1.5">

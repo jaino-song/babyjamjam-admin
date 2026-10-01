@@ -513,8 +513,8 @@ export function DocumentDropzone({
                     onKeyDown={handleAddTag}
                     placeholder="태그를 입력하고 Enter를 눌러 추가"
                     disabled={isLoading}
-                    helperText="검색에 자주 쓰는 키워드를 등록해 두면 문서를 더 빨리 찾을 수 있습니다."
-                    helperTextClassName="text-[0.75rem] leading-5 text-v3-text-muted"
+                    helperText="태그를 등록하면 검색이 쉬워져요"
+                    helperTone="hint"
                     labelClassName={DOCUMENT_FIELD_LABEL_CLASS_NAME}
                     dataComponent={`${dataComponent}_upload-form_details_tags-molecule`}
                     inputDataComponent={`${dataComponent}_upload-form_details_tags-input`}

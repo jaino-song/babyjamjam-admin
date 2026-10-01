@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 import { EmployeeAutocomplete } from "../EmployeeAutocomplete";
 import type { Employee } from "@/hooks/useEmployees";
+import { expectNoFieldMessageBelowControl, getFieldMessages } from "@/test-utils/field-message-slot";
 
 let mockEmployees: Employee[] = [];
 const mockSetPrefillName = jest.fn();
@@ -233,5 +234,31 @@ describe("EmployeeAutocomplete", () => {
     expect(
       screen.getByRole("combobox", { name: "관리사님 전화번호" }),
     ).toHaveTextContent("010-1111-2222");
+  });
+
+  it("puts helperText in the label-row slot: guidance, replaced by the error, restored when fixed", () => {
+    const props = { value: null, onChange: jest.fn(), label: "제공인력 1 성함" };
+    const { container, rerender } = render(<EmployeeAutocomplete {...props} helperText="목록에서 선택해 주세요" />);
+
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["목록에서 선택해 주세요"]);
+    expect(getFieldMessages(container)[0]).toHaveAttribute("data-slot", "field-message");
+    expectNoFieldMessageBelowControl(container);
+
+    rerender(<EmployeeAutocomplete {...props} error helperText="제공인력을 선택해 주세요" />);
+    const [errorMessage] = getFieldMessages(container);
+    expect(errorMessage).toHaveTextContent("제공인력을 선택해 주세요");
+    expect(errorMessage).toHaveAttribute("data-slot", "field-error-message");
+    expect(screen.getByRole("combobox", { name: "제공인력 1 성함" })).toHaveAttribute("aria-describedby", expect.stringContaining(errorMessage.id));
+    expectNoFieldMessageBelowControl(container);
+
+    rerender(<EmployeeAutocomplete {...props} helperText="목록에서 선택해 주세요" />);
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["목록에서 선택해 주세요"]);
+  });
+
+  it("renders an empty slot and keeps the label on one line when there is no message", () => {
+    const { container } = render(<EmployeeAutocomplete value={null} onChange={jest.fn()} label="제공인력 1 성함" />);
+
+    expect(getFieldMessages(container)).toHaveLength(0);
+    expect(screen.getByText("제공인력 1 성함").closest("label")).toHaveClass("shrink-0", "whitespace-nowrap");
   });
 });

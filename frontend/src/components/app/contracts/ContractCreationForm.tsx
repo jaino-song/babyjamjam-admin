@@ -116,10 +116,18 @@ const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
   Seogu: "서구",
 };
 
-const AREA_TEMPLATES_LOADING_MESSAGE = "계약서 유형을 불러오는 중입니다...";
-const AREA_TEMPLATES_ERROR_MESSAGE = "계약서 유형을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
-const AREA_TEMPLATES_EMPTY_MESSAGE = "설정된 계약서 유형이 없습니다. 관리자에게 계약서 유형을 설정해 달라고 요청해 주세요.";
-const AREA_TEMPLATE_SELECTION_INVALID_MESSAGE = "계약서 선택을 다시 확인해 주세요.";
+// 계약서 선택 필드의 메시지는 모두 라벨 줄 오른쪽 한 줄 자리에 들어가므로 짧게 써요.
+const AREA_TEMPLATES_LOADING_MESSAGE = "계약서 유형을 불러오는 중이에요";
+const AREA_TEMPLATES_ERROR_MESSAGE = "계약서 유형을 불러오지 못했어요";
+const AREA_TEMPLATES_EMPTY_MESSAGE = "설정된 계약서 유형이 없어요";
+const AREA_TEMPLATE_SELECTION_INVALID_MESSAGE = "계약서 선택을 다시 확인해 주세요";
+const AREA_TEMPLATE_MESSAGE_ID = "contract-creation-area-template-message";
+const AREA_TEMPLATE_REQUIRED_MESSAGE = "계약서를 선택해 주세요";
+const CLIENT_NAME_REQUIRED_MESSAGE = "산모님 성함을 입력해 주세요";
+const EMPLOYEE_REQUIRED_MESSAGE = "제공인력을 선택해 주세요";
+const VOUCHER_TYPE_REQUIRED_MESSAGE = "바우처 유형을 선택해 주세요";
+const VOUCHER_DURATION_REQUIRED_MESSAGE = "기간을 선택해 주세요";
+const PRICE_REQUIRED_MESSAGE = "금액을 입력해 주세요";
 
 function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
   const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
@@ -565,11 +573,16 @@ function RegisteredValueDiffHint({ diffKey }: { diffKey: ClientDiffKey }) {
 }
 
 // 힌트가 있을 때만 라벨과 힌트를 한 줄에 놓아요. 힌트가 없으면 라벨 마크업은 그대로예요.
-// 오른쪽 자리는 라벨 한 줄 높이로 고정이고, 넘치는 메시지는 말줄임표로 잘려요.
+// 오른쪽 자리는 라벨 한 줄 높이로 고정이고, 넘치는 메시지는 말줄임표로 잘려요. 라벨은 줄어들거나 줄바꿈되지 않아요.
 function LabelWithHint({ hint, children }: { hint: ReactNode; children: ReactNode }) {
   if (!hint) return <>{children}</>;
   return (
-    <div className={cn("flex items-center justify-between gap-2", FIELD_MESSAGE_LABEL_ROW_CLASS_NAME)}>
+    <div
+      className={cn(
+        "flex items-center justify-between gap-2 [&>label]:shrink-0 [&>label]:whitespace-nowrap",
+        FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+      )}
+    >
       {children}
       <div className={cn("flex items-center", FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME)}>{hint}</div>
     </div>
@@ -1070,6 +1083,10 @@ export const ContractCreationForm = ({
     }));
   };
 
+  const markStepAttempted = (step: number) => {
+    setAttemptedSteps((previous) => (previous.includes(step) ? previous : [...previous, step]));
+  };
+
   const handleContractCreation = async ({ mode = "auto" }: ContractCreationRunOptions = {}) => {
     if (isSubmittingRef.current) return;
     const dateProblem = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
@@ -1078,15 +1095,9 @@ export const ContractCreationForm = ({
       return;
     }
     if (!isAreaTemplateSelectionValid) {
-      const areaTemplateMessage = isAreaTemplatesLoading
-        ? AREA_TEMPLATES_LOADING_MESSAGE
-        : isAreaTemplatesError
-          ? AREA_TEMPLATES_ERROR_MESSAGE
-          : areaTemplates.length === 0
-            ? AREA_TEMPLATES_EMPTY_MESSAGE
-            : AREA_TEMPLATE_SELECTION_INVALID_MESSAGE;
-      setSubmitError(getUserErrorMessage(areaTemplateMessage));
-      setActiveStep(0);
+      // 문제는 계약서 선택 필드의 라벨 줄 메시지로 보여줘요.
+      markStepAttempted(CONTRACT_CUSTOMER_INFO_STEP_INDEX);
+      setActiveStep(CONTRACT_CUSTOMER_INFO_STEP_INDEX);
       return;
     }
     isSubmittingRef.current = true;
@@ -1098,7 +1109,8 @@ export const ContractCreationForm = ({
         && isFeatureEnabled("headlessDispatch");
 
       if (employeeId === null || (showEmployee2 && employee2Id === null)) {
-        setSubmitError("등록된 제공인력을 목록에서 선택해 주세요.");
+        // 문제는 제공인력 선택 필드의 라벨 줄 메시지로 보여줘요.
+        markStepAttempted(1);
         setActiveStep(1);
         return;
       }
@@ -1731,6 +1743,68 @@ export const ContractCreationForm = ({
     registeredDiffKeys.has(key) ? <RegisteredValueDiffHint diffKey={key} /> : null;
   const registeredDiffDescribedBy = (key: ClientDiffKey): string | undefined =>
     registeredDiffKeys.has(key) ? getRegisteredValueDiffHintId(key) : undefined;
+  // 라벨 줄 오른쪽 한 줄 자리: 오류 > 진행 상태 > 등록값 다름 힌트 순으로 하나만 보여줘요.
+  // 비어 있는 필수 항목은 그 단계에서 계속하기/제출을 눌러 본 뒤에 오류로 알려줘요.
+  const getRequiredMessage = (step: number, missing: boolean, text: string): FieldMessageView | null =>
+    missing && attemptedSteps.includes(step) ? { tone: "error", text } : null;
+  const renderFieldSlot = (
+    message: FieldMessageView | null,
+    id: string,
+    diffKey: ClientDiffKey | null,
+    dataComponent: string,
+  ): ReactNode => message ? (
+    <FieldMessageText id={id} tone={message.tone} data-component={dataComponent}>
+      {message.text}
+    </FieldMessageText>
+  ) : diffKey ? registeredDiffHint(diffKey) : null;
+  const getSlotDescribedBy = (
+    message: FieldMessageView | null,
+    id: string,
+    diffKey: ClientDiffKey | null,
+  ): string | undefined => message ? id : diffKey ? registeredDiffDescribedBy(diffKey) : undefined;
+
+  const areaTemplateMessage: FieldMessageView | null = isAreaTemplatesError
+    ? { tone: "error", text: AREA_TEMPLATES_ERROR_MESSAGE }
+    : isAreaTemplatesEmpty
+      ? { tone: "error", text: AREA_TEMPLATES_EMPTY_MESSAGE }
+      : isAreaTemplatesLoading
+        ? { tone: "hint", text: AREA_TEMPLATES_LOADING_MESSAGE }
+        : area && !isAreaTemplateSelectionValid
+          ? { tone: "error", text: AREA_TEMPLATE_SELECTION_INVALID_MESSAGE }
+          : getRequiredMessage(CONTRACT_CUSTOMER_INFO_STEP_INDEX, !area, AREA_TEMPLATE_REQUIRED_MESSAGE);
+  const areaTemplateSlot: ReactNode = areaTemplateMessage ? (
+    <>
+      <FieldMessageText
+        id={AREA_TEMPLATE_MESSAGE_ID}
+        tone={areaTemplateMessage.tone}
+        data-component={`desktop_contracts_creation_doc-type-field_status_${isAreaTemplatesError ? "error" : isAreaTemplatesEmpty ? "empty" : isAreaTemplatesLoading ? "loading" : "message"}`}
+      >
+        {areaTemplateMessage.text}
+      </FieldMessageText>
+      {isAreaTemplatesError ? (
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          data-component="desktop_contracts_creation_doc-type-field_status_error_retry"
+          className="ml-2 h-auto shrink-0 p-0 text-[calc(12px*var(--glint-ui-scale,1))]"
+          onClick={() => void refetchAreaTemplates()}
+          disabled={isAreaTemplatesFetching}
+        >
+          {isAreaTemplatesFetching ? "재시도 중..." : "다시 시도"}
+        </Button>
+      ) : null}
+    </>
+  ) : registeredDiffHint("areaId");
+  const clientNameMessage = getRequiredMessage(CONTRACT_CUSTOMER_INFO_STEP_INDEX, !name.trim(), CLIENT_NAME_REQUIRED_MESSAGE);
+  const employeeMessage = getRequiredMessage(1, employeeId === null, EMPLOYEE_REQUIRED_MESSAGE);
+  const employee2Message = getRequiredMessage(1, showEmployee2 && employee2Id === null, EMPLOYEE_REQUIRED_MESSAGE);
+  const voucherTypeMessage = getRequiredMessage(2, !voucherType, VOUCHER_TYPE_REQUIRED_MESSAGE);
+  const voucherDurationMessage = getRequiredMessage(2, !voucherDuration, VOUCHER_DURATION_REQUIRED_MESSAGE);
+  const fullPriceMessage = getRequiredMessage(2, hasVoucherPricingSelection && !fullPrice, PRICE_REQUIRED_MESSAGE);
+  const grantMessage = getRequiredMessage(2, hasVoucherPricingSelection && !grant, PRICE_REQUIRED_MESSAGE);
+  const actualPriceMessage = getRequiredMessage(2, hasVoucherPricingSelection && !actualPrice, PRICE_REQUIRED_MESSAGE);
+
   // 저장값이 있으면 입력칸을 비워도 저장값이 보이도록 placeholder로 써요. 없으면 기본 placeholder를 그대로 둬요.
   const registeredPlaceholder = (
     key: ClientDiffKey,
@@ -1836,9 +1910,8 @@ export const ContractCreationForm = ({
         requestFieldFocus(problemTarget, activeStep);
         return;
       }
-      const validationMessage = getStepValidationMessage(activeStep);
-      if (validationMessage) {
-        setSubmitError(validationMessage);
+      if (isStepIncomplete(activeStep)) {
+        markStepAttempted(activeStep);
         return;
       }
     }
@@ -1846,19 +1919,11 @@ export const ContractCreationForm = ({
     setActiveStep(nextStep);
   };
 
-  const getStepValidationMessage = (step: number): string | null => {
-    if (step === 0 && !isStep1Valid) {
-      return "고객 정보와 계약서를 선택해 주세요.";
-    }
-    if (step === 1 && !isStep2Valid) {
-      return "제공인력 정보를 모두 입력해 주세요.";
-    }
-    if (step === 2 && !isStep3Valid) {
-      return "바우처 유형/기간과 금액 정보를 입력해 주세요.";
-    }
-    // 계약 날짜 문제는 각 날짜 필드의 라벨 줄 메시지로 보여줘요.
-    return null;
-  };
+  // 비어 있는 필수 항목은 각 필드의 라벨 줄 메시지로 보여줘요. 계약 날짜 문제도 같아요.
+  const isStepIncomplete = (step: number): boolean =>
+    (step === 0 && !isStep1Valid)
+    || (step === 1 && !isStep2Valid)
+    || (step === 2 && !isStep3Valid);
 
   const handleWizardComplete = () => {
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
@@ -1866,9 +1931,8 @@ export const ContractCreationForm = ({
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
       return;
     }
-    const validationMessage = getStepValidationMessage(CONTRACT_INFO_STEP_INDEX);
-    if (validationMessage) {
-      setSubmitError(validationMessage);
+    if (isStepIncomplete(CONTRACT_INFO_STEP_INDEX)) {
+      markStepAttempted(CONTRACT_INFO_STEP_INDEX);
       return;
     }
     setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
@@ -1898,6 +1962,8 @@ export const ContractCreationForm = ({
             manualValue={name}
             onManualValueChange={setName}
             disabled={Boolean(initialClient)}
+            required
+            labelMessage={clientNameMessage}
           />
 
           <ContactInput
@@ -1969,7 +2035,7 @@ export const ContractCreationForm = ({
           />
 
           <div className="grid gap-[calc(7px*var(--glint-ui-scale,1))]" data-component="desktop_contracts_creation_doc-type-field">
-            <LabelWithHint hint={registeredDiffHint("areaId")}>
+            <LabelWithHint hint={areaTemplateSlot}>
               <Label className={LABEL_CLS} data-component="desktop_contracts_creation_doc-type-field_label">
                 {t(locale, "contract-msg.doc-type-label")}
                 <span className="text-destructive ml-1">*</span>
@@ -1983,7 +2049,8 @@ export const ContractCreationForm = ({
             >
               <SelectTrigger
                 aria-label={t(locale, "contract-msg.doc-type-label")}
-                aria-describedby={registeredDiffDescribedBy("areaId")}
+                aria-describedby={areaTemplateMessage ? AREA_TEMPLATE_MESSAGE_ID : registeredDiffDescribedBy("areaId")}
+                aria-invalid={areaTemplateMessage?.tone === "error" ? true : undefined}
                 className="w-full"
                 data-component="desktop_contracts_creation_doc-type-field_select_trigger"
               >
@@ -2010,45 +2077,6 @@ export const ContractCreationForm = ({
                 ))}
               </SelectContent>
             </Select>
-            {isAreaTemplatesLoading && (
-              <Alert
-                data-component="desktop_contracts_creation_doc-type-field_status_loading"
-                variant="info"
-              >
-                <AlertDescription>{AREA_TEMPLATES_LOADING_MESSAGE}</AlertDescription>
-              </Alert>
-            )}
-            {isAreaTemplatesError && (
-              <Alert
-                data-component="desktop_contracts_creation_doc-type-field_status_error"
-                variant="destructive"
-              >
-                <AlertDescription>
-                  {AREA_TEMPLATES_ERROR_MESSAGE}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    data-component="desktop_contracts_creation_doc-type-field_status_error_retry"
-                    className="mt-3"
-                    onClick={() => void refetchAreaTemplates()}
-                    disabled={isAreaTemplatesFetching}
-                  >
-                    {isAreaTemplatesFetching ? "재시도 중..." : "다시 시도"}
-                  </Button>
-                </AlertDescription>
-              </Alert>
-            )}
-            {isAreaTemplatesEmpty && (
-              <Alert
-                data-component="desktop_contracts_creation_doc-type-field_status_empty"
-                variant="warning"
-              >
-                <AlertDescription>
-                  {AREA_TEMPLATES_EMPTY_MESSAGE}
-                </AlertDescription>
-              </Alert>
-            )}
           </div>
         </div>
       ),
@@ -2092,6 +2120,8 @@ export const ContractCreationForm = ({
               placeholder={registeredSnapshot?.primaryEmployeeId.display ?? undefined}
               labelTrailing={registeredDiffHint("primaryEmployeeId")}
               describedBy={registeredDiffDescribedBy("primaryEmployeeId")}
+              error={employeeMessage !== null}
+              helperText={employeeMessage?.text}
             />
             <ContactInput
               phone={employeePhone}
@@ -2120,6 +2150,8 @@ export const ContractCreationForm = ({
                 placeholder={registeredSnapshot?.secondaryEmployeeId.display ?? undefined}
                 labelTrailing={registeredDiffHint("secondaryEmployeeId")}
                 describedBy={registeredDiffDescribedBy("secondaryEmployeeId")}
+                error={employee2Message !== null}
+                helperText={employee2Message?.text}
               />
               <ContactInput
                 phone={employee2Phone}
@@ -2166,7 +2198,7 @@ export const ContractCreationForm = ({
             </div>
 
             <div className="space-y-2 flex-1 min-w-0">
-              <LabelWithHint hint={registeredDiffHint("type")}>
+              <LabelWithHint hint={renderFieldSlot(voucherTypeMessage, "contract-creation-voucher-type-message", "type", "desktop_contracts_creation_voucher-type-field_message")}>
                 <Label className={LABEL_CLS}>{t(locale, "price-info-msg.voucher-type-label")}</Label>
               </LabelWithHint>
               <div className="relative">
@@ -2175,7 +2207,8 @@ export const ContractCreationForm = ({
                   value={voucherType}
                   onValueChange={handleVoucherTypeChange}
                   hideIcon={isVoucherPriceInfosLoading}
-                  aria-describedby={registeredDiffDescribedBy("type")}
+                  aria-describedby={getSlotDescribedBy(voucherTypeMessage, "contract-creation-voucher-type-message", "type")}
+                  aria-invalid={voucherTypeMessage ? true : undefined}
                   placeholder={registeredPlaceholder("type", t(locale, "price-info-msg.voucher-type-label"), getVoucherTypeLabel)}
                   options={Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => ({
                     label: groupName,
@@ -2194,7 +2227,7 @@ export const ContractCreationForm = ({
             </div>
 
             <div className="space-y-2 flex-1 min-w-0">
-              <LabelWithHint hint={registeredDiffHint("duration")}>
+              <LabelWithHint hint={renderFieldSlot(voucherDurationMessage, "contract-creation-voucher-duration-message", "duration", "desktop_contracts_creation_voucher-duration-field_message")}>
                 <Label className={LABEL_CLS}>{t(locale, "price-info-msg.duration-label")}</Label>
               </LabelWithHint>
               <FormNativeSelect
@@ -2202,7 +2235,8 @@ export const ContractCreationForm = ({
                 value={voucherDuration}
                 onValueChange={handleDurationChange}
                 disabled={!canSelectVoucherDuration || isVoucherPriceInfosLoading}
-                aria-describedby={registeredDiffDescribedBy("duration")}
+                aria-describedby={getSlotDescribedBy(voucherDurationMessage, "contract-creation-voucher-duration-message", "duration")}
+                aria-invalid={voucherDurationMessage ? true : undefined}
                 placeholder={registeredPlaceholder("duration", t(locale, "price-info-msg.duration-label"), (duration) => `${duration}일`)}
                 options={voucherPriceInfos.map((v) => ({
                   value: String(v.duration),
@@ -2217,7 +2251,7 @@ export const ContractCreationForm = ({
             className={cn(PANEL_THREE_COLUMN_GRID_CLASS_NAME, "animate-v3-slide-up")}
           >
             <div className="space-y-2">
-              <LabelWithHint hint={registeredDiffHint("fullPrice")}>
+              <LabelWithHint hint={renderFieldSlot(fullPriceMessage, "contract-creation-full-price-message", "fullPrice", "desktop_contracts_creation_full-price-field_message")}>
                 <Label className={LABEL_CLS}>{t(locale, "contract-msg.full-price-label")}</Label>
               </LabelWithHint>
               <div className="relative">
@@ -2226,7 +2260,8 @@ export const ContractCreationForm = ({
                   value={formatPrice(hasVoucherPricingSelection ? fullPrice : "")}
                   onChange={(e) => setFullPrice(parsePrice(e.target.value))}
                   placeholder={registeredPlaceholder("fullPrice", "0", formatPrice)}
-                  aria-describedby={registeredDiffDescribedBy("fullPrice")}
+                  aria-describedby={getSlotDescribedBy(fullPriceMessage, "contract-creation-full-price-message", "fullPrice")}
+                  aria-invalid={fullPriceMessage ? true : undefined}
                   disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />
@@ -2234,7 +2269,7 @@ export const ContractCreationForm = ({
               </div>
             </div>
             <div className="space-y-2">
-              <LabelWithHint hint={registeredDiffHint("grant")}>
+              <LabelWithHint hint={renderFieldSlot(grantMessage, "contract-creation-grant-message", "grant", "desktop_contracts_creation_grant-field_message")}>
                 <Label className={LABEL_CLS}>{t(locale, "contract-msg.grant-label")}</Label>
               </LabelWithHint>
               <div className="relative">
@@ -2243,7 +2278,8 @@ export const ContractCreationForm = ({
                   value={formatPrice(hasVoucherPricingSelection ? grant : "")}
                   onChange={(e) => setGrant(parsePrice(e.target.value))}
                   placeholder={registeredPlaceholder("grant", "0", formatPrice)}
-                  aria-describedby={registeredDiffDescribedBy("grant")}
+                  aria-describedby={getSlotDescribedBy(grantMessage, "contract-creation-grant-message", "grant")}
+                  aria-invalid={grantMessage ? true : undefined}
                   disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />
@@ -2251,7 +2287,7 @@ export const ContractCreationForm = ({
               </div>
             </div>
             <div className="space-y-2">
-              <LabelWithHint hint={registeredDiffHint("actualPrice")}>
+              <LabelWithHint hint={renderFieldSlot(actualPriceMessage, "contract-creation-actual-price-message", "actualPrice", "desktop_contracts_creation_actual-price-field_message")}>
                 <Label className={LABEL_CLS}>{t(locale, "contract-msg.actual-price-label")}</Label>
               </LabelWithHint>
               <div className="relative">
@@ -2260,7 +2296,8 @@ export const ContractCreationForm = ({
                   value={formatPrice(hasVoucherPricingSelection ? actualPrice : "")}
                   onChange={(e) => setActualPrice(parsePrice(e.target.value))}
                   placeholder={registeredPlaceholder("actualPrice", "0", formatPrice)}
-                  aria-describedby={registeredDiffDescribedBy("actualPrice")}
+                  aria-describedby={getSlotDescribedBy(actualPriceMessage, "contract-creation-actual-price-message", "actualPrice")}
+                  aria-invalid={actualPriceMessage ? true : undefined}
                   disabled={!hasVoucherPricingSelection}
                   className={`${INPUT_CLS} pr-12`}
                 />

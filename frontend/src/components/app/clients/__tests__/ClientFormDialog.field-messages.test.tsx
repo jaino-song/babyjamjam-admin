@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 
 import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
 
 const mockCreateClient = jest.fn();
+let mockOutOfPocketPriceError = false;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
@@ -21,7 +23,7 @@ jest.mock("@/hooks/useVoucherData", () => ({
   useAreaTemplates: () => ({ data: [], isLoading: false }),
   useOutOfPocketPriceInfos: () => ({
     data: [{ id: 1, duration: 5, fullPrice: "815000" }],
-    isError: false,
+    isError: mockOutOfPocketPriceError,
     isLoading: false,
   }),
   useVoucherPriceInfos: () => ({ data: [], isLoading: false }),
@@ -57,6 +59,7 @@ jest.mock("@/lib/api/client", () => ({
 const mockApiGet = api.get as jest.MockedFunction<typeof api.get>;
 
 const FIELD_MESSAGE_SELECTOR = '[data-slot="field-message"], [data-slot="field-error-message"]';
+const AREA_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
 
 async function openDialog() {
   const view = render(<ClientFormDialog open onClose={jest.fn()} />);
@@ -84,17 +87,36 @@ describe("ClientFormDialog inline field messages", () => {
     mockApiGet.mockReset();
     mockApiGet.mockResolvedValue({ data: { exists: false } });
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });
+    mockOutOfPocketPriceError = false;
   });
 
-  it("shows no field message on first render", async () => {
+  it("shows only the area guidance on first render, in the area field's label-row slot", async () => {
     const { baseElement } = await openDialog();
 
-    expect(baseElement.querySelectorAll(FIELD_MESSAGE_SELECTOR)).toHaveLength(0);
+    const messages = Array.from(baseElement.querySelectorAll<HTMLElement>(FIELD_MESSAGE_SELECTOR));
+    expect(messages.map((message) => message.textContent)).toEqual([AREA_GUIDANCE]);
+    expect(messages[0]).toHaveAttribute("data-slot", "field-message");
+    const areaSelect = screen.getByLabelText("관할 지역");
+    expect(areaSelect).toHaveAttribute("aria-describedby", messages[0].id);
+    expect(areaSelect.closest('[data-source-component="FormField"]')).toContainElement(messages[0]);
+    expectNoFieldMessageBelowControl(baseElement);
     expect(screen.getByLabelText(/생년월일/)).toHaveAttribute("placeholder", "1958-03-03");
     expect(screen.getByLabelText("출산 예정일")).toHaveAttribute("placeholder", "2026-11-20");
     expect(screen.getByLabelText("출산일")).toHaveAttribute("placeholder", "2026-11-20");
     expect(screen.getByLabelText("시작일")).toHaveAttribute("placeholder", "2026-12-01");
     expect(screen.getByLabelText("종료일")).toHaveAttribute("placeholder", "2026-12-19");
+  });
+
+  it("reports a failed out-of-pocket price lookup in the duration slot, not below the grid", async () => {
+    mockOutOfPocketPriceError = true;
+    const { baseElement } = await openDialog();
+
+    const error = baseElement.querySelector('[data-slot="field-error-message"]');
+    expect(error).toHaveTextContent("자부담 요금을 불러오지 못했어요");
+    expect(screen.getByLabelText(/기간/)).toHaveAttribute("aria-describedby", error?.id);
+    expect(screen.getByLabelText(/기간/)).toHaveAttribute("aria-invalid", "true");
+    expect(error?.closest('[data-source-component="FormField"]')).toContainElement(screen.getByLabelText(/기간/));
+    expectNoFieldMessageBelowControl(baseElement);
   });
 
   it("shows the required message only after a typed value is cleared", async () => {
@@ -218,12 +240,15 @@ describe("ClientFormPanel inline field messages", () => {
 
     const next = screen.getByRole("button", { name: "다음" });
     expect(next).toBeEnabled();
-    expect(document.querySelectorAll(FIELD_MESSAGE_SELECTOR)).toHaveLength(0);
+    expect(
+      Array.from(document.querySelectorAll(FIELD_MESSAGE_SELECTOR)).map((message) => message.textContent),
+    ).toEqual([AREA_GUIDANCE]);
 
     fireEvent.click(next);
 
     expect(screen.getByText("이름을 입력해 주세요")).toBeInTheDocument();
     expect(screen.getByText("연락처를 입력해 주세요")).toBeInTheDocument();
     expect(document.activeElement).toBe(screen.getByLabelText(/이름/));
+    expectNoFieldMessageBelowControl(document.body);
   });
 });

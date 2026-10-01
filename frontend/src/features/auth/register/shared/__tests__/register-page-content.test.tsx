@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { api } from "@/lib/api/client";
 import { authApi } from "@/services/api";
 
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
+
 import { RegisterPageContent } from "../register-page-content";
 
 jest.mock("next/navigation", () => ({
@@ -51,12 +53,32 @@ describe("RegisterPageContent field messages", () => {
     mockApiGet.mockResolvedValue({ data: { exists: false } });
   });
 
-  it("shows no message on first render", () => {
+  it("shows only the password guidance on first render", () => {
     const { container } = renderRegister();
 
     expect(container.querySelector('[data-slot="field-error-message"]')).toBeNull();
-    expect(container.querySelector('[data-slot="field-message"]')).toBeNull();
+    const messages = Array.from(container.querySelectorAll('[data-slot="field-message"]'));
+    expect(messages.map((message) => message.textContent)).toEqual(["소문자·숫자·특수문자 8자 이상"]);
+    expect(slotOf(container, "비밀번호")).toBe(messages[0]);
     expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+    expectNoFieldMessageBelowControl(container);
+  });
+
+  it("replaces the password guidance with the live requirement hint and, once cleared, the required error", () => {
+    const { container } = renderRegister();
+    const password = screen.getByLabelText("비밀번호", { selector: "input" });
+
+    fireEvent.change(password, { target: { value: "abcdefgh" } });
+    expect(slotOf(container, "비밀번호")).toHaveTextContent("숫자·특수문자 필요");
+    expect(container).not.toHaveTextContent("소문자·숫자·특수문자 8자 이상");
+
+    fireEvent.change(password, { target: { value: "Passw0rd!x" } });
+    expect(slotOf(container, "비밀번호")).toHaveTextContent("사용할 수 있는 비밀번호예요");
+
+    fireEvent.change(password, { target: { value: "" } });
+    expect(slotOf(container, "비밀번호")).toHaveTextContent("비밀번호를 입력해 주세요");
+    expect(container).not.toHaveTextContent("소문자·숫자·특수문자 8자 이상");
+    expectNoFieldMessageBelowControl(container);
   });
 
   it("shows a required message only after a field held a value and was cleared", () => {
