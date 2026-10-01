@@ -38,12 +38,12 @@ export function NotificationTestSection() {
     <div data-component="desktop_settings_sections_notification-test" className="space-y-4">
       <div className="flex flex-col gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-primary-light text-primary">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-v3-primary-light text-v3-primary">
             <Bell className="h-5 w-5" aria-hidden="true" />
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-dark">전체 구독 디바이스</p>
-            <p className="mt-0.5 text-sm leading-5 text-text-muted">
+            <p className="font-semibold text-v3-dark">전체 구독 디바이스</p>
+            <p className="mt-0.5 text-sm leading-5 text-v3-text-muted">
               실제 테스트 푸시가 즉시 전송됩니다.
             </p>
           </div>

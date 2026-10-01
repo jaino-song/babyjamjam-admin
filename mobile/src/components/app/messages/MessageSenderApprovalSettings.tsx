@@ -73,15 +73,15 @@ export function MessageSenderApprovalSettings({
 
   return (
     <ContentPaper variant="v3" className="overflow-hidden">
-      <div className="rounded-[28px] border border-border/70 bg-gradient-to-br from-white via-white to-primary-light/40 p-6 sm:p-7">
+      <div className="rounded-[28px] border border-v3-border/70 bg-gradient-to-br from-white via-white to-v3-primary-light/40 p-6 sm:p-7">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-v3-primary/10 text-v3-primary">
               <Building2 className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-dark">메시지 발송 권한 승인</h2>
-              <p className="text-sm text-text-muted">
+              <h2 className="text-lg font-bold text-v3-dark">메시지 발송 권한 승인</h2>
+              <p className="text-sm text-v3-text-muted">
                 승인 대상은 계정이 아니라 조직 단위입니다. 한 번 승인되면 같은 조직의 다른 계정에도 적용됩니다.
               </p>
             </div>
@@ -99,7 +99,7 @@ export function MessageSenderApprovalSettings({
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
-          <div className="space-y-4 rounded-[24px] border border-border bg-white/90 p-5">
+          <div className="space-y-4 rounded-[24px] border border-v3-border bg-white/90 p-5">
             <div className="rounded-[18px] bg-slate-50 px-4 py-3">
               <div className="flex items-start gap-2">
                 <Phone className="mt-0.5 h-4 w-4 text-slate-500" />
@@ -143,33 +143,33 @@ export function MessageSenderApprovalSettings({
             ) : null}
           </div>
 
-          <div className="space-y-4 rounded-[24px] border border-border bg-white/90 p-5">
+          <div className="space-y-4 rounded-[24px] border border-v3-border bg-white/90 p-5">
             <div>
-              <p className="text-sm font-semibold text-dark">현재 상태</p>
-              <p className="mt-1 text-sm leading-6 text-text-muted">{meta.description}</p>
+              <p className="text-sm font-semibold text-v3-dark">현재 상태</p>
+              <p className="mt-1 text-sm leading-6 text-v3-text-muted">{meta.description}</p>
             </div>
 
-            <div className="space-y-3 rounded-[18px] bg-surface/60 p-4 text-sm">
+            <div className="space-y-3 rounded-[18px] bg-v3-dim-white/60 p-4 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-text-muted">발신번호</span>
-                <span className="font-semibold text-dark">{UNIFIED_SENDER_PHONE}</span>
+                <span className="text-v3-text-muted">발신번호</span>
+                <span className="font-semibold text-v3-dark">{UNIFIED_SENDER_PHONE}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-text-muted">신청 시각</span>
-                <span className="font-semibold text-dark">
+                <span className="text-v3-text-muted">신청 시각</span>
+                <span className="font-semibold text-v3-dark">
                   {formatDate(approval?.requestedAt ?? null) ?? "아직 없음"}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3">
-                <span className="text-text-muted">승인 시각</span>
-                <span className="font-semibold text-dark">
+                <span className="text-v3-text-muted">승인 시각</span>
+                <span className="font-semibold text-v3-dark">
                   {formatDate(approval?.approvedAt ?? null) ?? "아직 없음"}
                 </span>
               </div>
             </div>
 
             {isLoading ? (
-              <div className="flex items-center justify-center rounded-[18px] border border-dashed border-border px-4 py-8">
+              <div className="flex items-center justify-center rounded-[18px] border border-dashed border-v3-border px-4 py-8">
                 <Spinner className="h-5 w-5" />
               </div>
             ) : null}

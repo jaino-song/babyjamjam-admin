@@ -54,7 +54,7 @@ function CallerName({ children }: { children: ReactNode }) {
 /** A short marker in the row title; the full reasoning lives in the review sheet. */
 function RowFlag({ label, tone = "warning" }: { label: string; tone?: "warning" | "danger" | "muted" }) {
   const toneClass =
-    tone === "danger" ? "text-red-600" : tone === "muted" ? "text-text-muted" : "text-amber-600";
+    tone === "danger" ? "text-red-600" : tone === "muted" ? "text-v3-text-muted" : "text-amber-600";
   return <span className={`shrink-0 text-[0.62rem] font-bold ${toneClass}`}>{label}</span>;
 }
 

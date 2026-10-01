@@ -61,8 +61,8 @@ export function StatsPeriodSelector({
       className="flex items-center justify-end gap-2"
       aria-label="통계 기간 선택"
     >
-      <span className="text-[0.7rem] font-semibold text-text-muted">기간</span>
-      <div className="flex items-center gap-1 rounded-full bg-surface p-1">
+      <span className="text-[0.7rem] font-semibold text-v3-text-muted">기간</span>
+      <div className="flex items-center gap-1 rounded-full bg-v3-dim-white p-1">
         {STATS_PERIOD_OPTIONS.map((option) => (
           <Button
             key={option.value}
@@ -140,7 +140,7 @@ export function StatsSourceEmpty({ source, dataComponent }: { source: string; da
   return (
     <div
       data-component={dataComponent}
-      className="rounded-md border border-dashed border-border bg-surface px-3 py-2 text-[0.78rem] text-text-muted"
+      className="rounded-md border border-dashed border-v3-border bg-v3-dim-white px-3 py-2 text-[0.78rem] text-v3-text-muted"
     >
       {source} 연결이 필요해요.
     </div>
@@ -149,8 +149,8 @@ export function StatsSourceEmpty({ source, dataComponent }: { source: string; da
 
 export function StatsUnavailableValue({ variant = "inline" }: { variant?: "inline" | "block" }) {
   if (variant === "block") {
-    return <div className="text-[0.78rem] text-text-muted">—</div>;
+    return <div className="text-[0.78rem] text-v3-text-muted">—</div>;
   }
 
-  return <span className="ml-auto text-[0.7rem] font-semibold text-text-muted">—</span>;
+  return <span className="ml-auto text-[0.7rem] font-semibold text-v3-text-muted">—</span>;
 }

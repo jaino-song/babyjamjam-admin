@@ -18,11 +18,11 @@ export function InfoCard({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="bg-surface rounded-2xl p-4"
+      className="bg-v3-dim-white rounded-2xl p-4"
     >
       <h3
         data-component={dataComponent ? `${dataComponent}_title` : undefined}
-        className="text-[0.7rem] uppercase tracking-[0.1em] text-text-muted font-semibold mb-3"
+        className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-text-muted font-semibold mb-3"
       >
         {title}
       </h3>

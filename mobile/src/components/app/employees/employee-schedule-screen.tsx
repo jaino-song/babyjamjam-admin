@@ -101,7 +101,7 @@ function ScheduleCalendar({
         {WEEKDAY_LABELS.map((label) => (
           <span
             key={label}
-            className="py-1 text-center text-[0.68rem] font-semibold text-text-muted"
+            className="py-1 text-center text-[0.68rem] font-semibold text-v3-text-muted"
           >
             {label}
           </span>
@@ -137,15 +137,15 @@ function ScheduleCalendar({
               onClick={() => onDateSelect(day)}
               className={[
                 `${styles.calendarDay} h-auto w-full flex-col items-stretch justify-start text-left shadow-none`,
-                day.isCurrentMonth ? "bg-white" : "bg-surface/45 text-text-muted",
-                isSelected ? "border-primary bg-primary-light text-dark" : "",
-                isToday && !isSelected ? "ring-2 ring-primary/25 ring-offset-1" : "",
-                !day.isInHorizon ? "cursor-not-allowed border-border/50 bg-surface/65 opacity-55" : "",
+                day.isCurrentMonth ? "bg-white" : "bg-v3-dim-white/45 text-v3-text-muted",
+                isSelected ? "border-v3-primary bg-v3-primary-light text-v3-dark" : "",
+                isToday && !isSelected ? "ring-2 ring-v3-primary/25 ring-offset-1" : "",
+                !day.isInHorizon ? "cursor-not-allowed border-v3-border/50 bg-v3-dim-white/65 opacity-55" : "",
               ].filter(Boolean).join(" ")}
             >
               <span className="flex items-center justify-between gap-1 text-[0.72rem] font-semibold">
                 <span>{day.date.getDate()}</span>
-                {isToday ? <span className="text-[0.58rem] text-primary">오늘</span> : null}
+                {isToday ? <span className="text-[0.58rem] text-v3-primary">오늘</span> : null}
               </span>
               <span className={styles.eventDots} data-slot="calendar-events">
                 {entries.slice(0, 3).map((entry) => (
@@ -193,7 +193,7 @@ function ScheduleEntryRows({
           <ListItemRow
             key={entry.id}
             data-component={`${dataComponent}_row`}
-            className={selectedEntryId === entry.id ? "bg-primary-light" : undefined}
+            className={selectedEntryId === entry.id ? "bg-v3-primary-light" : undefined}
             style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
             left={
               <span
@@ -375,7 +375,7 @@ export function EmployeeScheduleScreen({
       data-slot="schedule-content"
     >
       <header className="shrink-0" data-component={`${listBase}_header`} data-slot="schedule-header">
-        <h1 className="text-[1.25rem] font-bold text-dark">서비스 일정</h1>
+        <h1 className="text-[1.25rem] font-bold text-v3-dark">서비스 일정</h1>
       </header>
       <DetailTabPills
         data-component={`${listBase}_view-tabs`}
@@ -435,7 +435,7 @@ export function EmployeeScheduleScreen({
             >
               <div className="section-header flex items-center justify-between">
                 <span>{formatSelectedDate(dateFromKey(selectedDateKey))}</span>
-                <span className="text-text-muted">{selectedDateEntries.length}건</span>
+                <span className="text-v3-text-muted">{selectedDateEntries.length}건</span>
               </div>
               <ScheduleEntryRows
                 dataComponent={`${cardBase}_body_agenda_rows`}

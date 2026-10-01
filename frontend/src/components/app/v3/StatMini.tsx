@@ -27,10 +27,10 @@ export interface StatMiniProps extends Omit<React.HTMLAttributes<HTMLDivElement>
 }
 
 const colorVariants = [
-  { bg: "bg-primary-light", text: "text-primary" },
-  { bg: "bg-orange-light", text: "text-orange" },
-  { bg: "bg-green-light", text: "text-green" },
-  { bg: "bg-burgundy-light", text: "text-burgundy" },
+  { bg: "bg-v3-primary-light", text: "text-v3-primary" },
+  { bg: "bg-v3-orange-light", text: "text-v3-orange" },
+  { bg: "bg-v3-green-light", text: "text-v3-green" },
+  { bg: "bg-v3-burgundy-light", text: "text-v3-burgundy" },
 ] as const;
 
 export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, StatMiniProps>(
@@ -76,7 +76,7 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
           className={cn(
             "h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px]",
             isResponsiveSquare ? "hidden min-[961px]:flex" : "flex",
-            isLoading ? "bg-surface" : variant.bg,
+            isLoading ? "bg-v3-dim-white" : variant.bg,
           )}
         >
           {isLoading ? (
@@ -94,11 +94,11 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
           >
             <Skeleton
               data-slot="stat-mini-value"
-              className="h-[calc(33px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] bg-surface"
+              className="h-[calc(33px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] bg-v3-dim-white"
             />
             <Skeleton
               data-slot="stat-mini-label"
-              className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-surface"
+              className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
             />
           </div>
         ) : (
@@ -112,13 +112,13 @@ export const StatMini = React.forwardRef<HTMLButtonElement | HTMLDivElement, Sta
             >
               <p
                 data-slot="stat-mini-value"
-                className="min-w-0 break-words text-[calc(24px*var(--glint-ui-scale,1))] font-bold text-dark"
+                className="min-w-0 break-words text-[calc(24px*var(--glint-ui-scale,1))] font-bold text-v3-dark"
               >
                 {value}
               </p>
-              <p className="mb-[calc(4px*var(--glint-ui-scale,1))] self-end text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">{counter}</p>
+              <p className="mb-[calc(4px*var(--glint-ui-scale,1))] self-end text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">{counter}</p>
             </span>
-            <p data-slot="stat-mini-label" className="break-words text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
+            <p data-slot="stat-mini-label" className="break-words text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
               {label}
             </p>
           </div>

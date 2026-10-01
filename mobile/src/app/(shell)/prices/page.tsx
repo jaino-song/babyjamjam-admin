@@ -285,7 +285,7 @@ export default function PricesPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--burgundy))",
+                    color: "hsl(var(--v3-burgundy))",
                   }}
                   data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_error"
                 >
@@ -297,7 +297,7 @@ export default function PricesPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--text-muted))",
+                    color: "hsl(var(--v3-text-muted))",
                   }}
                   data-component="mobile_prices_page_detail-sheet_stack_list-page_content_list-card_body_empty"
                 >
@@ -339,7 +339,7 @@ export default function PricesPage() {
                               <ChevronRight
                                 size={16}
                                 strokeWidth={2}
-                                color="hsl(var(--text-muted))"
+                                color="hsl(var(--v3-text-muted))"
                                 aria-hidden="true"
                               />
                             }

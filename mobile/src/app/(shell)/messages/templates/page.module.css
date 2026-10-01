@@ -48,8 +48,8 @@
 }
 
 .templateIconSms {
-  color: hsl(var(--primary));
-  background: hsl(var(--primary-light));
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
 }
 
 .channel {
@@ -68,8 +68,8 @@
 }
 
 .channelSms {
-  color: hsl(var(--primary));
-  background: hsl(var(--primary-light));
+  color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
 }
 
 .templateMeta {
@@ -77,11 +77,11 @@
   align-items: center;
   gap: 5px;
   margin-top: 2px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.66rem;
   line-height: normal;
 }
 
 .metaSeparator {
-  color: hsl(var(--border));
+  color: hsl(var(--v3-border));
 }

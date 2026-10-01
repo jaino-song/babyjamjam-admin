@@ -401,7 +401,7 @@ export function PastTriggerPolicyDetail({
           />
           <span
             data-component={sub("interval_field_unit")}
-            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-semibold text-dark"
+            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-semibold text-v3-dark"
           >
             분
           </span>
@@ -409,7 +409,7 @@ export function PastTriggerPolicyDetail({
         <p
           id={intervalHelperId}
           data-component={sub("interval_helper")}
-          className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-text-muted"
+          className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-v3-text-muted"
         >
           1~1440분
         </p>
@@ -440,7 +440,7 @@ export function PastTriggerPolicyDetail({
               data-component={sub("order_loading_skeleton")}
               className="h-[calc(36px*var(--glint-ui-scale,1))] w-full rounded-[calc(10px*var(--glint-ui-scale,1))]"
             />
-            <span className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium text-text-muted">
+            <span className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium text-v3-text-muted">
               자동 전송 루틴을 불러오는 중
             </span>
           </div>
@@ -458,7 +458,7 @@ export function PastTriggerPolicyDetail({
                 >
                   <span
                     data-component={`${rowDataComponent}_rank`}
-                    className="w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold text-primary"
+                    className="w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold text-v3-primary"
                   >
                     {index + 1}
                   </span>
@@ -468,13 +468,13 @@ export function PastTriggerPolicyDetail({
                   >
                     <span
                       data-component={`${rowDataComponent}_copy_title`}
-                      className="truncate text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1rem*var(--glint-ui-scale,1))] text-dark"
+                      className="truncate text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1rem*var(--glint-ui-scale,1))] text-v3-dark"
                     >
                       {rule.name}
                     </span>
                     <span
                       data-component={`${rowDataComponent}_copy_summary`}
-                      className="truncate text-[calc(0.62rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.9rem*var(--glint-ui-scale,1))] text-text-muted"
+                      className="truncate text-[calc(0.62rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.9rem*var(--glint-ui-scale,1))] text-v3-text-muted"
                     >
                       {getTriggerRuleSummary(rule)}
                     </span>
@@ -516,7 +516,7 @@ export function PastTriggerPolicyDetail({
           <div
             data-component={sub("order_empty")}
             data-slot="info-row"
-            className="info-row !justify-center !py-[calc(12px*var(--glint-ui-scale,1))] text-center text-[calc(0.7rem*var(--glint-ui-scale,1))] font-medium text-text-muted"
+            className="info-row !justify-center !py-[calc(12px*var(--glint-ui-scale,1))] text-center text-[calc(0.7rem*var(--glint-ui-scale,1))] font-medium text-v3-text-muted"
           >
             등록된 자동 전송 루틴 없음
           </div>

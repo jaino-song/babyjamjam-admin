@@ -456,7 +456,7 @@ export default function ConsultationsPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--text-muted))",
+                    color: "hsl(var(--v3-text-muted))",
                   }}
                   data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_loading"
                 >
@@ -468,7 +468,7 @@ export default function ConsultationsPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--burgundy))",
+                    color: "hsl(var(--v3-burgundy))",
                   }}
                   data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
                 >
@@ -480,7 +480,7 @@ export default function ConsultationsPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--text-muted))",
+                    color: "hsl(var(--v3-text-muted))",
                   }}
                   data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_empty"
                 >

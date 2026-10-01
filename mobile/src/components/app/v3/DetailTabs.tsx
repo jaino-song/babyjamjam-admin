@@ -21,7 +21,7 @@ export function DetailTabs({ "data-component": dataComponent, tabs, activeTab, o
   const sub = (suffix: string) => (dataComponent ? `${dataComponent}_${suffix}` : undefined);
 
   return (
-    <div data-component={dataComponent} data-slot="detail-tabs" className="relative flex gap-1 border-b border-border">
+    <div data-component={dataComponent} data-slot="detail-tabs" className="relative flex gap-1 border-b border-v3-border">
       {tabs.map((tab) => (
         <button
           data-component={sub("tab-button")}
@@ -29,7 +29,7 @@ export function DetailTabs({ "data-component": dataComponent, tabs, activeTab, o
           onClick={() => onTabChange(tab.key)}
           className={cn(
             "relative flex-1 text-center text-[0.8rem] pb-2 px-3 transition-colors",
-            activeTab === tab.key ? "text-primary font-semibold" : "text-text-muted hover:text-text"
+            activeTab === tab.key ? "text-primary font-semibold" : "text-v3-text-muted hover:text-v3-text"
           )}
         >
           {tab.label}

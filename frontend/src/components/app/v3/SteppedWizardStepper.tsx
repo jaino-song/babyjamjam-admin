@@ -49,9 +49,9 @@ export function SteppedWizardStepper({
                   data-component="desktop_v3_stepped-wizard_stepper-desktop_item_step_circle"
                   className={cn(
                     "flex h-[1.575rem] w-[1.575rem] items-center justify-center rounded-full text-[0.612rem] font-bold transition-all duration-300 will-change-transform",
-                    isCompleted && "bg-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
-                    isCurrent && "scale-110 bg-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
-                    !isCompleted && !isCurrent && "border-2 border-border bg-surface text-text-muted",
+                    isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                    isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                    !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted",
                   )}
                 >
                   {isCompleted ? <Check className="h-[0.7875rem] w-[0.7875rem]" strokeWidth={3} /> : idx + 1}
@@ -62,7 +62,7 @@ export function SteppedWizardStepper({
                   data-component="desktop_v3_stepped-wizard_stepper-desktop_item_label"
                   className={cn(
                     "block w-full text-center text-[0.535rem] font-semibold leading-none whitespace-normal transition-colors md:whitespace-nowrap",
-                    (isCompleted || isCurrent) ? "text-primary" : "text-text-muted",
+                    (isCompleted || isCurrent) ? "text-v3-primary" : "text-v3-text-muted",
                   )}
                 >
                   {step.label}
@@ -74,7 +74,7 @@ export function SteppedWizardStepper({
                 data-component="desktop_v3_stepped-wizard_stepper-desktop_connector"
                 className={cn(
                   "mt-[0.73125rem] h-[0.1125rem] w-[0.75rem] shrink-0 rounded-full md:w-[1.45rem]",
-                  idx < currentStep ? "bg-primary" : "bg-border",
+                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border",
                 )}
               />
             )}

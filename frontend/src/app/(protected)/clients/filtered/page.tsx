@@ -68,13 +68,13 @@ function FilteredClientsTableSkeleton() {
                         data-component="desktop_clients-filtered_page_content_loading_table_row"
                     >
                         <TableCell>
-                            <Skeleton className="h-4 w-24 bg-surface" />
+                            <Skeleton className="h-4 w-24 bg-v3-dim-white" />
                         </TableCell>
                         <TableCell>
-                            <Skeleton className="h-4 w-20 bg-surface" />
+                            <Skeleton className="h-4 w-20 bg-v3-dim-white" />
                         </TableCell>
                         <TableCell>
-                            <Skeleton className="h-6 w-14 rounded-full bg-surface" />
+                            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
                         </TableCell>
                     </TableRow>
                 ))}

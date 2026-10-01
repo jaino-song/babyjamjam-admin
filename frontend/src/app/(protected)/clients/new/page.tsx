@@ -47,17 +47,17 @@ import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
 const INPUT_CLS =
-  "h-auto w-full rounded-[14px] border-[1.5px] border-input bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-dark outline-none transition-all focus:border-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "h-auto w-full rounded-[14px] border-[1.5px] border-input bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 
 const SELECT_CLS =
-  "h-auto min-h-0 w-full rounded-[14px] border-[1.5px] border-input bg-white pl-4 py-3 text-[0.85rem] font-normal leading-normal text-dark outline-none transition-all focus:border-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus:ring-0";
+  "h-auto min-h-0 w-full rounded-[14px] border-[1.5px] border-input bg-white pl-4 py-3 text-[0.85rem] font-normal leading-normal text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus:ring-0";
 
-const LABEL_CLS = "text-xs font-semibold text-text-muted";
+const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
 
 const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
 
 const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-dark";
+  "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
 
 type ClientInputField =
   | "name"
@@ -545,7 +545,7 @@ export default function NewClientPage() {
             />
           </div>
           {error && (
-            <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -637,7 +637,7 @@ export default function NewClientPage() {
                 />
                 {(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                   <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading" className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                    <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
                   </div>
                 )}
               </div>
@@ -679,7 +679,7 @@ export default function NewClientPage() {
             <div data-component="desktop_clients-new_service_step_pricing-section_pricing-header" className="flex items-center gap-2 mb-3">
               <span className={LABEL_CLS}>{t(locale, "clients.form.section-pricing")}</span>
               {selectedPriceInfo && !pricesManuallyEdited && (
-                <span className="text-[0.65rem] font-bold text-primary bg-primary-light px-2 py-0.5 rounded-full">
+                <span className="text-[0.65rem] font-bold text-v3-primary bg-v3-primary-light px-2 py-0.5 rounded-full">
                   자동입력
                 </span>
               )}
@@ -750,8 +750,8 @@ export default function NewClientPage() {
                   className={cn(
                     "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
                     store[key]
-                      ? "bg-primary-light border-primary text-primary"
-                      : "bg-white border-border text-text-muted hover:border-primary/40"
+                      ? "bg-v3-primary-light border-v3-primary text-v3-primary"
+                      : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
                   )}
                 >
                   {store[key] && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
@@ -762,7 +762,7 @@ export default function NewClientPage() {
           </div>
 
           {error && (
-            <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -772,19 +772,19 @@ export default function NewClientPage() {
         <div data-component="desktop_clients-new_service_summary" className="flex gap-3 flex-wrap">
           {store.type && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
               {store.type}
             </span>
           )}
           {store.duration && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
               {store.duration}일
             </span>
           )}
           {store.actualPrice && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
               {formatPrice(store.actualPrice)}원
             </span>
           )}
@@ -837,7 +837,7 @@ export default function NewClientPage() {
           </div>
 
           {error && (
-            <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -854,7 +854,7 @@ export default function NewClientPage() {
             data-component="desktop_clients-new_main_content_content-inner_back-button"
             type="button"
             onClick={() => router.push("/clients")}
-            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-text-muted hover:text-primary transition-colors mb-4 md:mb-6 self-start"
+            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
           >
             <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
             고객 목록으로 돌아가기

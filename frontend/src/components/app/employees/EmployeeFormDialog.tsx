@@ -292,14 +292,14 @@ function WorkAreaMultiSelect({
                         className={cn(
                             APP_FORM_CONTROL_CLASS_NAME,
                             "box-border items-center justify-between gap-2 py-0 text-left",
-                            value.length === 0 && "text-text-muted",
-                            invalid && "border-burgundy focus-visible:border-burgundy",
+                            value.length === 0 && "text-v3-text-muted",
+                            invalid && "border-v3-burgundy focus-visible:border-v3-burgundy",
                         )}
                     >
                         <span className="min-w-0 flex-1 truncate">{selectedSummary}</span>
                         <ChevronDown
                             className={cn(
-                                "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 text-text-muted transition-transform",
+                                "h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] shrink-0 text-v3-text-muted transition-transform",
                                 open && "rotate-180",
                             )}
                             strokeWidth={2.2}
@@ -315,20 +315,20 @@ function WorkAreaMultiSelect({
                 sideOffset={6}
                 avoidCollisions
                 data-component={`${dataComponentPrefix}-select-popover`}
-                className="w-[var(--radix-popover-trigger-width)] min-w-[240px] rounded-[13px] border-[1.35px] border-border bg-white p-0 shadow-lg"
+                className="w-[var(--radix-popover-trigger-width)] min-w-[240px] rounded-[13px] border-[1.35px] border-v3-border bg-white p-0 shadow-lg"
             >
                 <div
                     data-component={`${dataComponentPrefix}-select-head`}
-                    className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5"
+                    className="flex items-center justify-between gap-3 border-b border-v3-border px-3.5 py-2.5"
                 >
-                    <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted">
+                    <span className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                         {value.length}개 지역 선택
                     </span>
                     <div className="flex items-center gap-2">
                         <button
                             type="button"
                             onClick={() => onChange(selectableOptions.map((option) => option.value))}
-                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-primary hover:text-primary/80"
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-primary hover:text-v3-primary/80"
                             data-component={`${dataComponentPrefix}-select-all`}
                         >
                             전체 선택
@@ -337,7 +337,7 @@ function WorkAreaMultiSelect({
                             type="button"
                             onClick={() => onChange([])}
                             disabled={value.length === 0}
-                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted hover:text-dark disabled:cursor-not-allowed disabled:opacity-45"
+                            className="text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted hover:text-v3-dark disabled:cursor-not-allowed disabled:opacity-45"
                             data-component={`${dataComponentPrefix}-clear`}
                         >
                             선택 해제
@@ -360,13 +360,13 @@ function WorkAreaMultiSelect({
                             <label
                                 key={option.value}
                                 htmlFor={checkboxId}
-                                className="flex min-h-[36px] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-dark hover:bg-primary/5"
+                                className="flex min-h-[36px] cursor-pointer items-center gap-2.5 rounded-[8px] px-2.5 py-2 text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark hover:bg-v3-primary/5"
                             >
                                 <Checkbox
                                     id={checkboxId}
                                     checked={isSelected}
                                     onCheckedChange={(checked) => setAreaChecked(option.value, checked === true)}
-                                    className="h-4 w-4 rounded-[4px] border-border data-[state=checked]:border-primary data-[state=checked]:bg-primary"
+                                    className="h-4 w-4 rounded-[4px] border-v3-border data-[state=checked]:border-v3-primary data-[state=checked]:bg-v3-primary"
                                     data-component={`${dataComponentPrefix}-option-${index}`}
                                 />
                                 <span>{option.label}</span>
@@ -375,7 +375,7 @@ function WorkAreaMultiSelect({
                     })}
                 </div>
 
-                <div className="border-t border-border p-2.5">
+                <div className="border-t border-v3-border p-2.5">
                     <Button
                         type="button"
                         size="sm"
@@ -833,7 +833,7 @@ function EmployeeFormContent({
         <Alert
             variant="destructive"
             data-component="desktop_employees_form-dialog_error"
-            className="rounded-[18px] border-none bg-burgundy-light px-4 py-3 text-burgundy [&>svg]:text-burgundy"
+            className="rounded-[18px] border-none bg-v3-burgundy-light px-4 py-3 text-v3-burgundy [&>svg]:text-v3-burgundy"
         >
             <AlertDescription>
                 <div className="flex flex-col gap-2">
@@ -1024,7 +1024,7 @@ function EmployeeFormContent({
                 label={
                     <>
                         {t(locale, "employees.form.name")}
-                        <span className="ml-1 text-burgundy">*</span>
+                        <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
                 labelAccessory={renderInputMessage("name", "desktop_employees_form-panel_name-field_helper")}
@@ -1045,7 +1045,7 @@ function EmployeeFormContent({
                 label={
                     <>
                         {t(locale, "employees.form.phone")}
-                        <span className="ml-1 text-burgundy">*</span>
+                        <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
                 labelAccessory={renderInputMessage("phone", "desktop_employees_form-panel_phone-field_helper")}
@@ -1087,7 +1087,7 @@ function EmployeeFormContent({
                 label={
                     <>
                     {t(locale, "employees.form.grade")}
-                    <span className="ml-1 text-burgundy">*</span>
+                    <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
             >
@@ -1108,7 +1108,7 @@ function EmployeeFormContent({
                 label={
                     <>
                     {t(locale, "employees.form.work-area")}
-                    <span className="ml-1 text-burgundy">*</span>
+                    <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
                 labelAccessory={touched.workArea && !isWorkAreaValid ? (

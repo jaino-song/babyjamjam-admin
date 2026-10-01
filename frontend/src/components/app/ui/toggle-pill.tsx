@@ -54,7 +54,7 @@ function TogglePill({
   };
 
   const buttonClassName =
-    "relative z-10 inline-flex min-w-0 items-center justify-center rounded-full border-0 bg-transparent px-[calc(20px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-extrabold leading-none tracking-[-0.025em] outline-none transition-colors duration-200 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-primary/25 disabled:cursor-not-allowed disabled:opacity-55";
+    "relative z-10 inline-flex min-w-0 items-center justify-center rounded-full border-0 bg-transparent px-[calc(20px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-extrabold leading-none tracking-[-0.025em] outline-none transition-colors duration-200 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/25 disabled:cursor-not-allowed disabled:opacity-55";
 
   return (
     <div
@@ -64,14 +64,14 @@ function TogglePill({
       role="tablist"
       aria-label={ariaLabel}
       className={cn(
-        "relative isolate inline-grid h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-fit grid-cols-2 overflow-hidden rounded-full bg-primary/10",
+        "relative isolate inline-grid h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-fit grid-cols-2 overflow-hidden rounded-full bg-v3-primary/10",
         className,
       )}
     >
       <span
         aria-hidden="true"
         data-component={indicatorDataComponent ?? `${dataComponent}-indicator`}
-        className="pointer-events-none absolute inset-y-0 left-0 z-0 w-1/2 rounded-full bg-primary shadow-[0_6px_18px_hsla(214,100%,34%,0.2)] transition-transform duration-300 ease-out motion-reduce:transition-none"
+        className="pointer-events-none absolute inset-y-0 left-0 z-0 w-1/2 rounded-full bg-v3-primary shadow-[0_6px_18px_hsla(214,100%,34%,0.2)] transition-transform duration-300 ease-out motion-reduce:transition-none"
         style={{ transform: value ? "translateX(0)" : "translateX(100%)" }}
       />
       <button
@@ -82,7 +82,7 @@ function TogglePill({
         tabIndex={value ? 0 : -1}
         disabled={disabled}
         data-component={leftButtonDataComponent ?? `${dataComponent}-button-left`}
-        className={cn(buttonClassName, value ? "text-white" : "text-text-muted hover:text-primary")}
+        className={cn(buttonClassName, value ? "text-white" : "text-v3-text-muted hover:text-v3-primary")}
         onClick={() => onValueChange(true)}
         onKeyDown={(event) => handleKeyDown(event, true)}
       >
@@ -96,7 +96,7 @@ function TogglePill({
         tabIndex={value ? -1 : 0}
         disabled={disabled}
         data-component={rightButtonDataComponent ?? `${dataComponent}-button-right`}
-        className={cn(buttonClassName, value ? "text-text-muted hover:text-primary" : "text-white")}
+        className={cn(buttonClassName, value ? "text-v3-text-muted hover:text-v3-primary" : "text-white")}
         onClick={() => onValueChange(false)}
         onKeyDown={(event) => handleKeyDown(event, false)}
       >

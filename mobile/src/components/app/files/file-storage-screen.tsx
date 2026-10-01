@@ -162,7 +162,7 @@ function FilePreview({ doc }: { doc: Document }) {
       <p
         style={{
           fontSize: "0.82rem",
-          color: "hsl(var(--text-muted))",
+          color: "hsl(var(--v3-text-muted))",
           lineHeight: 1.6,
           margin: 0,
         }}
@@ -314,7 +314,7 @@ function FileDetailContent({
               style={{
                 fontSize: "0.84rem",
                 lineHeight: 1.55,
-                color: "hsl(var(--dark))",
+                color: "hsl(var(--v3-dark))",
                 whiteSpace: "pre-wrap",
               }}
             >
@@ -324,7 +324,7 @@ function FileDetailContent({
             <div
               style={{
                 fontSize: "0.82rem",
-                color: "hsl(var(--text-muted))",
+                color: "hsl(var(--v3-text-muted))",
                 lineHeight: 1.55,
               }}
             >
@@ -348,7 +348,7 @@ function FileDetailContent({
             <div
               style={{
                 fontSize: "0.82rem",
-                color: "hsl(var(--text-muted))",
+                color: "hsl(var(--v3-text-muted))",
                 lineHeight: 1.55,
               }}
             >
@@ -501,7 +501,7 @@ export function FileStorageScreen() {
                   padding: "32px 16px",
                   textAlign: "center",
                   fontSize: "0.82rem",
-                  color: "hsl(var(--text-muted))",
+                  color: "hsl(var(--v3-text-muted))",
                 }}
                 data-component="mobile_files_detail-sheet_stack_list-page_content_list-card_body_empty"
               >

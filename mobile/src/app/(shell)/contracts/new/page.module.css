@@ -1,6 +1,6 @@
 .pageRoot,
 :global(main[data-slot="main-content"]:has([data-slot="contract-creation-screen"])) {
-  color: hsl(var(--text));
+  color: hsl(var(--v3-text));
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
   -webkit-font-smoothing: antialiased;
@@ -12,7 +12,7 @@
   min-height: 0;
   overflow: hidden;
   padding: 0 !important;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 :global(main[data-slot="main-content"]:has([data-slot="contract-creation-screen"]) > [data-slot="contract-creation-screen"]) {
@@ -42,7 +42,7 @@
   height: 100%;
   transform: none;
   overflow: hidden;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 .navPage {
@@ -51,7 +51,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 .navbar {
@@ -63,8 +63,8 @@
   justify-content: space-between;
   height: 64px;
   padding: 0 14px;
-  background: hsl(var(--primary));
-  border-bottom: 1px solid hsl(var(--primary));
+  background: hsl(var(--v3-primary));
+  border-bottom: 1px solid hsl(var(--v3-primary));
 }
 
 .navbarTitle {
@@ -93,14 +93,14 @@
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 .wizardHeader {
   flex-shrink: 0;
   padding: 12px 16px 14px;
   background: white;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--v3-border));
 }
 
 .progressRow {
@@ -121,12 +121,12 @@
 .progressFill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, hsl(var(--primary)), hsl(214 100% 50%));
+  background: linear-gradient(90deg, hsl(var(--v3-primary)), hsl(214 100% 50%));
   transition: width 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .stepCount {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.6rem;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
@@ -134,12 +134,12 @@
 }
 
 .stepCount span {
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
 }
 
 .stepTitle {
   margin: 0 0 4px;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-size: 1.1rem;
   font-weight: 800;
   line-height: 1.2;
@@ -147,7 +147,7 @@
 
 .stepDesc {
   margin: 0;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.72rem;
   line-height: 1.4;
 }
@@ -182,7 +182,7 @@
   align-items: center;
   gap: 6px;
   margin: 0;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -192,8 +192,8 @@
 .autoBadge {
   padding: 2px 6px;
   border-radius: 4px;
-  background: hsl(var(--green-light));
-  color: hsl(var(--green));
+  background: hsl(var(--v3-green-light));
+  color: hsl(var(--v3-green));
   font-size: 0.55rem;
   font-weight: 800;
   letter-spacing: 0;
@@ -204,7 +204,7 @@
   padding: 2px 6px;
   border-radius: 4px;
   background: hsl(220 20% 97%);
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.55rem;
   font-weight: 800;
   letter-spacing: 0;
@@ -230,29 +230,29 @@
 
 .requiredMark {
   margin-left: 2px;
-  color: hsl(var(--burgundy));
+  color: hsl(var(--v3-burgundy));
 }
 
 .formInput {
   box-sizing: border-box;
   width: 100%;
   padding: 13px 14px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
   outline: none;
   background: white;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-family: inherit;
   font-size: 0.9rem;
   line-height: normal;
 }
 
 .formInput:focus {
-  border-color: hsl(var(--primary));
+  border-color: hsl(var(--v3-primary));
 }
 
 .formInput::placeholder {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   opacity: 0.6;
 }
 
@@ -294,8 +294,8 @@
   width: 14px;
   height: 14px;
   margin-top: -7px;
-  border: 2px solid hsl(var(--border, 220 13% 91%));
-  border-top-color: hsl(var(--primary));
+  border: 2px solid hsl(var(--v3-border, 220 13% 91%));
+  border-top-color: hsl(var(--v3-primary));
   border-radius: 50%;
   animation: selectSpin 0.7s linear infinite;
   pointer-events: none;
@@ -319,7 +319,7 @@
   position: absolute;
   top: 50%;
   right: 14px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.8rem;
   pointer-events: none;
   transform: translateY(-50%);
@@ -332,7 +332,7 @@
   gap: 12px;
   padding: 12px 14px;
   background: white;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
 }
 
@@ -346,24 +346,24 @@
 }
 
 .toggleLabel {
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-size: 0.85rem;
   font-weight: 600;
 }
 
 .toggleSub {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.68rem;
 }
 
 .dashedDivider {
   height: 0;
-  border-top: 1px dashed hsl(var(--border));
+  border-top: 1px dashed hsl(var(--v3-border));
 }
 
 .contractNotice {
   padding: 8px 12px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.66rem;
   text-align: center;
 }
@@ -372,7 +372,7 @@
   margin-top: 4px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: hsl(var(--primary-light));
+  background: hsl(var(--v3-primary-light));
 }
 
 .priceSummaryRow {
@@ -380,7 +380,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 0;
-  color: hsl(var(--text));
+  color: hsl(var(--v3-text));
   font-size: 0.78rem;
 }
 
@@ -388,7 +388,7 @@
   margin-top: 4px;
   padding-top: 8px;
   border-top: 1px dashed hsla(214, 70%, 50%, 0.25);
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
   font-size: 0.92rem;
   font-weight: 800;
 }
@@ -407,7 +407,7 @@
   gap: 8px;
   padding: 12px 14px 18px;
   background: white;
-  border-top: 1px solid hsl(var(--border));
+  border-top: 1px solid hsl(var(--v3-border));
 }
 
 .wizardButton {
@@ -424,12 +424,12 @@
 
 .secondaryButton {
   background: hsl(220 20% 97%);
-  color: hsl(var(--text));
+  color: hsl(var(--v3-text));
 }
 
 .primaryButton {
   flex: 2;
-  background: hsl(var(--primary));
+  background: hsl(var(--v3-primary));
   color: white;
   box-shadow: 0 4px 14px rgba(20, 50, 100, 0.18);
 }
@@ -449,10 +449,10 @@
   width: 100%;
   padding: 13px 14px;
   padding-right: 44px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
   background: white;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-family: inherit;
   font-size: 0.9rem;
   line-height: normal;
@@ -460,7 +460,7 @@
 }
 
 .pageRoot [data-slot="autocomplete-input"]:focus {
-  border-color: hsl(var(--primary));
+  border-color: hsl(var(--v3-primary));
   box-shadow: none;
 }
 
@@ -470,7 +470,7 @@
   z-index: 200;
   display: flex;
   flex-direction: column;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 .eformsignModalHeader {
@@ -480,8 +480,8 @@
   height: 56px;
   padding: 0 14px;
   background: white;
-  border-bottom: 1px solid hsl(var(--border));
-  color: hsl(var(--dark));
+  border-bottom: 1px solid hsl(var(--v3-border));
+  color: hsl(var(--v3-dark));
   font-size: 1rem;
   font-weight: 700;
 }
@@ -511,7 +511,7 @@
 }
 
 .clientDiffLabel {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-weight: 700;
 }
 
@@ -520,16 +520,16 @@
 }
 
 .clientDiffOld {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
 }
 
 .clientDiffNew {
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-weight: 700;
 }
 
 .clientDiffNote {
   margin: 0;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.75rem;
 }

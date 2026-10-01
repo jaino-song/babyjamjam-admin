@@ -56,9 +56,9 @@ function resolveState(step: StepperStep, index: number, activeStep?: number): St
 }
 
 const STATE_CIRCLE: Record<StepState, string> = {
-  done:    "bg-primary text-white",
-  active:  "bg-primary text-white ring-2 ring-primary/30 ring-offset-1",
-  pending: "bg-surface text-text-muted",
+  done:    "bg-v3-primary text-white",
+  active:  "bg-v3-primary text-white ring-2 ring-v3-primary/30 ring-offset-1",
+  pending: "bg-v3-dim-white text-v3-text-muted",
 };
 
 export function Stepper({
@@ -106,7 +106,7 @@ export function Stepper({
                 className={cn(
                   "mt-1 whitespace-nowrap",
                   tokens.label,
-                  state === "done" ? "text-primary" : "text-text-muted",
+                  state === "done" ? "text-v3-primary" : "text-v3-text-muted",
                 )}
               >
                 {step.label}
@@ -119,7 +119,7 @@ export function Stepper({
                 className={cn(
                   "shrink-0 select-none font-semibold leading-none",
                   tokens.connector,
-                  nextState === "done" || nextState === "active" ? "text-primary" : "text-border",
+                  nextState === "done" || nextState === "active" ? "text-v3-primary" : "text-v3-border",
                 )}
               >
                 -

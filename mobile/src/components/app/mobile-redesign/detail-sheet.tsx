@@ -775,11 +775,11 @@ export function DocRow({
   tone: DocRowTone;
 }) {
   const iconToneClass: Record<DocRowTone, string> = {
-    green: "bg-green-light text-green",
-    primary: "bg-primary-light text-primary",
-    burgundy: "bg-burgundy-light text-burgundy",
-    orange: "bg-orange-light text-orange",
-    muted: "bg-surface text-text-muted",
+    green: "bg-v3-green-light text-v3-green",
+    primary: "bg-v3-primary-light text-v3-primary",
+    burgundy: "bg-v3-burgundy-light text-v3-burgundy",
+    orange: "bg-v3-orange-light text-v3-orange",
+    muted: "bg-v3-dim-white text-v3-text-muted",
   };
   return (
     <div className="doc-row">

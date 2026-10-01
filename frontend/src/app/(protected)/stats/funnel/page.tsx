@@ -149,8 +149,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           data-component="desktop_stats-funnel_page_pages_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6 overflow-hidden"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">페이지별 상세 ({statsPeriodLabel(period)})</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">페이지별 상세 ({statsPeriodLabel(period)})</h3>
             <InfoTooltip
               text={
                 "각 페이지의 조회수, 방문자, 시작 페이지로 쓰인 횟수, 종료 페이지로 쓰인 횟수, 그 페이지에서 시작한 세션 중 한 페이지만 보고 나간 비율(이탈률)을 보여줍니다."
@@ -160,27 +160,27 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-text-muted">
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
               {posthogConfigured ? `총 ${pages.length}개 페이지` : "—"}
             </span>
           </header>
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_pages-unavailable" />
           ) : pages.length === 0 ? (
-            <p className="text-center py-8 text-[0.85rem] text-text-muted">
+            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 트래픽이 없어요.
             </p>
           ) : (
             <table className="w-full text-[0.82rem]">
               <thead>
-                <tr className="bg-surface border-b border-border">
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">경로</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">조회수</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">방문자</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">시작</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">종료</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">이탈률</th>
-                  <th className="font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">조회수 분포</th>
+                <tr className="bg-v3-dim-white border-b border-v3-border">
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">방문자</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">시작</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">종료</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">이탈률</th>
+                  <th className="font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수 분포</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,9 +188,9 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
                   <tr
                     key={`${p.path}-${i}`}
                     data-component="desktop_stats-funnel_page_pages_card_body_row"
-                    className="border-b border-border last:border-0 hover:bg-surface"
+                    className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
                   >
-                    <td className="px-3 py-3 font-mono text-text">{p.path}</td>
+                    <td className="px-3 py-3 font-mono text-v3-text">{p.path}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums">{p.pv}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{p.unique}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{p.entries}</td>
@@ -203,9 +203,9 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
                       {p.entries === 0 ? "—" : `${p.bouncePct.toFixed(0)}%`}
                     </td>
                     <td className="px-3 py-3">
-                      <div className="h-2 rounded-full bg-surface overflow-hidden min-w-[80px]">
+                      <div className="h-2 rounded-full bg-v3-dim-white overflow-hidden min-w-[80px]">
                         <div
-                          className="h-full bg-gradient-to-r from-primary to-blue-700"
+                          className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
                           style={{ width: `${(p.pv / maxPv) * 100}%` }}
                         />
                       </div>
@@ -227,8 +227,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           data-component="desktop_stats-funnel_page_entry-exit_entry-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">주요 시작 페이지</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 시작 페이지</h3>
             <InfoTooltip
               text={
                 "각 세션의 첫 페이지뷰(entry page) 통계.\n사용자가 사이트에 들어왔을 때 가장 자주 보는 페이지를 표시합니다."
@@ -242,25 +242,25 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_entry-unavailable" />
           ) : entryPages.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-text-muted">
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               세션 데이터가 아직 없어요.
             </p>
           ) : (
             <div className="space-y-2.5">
               {entryPages.map((p) => (
                 <div key={p.path} className="flex items-center gap-3">
-                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-text">
+                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-v3-text">
                     {p.path}
                   </span>
-                  <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-primary to-blue-700"
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
                       style={{ width: `${(p.count / maxEntry) * 100}%` }}
                     />
                   </div>
                   <span className="w-20 text-right text-[0.78rem] font-semibold tabular-nums">
                     {p.count}
-                    <span className="ml-1 text-[0.65rem] font-normal text-text-muted">
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
                       {p.pct.toFixed(0)}%
                     </span>
                   </span>
@@ -274,8 +274,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           data-component="desktop_stats-funnel_page_entry-exit_exit-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">주요 종료 페이지</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 종료 페이지</h3>
             <InfoTooltip
               text={
                 "각 세션의 마지막 페이지뷰(exit page) 통계.\n사용자가 사이트를 떠나기 직전에 가장 자주 본 페이지를 표시합니다."
@@ -289,17 +289,17 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_exit-unavailable" />
           ) : exitPages.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-text-muted">
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               세션 데이터가 아직 없어요.
             </p>
           ) : (
             <div className="space-y-2.5">
               {exitPages.map((p) => (
                 <div key={p.path} className="flex items-center gap-3">
-                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-text">
+                  <span className="w-[130px] truncate text-[0.78rem] font-mono text-v3-text">
                     {p.path}
                   </span>
-                  <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
                     <div
                       className="h-full bg-gradient-to-r from-red-500 to-red-600"
                       style={{ width: `${(p.count / maxExit) * 100}%` }}
@@ -307,7 +307,7 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
                   </div>
                   <span className="w-20 text-right text-[0.78rem] font-semibold tabular-nums">
                     {p.count}
-                    <span className="ml-1 text-[0.65rem] font-normal text-text-muted">
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
                       {p.pct.toFixed(0)}%
                     </span>
                   </span>
@@ -324,8 +324,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           data-component="desktop_stats-funnel_page_transitions_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">주요 페이지 이동 경로</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">주요 페이지 이동 경로</h3>
             <InfoTooltip
               text={
                 "한 세션 안에서 사용자가 페이지 A를 본 직후 페이지 B로 이동한 횟수.\n가장 자주 발생한 이동 경로를 통해 자연스러운 네비게이션 흐름을 파악합니다."
@@ -335,14 +335,14 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-text-muted">
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
               {posthogConfigured ? `상위 ${transitions.length}개` : "—"}
             </span>
           </header>
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_transitions-unavailable" />
           ) : transitions.length === 0 ? (
-            <p className="text-center py-8 text-[0.85rem] text-text-muted">
+            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
               연속된 페이지뷰 데이터가 아직 없어요. (한 방문에서 페이지를 2개 이상 발생해야 표시됩니다)
             </p>
           ) : (
@@ -351,24 +351,24 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
                 <div
                   key={`${t.fromPath}-${t.toPath}-${i}`}
                   data-component="desktop_stats-funnel_page_transitions_card_transition-row"
-                  className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-surface"
+                  className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-v3-dim-white"
                 >
-                  <span className="font-mono text-[0.78rem] text-text shrink-0 max-w-[180px] truncate">
+                  <span className="font-mono text-[0.78rem] text-v3-text shrink-0 max-w-[180px] truncate">
                     {t.fromPath}
                   </span>
-                  <span className="text-primary text-base shrink-0">→</span>
-                  <span className="font-mono text-[0.78rem] text-text shrink-0 max-w-[180px] truncate">
+                  <span className="text-v3-primary text-base shrink-0">→</span>
+                  <span className="font-mono text-[0.78rem] text-v3-text shrink-0 max-w-[180px] truncate">
                     {t.toPath}
                   </span>
-                  <div className="flex-1 h-2 rounded-full bg-surface overflow-hidden mx-2 min-w-[60px]">
+                  <div className="flex-1 h-2 rounded-full bg-v3-dim-white overflow-hidden mx-2 min-w-[60px]">
                     <div
-                      className="h-full bg-gradient-to-r from-primary to-blue-700"
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
                       style={{ width: `${(t.count / maxTransition) * 100}%` }}
                     />
                   </div>
                   <span className="text-[0.78rem] font-semibold tabular-nums shrink-0 w-16 text-right">
                     {t.count}회
-                    <span className="ml-1 text-[0.65rem] font-normal text-text-muted">
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">
                       {t.pct.toFixed(0)}%
                     </span>
                   </span>
@@ -385,8 +385,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           data-component="desktop_stats-funnel_page_conversion_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-text">
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">
               핵심 전환 펀널 · 가격 → 상담
             </h3>
             <InfoTooltip
@@ -398,11 +398,11 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-text-muted">
+            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
               {posthogConfigured ? (
                 <>
                   전환율{" "}
-                  <strong className="text-text">
+                  <strong className="text-v3-text">
                     {conversionFunnel.conversionRate.toFixed(1)}%
                   </strong>
                 </>

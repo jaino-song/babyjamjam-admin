@@ -176,11 +176,11 @@ export const V3Sidebar = () => {
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={48} height={48} className="w-full h-full object-cover" />
           </div>
           <div className="min-w-0">
-            <span className="block truncate text-[calc(20px*var(--glint-ui-scale,1))] font-bold text-primary tracking-tight">
+            <span className="block truncate text-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-primary tracking-tight">
               아가잼잼
             </span>
             {user?.branchName && (
-              <span className="mt-[calc(2px*var(--glint-ui-scale,1))] block truncate text-[calc(11.52px*var(--glint-ui-scale,1))] font-medium leading-none text-text-muted">
+              <span className="mt-[calc(2px*var(--glint-ui-scale,1))] block truncate text-[calc(11.52px*var(--glint-ui-scale,1))] font-medium leading-none text-v3-text-muted">
                 {user.branchName}
               </span>
             )}
@@ -197,7 +197,7 @@ export const V3Sidebar = () => {
       >
         {navSections.map((section, idx) => (
           <div key={section.title + idx}>
-            <h3 className="mb-[calc(8px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-text-muted uppercase tracking-[0.15em]">
+            <h3 className="mb-[calc(8px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
               {section.title}
             </h3>
             <ul className="space-y-[calc(4px*var(--glint-ui-scale,1))]">
@@ -209,14 +209,14 @@ export const V3Sidebar = () => {
                 const navItemClassName = `
                   relative group flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] rounded-2xl transition-all duration-200 overflow-hidden
                   ${disabled
-                    ? "cursor-not-allowed bg-transparent text-text-muted/60"
+                    ? "cursor-not-allowed bg-transparent text-v3-text-muted/60"
                     : active
-                      ? "bg-primary text-white shadow-md shadow-blue-500/20"
-                      : "text-text hover:bg-primary-light hover:text-primary"
+                      ? "bg-v3-primary text-white shadow-md shadow-blue-500/20"
+                      : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                   }
                 `;
                 const iconClassName = `h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 transition-colors ${
-                  disabled ? "opacity-50" : active ? "text-white" : "group-hover:text-primary"
+                  disabled ? "opacity-50" : active ? "text-white" : "group-hover:text-v3-primary"
                 }`;
                 const content = (
                   <>
@@ -233,7 +233,7 @@ export const V3Sidebar = () => {
                         data-component={`sidebar-nav-${itemName}-badge`}
                         className={`
                           ml-auto inline-flex h-[calc(20px*var(--glint-ui-scale,1))] min-w-[calc(20px*var(--glint-ui-scale,1))] items-center justify-center rounded-full px-[calc(8px*var(--glint-ui-scale,1))] text-center text-[calc(10.4px*var(--glint-ui-scale,1))] font-bold leading-none
-                          bg-burgundy text-white
+                          bg-v3-burgundy text-white
                         `}
                       >
                         {badge}
