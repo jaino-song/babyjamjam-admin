@@ -8,6 +8,7 @@ import { ClientFormDialog } from "../ClientFormDialog";
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

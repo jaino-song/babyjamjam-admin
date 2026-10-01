@@ -19,6 +19,8 @@ import {
 } from "@babyjamjam/shared/utils/field-validation-message";
 import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useClientPhoneDuplicateCheck } from "@/hooks/useClientPhoneDuplicateCheck";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
     useAvailableClientAreas,
@@ -42,7 +44,7 @@ import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { cn } from "@/lib/utils";
-import { calcEndDateBusinessDays, countBusinessDaysKr } from "@/lib/date/business-days";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import {
     resolveElevenDigitPhoneMessage,
@@ -378,6 +380,40 @@ export function ClientFormDialog({
     );
 }
 
+// 영업일 달력에 미리 받아 둘 연도예요. 시작일·종료일이 속한 해와, 시작일 다음 해(종료일이 해를 넘길 수 있어요)를 포함해요.
+function getClientCalendarYears(startDate: string, endDate: string): number[] {
+    const years = new Set<number>();
+    if (isRealIsoDate(startDate)) {
+        const startYear = Number.parseInt(startDate.slice(0, 4), 10);
+        years.add(startYear);
+        years.add(startYear + 1);
+    }
+    if (isRealIsoDate(endDate)) years.add(Number.parseInt(endDate.slice(0, 4), 10));
+    return [...years];
+}
+
+// 시작일과 서비스 기간으로 종료일을 다시 계산한 폼 값이에요. 달력이 지원하지 않는 연도면 종료일을 그대로 둬요.
+function withAutoEndDate(prev: ClientFormData, calendar: KrBusinessDayCalendar): ClientFormData {
+    const duration = prev.duration;
+    const startDate = prev.startDate ?? "";
+
+    if (!duration || !isRealIsoDate(startDate)) {
+        return prev.endDate ? { ...prev, endDate: "" } : prev;
+    }
+
+    let computedEndDate: string;
+    try {
+        computedEndDate = normalizeDateForDisplayState(calendar.calcEndDateBusinessDays(startDate, duration));
+    } catch {
+        return prev;
+    }
+
+    return prev.endDate === computedEndDate ? prev : {
+        ...prev,
+        endDate: computedEndDate,
+    };
+}
+
 function ClientFormContent({
     surface,
     "data-component": dataComponent,
@@ -687,30 +723,47 @@ function ClientFormContent({
         }
     }, [selectedPriceInfo, pricesManuallyEdited]);
 
+    // 종료일은 고객 정보로 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
+    const {
+        calendar: businessDayCalendar,
+        ready: isCalendarReady,
+        error: calendarError,
+        retry: retryCalendar,
+    } = useBusinessDayCalendar({
+        extraYears: getClientCalendarYears(formData.startDate ?? "", formData.endDate ?? ""),
+    });
+    // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요(달력 객체가 바뀌어도 다시 계산하지 않아요).
+    const pendingAutoEndDateRef = useRef(false);
+    const businessDayCalendarRef = useRef(businessDayCalendar);
+    businessDayCalendarRef.current = businessDayCalendar;
+
+    const recalculateEndDate = useCallback(() => {
+        const calendar = businessDayCalendarRef.current;
+        queueMicrotask(() => {
+            setFormData(prev => withAutoEndDate(prev, calendar));
+        });
+    }, []);
+
     useEffect(() => {
         if (skipNextEndDateRecalculationRef.current) {
             skipNextEndDateRecalculationRef.current = false;
+            pendingAutoEndDateRef.current = false;
             return;
         }
-
-        queueMicrotask(() => {
-            setFormData(prev => {
-                const duration = prev.duration;
-                const startDate = prev.startDate ?? "";
-
-                if (!duration || !isRealIsoDate(startDate)) {
-                    return prev.endDate ? { ...prev, endDate: "" } : prev;
-                }
-
-                const computedEndDate = normalizeDateForDisplayState(calcEndDateBusinessDays(startDate, duration));
-
-                return prev.endDate === computedEndDate ? prev : {
-                    ...prev,
-                    endDate: computedEndDate,
-                };
-            });
-        });
+        // 기간이나 시작일이 비면 종료일을 비우는 일이라 달력이 필요 없어요.
+        const needsCalendar = Boolean(formData.duration) && isRealIsoDate(formData.startDate ?? "");
+        pendingAutoEndDateRef.current = needsCalendar && !isCalendarReady;
+        if (pendingAutoEndDateRef.current) return;
+        recalculateEndDate();
+        // 입력(기간·시작일)이 바뀔 때만 다시 계산한다. 달력 준비 여부는 아래 effect가 따로 본다.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [formData.duration, formData.startDate]);
+
+    useEffect(() => {
+        if (!isCalendarReady || !pendingAutoEndDateRef.current) return;
+        pendingAutoEndDateRef.current = false;
+        recalculateEndDate();
+    }, [isCalendarReady, recalculateEndDate]);
 
     // Reset duration/prices when the voucher year changes (same semantics as handleTypeChange)
     const handleVoucherYearChange = (newYear: string) => {
@@ -915,6 +968,7 @@ function ClientFormContent({
     const inputValueOf = (field: ClientInputField): string => String(formData[field] ?? "");
 
     const handleInputChange = (field: ClientInputField, value: string) => {
+        if (field === "endDate") pendingAutoEndDateRef.current = false;
         fields.onChange(field, inputValueOf(field), value);
         handleChange(field, value);
     };
@@ -1091,8 +1145,11 @@ function ClientFormContent({
         setTimeout(scrollToTop, 0);
     };
 
+    // 서비스 기간 검증은 지점 달력으로 하므로 달력이 준비되기 전에는 저장하지 않아요. (빈 갱신만 보내는 옛 고객 수정은 달력을 쓰지 않아요.)
+    const isCalendarBlockingSubmit = !isCalendarReady && !isLegacyNoopEdit;
+
     const handleSubmit = async (confirmedPeriod?: string) => {
-        if (submissionInFlightRef.current || error?.outcome === "UNKNOWN") return;
+        if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit) return;
         clearFormError();
 
         if (isLegacyNoopEdit && client) {
@@ -1146,7 +1203,7 @@ function ClientFormContent({
             const normalizedStartDate = formData.startDate ?? "";
             const normalizedEndDate = formData.endDate ?? "";
             const businessDays = normalizedStartDate && normalizedEndDate
-                ? countBusinessDaysKr(normalizedStartDate, normalizedEndDate)
+                ? businessDayCalendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
                 : null;
             const hasDurationMismatch = businessDays !== null
                 && Number.isSafeInteger(formData.duration)
@@ -1263,6 +1320,16 @@ function ClientFormContent({
         || isUnknownOutcome
         || isAwaitingEditInit
         || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
+    // 달력은 마지막 단계의 저장 버튼만 막아요. 다음 단계로 가는 것은 달력과 무관해요.
+    const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit;
+    const calendarLoadNotice = isCalendarReady ? null : (
+        <CalendarLoadNotice
+            error={calendarError}
+            onRetry={retryCalendar}
+            loading={!calendarError}
+            dataComponent={`${base}_calendar-load-notice`}
+        />
+    );
 
     const handleNextStep = () => {
         if (!isLegacyNoopEdit) {
@@ -1310,7 +1377,7 @@ function ClientFormContent({
                 variant="positive"
                 size="sm"
                 onClick={() => void handleSubmit()}
-                disabled={isSubmitting || isUnknownOutcome || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
+                disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
                 data-component={`${base}_submit`}
                 className="w-full sm:flex-1"
             >
@@ -1368,7 +1435,7 @@ function ClientFormContent({
                         type="button"
                         size="sm"
                         onClick={() => void handleSubmit()}
-                        disabled={isPanelActionBlocked}
+                        disabled={isPanelSubmitBlocked}
                         data-component={`${base}_submit`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
@@ -1798,6 +1865,7 @@ function ClientFormContent({
                             {...getInputFieldProps("endDate")}
                         />
                     </FormField>
+                    {calendarLoadNotice ? <div className="lg:col-span-3">{calendarLoadNotice}</div> : null}
                 </FormGrid>
             </ClientDialogSection>
 
@@ -2195,6 +2263,7 @@ function ClientFormContent({
                     {...getInputFieldProps("endDate")}
                 />
             </FormField>
+            {calendarLoadNotice ? <div className={PANEL_FULL_FIELD_CLASS_NAME}>{calendarLoadNotice}</div> : null}
 
             <div className={cn(
                 PANEL_FULL_FIELD_CLASS_NAME,

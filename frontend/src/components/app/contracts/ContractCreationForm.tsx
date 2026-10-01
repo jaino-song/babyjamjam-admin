@@ -8,7 +8,6 @@ import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
-import { calcEndDateBusinessDays } from "@babyjamjam/shared/utils/business-days";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { createReconnectingEventSource } from "@/lib/sse/reconnecting-event-source";
@@ -48,6 +47,8 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useToast } from "@/hooks/use-toast";
 import { useEnqueueEformsignDocumentCreation } from "@/hooks/useEformsignDocumentJobs";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
@@ -583,6 +584,18 @@ function getVoucherTypeLabel(type: string): string {
   return type;
 }
 
+// 영업일 달력에 미리 받아 둘 연도예요. 시작일·종료일이 속한 해와, 시작일 다음 해(종료일이 해를 넘길 수 있어요)를 포함해요.
+function getContractCalendarYears(startDate: string, endDate: string): number[] {
+  const years = new Set<number>();
+  if (isRealIsoDate(startDate)) {
+    const startYear = Number.parseInt(startDate.slice(0, 4), 10);
+    years.add(startYear);
+    years.add(startYear + 1);
+  }
+  if (isRealIsoDate(endDate)) years.add(Number.parseInt(endDate.slice(0, 4), 10));
+  return [...years];
+}
+
 export const ContractCreationForm = ({
   onClose,
   onSuccess,
@@ -737,6 +750,16 @@ export const ContractCreationForm = ({
     resetAll,
   } = useFormStore();
 
+  // 종료일은 계약서와 고객 정보에 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
+  const {
+    calendar: businessDayCalendar,
+    ready: isCalendarReady,
+    error: calendarError,
+    retry: retryCalendar,
+  } = useBusinessDayCalendar({ extraYears: getContractCalendarYears(startDate, endDate) });
+  // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요.
+  const pendingAutoEndDateRef = useRef(false);
+
   // Sync display inputs when external date state changes (e.g., client autofill).
   useEffect(() => { setDueDateInput(toIsoDateOnly(dueDate)); }, [dueDate]);
   useEffect(() => { setBirthDateInput(toIsoDateOnly(birthDate)); }, [birthDate]);
@@ -769,15 +792,40 @@ export const ContractCreationForm = ({
     }
   }, [birthDateInput, onFieldInputChange, setBirthDate]);
 
-  // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 시작일과 서비스 기간이 모두 정해지면 평일(주말+지점 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
-  useEffect(() => {
+  // 달력이 아직 없으면 건너뛰고, 준비되는 순간 한 번만 다시 계산한다(달력 객체가 바뀌어도 다시 계산하지 않는다).
+  const applyAutoEndDate = useCallback(() => {
     if (!startDate || !voucherDuration) return;
     const n = parseInt(voucherDuration, 10);
     if (!Number.isFinite(n) || n <= 0) return;
-    const computed = calcEndDateBusinessDays(startDate, n);
-    if (computed) setEndDate(computed);
-  }, [startDate, voucherDuration, setEndDate]);
+    try {
+      const computed = businessDayCalendar.calcEndDateBusinessDays(startDate, n);
+      if (computed) setEndDate(computed);
+    } catch {
+      // 달력이 지원하지 않는 연도면 종료일을 건드리지 않고 직접 입력하게 둬요.
+    }
+  }, [businessDayCalendar, startDate, voucherDuration, setEndDate]);
+  const applyAutoEndDateRef = useRef(applyAutoEndDate);
+  applyAutoEndDateRef.current = applyAutoEndDate;
+
+  useEffect(() => {
+    if (!startDate || !voucherDuration) return;
+    if (!isCalendarReady) {
+      pendingAutoEndDateRef.current = true;
+      return;
+    }
+    pendingAutoEndDateRef.current = false;
+    applyAutoEndDateRef.current();
+    // 입력(시작일·기간)이 바뀔 때만 다시 계산한다. 달력 준비 여부는 아래 effect가 따로 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, voucherDuration]);
+
+  useEffect(() => {
+    if (!isCalendarReady || !pendingAutoEndDateRef.current) return;
+    pendingAutoEndDateRef.current = false;
+    applyAutoEndDateRef.current();
+  }, [isCalendarReady]);
 
   const isProcessingStep = activeStep === CONTRACT_CREATION_PROCESSING_STEP_INDEX;
   const hasCreationSession = isProcessingStep && creationProgress.step !== null;
@@ -1861,6 +1909,7 @@ export const ContractCreationForm = ({
   };
 
   const handleWizardComplete = () => {
+    if (!isCalendarReady) return;
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (problemTarget) {
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
@@ -2347,6 +2396,7 @@ export const ContractCreationForm = ({
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   fields.onChange("endDate", endDateInput, formatted);
+                  pendingAutoEndDateRef.current = false;
                   setEndDateInput(formatted);
                   if (formatted.length === 10) setEndDate(formatted);
                   else if (formatted.length === 0) setEndDate("");
@@ -2385,6 +2435,12 @@ export const ContractCreationForm = ({
               />
             </div>
           </div>
+          <CalendarLoadNotice
+            error={calendarError}
+            onRetry={retryCalendar}
+            loading={!isCalendarReady && !calendarError}
+            dataComponent="desktop_contracts_creation_form_calendar-load-notice"
+          />
         </div>
       ),
       summary: (
@@ -2505,7 +2561,7 @@ export const ContractCreationForm = ({
             size="sm"
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting}
+            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady}
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
