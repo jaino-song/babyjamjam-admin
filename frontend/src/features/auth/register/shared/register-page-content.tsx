@@ -11,15 +11,17 @@ import {
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
-import { PasswordRequirements } from "@/components/auth/password-requirements";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
+  PASSWORD_GUIDANCE,
+  getPasswordRequirementMessage,
   resolveElevenDigitPhoneMessage,
   toFieldMessageView,
+  withGuidance,
   type FieldMessageView,
 } from "@/lib/forms/field-message-text";
 import { t } from "@/lib/i18n/translations";
@@ -34,7 +36,6 @@ import {
 const REGISTER_CARD_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-register-title']]:!text-[1.72rem] md:[&_[data-component='auth-register-title']]:!text-[1.5rem] [&_[data-component='auth-register-subtitle']]:!max-w-[30ch] [&_[data-component='auth-register-subtitle']]:!text-[0.82rem] md:[&_[data-component='auth-register-subtitle']]:!text-[0.76rem]";
 const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-bold md:text-[0.77rem]";
 const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
-const REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME = "justify-center [&_li]:text-[0.78rem] [&_svg]:h-3.5 [&_svg]:w-3.5";
 const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
 const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
 const PHONE_DUPLICATE_AVAILABLE_MESSAGE = "등록 가능한 번호입니다.";
@@ -158,15 +159,15 @@ function DesktopRegisterStepIndicator({ currentStep }: { currentStep: RegisterSt
           <div key={step} data-component="desktop_auth_register_stepper-desktop_item" className="contents">
             <div
               data-component="desktop_auth_register_stepper-desktop_item_step"
-              className={cn("flex items-center overflow-visible py-0.5", isCurrent && "text-v3-primary", isCompleted && "text-v3-dark")}
+              className={cn("flex items-center overflow-visible py-0.5", isCurrent && "text-primary", isCompleted && "text-dark")}
             >
               <div
                 data-component="desktop_auth_register_stepper-desktop_item_step_circle"
                 className={cn(
                   "flex h-7 w-7 items-center justify-center rounded-full text-[0.68rem] font-bold transition-all duration-300 will-change-transform",
-                  isCompleted && "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
-                  isCurrent && "scale-110 bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
-                  !isCompleted && !isCurrent && "border-2 border-v3-border bg-v3-dim-white text-v3-text-muted",
+                  isCompleted && "bg-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                  isCurrent && "scale-110 bg-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)]",
+                  !isCompleted && !isCurrent && "border-2 border-border bg-surface text-text-muted",
                 )}
               >
                 {isCompleted ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : step}
@@ -178,7 +179,7 @@ function DesktopRegisterStepIndicator({ currentStep }: { currentStep: RegisterSt
                 data-component="desktop_auth_register_stepper-desktop_item_connector"
                 className={cn(
                   "mx-1.5 h-0.5 w-10 rounded-full",
-                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border",
+                  idx < currentStep ? "bg-primary" : "bg-border",
                 )}
               />
             ) : null}
@@ -195,14 +196,14 @@ function MobileRegisterStepIndicator({ currentStep }: { currentStep: RegisterSte
   return (
     <div data-component="desktop_auth_register_stepper-mobile">
       <div data-component="desktop_auth_register_stepper-mobile_header" className="mb-2 flex items-center justify-end">
-        <span className="text-[0.64rem] font-semibold text-v3-text-muted">
+        <span className="text-[0.64rem] font-semibold text-text-muted">
           {currentStep + 1} / {REGISTER_STEP_TOTAL} 단계
         </span>
       </div>
-      <div data-component="desktop_auth_register_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-v3-border">
+      <div data-component="desktop_auth_register_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-border">
         <div
           data-component="desktop_auth_register_stepper-mobile_track_progress"
-          className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
+          className="h-full rounded-full bg-gradient-to-r from-primary to-blue-500 transition-all duration-400"
           style={{
             width: `${progress}%`,
             transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -294,7 +295,15 @@ function RegisterStepFields({
       emailLinkableMessage ? { tone: "ok", text: emailLinkableMessage } : null,
     ),
     name: pickFieldMessage(resolveRuleMessage("name", "text"), errorMessage(errors.name)),
-    password: pickFieldMessage(resolveRuleMessage("password", "text"), errorMessage(errors.password)),
+    // Error, then what is still missing while typing, then the static guidance.
+    password: withGuidance(
+      pickFieldMessage(
+        resolveRuleMessage("password", "text"),
+        errorMessage(errors.password),
+        getPasswordRequirementMessage(valueOf("password"), passwordStrength.requirements),
+      ),
+      PASSWORD_GUIDANCE,
+    ),
     confirmPassword: pickFieldMessage(
       resolveRuleMessage("confirmPassword", "text"),
       errorMessage(errors.confirmPassword),
@@ -365,22 +374,6 @@ function RegisterStepFields({
             autoComplete="new-password"
             data-component="desktop_auth_register_step-fields_password-field"
           />
-
-          <div
-            data-component="desktop_auth_register_step-fields_password-requirements-wrap"
-            className={cn(
-              "grid overflow-hidden transition-[grid-template-rows,opacity,margin] duration-300 ease-out",
-              formData.password ? "mt-0 grid-rows-[1fr] opacity-100" : "mt-[-6px] grid-rows-[0fr] opacity-0",
-            )}
-          >
-            <div data-component="desktop_auth_register_step-fields_password-requirements-wrap_inner" className="overflow-hidden">
-              <PasswordRequirements
-                requirements={passwordStrength.requirements}
-                orientation="horizontal"
-                className={REGISTER_PASSWORD_REQUIREMENTS_CLASS_NAME}
-              />
-            </div>
-          </div>
 
           <FormField
             label="비밀번호 확인"
@@ -584,7 +577,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
 
                 <div
                   data-component="desktop_auth_register_body_form_actions"
-                  className="mt-1 flex items-center justify-between border-t border-v3-border pt-3"
+                  className="mt-1 flex items-center justify-between border-t border-border pt-3"
                 >
                 <Button
                   data-component="desktop_auth_register_body_form_actions_prev-btn"

@@ -74,7 +74,7 @@ export function CompactDateSelect({
           <SelectItem
             key={option.value}
             value={option.value}
-            className="rounded-[10px] px-2 py-1.5 pr-2 text-[0.76rem] data-[state=checked]:!bg-[hsl(var(--v3-primary))] data-[state=checked]:!text-white data-[state=checked]:font-semibold [&_span[data-slot=select-item-indicator]]:hidden"
+            className="rounded-[10px] px-2 py-1.5 pr-2 text-[0.76rem] data-[state=checked]:!bg-[hsl(var(--primary))] data-[state=checked]:!text-white data-[state=checked]:font-semibold [&_span[data-slot=select-item-indicator]]:hidden"
           >
             {option.label}
           </SelectItem>

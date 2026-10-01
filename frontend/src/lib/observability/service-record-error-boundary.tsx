@@ -38,13 +38,13 @@ export class ServiceRecordErrorBoundary extends Component<
     return (
       <div
         data-component="desktop_clients_service-records-error-boundary"
-        className="rounded-2xl border border-v3-border bg-white px-6 py-10 text-center"
+        className="rounded-2xl border border-border bg-white px-6 py-10 text-center"
         role="alert"
       >
-        <p className="text-sm font-semibold text-v3-dark">
+        <p className="text-sm font-semibold text-dark">
           제공기록지 화면을 표시하는 중 문제가 발생했습니다
         </p>
-        <p className="mt-2 text-xs text-v3-text-muted">
+        <p className="mt-2 text-xs text-text-muted">
           잠시 후 다시 시도해 주세요.
         </p>
         <Button

@@ -47,24 +47,24 @@ export function SearchFilterBar({
   }, []);
 
   return (
-    <div data-component={dataComponent} data-slot="search-filter-bar" className="flex items-center gap-3 rounded-2xl bg-white px-5 py-3 shadow-v3 border border-v3-border transition-all duration-200 focus-within:shadow-v3-hover animate-v3-slide-up">
-      <Search size={18} className="text-v3-text-muted shrink-0" />
+    <div data-component={dataComponent} data-slot="search-filter-bar" className="flex items-center gap-3 rounded-2xl bg-white px-5 py-3 shadow-v3 border border-border transition-all duration-200 focus-within:shadow-v3-hover animate-v3-slide-up">
+      <Search size={18} className="text-text-muted shrink-0" />
       <Input
         type="text"
         placeholder={searchPlaceholder}
         value={searchValue}
         onChange={(e) => onSearchChange(e.target.value)}
-        className="h-auto min-w-0 flex-1 border-none bg-transparent p-0 text-[0.85rem] outline-none placeholder:text-v3-text-muted focus-visible:ring-0 focus-visible:ring-offset-0"
+        className="h-auto min-w-0 flex-1 border-none bg-transparent p-0 text-[0.85rem] outline-none placeholder:text-text-muted focus-visible:ring-0 focus-visible:ring-offset-0"
       />
 
-      <div className="h-5 w-px bg-v3-border shrink-0" />
+      <div className="h-5 w-px bg-border shrink-0" />
 
       <div ref={dropdownRef} className="relative shrink-0">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="flex items-center gap-1.5 text-[0.8rem] font-medium text-v3-text hover:text-v3-primary transition-colors whitespace-nowrap"
+          className="flex items-center gap-1.5 text-[0.8rem] font-medium text-text hover:text-primary transition-colors whitespace-nowrap"
         >
-          <span className={activeOption?.value !== filterOptions[0]?.value ? "text-v3-primary" : ""}>
+          <span className={activeOption?.value !== filterOptions[0]?.value ? "text-primary" : ""}>
             {activeOption?.label || filterLabel}
           </span>
           <ChevronDown
@@ -74,7 +74,7 @@ export function SearchFilterBar({
         </button>
 
         {isOpen && (
-          <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-v3-hover border border-v3-border py-1.5 z-50 animate-v3-pop-in">
+          <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-v3-hover border border-border py-1.5 z-50 animate-v3-pop-in">
             {filterOptions.map((option) => (
               <button
                 key={option.value}
@@ -84,12 +84,12 @@ export function SearchFilterBar({
                 }}
                 className={`w-full flex items-center justify-between px-4 py-2 text-[0.8rem] transition-colors ${
                   option.value === filterValue
-                    ? "text-v3-primary font-semibold bg-v3-primary-light"
-                    : "text-v3-text hover:bg-v3-dim-white"
+                    ? "text-primary font-semibold bg-primary-light"
+                    : "text-text hover:bg-surface"
                 }`}
               >
                 <span>{option.label}</span>
-                {option.value === filterValue && <Check size={14} className="text-v3-primary" />}
+                {option.value === filterValue && <Check size={14} className="text-primary" />}
               </button>
             ))}
           </div>

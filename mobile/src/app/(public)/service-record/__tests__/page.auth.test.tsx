@@ -335,10 +335,70 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "기록 시작" }));
 
-        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]'))
-            .toHaveTextContent("서비스 제공일자(2026.07.20)가 오늘과 달라요. 한번 더 확인해 주세요.");
+        // The warning lives in the date field's own label-row slot, not in a separate notice.
+        expect(document.getElementById("service-record-date-helper")).toHaveTextContent("오늘과 다른 날짜예요");
+        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]')).toBeNull();
         expect(screen.getAllByRole("button", { name: /이상없음/ })[0]).toBeEnabled();
         expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+    });
+
+    it("keeps the date caution in a read-only field row on later pages", async () => {
+        const user = userEvent.setup();
+        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
+            header: { momName: "홍길동" },
+            day: 1,
+            pageIdx: 1,
+            draft: { _date: "2026-07-20" },
+        }));
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                totalSessions: 2,
+                header: { momName: "홍길동" },
+            }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "기록 시작" }));
+
+        const row = document.querySelector('[data-component="mobile_service-record_wizard_body_service-date-readonly"]') as HTMLElement;
+        expect(row).not.toBeNull();
+        expect(row).toHaveTextContent("서비스 제공일자");
+        expect(row.querySelector('[data-slot="ro"]')).toHaveTextContent("2026-07-20");
+        expect(row.querySelector('[data-slot="lab-msg"]')).toHaveTextContent("오늘과 다른 날짜예요");
+        // No separate notice, no date input, and the old sentence is gone.
+        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]')).toBeNull();
+        expect(document.getElementById("service-record-date-helper")).toBeNull();
+        expect(screen.queryByText(/가 오늘과 달라요/)).not.toBeInTheDocument();
+    });
+
+    it("shows no date row on later pages when the date matches today", async () => {
+        const user = userEvent.setup();
+        const today = new Date();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
+            header: { momName: "홍길동" },
+            day: 1,
+            pageIdx: 1,
+            draft: { _date: `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}` },
+        }));
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ valid: true }))
+            .mockResolvedValueOnce(jsonResponse({
+                ...serviceRecordContext,
+                totalSessions: 2,
+                header: { momName: "홍길동" },
+            }));
+
+        render(<ServiceRecordPage />);
+
+        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "기록 시작" }));
+
+        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_service-date-readonly"]')).toBeNull();
+        expect(screen.queryByText("오늘과 다른 날짜예요")).not.toBeInTheDocument();
     });
 
     it("does not allow navigation back to submitted service information from the overview", async () => {

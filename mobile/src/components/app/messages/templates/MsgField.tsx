@@ -11,6 +11,7 @@ interface MsgFieldProps {
   maxLength?: number;
   rows?: number;
   ariaLabel?: string;
+  ariaDescribedBy?: string;
   className?: string;
   textareaClassName?: string;
 }
@@ -23,6 +24,7 @@ export const MsgField = ({
   maxLength,
   rows = 12,
   ariaLabel,
+  ariaDescribedBy,
   className,
   textareaClassName,
 }: MsgFieldProps) => {
@@ -41,6 +43,7 @@ export const MsgField = ({
         maxLength={maxLength}
         rows={rows}
         aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
         className={cn(
           "max-h-[50vh] resize-none rounded-none border-none font-inherit text-base leading-relaxed focus-visible:ring-0 focus-visible:ring-offset-0",
           textareaClassName,

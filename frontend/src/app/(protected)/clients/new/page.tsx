@@ -41,22 +41,23 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { FormNativeSelect } from "@/components/app/ui/form-section";
+import { FieldMessageText } from "@/components/app/ui/field-message";
+import { FormField as AppFormField, FormNativeSelect, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { cn } from "@/lib/utils";
 
 const INPUT_CLS =
-  "h-auto w-full rounded-[14px] border-[1.5px] border-input bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
+  "h-auto w-full rounded-[14px] border-[1.5px] border-input bg-white px-4 py-3 text-[0.85rem] font-[Pretendard] text-dark outline-none transition-all focus:border-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)]";
 
 const SELECT_CLS =
-  "h-auto min-h-0 w-full rounded-[14px] border-[1.5px] border-input bg-white pl-4 py-3 text-[0.85rem] font-normal leading-normal text-v3-dark outline-none transition-all focus:border-v3-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus:ring-0";
+  "h-auto min-h-0 w-full rounded-[14px] border-[1.5px] border-input bg-white pl-4 py-3 text-[0.85rem] font-normal leading-normal text-dark outline-none transition-all focus:border-primary focus:shadow-[0_0_0_3px_hsla(214,100%,34%,0.08)] focus:ring-0";
 
-const LABEL_CLS = "text-xs font-semibold text-v3-text-muted";
+const LABEL_CLS = "text-xs font-semibold text-text-muted";
 
 const GRID_CLS = "grid grid-cols-1 md:grid-cols-2 gap-4";
 
 const COMPLETED_PILL =
-  "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-v3-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-v3-dark";
+  "inline-flex items-center gap-1.5 px-3 py-2 rounded-[14px] bg-green-light border-[1.5px] border-[hsl(137,40%,85%)] text-[0.85rem] font-semibold text-dark";
 
 type ClientInputField =
   | "name"
@@ -110,11 +111,6 @@ const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
     ? "문제가 발생했어요. 새로고침 해주세요."
     : "Something went wrong. Please refresh and try again.";
 
-const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
-  locale === "ko"
-    ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
-    : "Checking for duplicate phone number. Please wait.";
-
 export default function NewClientPage() {
   const router = useRouter();
   const locale = useLocale();
@@ -136,12 +132,16 @@ export default function NewClientPage() {
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
-  const phoneInlineMessage = phoneDigits.length === 11
+  // Duplicate-check status for the phone field's label-row slot: a failed
+  // check or duplicate is an error, a check still running is a hint.
+  const phoneInlineMessage: FieldMessageView | null = phoneDigits.length === 11
     ? hasPhoneDuplicateCheckFailed
-      ? getPhoneDuplicateCheckFailedMessage(locale)
-      : isPhoneDuplicate
-        ? t(locale, "clients.form.error-phone-duplicate")
-        : null
+      ? { tone: "error", text: getPhoneDuplicateCheckFailedMessage(locale) }
+      : isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits
+        ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
+        : isPhoneDuplicate
+          ? { tone: "error", text: t(locale, "clients.form.error-phone-duplicate") }
+          : null
     : null;
 
   useEffect(() => {
@@ -373,9 +373,7 @@ export default function NewClientPage() {
     if (field === "birthday" && value.length === 10 && !isValidBirthdayIsoDate(value)) {
       return { tone: "error", text: t(locale, "form.validation.birthday-future") };
     }
-    if (!settled && field === "phone" && phoneInlineMessage) {
-      return { tone: "error", text: phoneInlineMessage };
-    }
+    if (!settled && field === "phone" && phoneInlineMessage) return phoneInlineMessage;
     return null;
   };
 
@@ -399,15 +397,13 @@ export default function NewClientPage() {
     switch (step) {
       case 0:
         if (phoneDigits.length === 11) {
-          if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-            setError(getPhoneDuplicateCheckPendingMessage(locale));
-            return false;
-          }
-          if (hasPhoneDuplicateCheckFailed) {
-            setError(getPhoneDuplicateCheckFailedMessage(locale));
-            return false;
-          }
-          if (isPhoneDuplicate) {
+          // A pending, failed or duplicate check already shows in the phone slot.
+          if (
+            isCheckingPhoneDuplicate
+            || lastCheckedPhoneDigits !== phoneDigits
+            || hasPhoneDuplicateCheckFailed
+            || isPhoneDuplicate
+          ) {
             document.getElementById(clientInputElementId("phone"))?.focus();
             return false;
           }
@@ -549,7 +545,7 @@ export default function NewClientPage() {
             />
           </div>
           {error && (
-            <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_basic_step_error" className="md:col-span-2 text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -571,18 +567,26 @@ export default function NewClientPage() {
           </div>
 
           <div data-component="desktop_clients-new_service_step_grid" className={GRID_CLS}>
-            {store.voucherClient && <div data-component="desktop_clients-new_service_step_grid_year-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-year")}</label>
+            {store.voucherClient && <AppFormField
+              data-component="desktop_clients-new_service_step_grid_year-field"
+              htmlFor="clients-new-voucher-year"
+              label={t(locale, "clients.form.voucher-year")}
+            >
               <FormNativeSelect
+                id="clients-new-voucher-year"
                 className={SELECT_CLS}
                 value={resolvedVoucherYear.toString()}
                 onValueChange={handleVoucherYearChange}
                 options={voucherYearOptions}
               />
-            </div>}
-            {store.voucherClient && <div data-component="desktop_clients-new_service_step_grid_type-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.voucher-type")}</label>
+            </AppFormField>}
+            {store.voucherClient && <AppFormField
+              data-component="desktop_clients-new_service_step_grid_type-field"
+              htmlFor="clients-new-voucher-type"
+              label={t(locale, "clients.form.voucher-type")}
+            >
               <FormNativeSelect
+                id="clients-new-voucher-type"
                 className={SELECT_CLS}
                 value={store.type}
                 onValueChange={handleTypeChange}
@@ -596,11 +600,24 @@ export default function NewClientPage() {
                   ),
                 ]}
               />
-            </div>}
-            <div data-component="desktop_clients-new_service_step_grid_duration-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.duration")}</label>
+            </AppFormField>}
+            <AppFormField
+              data-component="desktop_clients-new_service_step_grid_duration-field"
+              htmlFor="clients-new-duration"
+              label={t(locale, "clients.form.duration")}
+              labelAccessory={!store.voucherClient && isOutOfPocketPriceError ? (
+                <FieldMessageText
+                  id="clients-new-duration-message"
+                  tone="error"
+                  data-component="desktop_clients-new_service_step_grid_duration-field_message"
+                >
+                  자부담 요금을 불러오지 못했어요
+                </FieldMessageText>
+              ) : null}
+            >
               <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap" className="relative">
                 <FormNativeSelect
+                  id="clients-new-duration"
                   className={cn(SELECT_CLS, (store.voucherClient
                     ? !store.type || isPriceLoading
                     : isOutOfPocketPriceLoading || isOutOfPocketPriceError) && "opacity-50")}
@@ -612,6 +629,7 @@ export default function NewClientPage() {
                   disabled={store.voucherClient
                     ? !store.type || isPriceLoading
                     : isOutOfPocketPriceLoading || isOutOfPocketPriceError}
+                  aria-describedby={!store.voucherClient && isOutOfPocketPriceError ? "clients-new-duration-message" : undefined}
                   options={[
                     { value: "", label: "선택하세요" },
                     ...durationOptions,
@@ -619,26 +637,20 @@ export default function NewClientPage() {
                 />
                 {(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                   <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading" className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
+                    <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
                   </div>
                 )}
               </div>
-            </div>
+            </AppFormField>
           </div>
-          {!store.voucherClient && isOutOfPocketPriceError && (
-            <p data-component="desktop_clients-new_service_step_out-of-pocket-price-error" className="text-xs font-semibold text-v3-burgundy">
-              자부담 요금 정보를 불러오지 못했습니다.
-            </p>
-          )}
 
           <div data-component="desktop_clients-new_service_step_employee-grid" className={GRID_CLS}>
-            <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.primary-employee")}</label>
+            <div data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field">
               <EmployeeAutocomplete
                   data-component="desktop_clients-new_service_step_employee-grid_primary-employee-field_autocomplete"
                 value={store.primaryEmployeeId}
                 onChange={(id) => setField("primaryEmployeeId", id)}
-                label=""
+                label={t(locale, "clients.form.primary-employee")}
                 excludeIds={store.secondaryEmployeeId != null ? [store.secondaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
@@ -647,13 +659,12 @@ export default function NewClientPage() {
                 }}
               />
             </div>
-            <div data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.secondary-employee")}</label>
+            <div data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field">
               <EmployeeAutocomplete
                   data-component="desktop_clients-new_service_step_employee-grid_secondary-employee-field_autocomplete"
                 value={store.secondaryEmployeeId}
                 onChange={(id) => setField("secondaryEmployeeId", id)}
-                label=""
+                label={t(locale, "clients.form.secondary-employee")}
                 excludeIds={store.primaryEmployeeId != null ? [store.primaryEmployeeId] : []}
                 allowManualEntry
                 onManualEntry={() => {
@@ -668,49 +679,58 @@ export default function NewClientPage() {
             <div data-component="desktop_clients-new_service_step_pricing-section_pricing-header" className="flex items-center gap-2 mb-3">
               <span className={LABEL_CLS}>{t(locale, "clients.form.section-pricing")}</span>
               {selectedPriceInfo && !pricesManuallyEdited && (
-                <span className="text-[0.65rem] font-bold text-v3-primary bg-v3-primary-light px-2 py-0.5 rounded-full">
+                <span className="text-[0.65rem] font-bold text-primary bg-primary-light px-2 py-0.5 rounded-full">
                   자동입력
                 </span>
               )}
             </div>
             <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid" className={cn("grid grid-cols-1 gap-4", store.voucherClient && "md:grid-cols-3")}>
-              <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.full-price")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field_full-price-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
-                    onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
-                    disabled={arePriceInputsLocked}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>
-              {store.voucherClient && <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.grant")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field_grant-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={formatPrice(store.grant)}
-                    onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>}
-              {store.voucherClient && <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field" className="flex flex-col gap-1.5">
-                <label className={LABEL_CLS}>{t(locale, "clients.form.actual-price")}</label>
-                <div data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field_actual-price-input-wrap" className="relative">
-                  <input
-                    className={cn(INPUT_CLS, "pr-8")}
-                    value={formatPrice(store.actualPrice)}
-                    onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
-                    placeholder="0"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-v3-text-muted">원</span>
-                </div>
-              </div>}
+              <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field"
+                htmlFor="clients-new-full-price"
+                label={t(locale, "clients.form.full-price")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_full-price-field_full-price-input-wrap"
+                  id="clients-new-full-price"
+                  value={arePriceInputsLocked ? "" : formatPrice(store.fullPrice)}
+                  onChange={(e) => handlePriceChange("fullPrice", e.target.value.replace(/,/g, ""))}
+                  disabled={arePriceInputsLocked}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>
+              {store.voucherClient && <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field"
+                htmlFor="clients-new-grant"
+                label={t(locale, "clients.form.grant")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_grant-field_grant-input-wrap"
+                  id="clients-new-grant"
+                  value={formatPrice(store.grant)}
+                  onChange={(e) => handlePriceChange("grant", e.target.value.replace(/,/g, ""))}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>}
+              {store.voucherClient && <AppFormField
+                data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field"
+                htmlFor="clients-new-actual-price"
+                label={t(locale, "clients.form.actual-price")}
+              >
+                <FormTextInputWithSuffix
+                  data-component="desktop_clients-new_service_step_pricing-section_pricing-grid_actual-price-field_actual-price-input-wrap"
+                  id="clients-new-actual-price"
+                  value={formatPrice(store.actualPrice)}
+                  onChange={(e) => handlePriceChange("actualPrice", e.target.value.replace(/,/g, ""))}
+                  className={INPUT_CLS}
+                  placeholder="0"
+                  suffix="원"
+                />
+              </AppFormField>}
             </div>
           </div>
 
@@ -730,8 +750,8 @@ export default function NewClientPage() {
                   className={cn(
                     "px-4 py-2.5 rounded-[14px] text-[0.8rem] font-semibold transition-all border-[1.5px]",
                     store[key]
-                      ? "bg-v3-primary-light border-v3-primary text-v3-primary"
-                      : "bg-white border-v3-border text-v3-text-muted hover:border-v3-primary/40"
+                      ? "bg-primary-light border-primary text-primary"
+                      : "bg-white border-border text-text-muted hover:border-primary/40"
                   )}
                 >
                   {store[key] && <Check className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={2.5} />}
@@ -742,7 +762,7 @@ export default function NewClientPage() {
           </div>
 
           {error && (
-            <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_service_step_error" className="text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -752,19 +772,19 @@ export default function NewClientPage() {
         <div data-component="desktop_clients-new_service_summary" className="flex gap-3 flex-wrap">
           {store.type && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {store.type}
             </span>
           )}
           {store.duration && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {store.duration}일
             </span>
           )}
           {store.actualPrice && (
             <span className={COMPLETED_PILL}>
-              <Check className="w-4 h-4 text-v3-green" strokeWidth={2} />
+              <Check className="w-4 h-4 text-green" strokeWidth={2} />
               {formatPrice(store.actualPrice)}원
             </span>
           )}
@@ -776,15 +796,19 @@ export default function NewClientPage() {
       content: (
         <div data-component="desktop_clients-new_contract_step" className="space-y-6">
           <div data-component="desktop_clients-new_contract_step_grid" className={GRID_CLS}>
-            <div data-component="desktop_clients-new_contract_step_grid_status-field" className="flex flex-col gap-1.5">
-              <label className={LABEL_CLS}>{t(locale, "clients.form.contract-status")}</label>
+            <AppFormField
+              data-component="desktop_clients-new_contract_step_grid_status-field"
+              htmlFor="clients-new-contract-status"
+              label={t(locale, "clients.form.contract-status")}
+            >
               <FormNativeSelect
+                id="clients-new-contract-status"
                 className={SELECT_CLS}
                 value={store.serviceStatus}
                 onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
                 options={SERVICE_STATUS_OPTIONS}
               />
-            </div>
+            </AppFormField>
             <div data-component="desktop_clients-new_contract_step_grid_spacer" />
             <div data-component="desktop_clients-new_contract_step_grid_start-date-field">
               <FormField
@@ -813,7 +837,7 @@ export default function NewClientPage() {
           </div>
 
           {error && (
-            <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-v3-burgundy font-semibold bg-v3-burgundy-light rounded-[14px] px-4 py-3">
+            <div data-component="desktop_clients-new_contract_step_error" className="text-[0.8rem] text-burgundy font-semibold bg-burgundy-light rounded-[14px] px-4 py-3">
               {error}
             </div>
           )}
@@ -830,7 +854,7 @@ export default function NewClientPage() {
             data-component="desktop_clients-new_main_content_content-inner_back-button"
             type="button"
             onClick={() => router.push("/clients")}
-            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
+            className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-text-muted hover:text-primary transition-colors mb-4 md:mb-6 self-start"
           >
             <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
             고객 목록으로 돌아가기

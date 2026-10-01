@@ -66,16 +66,34 @@ describe("RegisterPage", () => {
       return screen.findByLabelText("전화번호");
     };
 
-    it("shows nothing on first load and drops the old helper lines below the inputs", () => {
+    it("shows the password rule as guidance on first load and drops the lines below the inputs", () => {
       render(<RegisterPage />);
 
-      ["이메일", "이름", "비밀번호", "비밀번호 확인"].forEach((label) => {
+      ["이메일", "이름", "비밀번호 확인"].forEach((label) => {
         const field = screen.getByLabelText(label);
         expect(slotOf(field)).toBeEmptyDOMElement();
         expect(slotOf(field)).toHaveAttribute("aria-live", "polite");
         expect(field).not.toHaveAttribute("aria-invalid", "true");
       });
+      const password = screen.getByLabelText("비밀번호");
+      expect(slotOf(password)).toHaveTextContent("8자 이상 대소문자·숫자·특수문자");
+      expect(slotOf(password)).toHaveAttribute("aria-live", "polite");
+      expect(password).not.toHaveAttribute("aria-invalid", "true");
       expect(document.querySelector(".auth-helper")).toBeNull();
+      expect(document.querySelector(".pw-strength")).toBeNull();
+    });
+
+    it("replaces the password guidance with the unmet rule and brings it back once emptied", async () => {
+      const user = userEvent.setup();
+      render(<RegisterPage />);
+      const password = screen.getByLabelText("비밀번호");
+
+      await user.type(password, "abc");
+      expect(slotOf(password)).not.toHaveTextContent("8자 이상 대소문자·숫자·특수문자");
+      expect(slotOf(password)).toHaveTextContent("필요해요");
+
+      await user.clear(password);
+      expect(slotOf(password)).not.toHaveTextContent("필요해요");
     });
 
     it("calls a cleared field required only after it held a value", async () => {

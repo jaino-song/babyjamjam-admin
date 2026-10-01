@@ -27,9 +27,9 @@ export function StatsPeriodSelector({
     <div
       data-component={dataComponent}
       data-source-component="StatsPeriodSelector"
-      className="flex items-center justify-between gap-3 rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-dim-white px-3 py-2"
+      className="flex items-center justify-between gap-3 rounded-[calc(14px*var(--glint-ui-scale,1))] bg-surface px-3 py-2"
     >
-      <span className="text-[calc(0.68rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+      <span className="text-[calc(0.68rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">
         조회 기간
       </span>
       <Select

@@ -14,11 +14,11 @@ export interface DetailActionsProps {
 
 const variantStyles: Record<string, string> = {
   primary:
-    "bg-v3-primary text-white hover:bg-v3-primary-hover",
+    "bg-primary text-white hover:bg-primary-hover",
   default:
-    "bg-v3-dim-white text-v3-text hover:bg-v3-border",
+    "bg-surface text-text hover:bg-border",
   danger:
-    "bg-v3-burgundy-light text-v3-burgundy hover:bg-v3-burgundy/10",
+    "bg-burgundy-light text-burgundy hover:bg-burgundy/10",
 };
 
 export function DetailActions({ actions, name }: DetailActionsProps) {

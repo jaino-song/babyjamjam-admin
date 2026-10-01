@@ -41,7 +41,7 @@ export function MiniBars({
               data-component={sub(`bar-${i}`)}
               data-slot="mini-bars-bar"
               className={`min-w-0 rounded-t-md ${
-                isLast ? "bg-v3-primary" : "bg-blue-300/60"
+                isLast ? "bg-primary" : "bg-blue-300/60"
               }`}
               style={{ height: `${Math.max(pct, 4)}%` }}
               aria-label={`${labels?.[i] ?? i + 1}: ${v}`}
@@ -51,7 +51,7 @@ export function MiniBars({
         })}
       </div>
       {labels && labels.length > 0 && labels.length === values.length ? (
-        <div data-component={sub("axis")} data-slot="mini-bars-axis" className="mt-1.5 grid gap-1.5 text-[0.6rem] tabular-nums text-v3-text-muted" style={columns}>
+        <div data-component={sub("axis")} data-slot="mini-bars-axis" className="mt-1.5 grid gap-1.5 text-[0.6rem] tabular-nums text-text-muted" style={columns}>
           {labels.map((label, index) => labelIndexes.has(index) ? (
             <span
               key={index}

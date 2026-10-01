@@ -138,7 +138,7 @@ export function EmployeeDetailContent({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-text-muted transition-colors hover:bg-surface"
                 aria-label="제공인력 옵션"
                 data-component="mobile_employees_detail-sheet_stack_detail-page_body_header_menu-trigger"
               >

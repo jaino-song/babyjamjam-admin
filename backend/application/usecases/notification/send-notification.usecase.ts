@@ -65,14 +65,35 @@ export class SendNotificationUsecase {
         branchid: string,
         params: SendNotificationParams,
     ): Promise<SendNotificationOutcome> {
-        const { userId, title, body, data } = params;
+        const savedNotification = await this.createNotificationRecord(branchid, params);
+        return this.deliverNotification(branchid, savedNotification);
+    }
 
-        // 알림 이력 저장
+    /**
+     * Stores the in-app notification row only — no push delivery. Split out of
+     * {@link executeWithOutcome} so a caller that needs to respond before push/email
+     * delivery finishes (manual "send"/"broadcast" endpoints, background delivery
+     * mode) can await just the storage step and run {@link deliverNotification}
+     * afterwards without blocking the response.
+     */
+    async createNotificationRecord(
+        branchid: string,
+        params: SendNotificationParams,
+    ): Promise<NotificationEntity> {
+        const { userId, title, body, data } = params;
         const notification = NotificationEntity.create(userId, title, body, data);
-        const savedNotification = await this.notificationRepository.create(
-            branchid,
-            notification
-        );
+        return this.notificationRepository.create(branchid, notification);
+    }
+
+    /**
+     * Delivers push notifications for an already-stored notification row and
+     * persists the delivery outcome. Counterpart to {@link createNotificationRecord}.
+     */
+    async deliverNotification(
+        branchid: string,
+        savedNotification: NotificationEntity,
+    ): Promise<SendNotificationOutcome> {
+        const userId = savedNotification.userId;
 
         if (!this.webPushPort.isEnabled()) {
             return this.persistOutcome(branchid, savedNotification, { status: "disabled", subscriptions: 0, delivered: 0, failed: 0 });

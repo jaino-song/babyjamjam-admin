@@ -66,10 +66,10 @@ function PillToggle({
       className={cn(
         "rounded-full border px-2 py-0.5 text-[0.7rem] font-medium transition-colors min-w-[2.65rem] text-center",
         "xl:min-w-[3.25rem] xl:px-3 xl:py-1 xl:text-xs",
-        "border-[hsl(var(--v3-primary))]",
+        "border-[hsl(var(--primary))]",
         active
-          ? "bg-[hsl(var(--v3-primary))] text-white"
-          : "text-[hsl(var(--v3-primary))] hover:bg-[hsl(var(--v3-primary))]/10",
+          ? "bg-[hsl(var(--primary))] text-white"
+          : "text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10",
       )}
     >
       {label}
@@ -114,19 +114,19 @@ function TableSkeleton() {
           {Array.from({ length: 10 }).map((_, index) => (
             <TableRow key={index} data-component="desktop_settings_voucher-price-table_skeleton_row">
               <TableCell className="px-1.5 py-3 font-medium xl:px-2 xl:py-4">
-                <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
+                <Skeleton className="h-4 w-20 mx-auto bg-surface" />
               </TableCell>
               <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
-                <Skeleton className="h-4 w-10 mx-auto bg-v3-dim-white" />
+                <Skeleton className="h-4 w-10 mx-auto bg-surface" />
               </TableCell>
               <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
-                <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
+                <Skeleton className="h-4 w-24 mx-auto bg-surface" />
               </TableCell>
               <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
-                <Skeleton className="h-4 w-24 mx-auto bg-v3-dim-white" />
+                <Skeleton className="h-4 w-24 mx-auto bg-surface" />
               </TableCell>
               <TableCell className="px-1.5 py-3 xl:px-2 xl:py-4">
-                <Skeleton className="h-4 w-20 mx-auto bg-v3-dim-white" />
+                <Skeleton className="h-4 w-20 mx-auto bg-surface" />
               </TableCell>
             </TableRow>
           ))}
@@ -213,8 +213,8 @@ export function VoucherPriceTable() {
           data-component="desktop_settings_voucher-price-table_header"
           className="flex-row items-center gap-2.5 px-6 py-4 xl:gap-3 xl:py-5"
         >
-          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-[hsl(var(--v3-primary))]/10 xl:h-10 xl:w-10">
-            <CreditCard className="size-4 text-[hsl(var(--v3-primary))] xl:size-5" />
+          <div className="flex items-center justify-center w-8 h-8 rounded-xl bg-[hsl(var(--primary))]/10 xl:h-10 xl:w-10">
+            <CreditCard className="size-4 text-[hsl(var(--primary))] xl:size-5" />
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-bold text-foreground xl:text-lg">바우처 요금표</h2>
@@ -302,7 +302,7 @@ export function VoucherPriceTable() {
           <button
             type="button"
             onClick={clearAllFilters}
-            className="rounded-full border border-[hsl(var(--v3-primary))]/30 px-2 py-0.5 text-[0.7rem] font-medium text-[hsl(var(--v3-primary))] hover:bg-[hsl(var(--v3-primary))]/10 transition-colors xl:px-3 xl:py-1 xl:text-xs"
+            className="rounded-full border border-[hsl(var(--primary))]/30 px-2 py-0.5 text-[0.7rem] font-medium text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary))]/10 transition-colors xl:px-3 xl:py-1 xl:text-xs"
           >
             모두 해제
           </button>

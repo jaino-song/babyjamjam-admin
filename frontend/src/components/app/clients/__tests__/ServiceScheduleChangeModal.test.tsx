@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { ServiceScheduleChangeModal } from "../ServiceScheduleChangeModal";
 
 describe("ServiceScheduleChangeModal", () => {
@@ -77,11 +78,45 @@ describe("ServiceScheduleChangeModal", () => {
         };
         const slot = () => document.getElementById("service-schedule-change-date-message");
 
-        it("shows no message on first render", () => {
+        it("shows the static guidance in the slot on first render", () => {
             renderModal();
 
-            expect(slot()).toBeNull();
+            expect(slot()).toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(slot()).toHaveAttribute("data-slot", "field-message");
+            expect(screen.getByLabelText("3회차 서비스 제공 날짜")).not.toHaveAttribute("aria-invalid", "true");
             expect(screen.getByRole("button", { name: "일정 변경" })).not.toBeDisabled();
+        });
+
+        it("replaces the guidance with an error and brings it back once the date is fixed", () => {
+            const { rerender, onDateChange } = renderModal({ selectedDate: "2026-07-20" });
+            const input = screen.getByLabelText("3회차 서비스 제공 날짜");
+            const modalProps = {
+                open: true,
+                sessionIndex: 3,
+                currentDate: "2026-07-20",
+                minimumDate: "2026-07-21",
+                isPending: false,
+                onDateChange,
+                onClose: jest.fn(),
+                onSubmit: jest.fn(),
+            };
+
+            expect(slot()).toHaveTextContent("2026-07-21 이후로 입력해 주세요");
+            expect(slot()).toHaveAttribute("data-slot", "field-error-message");
+            expect(slot()).not.toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(input).toHaveAttribute("aria-invalid", "true");
+
+            rerender(<ServiceScheduleChangeModal {...modalProps} selectedDate="2026-07-25" />);
+
+            expect(slot()).toHaveTextContent("현재 날짜 이후로 선택해 주세요");
+            expect(slot()).toHaveAttribute("data-slot", "field-message");
+            expect(input).not.toHaveAttribute("aria-invalid", "true");
+        });
+
+        it("renders nothing below the date input", () => {
+            renderModal();
+
+            expectNoFieldMessageBelowControl(document.body);
         });
 
         it("types digits into YYYY-MM-DD while keeping the payload ISO", () => {

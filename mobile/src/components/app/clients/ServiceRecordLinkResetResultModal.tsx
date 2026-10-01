@@ -34,7 +34,7 @@ export function ServiceRecordLinkResetResultModal({
             onApprove={() => onCopy(serviceRecordUrl)}
         >
             <div className="space-y-2 pt-5">
-                <label htmlFor="reset-service-record-link-url" className="block text-[13px] font-semibold text-v3-text">
+                <label htmlFor="reset-service-record-link-url" className="block text-[13px] font-semibold text-text">
                     제공기록지 링크
                 </label>
                 <Textarea

@@ -260,7 +260,7 @@ export default function EmployeesPage() {
                     padding: "32px 16px",
                     textAlign: "center",
                     fontSize: "0.82rem",
-                    color: "hsl(var(--v3-text-muted))",
+                    color: "hsl(var(--text-muted))",
                   }}
                   data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_empty"
                 >

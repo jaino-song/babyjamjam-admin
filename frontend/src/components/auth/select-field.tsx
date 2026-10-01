@@ -9,8 +9,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { InlineFieldError } from "@/components/auth/inline-field-error";
 import { AUTH_FIELD_CONTROL_CLASS_NAME } from "@/components/auth/field-styles";
+import {
+  FIELD_MESSAGE_LABEL_ROW_CLASS_NAME,
+  FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME,
+  FieldMessageText,
+} from "@/components/app/ui/field-message";
 
 interface SelectFieldProps {
   label: string;
@@ -18,13 +22,13 @@ interface SelectFieldProps {
   onValueChange: (value: string) => void;
   placeholder?: string;
   options: { value: string; label: string }[];
+  /** A problem with the field. It shows in the label-row slot, never below the select. */
   error?: string;
   disabled?: boolean;
   id?: string;
   className?: string;
-  hideErrorMessage?: boolean;
+  /** Informational hint for the slot; it shows only while the field has no error. */
   labelTrailing?: React.ReactNode;
-  errorDisplay?: "below" | "inline";
   "data-component"?: string;
 }
 
@@ -38,43 +42,29 @@ export function SelectField({
   disabled,
   id,
   className,
-  hideErrorMessage = false,
   labelTrailing,
-  errorDisplay = "below",
   "data-component": dataComponent,
 }: SelectFieldProps) {
   const fieldId = id || label.toLowerCase().replace(/\s+/g, "-");
   const errorId = `${fieldId}-error`;
-  const shouldShowInlineError = errorDisplay === "inline";
-  const inlineError =
-    shouldShowInlineError ? (
-      <InlineFieldError
-        id={errorId}
-        message={error}
-        reserveSpace
-      />
-    ) : undefined;
-  const trailingContent =
-    shouldShowInlineError
-      ? labelTrailing ? (
-          <div className="flex items-center gap-2">
-            {labelTrailing}
-            {inlineError}
-          </div>
-        ) : inlineError
-      : labelTrailing;
+  const trailingContent = error ? (
+    // Callers pass copy already normalized through the problem contract.
+    <FieldMessageText id={errorId} tone="error" data-component="desktop_auth_form-field_message">
+      {error}
+    </FieldMessageText>
+  ) : labelTrailing;
 
   return (
     <div className="flex flex-col gap-2" data-component={dataComponent}>
       <div
         data-component="desktop_auth_form-field_label-row"
-        className="flex items-center justify-between gap-2"
+        className={cn("flex items-center justify-between gap-2", FIELD_MESSAGE_LABEL_ROW_CLASS_NAME)}
       >
-        <Label htmlFor={fieldId}>{label}</Label>
-        {shouldShowInlineError || trailingContent ? (
+        <Label htmlFor={fieldId} className="shrink-0 whitespace-nowrap">{label}</Label>
+        {trailingContent ? (
           <div
             data-component="desktop_auth_form-field_label-row_trailing"
-            className="flex min-h-[0.6875rem] shrink-0 items-center"
+            className={cn("flex items-center", FIELD_MESSAGE_LABEL_SLOT_CLASS_NAME)}
           >
             {trailingContent}
           </div>
@@ -102,15 +92,6 @@ export function SelectField({
           ))}
         </SelectContent>
       </Select>
-      {error && !hideErrorMessage && !shouldShowInlineError && (
-        <p
-          id={errorId}
-          className="text-sm text-destructive animate-fade-in"
-        >
-          {/* Callers pass copy already normalized through the problem contract. */}
-          {error}
-        </p>
-      )}
     </div>
   );
 }

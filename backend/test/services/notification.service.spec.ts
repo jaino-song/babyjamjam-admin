@@ -23,13 +23,19 @@ describe("NotificationService", () => {
 
     const subscribePushUsecase = { execute: jest.fn() };
     const unsubscribePushUsecase = { execute: jest.fn() };
-    const sendNotificationUsecase = { execute: jest.fn(), broadcast: jest.fn() };
+    const sendNotificationUsecase = {
+        execute: jest.fn(),
+        broadcast: jest.fn(),
+        createNotificationRecord: jest.fn(),
+        deliverNotification: jest.fn(),
+    };
     const getNotificationsUsecase = { execute: jest.fn(), getUnread: jest.fn(), countUnread: jest.fn() };
     const markNotificationReadUsecase = { execute: jest.fn(), markAllAsRead: jest.fn() };
     const getVapidKeyUsecase = { execute: jest.fn() };
     const userRepository = {
         findById: jest.fn(),
         findByIdInBranch: jest.fn(),
+        findApprovedByIdInBranch: jest.fn(),
         findByKakaoId: jest.fn(),
         findByEmail: jest.fn(),
         findByRoles: jest.fn(),
@@ -68,6 +74,7 @@ describe("NotificationService", () => {
 
         userRepository.findById.mockResolvedValue(null);
         userRepository.findByIdInBranch.mockImplementation(async (userId: string) => createUser(userId));
+        userRepository.findApprovedByIdInBranch.mockImplementation(async (userId: string) => createUser(userId));
         userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
             createUser("user-1"),
             createUser("user-2"),
@@ -79,6 +86,16 @@ describe("NotificationService", () => {
         sendNotificationUsecase.execute.mockImplementation((branchid: string, params: { userId: string }) =>
             Promise.resolve(NotificationEntity.create(params.userId, "title", "body", { branchid }))
         );
+        sendNotificationUsecase.createNotificationRecord.mockImplementation(
+            (branchid: string, params: { userId: string }) =>
+                Promise.resolve(NotificationEntity.create(params.userId, "title", "body", { branchid })),
+        );
+        sendNotificationUsecase.deliverNotification.mockResolvedValue({
+            status: "delivered",
+            subscriptions: 1,
+            delivered: 1,
+            failed: 0,
+        });
     });
 
     afterEach(() => {
@@ -142,6 +159,45 @@ describe("NotificationService", () => {
         expect(emailPort.send).not.toHaveBeenCalled();
     });
 
+    describe("requireApprovedRecipient (BJJ-357)", () => {
+        it("resolves the recipient with the approval-filtered lookup when the option is set", async () => {
+            await service.sendNotification(
+                branchId, "user-1", "title", "body", undefined, { requireApprovedRecipient: true },
+            );
+
+            expect(userRepository.findApprovedByIdInBranch).toHaveBeenCalledWith("user-1", branchId);
+            expect(userRepository.findByIdInBranch).not.toHaveBeenCalled();
+        });
+
+        it("rejects with ForbiddenException and creates no notification when the approved lookup finds no user", async () => {
+            userRepository.findApprovedByIdInBranch.mockResolvedValue(null);
+
+            await expect(
+                service.sendNotification(
+                    branchId, "unapproved-user", "title", "body", undefined, { requireApprovedRecipient: true },
+                ),
+            ).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({
+                    code: "ACCESS_DENIED",
+                    outcome: "NOT_APPLIED",
+                    recovery: { action: "NONE", retry: { mode: "NEVER" } },
+                }),
+            });
+
+            expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
+            expect(sendNotificationUsecase.createNotificationRecord).not.toHaveBeenCalled();
+            expect(emailPort.send).not.toHaveBeenCalled();
+        });
+
+        it("uses the unfiltered branch-membership lookup when the option is omitted", async () => {
+            await service.sendNotification(branchId, "user-1", "title", "body");
+
+            expect(userRepository.findByIdInBranch).toHaveBeenCalledWith("user-1", branchId);
+            expect(userRepository.findApprovedByIdInBranch).not.toHaveBeenCalled();
+        });
+    });
+
     describe("listRecipients", () => {
         it("should de-duplicate by id, sort by Korean name order, and return only id/name", async () => {
             userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
@@ -193,6 +249,107 @@ describe("NotificationService", () => {
             branchId,
             expect.objectContaining({ userId: "user-2" }),
         );
+    });
+
+    describe("deliveryMode: background (BJJ-356)", () => {
+        it("sendNotification resolves with the stored notification before push/email delivery finishes", async () => {
+            systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+            // Deferred (not resolved-by-default) so the test can prove sendNotification
+            // settles while push delivery is still in flight. If the await on
+            // deliverNotification were ever hoisted out of the background closure and
+            // into the synchronous path before `return`, this promise never resolving
+            // yet would hang the `await service.sendNotification(...)` call below and
+            // fail the test on timeout.
+            let resolveDeliver!: (value: { status: string; subscriptions: number; delivered: number; failed: number }) => void;
+            const deliverPromise = new Promise<{ status: string; subscriptions: number; delivered: number; failed: number }>(
+                (resolve) => { resolveDeliver = resolve; },
+            );
+            sendNotificationUsecase.deliverNotification.mockImplementation(() => deliverPromise);
+
+            let resolveEmail!: (value: string) => void;
+            const emailPromise = new Promise<string>((resolve) => { resolveEmail = resolve; });
+            emailPort.send.mockImplementation(() => emailPromise);
+
+            const result = await service.sendNotification(
+                branchId, "user-1", "title", "body", undefined, { deliveryMode: "background" },
+            );
+
+            expect(result).toEqual(expect.objectContaining({ userId: "user-1" }));
+            expect(sendNotificationUsecase.createNotificationRecord).toHaveBeenCalledTimes(1);
+            expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
+
+            resolveDeliver({ status: "delivered", subscriptions: 1, delivered: 1, failed: 0 });
+            resolveEmail("email-id");
+            await service.whenBackgroundDeliveryIdle();
+
+            expect(sendNotificationUsecase.deliverNotification).toHaveBeenCalledTimes(1);
+            expect(emailPort.send).toHaveBeenCalledTimes(1);
+        });
+
+        it("broadcastNotification resolves with stored counts before background email sends complete, then finishes delivery afterwards", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([createUser("user-1")]);
+            systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+            let resolveEmail!: (value: string) => void;
+            const emailPromise = new Promise<string>((resolve) => { resolveEmail = resolve; });
+            emailPort.send.mockImplementation(() => emailPromise);
+
+            await expect(
+                service.broadcastNotification(branchId, "title", "body", undefined, { deliveryMode: "background" }),
+            ).resolves.toEqual({ sent: 1, failed: 0 });
+
+            expect(sendNotificationUsecase.createNotificationRecord).toHaveBeenCalledTimes(1);
+            expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
+
+            resolveEmail("email-id");
+            await service.whenBackgroundDeliveryIdle();
+
+            expect(sendNotificationUsecase.deliverNotification).toHaveBeenCalledTimes(1);
+            expect(emailPort.send).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps awaiting push and email delivery in the default delivery mode", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([createUser("user-1")]);
+            systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+            let resolveEmail!: () => void;
+            emailPort.send.mockImplementation(() =>
+                new Promise((resolve) => { resolveEmail = () => resolve("email-id"); })
+            );
+
+            const promise = service.broadcastNotification(branchId, "title", "body");
+            let settled = false;
+            void promise.then(() => { settled = true; }, () => { settled = true; });
+
+            for (let i = 0; i < 20; i++) {
+                await Promise.resolve();
+            }
+            expect(settled).toBe(false);
+            expect(emailPort.send).toHaveBeenCalledTimes(1);
+
+            resolveEmail();
+            await expect(promise).resolves.toEqual({ sent: 1, failed: 0 });
+            expect(settled).toBe(true);
+        });
+
+        it("catches and logs a background delivery rejection without throwing or leaving an unhandled rejection", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([createUser("user-1")]);
+            const errorSpy = jest.spyOn(Logger.prototype, "error").mockImplementation();
+            sendNotificationUsecase.deliverNotification.mockRejectedValue(new Error("push provider down"));
+
+            try {
+                await expect(
+                    service.broadcastNotification(branchId, "title", "body", undefined, { deliveryMode: "background" }),
+                ).resolves.toEqual({ sent: 1, failed: 0 });
+
+                await service.whenBackgroundDeliveryIdle();
+
+                expect(errorSpy).toHaveBeenCalledWith(
+                    expect.stringContaining("Background notification delivery failed"),
+                    expect.anything(),
+                );
+            } finally {
+                errorSpy.mockRestore();
+            }
+        });
     });
 
     it("should send a plain notification email with escaped HTML content", async () => {

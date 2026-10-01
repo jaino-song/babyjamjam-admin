@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 
 import { api } from "@/lib/api/client";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
+import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 
 import NewClientPage from "./page";
 
@@ -34,7 +35,9 @@ jest.mock("@/providers/LocaleProvider", () => ({
 }));
 
 jest.mock("@/components/app/clients/EmployeeAutocomplete", () => ({
-  EmployeeAutocomplete: () => <div data-testid="employee-autocomplete" />,
+  EmployeeAutocomplete: ({ label }: { label: string }) => (
+    <div data-testid="employee-autocomplete" data-label={label} />
+  ),
 }));
 
 jest.mock("@/components/app/employees/EmployeeFormDialog", () => ({
@@ -149,5 +152,64 @@ describe("NewClientPage inline field messages", () => {
 
     expect(screen.getByText("종료일은 시작일 이후여야 해요")).toBeInTheDocument();
     expect(screen.getByLabelText("종료일")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows the phone duplicate check in progress in the phone slot, not in the step error box", async () => {
+    mockApiGet.mockReturnValue(new Promise(() => {}) as ReturnType<typeof api.get>);
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });
+    const phone = screen.getByLabelText(/연락처/);
+    fireEvent.change(phone, { target: { value: "01012345678" } });
+
+    const message = await screen.findByText("중복 확인 중이에요");
+    expect(message).toHaveAttribute("data-slot", "field-message");
+    expect(phone).toHaveAttribute("aria-describedby", message.id);
+    expect(phone).not.toHaveAttribute("aria-invalid", "true");
+
+    // Next stays blocked while the check runs; nothing is reported outside the slot.
+    expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+    expect(document.querySelector('[data-component="desktop_clients-new_basic_step_error"]')).toBeNull();
+    expectNoFieldMessageBelowControl(document.body);
+  });
+
+  it("shows a found duplicate phone as an error in the phone slot and clears it on edit", async () => {
+    mockApiGet.mockResolvedValue({ data: { exists: true } });
+    await renderPage();
+    const phone = screen.getByLabelText(/연락처/);
+    fireEvent.change(phone, { target: { value: "01012345678" } });
+
+    const message = await screen.findByText("이미 등록된 연락처예요");
+    expect(message).toHaveAttribute("data-slot", "field-error-message");
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(phone, { target: { value: "0101234567" } });
+    expect(screen.queryByText("이미 등록된 연락처예요")).not.toBeInTheDocument();
+  });
+
+  it("gives the service and contract step fields a label above the control and nothing below it", async () => {
+    act(() => {
+      useClientWizardStore.getState().setField("voucherClient", true);
+    });
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01012345678" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+
+    const year = await screen.findByLabelText("바우처 연도");
+    expect(year.tagName).toBe("SELECT");
+    expect(screen.getByLabelText("바우처 유형").tagName).toBe("SELECT");
+    expect(screen.getByLabelText("서비스 기간").tagName).toBe("SELECT");
+    for (const label of ["총 서비스 금액", "정부지원금", "본인부담금"]) {
+      expect(screen.getByLabelText(label)).toBeInstanceOf(HTMLInputElement);
+    }
+    const [primary, secondary] = screen.getAllByTestId("employee-autocomplete");
+    expect(primary).toHaveAttribute("data-label", "주 담당 인력");
+    expect(secondary).toHaveAttribute("data-label", "보조 담당 인력");
+    expectNoFieldMessageBelowControl(document.body);
+
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    expect((await screen.findByLabelText("계약 상태")).tagName).toBe("SELECT");
+    expectNoFieldMessageBelowControl(document.body);
   });
 });

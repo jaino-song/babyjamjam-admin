@@ -64,7 +64,7 @@ export function FloatingQuickActions() {
             >
               <IconComp className={cn("w-5 h-5", color.text)} strokeWidth={2.5} />
             </div>
-            <span className="text-[10px] font-bold text-v3-text-muted group-hover:text-v3-dark transition-colors leading-tight text-center">
+            <span className="text-[10px] font-bold text-text-muted group-hover:text-dark transition-colors leading-tight text-center">
               {action.label}
             </span>
           </Link>

@@ -9,6 +9,28 @@ export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
   missing_phone: "산모 연락처가 없거나 형식이 올바르지 않아요.",
 };
 
+// One-line copy of each reason for a form field's message slot (the full sentences
+// above do not fit next to a label).
+const RECEIPT_LINK_REASON_SLOT_COPY: Record<keyof typeof RECEIPT_LINK_REASON_MESSAGES, string> = {
+  not_voucher_client: "바우처 산모가 아니에요",
+  missing_birthday: "산모 생년월일을 먼저 등록해 주세요",
+  contract_not_signed: "계약서 서명이 필요해요",
+  no_contract_document: "연결된 계약서가 없어요",
+  document_not_linked: "계약서에 연결된 산모가 없어요",
+  document_not_found: "계약서를 찾지 못했어요",
+  pdf_unavailable: "계약서 PDF를 불러올 수 없어요",
+  missing_phone: "산모 연락처를 확인해 주세요",
+};
+const RECEIPT_LINK_SLOT_FALLBACK_COPY = "영수증 링크를 준비하지 못했어요";
+
+/** The slot copy for a message produced by `describeReceiptLinkError`. */
+export function describeReceiptLinkSlotCopy(message: string): string {
+  const reason = Object.keys(RECEIPT_LINK_REASON_MESSAGES).find(
+    (key) => RECEIPT_LINK_REASON_MESSAGES[key] === message,
+  );
+  return reason ? RECEIPT_LINK_REASON_SLOT_COPY[reason] : RECEIPT_LINK_SLOT_FALLBACK_COPY;
+}
+
 export const RECEIPT_LINK_SEND_FALLBACK_MESSAGE = "영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.";
 
 export function describeReceiptLinkError(error: unknown): string {

@@ -89,4 +89,15 @@ describe("mobile employee wizard field messages", () => {
     expect(slot).toHaveTextContent("근무 지역을 선택해 주세요");
     expect(mockCreateEmployee).not.toHaveBeenCalled();
   });
+
+  it("keeps the open-status guidance in its label-row slot with nothing below the options", () => {
+    act(() => useEmployeeWizardStore.getState().setCurrentStep(1));
+    render(<NewEmployeePage />);
+
+    const slot = document.getElementById("employee-open-status-message") as HTMLElement;
+    expect(slot).toHaveTextContent("고객 매칭 노출 · 언제든 변경");
+    expect(slot).toHaveAttribute("aria-live", "polite");
+    expect(screen.getAllByText("고객 매칭 노출 · 언제든 변경")).toHaveLength(1);
+    expect(screen.queryByText(/새로운 고객 매칭에 노출될지 여부/)).not.toBeInTheDocument();
+  });
 });

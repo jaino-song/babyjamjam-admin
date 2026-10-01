@@ -28,15 +28,15 @@ function TemplateEditorPageSkeleton() {
     return (
         <div data-component="desktop_messages_sections_template-edit-loading-skeleton" className="space-y-6">
             <div data-component="desktop_messages_sections_template-edit-loading-skeleton_template-edit-loading-field" className="space-y-2">
-                <Skeleton className="h-4 w-24 bg-v3-dim-white" />
-                <Skeleton className="h-11 w-full rounded-[14px] bg-v3-dim-white" />
+                <Skeleton className="h-4 w-24 bg-surface" />
+                <Skeleton className="h-11 w-full rounded-[14px] bg-surface" />
             </div>
             <div data-component="desktop_messages_sections_template-edit-loading-skeleton_template-edit-loading-field" className="space-y-2">
-                <Skeleton className="h-4 w-20 bg-v3-dim-white" />
-                <Skeleton className="h-52 w-full rounded-[14px] bg-v3-dim-white" />
+                <Skeleton className="h-4 w-20 bg-surface" />
+                <Skeleton className="h-52 w-full rounded-[14px] bg-surface" />
             </div>
             <div data-component="desktop_messages_sections_template-edit-loading-skeleton_template-edit-loading-actions" className="flex justify-end">
-                <Skeleton className="h-10 w-24 rounded-[12px] bg-v3-dim-white" />
+                <Skeleton className="h-10 w-24 rounded-[12px] bg-surface" />
             </div>
         </div>
     );

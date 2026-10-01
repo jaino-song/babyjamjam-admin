@@ -239,7 +239,7 @@ function ClientMessageHistoryList({
                 >
                     <Skeleton
                         data-component={`${dataComponentPrefix}_history-list_skeleton-icon`}
-                        className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-v3-dim-white shadow-md"
+                        className="h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 rounded-[14px] bg-surface shadow-md"
                     />
                     <div
                         data-component={`${dataComponentPrefix}_history-list_skeleton-copy`}
@@ -247,15 +247,15 @@ function ClientMessageHistoryList({
                     >
                         <Skeleton
                             data-component={`${dataComponentPrefix}_history-list_skeleton-title`}
-                            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] max-w-full bg-surface"
                         />
                         <Skeleton
                             data-component={`${dataComponentPrefix}_history-list_skeleton-subtitle`}
-                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(220px*var(--glint-ui-scale,1))] max-w-full bg-surface"
                         />
                         <Skeleton
                             data-component={`${dataComponentPrefix}_history-list_skeleton-reason`}
-                            className="h-[calc(10px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] max-w-full bg-v3-dim-white"
+                            className="h-[calc(10px*var(--glint-ui-scale,1))] w-[calc(176px*var(--glint-ui-scale,1))] max-w-full bg-surface"
                         />
                     </div>
                     <div
@@ -264,11 +264,11 @@ function ClientMessageHistoryList({
                     >
                         <Skeleton
                             data-component={`${dataComponentPrefix}_history-list_skeleton-status`}
-                            className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] rounded-full bg-v3-dim-white"
+                            className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(64px*var(--glint-ui-scale,1))] rounded-full bg-surface"
                         />
                         <Skeleton
                             data-component={`${dataComponentPrefix}_history-list_skeleton-date`}
-                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
+                            className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-surface"
                         />
                     </div>
                 </div>
@@ -280,7 +280,7 @@ function ClientMessageHistoryList({
         return (
             <div
                 data-component={`${dataComponentPrefix}_history-list_error`}
-                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-v3-text-muted"
+                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-text-muted"
             >
                 메시지 발송 내역을 불러오지 못했습니다
             </div>
@@ -361,7 +361,7 @@ function ClientMessageHistoryList({
                                     </MessageStatusBadge>
                                     <span
                                         data-component={`${dataComponentPrefix}_history-list_item_date`}
-                                        className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                                        className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-text-muted"
                                     >
                                         {formatMessageHistoryDate(normalizedRecord.sentAt)}
                                     </span>
@@ -476,7 +476,7 @@ function ClientUpcomingMessageList({
             >
                 <p
                     data-component={`${sectionPrefix}_error_message`}
-                    className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                    className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
                 >
                     예정된 자동 메시지를 불러오지 못했어요
                 </p>
@@ -531,7 +531,7 @@ function ClientUpcomingMessageList({
                         <AnimatedSlotListItemContent
                             data-component={`${sectionPrefix}_list_item_content`}
                             icon={CalendarClock}
-                            iconContainerClassName="text-v3-primary"
+                            iconContainerClassName="text-primary"
                             title={job.ruleName || getMessageTemplateLabel(job.templateKey)}
                             subtitle={
                                 <>
@@ -599,7 +599,7 @@ function ClientContractsList({
                     <div
                         key={index}
                         data-component={`${dataComponentPrefix}-contracts-skeleton-card`}
-                        className="rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                        className="rounded-[18px] bg-surface p-[calc(16px*var(--glint-ui-scale,1))]"
                     >
                         <div data-component={`${dataComponentPrefix}-contracts-skeleton-card-head`} className="flex items-center justify-between gap-3">
                             <Skeleton className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-white/70" />
@@ -617,7 +617,7 @@ function ClientContractsList({
 
     if (isError && docs.length === 0) {
         return (
-            <div data-component={`${dataComponentPrefix}-contracts-error`} className="py-12 text-center text-[0.85rem] text-v3-text-muted">
+            <div data-component={`${dataComponentPrefix}-contracts-error`} className="py-12 text-center text-[0.85rem] text-text-muted">
                 계약서 정보를 불러오지 못했습니다
             </div>
         );
@@ -1329,7 +1329,7 @@ function ClientDetailPanelBody({
                                         <div
                                             data-component={`${dataComponentPrefix}_content_messages_zone-upcoming_label`}
                                             data-slot="message-zone-label"
-                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
                                         >
                                             예정된 자동 메시지
                                         </div>
@@ -1352,7 +1352,7 @@ function ClientDetailPanelBody({
                                         <div
                                             data-component={`${dataComponentPrefix}_content_messages_zone-past_label`}
                                             data-slot="message-zone-label"
-                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                                            className="flex items-center gap-2 px-1 pb-2 pt-1 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
                                         >
                                             발송 기록
                                         </div>

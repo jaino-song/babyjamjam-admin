@@ -11,7 +11,7 @@ const badgeVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
         secondary:
-          "bg-[hsl(220,20%,97%)] text-v3-text-muted border-border [a&]:hover:bg-[hsl(220,20%,94%)]",
+          "bg-[hsl(220,20%,97%)] text-text-muted border-border [a&]:hover:bg-[hsl(220,20%,94%)]",
         destructive:
           "bg-destructive text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
@@ -20,20 +20,20 @@ const badgeVariants = cva(
         link: "text-primary underline-offset-4 [a&]:hover:underline",
         // Semantic variants with opacity backgrounds
         success:
-          "bg-[hsl(137,60%,94%)] text-v3-green border-[hsl(137,34%,84%)] [a&]:hover:bg-[hsl(137,60%,91%)]",
+          "bg-[hsl(137,60%,94%)] text-green border-[hsl(137,34%,84%)] [a&]:hover:bg-[hsl(137,60%,91%)]",
         warning:
           "bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)] border-[hsla(38,92%,35%,0.18)] [a&]:hover:bg-[hsl(47,100%,89%)]",
         info:
-          "bg-[hsl(214,80%,95%)] text-v3-primary border-[hsl(214,70%,85%)] [a&]:hover:bg-[hsl(214,80%,92%)]",
+          "bg-[hsl(214,80%,95%)] text-primary border-[hsl(214,70%,85%)] [a&]:hover:bg-[hsl(214,80%,92%)]",
         v3: "bg-[hsl(220,20%,97%)] text-gray-700 px-3 py-1 border-[hsl(220,20%,90%)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
         "v3-active":
-          "bg-[hsl(137,60%,94%)] text-v3-green px-3 py-1 border-[hsl(137,34%,84%)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
+          "bg-[hsl(137,60%,94%)] text-green px-3 py-1 border-[hsl(137,34%,84%)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
         "v3-pending":
           "bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)] px-3 py-1 border-[hsla(38,92%,35%,0.18)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
         "v3-expired":
           "bg-[hsl(355,40%,94%)] text-[hsl(355,36%,45%)] px-3 py-1 border-[hsla(355,36%,45%,0.20)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
         "v3-info":
-          "bg-[hsl(214,80%,95%)] text-v3-primary px-3 py-1 border-[hsl(214,70%,85%)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
+          "bg-[hsl(214,80%,95%)] text-primary px-3 py-1 border-[hsl(214,70%,85%)] hover:opacity-90 hover:scale-[1.02] transition-all duration-200 ease-in-out shadow-sm",
       },
     },
     defaultVariants: {

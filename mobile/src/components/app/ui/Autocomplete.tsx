@@ -4,14 +4,17 @@ import {
     useState,
     useMemo,
     useEffect,
+    useId,
     useRef,
     type ReactNode,
 } from "react";
 import { Check, X, Loader2, Play } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Label } from "@/components/ui/label";
+import type { SlotMessage } from "@/lib/validations/field-message";
 import { Input } from "@/components/app/v3";
+
+import { FieldLabelRow } from "./FieldLabelRow";
 
 const SOURCE_COMPONENT = "Autocomplete";
 
@@ -46,7 +49,15 @@ export interface AutocompleteProps<T> {
     label?: ReactNode;
     required?: boolean;
     error?: boolean;
-    helperText?: ReactNode;
+    /**
+     * The field's one error/hint/status message, shown at the right of the label row.
+     * Wins over `helperText` while it is set.
+     */
+    message?: SlotMessage | null;
+    /** Always-on guidance, shown in the same slot while `message` has nothing to say. */
+    helperText?: string;
+    /** Id of a message slot rendered by the caller (when it draws its own label row and passes `label=""`). */
+    ariaDescribedBy?: string;
     emptyMessage?: ReactNode;
     manualEntry?: AutocompleteManualEntry;
     disabled?: boolean;
@@ -72,7 +83,9 @@ export function Autocomplete<T>({
     label,
     required,
     error,
+    message,
     helperText,
+    ariaDescribedBy,
     emptyMessage,
     manualEntry,
     disabled = false,
@@ -222,6 +235,11 @@ export function Autocomplete<T>({
     const addBtnDc = sub("add-button");
     const clearBtnDc = sub("clear");
     const resolvedInputId = inputId ?? name;
+    const slotMessage: SlotMessage | null =
+        message ?? (helperText ? { text: helperText, tone: error ? "err" : "muted" } : null);
+    const hasLabelRow = Boolean(label) || slotMessage !== null;
+    // Several autocompletes can share a `name`, so the slot needs an id of its own.
+    const slotId = useId();
 
     return (
         <div
@@ -232,19 +250,15 @@ export function Autocomplete<T>({
             data-disabled={disabled ? "true" : undefined}
             className={cn("space-y-2", className)}
         >
-            {label && (
-                <Label
+            {hasLabelRow && (
+                <FieldLabelRow
+                    data-component={dataComponent}
                     htmlFor={resolvedInputId}
-                    data-component={sub("label")}
-                    className={cn(error && "text-destructive")}
-                >
-                    {label}
-                    {required && (
-                        <span data-component={sub("required")} className="text-destructive ml-1">
-                            *
-                        </span>
-                    )}
-                </Label>
+                    label={label}
+                    required={Boolean(required)}
+                    message={slotMessage}
+                    messageId={slotId}
+                />
             )}
             <div ref={containerRef} data-component={sub("control")} className="relative">
                 <Input
@@ -266,6 +280,8 @@ export function Autocomplete<T>({
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     disabled={disabled}
+                    aria-describedby={hasLabelRow ? slotId : ariaDescribedBy}
+                    aria-invalid={error ? true : undefined}
                     data-component={inputDc}
                     data-slot="autocomplete-input"
                     data-state={isDropdownVisible ? "open" : "closed"}
@@ -315,7 +331,7 @@ export function Autocomplete<T>({
                                     }
                                 }
                             }}
-                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl text-primary transition-colors hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={toggleActionLabel}
                             title={toggleActionLabel}
                             data-component={toggleDc}
@@ -332,7 +348,7 @@ export function Autocomplete<T>({
                         data-slot="autocomplete-dropdown"
                         data-testid={dropdownDc}
                         data-state="open"
-                        className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
+                        className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
                             <div data-component={sub("loading")} className="flex items-center justify-center py-6">
@@ -371,8 +387,8 @@ export function Autocomplete<T>({
                                             onMouseEnter={() => setHighlightedIndex(index)}
                                             className={cn(
                                                 "flex flex-col items-start px-3 py-2 cursor-pointer transition-colors",
-                                                highlighted && "bg-v3-primary text-white",
-                                                selected && !highlighted && "bg-v3-primary/10"
+                                                highlighted && "bg-primary text-white",
+                                                selected && !highlighted && "bg-primary/10"
                                             )}
                                         >
                                             <div
@@ -412,7 +428,7 @@ export function Autocomplete<T>({
 
                         {manualEntry && (
                             <>
-                                <div data-component={sub("manual-divider")} className="h-px bg-v3-border" />
+                                <div data-component={sub("manual-divider")} className="h-px bg-border" />
                                 <div
                                     onPointerDown={(e) => {
                                         e.preventDefault();
@@ -432,7 +448,7 @@ export function Autocomplete<T>({
                                     className={cn(
                                         "flex flex-col w-full py-3 px-3 cursor-pointer transition-colors",
                                         activeHighlightedIndex === filteredItems.length &&
-                                            "bg-v3-primary text-white"
+                                            "bg-primary text-white"
                                     )}
                                     data-component={addBtnDc}
                                     data-testid={addBtnDc}
@@ -469,17 +485,6 @@ export function Autocomplete<T>({
                 )}
             </div>
 
-            {helperText && (
-                <p
-                    data-component={sub("helper")}
-                    className={cn(
-                        "text-xs",
-                        error ? "text-destructive" : "text-muted-foreground"
-                    )}
-                >
-                    {helperText}
-                </p>
-            )}
         </div>
     );
 }

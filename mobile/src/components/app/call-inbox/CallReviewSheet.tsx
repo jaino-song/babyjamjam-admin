@@ -23,7 +23,12 @@ import {
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
 import { formatIsoDateInput } from "@/lib/contracts/date-input";
-import { focusFirstInvalidField, type FieldSpec } from "@/lib/validations/field-message";
+import {
+  focusFirstInvalidField,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+} from "@/lib/validations/field-message";
 import { useLocale } from "@/providers/LocaleProvider";
 import type {
   ClientDraftDetail,
@@ -31,6 +36,9 @@ import type {
   Proposal,
 } from "@/lib/call-inbox/types";
 import { findEvidenceTurnIndex, transcriptTurnId, TranscriptView } from "./TranscriptView";
+
+/** Always-on caution for a proposal the model is unsure about; any error or hint replaces it. */
+const LOW_CONFIDENCE_SLOT: SlotMessage = { text: "⚠ 확신도 낮음", tone: "muted" };
 
 const REVIEW_BASE = "mobile_call-inbox_detail-sheet_stack_detail-page_review";
 
@@ -201,7 +209,7 @@ export function CallReviewSheet({
   return (
     <MobileDetailPage name="call-inbox" data-component={REVIEW_BASE}>
       {isLoading || !draft ? (
-        <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${REVIEW_BASE}_loading`}>
+        <div className="p-4 text-[0.82rem] text-text-muted" data-component={`${REVIEW_BASE}_loading`}>
           불러오는 중...
         </div>
       ) : draft.type === "NEW_CLIENT" ? (
@@ -230,7 +238,7 @@ function EvidenceChip({
         const index = findEvidenceTurnIndex(transcript, proposal.evidence);
         if (index >= 0) onJump(index);
       }}
-      className="mt-1 inline-block rounded-md border border-dashed border-v3-border px-2 py-1 text-left text-[0.68rem] text-v3-text-muted"
+      className="mt-1 inline-block rounded-md border border-dashed border-border px-2 py-1 text-left text-[0.68rem] text-text-muted"
       data-component={`${REVIEW_BASE}_evidence-chip`}
     >
       🎙 {proposal.evidence}
@@ -255,16 +263,16 @@ function ReviewHeader({ draft, title }: { draft: ClientDraftDetail; title: strin
           },
         ]}
       />
-      <div className="flex items-center justify-between px-1 text-[0.72rem] text-v3-text-muted">
+      <div className="flex items-center justify-between px-1 text-[0.72rem] text-text-muted">
         <span>{formatCallTime(draft.callRecord.recordedAt ?? draft.callRecord.createdAt)}</span>
         {draft.callRecord.driveFileId && (
-          <a href={driveUrl} target="_blank" rel="noreferrer" className="text-v3-primary">
+          <a href={driveUrl} target="_blank" rel="noreferrer" className="text-primary">
             ▶ 원본 듣기
           </a>
         )}
       </div>
       {draft.requestSummary && (
-        <p className="px-1 text-[0.8rem] leading-relaxed text-v3-text">{draft.requestSummary}</p>
+        <p className="px-1 text-[0.8rem] leading-relaxed text-text">{draft.requestSummary}</p>
       )}
     </>
   );
@@ -276,7 +284,7 @@ function ReadOnlyBanner({ draft }: { draft: ClientDraftDetail }) {
   const when = draft.reviewedAt ? formatCallTime(draft.reviewedAt) : null;
   return (
     <div
-      className="rounded-xl bg-gray-100 px-3 py-2 text-[0.78rem] text-v3-text"
+      className="rounded-xl bg-gray-100 px-3 py-2 text-[0.78rem] text-text"
       data-component={`${REVIEW_BASE}_readonly-banner`}
     >
       {label}
@@ -295,7 +303,7 @@ function TranscriptSection({
 }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[0.75rem] font-bold text-v3-text-muted">통화 전문</div>
+      <div className="text-[0.75rem] font-bold text-text-muted">통화 전문</div>
       <TranscriptView
         data-component={`${REVIEW_BASE}_transcript`}
         transcript={draft.callRecord.transcript}
@@ -431,7 +439,7 @@ function NewClientReview({
       )}
 
       <div className="flex flex-col gap-3">
-        <div className="text-[0.75rem] font-bold text-v3-text-muted">추출된 고객 정보 — 수정 후 등록</div>
+        <div className="text-[0.75rem] font-bold text-text-muted">추출된 고객 정보 — 수정 후 등록</div>
         {TEXT_FIELDS.map(({ field, type }) => {
           const proposal = proposalFor(proposals, field);
           const isLow = proposal?.confidence === "low";
@@ -469,7 +477,7 @@ function NewClientReview({
         <div className="flex flex-col gap-2">
           {TOGGLE_FIELDS.map(({ field, label }) => (
             <div key={field} className="flex items-center justify-between">
-              <span className="text-[0.8rem] text-v3-dark">{label}</span>
+              <span className="text-[0.8rem] text-dark">{label}</span>
               <Switch
                 checked={toggles[field] ?? false}
                 disabled={!isPending}
@@ -480,7 +488,7 @@ function NewClientReview({
             </div>
           ))}
           <div className="flex items-center justify-between">
-            <span className="text-[0.8rem] text-v3-dark">등록 인사 문자 발송</span>
+            <span className="text-[0.8rem] text-dark">등록 인사 문자 발송</span>
             <Switch checked={sendGreeting} disabled={!isPending} onCheckedChange={setSendGreeting} />
           </div>
         </div>
@@ -636,11 +644,11 @@ function ClientUpdateReview({
           className="flex items-center justify-between rounded-xl bg-blue-50 px-3 py-2.5 text-[0.78rem]"
           data-component={`${REVIEW_BASE}_client-update_client-card`}
         >
-          <span className="text-v3-dark">
+          <span className="text-dark">
             <b>{draft.client.name}</b>
             {draft.client.phone ? ` · ${formatPhoneNumber(draft.client.phone)}` : ""}
           </span>
-          <a href="/clients" className="text-v3-primary">
+          <a href="/clients" className="text-primary">
             고객 상세 보기 ›
           </a>
         </div>
@@ -657,7 +665,7 @@ function ClientUpdateReview({
       )}
 
       <div className="flex flex-col gap-2">
-        <div className="text-[0.75rem] font-bold text-v3-text-muted">제안된 변경 사항</div>
+        <div className="text-[0.75rem] font-bold text-text-muted">제안된 변경 사항</div>
         {proposals.map((proposal) => {
           const isLow = proposal.confidence === "low";
           const hasCurrent =
@@ -668,24 +676,29 @@ function ClientUpdateReview({
           return (
             <div
               key={proposal.field}
-              className={`rounded-xl border p-3 ${isIncluded ? "border-v3-border" : "border-v3-border opacity-50"}`}
+              className={`rounded-xl border p-3 ${isIncluded ? "border-border" : "border-border opacity-50"}`}
               data-component={`${REVIEW_BASE}_client-update_diff-row`}
             >
-              <div className="mb-1 flex items-center gap-2 text-[0.72rem] text-v3-text-muted">
+              <div className="mb-1 flex items-center gap-2 text-[0.72rem] text-text-muted">
                 {isPending && !isBool ? (
                   <div className="min-w-0 flex-1">
                     <FieldLabelRow
                       data-component={`${REVIEW_BASE}_client-update_${proposal.field}-field`}
                       htmlFor={inputIdFor(proposal.field)}
                       label={FIELD_LABELS[proposal.field] ?? proposal.field}
-                      message={fieldMessages.slot(proposal.field)}
+                      message={pickSlotMessage(
+                        fieldMessages.slot(proposal.field),
+                        isLow ? LOW_CONFIDENCE_SLOT : null,
+                      )}
                     />
                   </div>
                 ) : (
                   <span className="flex-1">{FIELD_LABELS[proposal.field] ?? proposal.field}</span>
                 )}
                 <div className="flex shrink-0 items-center gap-2">
-                  {isLow && <span className="font-bold text-amber-600">⚠ 확신도 낮음</span>}
+                  {isLow && !(isPending && !isBool) && (
+                    <span className="font-bold text-amber-600">{LOW_CONFIDENCE_SLOT.text}</span>
+                  )}
                   {isPending && (
                     <Switch
                       checked={isIncluded}
@@ -698,7 +711,7 @@ function ClientUpdateReview({
                 </div>
               </div>
               {hasCurrent && (
-                <div className="mb-1 flex items-center gap-2 text-[0.78rem] text-v3-text-muted">
+                <div className="mb-1 flex items-center gap-2 text-[0.78rem] text-text-muted">
                   <span className="line-through">{displayValue(proposal.currentValue ?? null)}</span>
                   <span>→</span>
                 </div>
@@ -726,11 +739,11 @@ function ClientUpdateReview({
                 />
               ) : isPending && isBool ? (
                 <div className="flex items-center gap-2 text-[0.85rem]">
-                  <span className="font-bold text-v3-orange">{displayValue(proposal.value)}</span>
+                  <span className="font-bold text-orange">{displayValue(proposal.value)}</span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 text-[0.85rem]">
-                  <span className="font-bold text-v3-orange">{displayValue(proposal.value)}</span>
+                  <span className="font-bold text-orange">{displayValue(proposal.value)}</span>
                 </div>
               )}
               <EvidenceChip

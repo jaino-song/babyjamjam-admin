@@ -176,4 +176,14 @@ describe("EmployeeFormDialog field messages", () => {
     fireEvent.change(nameInput(), { target: { value: "" } });
     expect(slotOf(nameInput())).toHaveTextContent("이름을 입력해 주세요");
   });
+
+  it("shows the open-status guidance in the label-row slot and not under the switch", async () => {
+    await renderDialog();
+
+    const slot = document.getElementById("employee-form-open-status-message") as HTMLElement;
+    expect(slot).toHaveTextContent("완료 후 배정 후보에 표시돼요");
+    expect(slot).toHaveAttribute("aria-live", "polite");
+    expect(screen.getAllByText("완료 후 배정 후보에 표시돼요")).toHaveLength(1);
+    expect(screen.queryByText(/고객 생성 완료 후 배정 후보에 표시합니다/)).not.toBeInTheDocument();
+  });
 });
