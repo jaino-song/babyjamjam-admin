@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
+import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
@@ -542,12 +543,15 @@ export class AdminServiceRecordEditService {
                 location: "body",
             }));
         }
+        // The normalized dates are persisted into the draft, so they are SAVED computations.
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         let changes: ServiceRecordEditJsonObject;
         try {
             changes = normalizeServiceRecordEditChanges(
                 target.loaded.source,
                 target.draft.changes,
                 validatedChanges,
+                calendar,
                 dto.dateMove as ServiceRecordEditDateMove | undefined,
             ).changes;
         } catch (error) {
@@ -617,7 +621,10 @@ export class AdminServiceRecordEditService {
             });
         }
 
+        // The preview id hashes the calendar version, so confirm must see the same calendar state.
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         const provisional = buildServiceRecordEditPreview({
+            calendar,
             draftId,
             draftVersion: target.draft.draftVersion,
             sourceCaseVersion: target.loaded.source.caseVersion,
@@ -673,6 +680,9 @@ export class AdminServiceRecordEditService {
             })))
             .digest("hex");
 
+        // Loaded before the repository transaction: its `prepare` callback is synchronous.
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+
         try {
             return await this.repository.confirmDraft({
                 branchId,
@@ -690,6 +700,7 @@ export class AdminServiceRecordEditService {
                     draftId,
                     actorUserId,
                     previewId: dto.previewId,
+                    calendar,
                 }),
             });
         } catch (error) {
@@ -711,8 +722,9 @@ export class AdminServiceRecordEditService {
         draftId: string;
         actorUserId: string;
         previewId: string;
+        calendar: KrBusinessDayCalendar;
     }): ServiceRecordEditConfirmPlan {
-        const { draft, source, revisionFactsSource, branchId, draftId, actorUserId, previewId } = args;
+        const { draft, source, revisionFactsSource, branchId, draftId, actorUserId, previewId, calendar } = args;
         if (draft.status !== "ACTIVE") {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_NOT_PENDING"));
         }
@@ -728,6 +740,7 @@ export class AdminServiceRecordEditService {
         }
 
         const provisional = buildServiceRecordEditPreview({
+            calendar,
             draftId,
             draftVersion: draft.draftVersion,
             sourceCaseVersion: source.caseVersion,

@@ -15,7 +15,7 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { type KrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import {
     resolveServiceRecordScheduleProjection,
@@ -103,6 +103,7 @@ function servicePeriodSessionCount(
     startDate: Date | null | undefined,
     endDate: Date | null | undefined,
     fallback: number | null,
+    calendar: KrBusinessDayCalendar,
     authoritative = false,
 ): number {
     // Confirmed revision rows carry the authoritative actual N. Legacy rows
@@ -113,7 +114,7 @@ function servicePeriodSessionCount(
     const endDateIso = isoDate(endDate);
     if (!startDateIso || !endDateIso) return fallback ?? 0;
     try {
-        return serviceRecordSessionCount(startDate, endDate, fallback) ?? 0;
+        return serviceRecordSessionCount(startDate, endDate, fallback, calendar) ?? 0;
     } catch (error) {
         // Unsupported legacy years remain viewable. A presentation total of
         // zero means the authoritative N is unknown; the editor projection
@@ -200,12 +201,14 @@ export class AdminServiceRecordService {
         // tenant-scoped projection to the regular overview when the edit
         // repository is available, while retaining the legacy two-key shape
         // for callers that do not register that optional repository.
+        // Overview totals and the projection are display-only, so the cached branch calendar is enough.
+        const calendar = await this.holidayCalendar.forBranch(branchId);
         const scheduleProjection = this.editRepository
-            ? await this.loadScheduleProjection(branchId, clientId)
+            ? await this.loadScheduleProjection(branchId, clientId, calendar)
             : undefined;
 
         return {
-            record: record ? this.mapCase(record, signatureDocs, options.includeSignatures === true) : null,
+            record: record ? this.mapCase(record, signatureDocs, options.includeSignatures === true, calendar) : null,
             assignments: schedules.map((schedule) => this.mapAssignment(
                 schedule,
                 jobs.filter((job) => job.employeeScheduleId === schedule.id),
@@ -215,6 +218,7 @@ export class AdminServiceRecordService {
                 )),
                 signatureDocByScheduleId.get(schedule.id) ?? null,
                 options.includeSignatures === true,
+                calendar,
             )),
             ...(scheduleProjection ? { scheduleProjection } : {}),
         };
@@ -233,7 +237,8 @@ export class AdminServiceRecordService {
         // graph.  Keep the editor's explicit unavailable result for tests or
         // legacy modules that omit the optional edit repository.
         if (overview.scheduleProjection) return overview;
-        const scheduleProjection = await this.loadScheduleProjection(branchId, clientId);
+        const calendar = await this.holidayCalendar.forBranch(branchId);
+        const scheduleProjection = await this.loadScheduleProjection(branchId, clientId, calendar);
         return { ...overview, scheduleProjection };
     }
 
@@ -299,6 +304,7 @@ export class AdminServiceRecordService {
     private async loadScheduleProjection(
         branchId: string,
         clientId: number,
+        calendar: KrBusinessDayCalendar,
     ): Promise<NonNullable<AdminServiceRecordOverviewDto["scheduleProjection"]>> {
         if (!this.editRepository) {
             return {
@@ -319,7 +325,7 @@ export class AdminServiceRecordService {
                 }],
             };
         }
-        const projection = resolveServiceRecordScheduleProjection(source);
+        const projection = resolveServiceRecordScheduleProjection(source, calendar);
         return {
             entries: projection.entries,
             blockingReasons: projection.blockingReasons,
@@ -330,6 +336,7 @@ export class AdminServiceRecordService {
         record: CaseForOverview,
         signatureDocs: SignatureDocRow[],
         includeSignatures: boolean,
+        calendar: KrBusinessDayCalendar,
     ): AdminServiceRecordCaseDto {
         const header = [
             record.momName,
@@ -348,6 +355,7 @@ export class AdminServiceRecordService {
                 record.startDate,
                 record.endDate,
                 record.requiredSessionCount,
+                calendar,
                 hasAuthoritativeRevision(record),
             ),
             completedAt: record.completedAt,
@@ -448,6 +456,7 @@ export class AdminServiceRecordService {
         logs: ServiceRecordLinkLog[],
         signatureDoc: AdminServiceRecordSignatureDocDto | null,
         includeSignatures: boolean,
+        calendar: KrBusinessDayCalendar,
     ): AdminServiceRecordAssignmentDto {
         return {
             scheduleId: schedule.id,
@@ -465,6 +474,7 @@ export class AdminServiceRecordService {
                 schedule.client.startDate ?? schedule.startDate,
                 schedule.client.endDate ?? schedule.endDate,
                 schedule.client.duration,
+                calendar,
             ),
             sessions: schedule.serviceRecordDays.map((session) => this.mapSession(session, includeSignatures)),
             signatureDoc,
