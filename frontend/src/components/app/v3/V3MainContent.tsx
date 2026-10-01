@@ -37,7 +37,7 @@ export function V3MainContent({
       data-mode="desktop"
       style={scaledStyle}
       className={cn(
-        "h-screen overflow-hidden bg-v3-dim-white",
+        "h-screen overflow-hidden bg-surface",
         shouldRenderQuickActions && "md:flex md:flex-row md:items-stretch md:gap-[calc(16px*var(--glint-ui-scale,1))]",
         paddingClassName,
       )}

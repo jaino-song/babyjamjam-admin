@@ -74,7 +74,7 @@ export function FormDialogShell({
       )}
     >
       <DialogHeader className={cn(APP_DIALOG_HEADER_CLASS_NAME, mobileSheet && "max-sm:border-0 max-sm:px-[22px] max-sm:pb-2 max-sm:pt-3")}>
-        {mobileSheet ? <div data-slot="sheet-handle" aria-hidden="true" className="mx-auto mb-2 h-1 w-9 shrink-0 rounded-full bg-v3-border sm:hidden" /> : null}
+        {mobileSheet ? <div data-slot="sheet-handle" aria-hidden="true" className="mx-auto mb-2 h-1 w-9 shrink-0 rounded-full bg-border sm:hidden" /> : null}
         <div className={APP_DIALOG_HEADER_ROW_CLASS_NAME}>
           <div className="min-w-0">
             {eyebrow ? (

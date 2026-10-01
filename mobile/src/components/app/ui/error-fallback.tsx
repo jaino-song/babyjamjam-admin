@@ -41,8 +41,8 @@ export function ErrorFallback({
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[hsl(355,40%,94%)]">
           <AlertTriangle className="h-6 w-6 text-[hsl(355,36%,45%)]" />
         </div>
-        <h1 className="mt-4 text-lg font-bold text-v3-dark">{title}</h1>
-        <p className="mt-2 text-sm leading-6 text-v3-text-muted">
+        <h1 className="mt-4 text-lg font-bold text-dark">{title}</h1>
+        <p className="mt-2 text-sm leading-6 text-text-muted">
           {description}
         </p>
 

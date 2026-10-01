@@ -8,8 +8,8 @@ const baseStyles =
   "flex items-center gap-[calc(4px*var(--glint-ui-scale,1))] rounded-xl py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold transition-colors";
 
 const variantStyles = {
-  primary: "text-v3-primary hover:bg-v3-primary-light",
-  muted: "text-v3-text-muted hover:bg-v3-dim-white",
+  primary: "text-primary hover:bg-primary-light",
+  muted: "text-text-muted hover:bg-surface",
 } as const;
 
 export interface HeaderActionButtonProps {

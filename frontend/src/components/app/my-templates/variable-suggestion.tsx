@@ -58,10 +58,10 @@ const VariableSuggestionList = forwardRef<VariableSuggestionListHandle, Variable
         return (
             <div
                 data-component="desktop_my-templates_variable-suggestion"
-                className="max-h-64 min-w-[200px] overflow-y-auto rounded-lg border border-v3-border bg-white p-1 shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]"
+                className="max-h-64 min-w-[200px] overflow-y-auto rounded-lg border border-border bg-white p-1 shadow-[0_12px_36px_hsla(214,50%,20%,0.12)]"
             >
                 {items.length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-v3-text-muted">일치하는 변수가 없습니다</p>
+                    <p className="px-3 py-2 text-xs text-text-muted">일치하는 변수가 없습니다</p>
                 ) : (
                     items.map((item, index) => (
                         <button
@@ -70,12 +70,12 @@ const VariableSuggestionList = forwardRef<VariableSuggestionListHandle, Variable
                             onMouseDown={(event) => event.preventDefault()}
                             onClick={() => selectItem(index)}
                             className={cn(
-                                "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm text-v3-dark",
-                                index === selectedIndex ? "bg-v3-dim-white" : "hover:bg-v3-dim-white"
+                                "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm text-dark",
+                                index === selectedIndex ? "bg-surface" : "hover:bg-surface"
                             )}
                         >
                             <span>{item.label}</span>
-                            <span className="font-mono text-xs text-v3-text-muted">{`{{${item.key}}}`}</span>
+                            <span className="font-mono text-xs text-text-muted">{`{{${item.key}}}`}</span>
                         </button>
                     ))
                 )}

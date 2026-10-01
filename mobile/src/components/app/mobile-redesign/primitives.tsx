@@ -43,7 +43,7 @@ export function ListLoadMoreButton({
       disabled={isLoading}
       aria-busy={isLoading}
       className={cn(
-        "flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-0.5 text-v3-primary",
+        "flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-0.5 text-primary",
         isLoading ? "cursor-default" : "peek-bounce"
       )}
       data-component={dataComponent}
@@ -78,7 +78,7 @@ export function ListLoadMoreSentinel({
         ref={sentinelRef}
         role="status"
         aria-label="더 많은 항목 불러오는 중"
-        className="flex min-h-[44px] items-center justify-center py-2 text-v3-primary"
+        className="flex min-h-[44px] items-center justify-center py-2 text-primary"
         data-component={dataComponent}
         data-source-component={LIST_LOAD_MORE_SENTINEL_SOURCE_COMPONENT}
       >
@@ -105,7 +105,7 @@ export function ListCountSkeleton({
 }) {
   return (
     <span
-      className="inline-block h-[0.7rem] w-7 animate-pulse rounded-full bg-v3-dim-white align-middle"
+      className="inline-block h-[0.7rem] w-7 animate-pulse rounded-full bg-surface align-middle"
       data-component={dataComponent}
       data-source-component={LIST_COUNT_SKELETON_SOURCE_COMPONENT}
     />
@@ -167,7 +167,7 @@ export function ListRowsSkeleton({
       style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
     >
       {left ?? (
-        <Skeleton className="list-avatar rounded-full bg-v3-dim-white animate-pulse" />
+        <Skeleton className="list-avatar rounded-full bg-surface animate-pulse" />
       )}
       <div
         className="list-info flex flex-col"
@@ -180,24 +180,24 @@ export function ListRowsSkeleton({
             page's font-size/line-height overrides. */}
         <div className="list-name">
           <span className="invisible">이름</span>
-          <Skeleton className="inline-block h-[0.8em] w-20 bg-v3-dim-white animate-pulse" />
+          <Skeleton className="inline-block h-[0.8em] w-20 bg-surface animate-pulse" />
         </div>
         <div className={metaClassName ?? "list-meta"}>
           <span className="invisible">정보</span>
-          <Skeleton className="inline-block h-[0.65em] w-32 bg-v3-dim-white animate-pulse" />
+          <Skeleton className="inline-block h-[0.65em] w-32 bg-surface animate-pulse" />
         </div>
       </div>
       <div
         className="list-right"
         data-component={`${dataComponent}_row_right`}
       >
-        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white animate-pulse" />
+        <Skeleton className="h-6 w-14 rounded-full bg-surface animate-pulse" />
         {/* 16px, not the 14px the timestamp actually renders at: the badge
             placeholder above is 24px against a real badge's 26px, so this
             makes the column add up to the same 43px and the rows stay put
             when the data arrives. */}
         {rightLines > 1 && (
-          <Skeleton className="h-4 w-12 bg-v3-dim-white animate-pulse" />
+          <Skeleton className="h-4 w-12 bg-surface animate-pulse" />
         )}
       </div>
     </div>
@@ -220,7 +220,7 @@ export function ListRowsSkeleton({
             data-component={`${dataComponent}_variant_header`}
             aria-hidden="true"
           >
-            <Skeleton className="h-[1.5em] w-12 bg-v3-dim-white animate-pulse" />
+            <Skeleton className="h-[1.5em] w-12 bg-surface animate-pulse" />
           </div>
         )}
         <div
@@ -232,7 +232,7 @@ export function ListRowsSkeleton({
             data-component={`${dataComponent}_section_header`}
             aria-hidden="true"
           >
-            <Skeleton className="h-[1.5em] w-10 bg-v3-dim-white animate-pulse" />
+            <Skeleton className="h-[1.5em] w-10 bg-surface animate-pulse" />
           </div>
           {rows}
         </div>
@@ -252,11 +252,11 @@ export function ListRowsSkeleton({
 }
 
 const avatarToneClass: Record<NonNullable<ListRow["avatarTone"]>, string> = {
-  primary: "bg-v3-primary",
-  green: "bg-v3-green",
-  burgundy: "bg-v3-burgundy",
-  orange: "bg-v3-orange",
-  purple: "bg-v3-purple",
+  primary: "bg-primary",
+  green: "bg-green",
+  burgundy: "bg-burgundy",
+  orange: "bg-orange",
+  purple: "bg-purple",
 };
 
 const badgeToneVariant: Record<ListRow["badgeTone"], NonNullable<ComponentProps<typeof StatusPill>["variant"]>> = {
@@ -268,18 +268,18 @@ const badgeToneVariant: Record<ListRow["badgeTone"], NonNullable<ComponentProps<
 };
 
 const iconToneClass: Record<ContractRow["iconTone"], string> = {
-  primary: "bg-v3-primary-light text-v3-primary",
-  green: "bg-v3-green-light text-v3-green",
-  muted: "bg-v3-dim-white text-v3-text-muted",
+  primary: "bg-primary-light text-primary",
+  green: "bg-green-light text-green",
+  muted: "bg-surface text-text-muted",
 };
 
 const menuToneClass: Record<MenuGroup["rows"][number]["tone"], string> = {
-  primary: "bg-v3-primary-light",
-  green: "bg-v3-green-light",
-  burgundy: "bg-v3-burgundy-light",
-  orange: "bg-v3-orange-light",
-  purple: "bg-v3-purple-light",
-  muted: "bg-v3-dim-white",
+  primary: "bg-primary-light",
+  green: "bg-green-light",
+  burgundy: "bg-burgundy-light",
+  orange: "bg-orange-light",
+  purple: "bg-purple-light",
+  muted: "bg-surface",
   gold: "bg-[hsl(50,100%,88%)]",
 };
 
@@ -594,7 +594,7 @@ export function MobileSectionNav<TId extends string>({
                 data-loading="true"
                 disabled
                 tabIndex={-1}
-                className="flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border border-[hsl(var(--v3-border))] px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold skeleton-base disabled:pointer-events-none disabled:cursor-default"
+                className="flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border border-[hsl(var(--border))] px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold skeleton-base disabled:pointer-events-none disabled:cursor-default"
               >
                 <Icon
                   aria-hidden="true"
@@ -615,12 +615,12 @@ export function MobileSectionNav<TId extends string>({
               aria-pressed={isActive}
               disabled={isDisabled}
               onClick={isDisabled ? undefined : () => onSelect(item.id)}
-              className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-default ${
+              className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-default ${
                 isDisabled
-                  ? "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-dim-white))] text-[hsl(var(--v3-text-muted))] opacity-40"
+                  ? "border-[hsl(var(--border))] bg-[hsl(var(--surface))] text-[hsl(var(--text-muted))] opacity-40"
                   : isActive
-                  ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))] text-white"
-                  : "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-bg))] text-[hsl(var(--v3-text-muted))]"
+                  ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))] text-white"
+                  : "border-[hsl(var(--border))] bg-[hsl(var(--v3-bg))] text-[hsl(var(--text-muted))]"
               }`}
             >
               <Icon

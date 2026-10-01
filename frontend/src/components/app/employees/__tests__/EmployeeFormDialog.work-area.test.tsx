@@ -112,6 +112,9 @@ describe("EmployeeFormPanel work area multi-select", () => {
     const openStatusField = document.querySelector<HTMLElement>(
       '[data-component="desktop_employees_form-panel_open-status-field"]',
     );
+    const openStatusControl = document.querySelector<HTMLElement>(
+      '[data-component="desktop_employees_form-panel_open-status-field_control"]',
+    );
     const openStatusSwitch = document.querySelector<HTMLElement>(
       '[data-component="desktop_employees_form-panel_open-status-switch"]',
     );
@@ -120,6 +123,7 @@ describe("EmployeeFormPanel work area multi-select", () => {
     );
     expect(field).not.toBeNull();
     expect(openStatusField).not.toBeNull();
+    expect(openStatusControl).not.toBeNull();
     expect(openStatusSwitch).not.toBeNull();
     expect(openStatusSwitchThumb).not.toBeNull();
 
@@ -131,8 +135,14 @@ describe("EmployeeFormPanel work area multi-select", () => {
     );
     expect(trigger).toHaveAttribute("aria-invalid", "true");
     expect(field!.nextElementSibling).toBe(openStatusField);
-    expect(openStatusField).toHaveClass(
-      "self-end",
+    // Same label row as every other field: label left, guidance in the slot, switch below.
+    const openStatusLabelRow = within(openStatusField!).getByText("다음 배정 가능 여부").parentElement;
+    expect(openStatusLabelRow).toHaveAttribute(
+      "data-component",
+      "desktop_employees_form-panel_open-status-field_label-row",
+    );
+    expect(within(openStatusLabelRow!).getByText("배정 후보에 표시돼요")).toHaveAttribute("data-slot", "field-message");
+    expect(openStatusControl).toHaveClass(
       "h-[calc(38px*var(--glint-ui-scale,1))]",
       "min-h-[calc(38px*var(--glint-ui-scale,1))]",
       "rounded-[13px]",

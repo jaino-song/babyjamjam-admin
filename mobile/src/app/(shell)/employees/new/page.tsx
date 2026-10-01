@@ -72,6 +72,9 @@ const FIELD_DOM_IDS: Readonly<Record<EmployeeWizardValidatedField, string>> = {
   workArea: "employee-work-area",
 };
 
+/** Always-on guidance for the open-to-next-work field, shown in its label-row slot. */
+const OPEN_STATUS_GUIDANCE = "고객 매칭 노출 · 언제든 변경";
+
 const SLOT_TONE_CLASS_NAMES: Readonly<Record<SlotTone, string>> = {
   muted: styles.slot_muted,
   ok: styles.slot_ok,
@@ -496,10 +499,18 @@ export default function NewEmployeePage() {
           </div>
 
           <div className={styles.formCard} data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card">
-            <div className={styles.cardTitle} data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card_title">
-              {t(locale, "employees.form.grade")} <span className={styles.required}>*</span>
+            <div className={styles.cardTitleRow} data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card_title">
+              <span className={styles.cardTitleText}>
+                {t(locale, "employees.form.grade")} <span className={styles.required}>*</span>
+              </span>
+              <span
+                id="employee-grade-message"
+                className={cn(styles.formSlot, styles.slot_muted)}
+                aria-live="polite"
+                data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card_helper"
+              />
             </div>
-            <div className={styles.gradeRow} data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card_grade-field">
+            <div className={styles.gradeRow} aria-describedby="employee-grade-message" data-component="mobile_employees-new_screen_root_wizard_basic-step_grade-card_grade-field">
               {GRADES.map((grade) => {
                 const isSelected = store.grade === grade;
 
@@ -580,10 +591,18 @@ export default function NewEmployeePage() {
           </div>
 
           <div className={styles.formCard} data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card">
-            <div className={styles.cardTitle} data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_title">
-              {t(locale, "employees.form.open-to-next-work")}
+            <div className={styles.cardTitleRow} data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_title">
+              <span className={styles.cardTitleText}>{t(locale, "employees.form.open-to-next-work")}</span>
+              <span
+                id="employee-open-status-message"
+                className={cn(styles.formSlot, styles.slot_muted)}
+                aria-live="polite"
+                data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_helper"
+              >
+                {OPEN_STATUS_GUIDANCE}
+              </span>
             </div>
-            <div className={styles.openRow} data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_options">
+            <div className={styles.openRow} aria-describedby="employee-open-status-message" data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_options">
               {[
                 { value: true, label: "배정 가능", tone: "ok" },
                 { value: false, label: "배정 불가", tone: "no" },
@@ -616,9 +635,6 @@ export default function NewEmployeePage() {
                   </button>
                 );
               })}
-            </div>
-            <div className={styles.formHelper} data-component="mobile_employees-new_screen_root_wizard_work-step_open-status-card_helper">
-              새로운 고객 매칭에 노출될지 여부입니다. 언제든 변경할 수 있습니다.
             </div>
           </div>
 

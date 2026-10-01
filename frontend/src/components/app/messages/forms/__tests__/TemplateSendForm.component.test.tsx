@@ -1074,13 +1074,31 @@ describe("recipient phone message on a refused send", () => {
     expect(phoneInput).not.toHaveAttribute("aria-invalid");
   });
 
-  it("keeps the top alert for a problem that belongs to no single field", async () => {
+  it("explains a missing recipient name in the name field's own slot, not the top alert", async () => {
     const { container } = renderNameRequiredForm();
     await queueRecipient("01011112222", "");
 
     fireEvent.submit(container.querySelector("form") as HTMLFormElement);
 
-    expect(await screen.findByText("산모님 성함을 입력하거나 기존 고객을 선택해 주세요")).toBeInTheDocument();
+    const nameMessage = await screen.findByTestId("autocomplete-message-산모님 성함");
+    expect(nameMessage).toHaveTextContent("산모님 성함을 입력해 주세요");
+    expect(nameMessage).toHaveAttribute("data-tone", "error");
+    expect(screen.getByTestId("autocomplete-산모님 성함")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("산모님 성함을 입력하거나 기존 고객을 선택해 주세요")).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+    ).toBeNull();
+  });
+
+  it("keeps the top alert for a problem that belongs to no single field", async () => {
+    const { container } = render(
+      <TemplateSendForm templateId="builtin:greeting" templateName="인사 메시지" message="" />,
+    );
+    await queueRecipient("01011112222", "");
+
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+
+    expect(await screen.findByText("메시지 본문을 입력해 주세요")).toBeInTheDocument();
   });
 });
 

@@ -255,7 +255,7 @@ export function useClientDetailController({
       paymentDate: todayIsoDate(),
       voucherType: target.type ?? "",
       voucherDuration: target.duration != null ? String(target.duration) : "",
-      area: "",
+      area: target.areaId ?? "",
     });
     router.push("/contracts/new");
   }, [employees, prefillContractCreation, router]);

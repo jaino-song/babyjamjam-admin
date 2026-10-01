@@ -35,7 +35,7 @@ export function FormCard({
       titleElement="h3"
       titleTrailing={titleTrailing}
       contentClassName={contentClassName ?? "block"}
-      className={cn("border-v3-border bg-transparent", className)}
+      className={cn("border-border bg-transparent", className)}
     >
       {children}
     </AppContentCard>

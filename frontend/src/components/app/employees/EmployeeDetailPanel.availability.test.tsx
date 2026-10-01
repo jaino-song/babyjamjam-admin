@@ -165,7 +165,7 @@ describe("EmployeeDetailPanel availability action", () => {
     );
     expect(screen.getByRole("checkbox", { name: "다음 배정 가능 여부" })).not.toBeChecked();
     expect(document.querySelector('[data-component="desktop_employees_split-layout_detail-panel_employees-detail-avatar"]'))
-      .toHaveClass("text-v3-text-muted");
+      .toHaveClass("text-text-muted");
 
     rerender(
       <EmployeeDetailPanel

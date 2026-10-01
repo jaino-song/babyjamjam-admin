@@ -85,7 +85,7 @@ export const MESSAGE_HISTORY_STATUS_META: Record<
   sent: {
     label: MESSAGE_HISTORY_STATUS_LABELS.sent,
     icon: CheckCircle2,
-    avatarClass: "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green",
+    avatarClass: "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-green",
   },
   failed: {
     label: MESSAGE_HISTORY_STATUS_LABELS.failed,
@@ -117,9 +117,9 @@ export const MESSAGE_HISTORY_FILTER_META: Record<
   all: {
     label: "전체",
     icon: History,
-    badgeTone: "bg-v3-primary-light text-v3-primary",
-    activeClassName: "text-v3-primary",
-    indicatorClassName: "bg-v3-primary",
+    badgeTone: "bg-primary-light text-primary",
+    activeClassName: "text-primary",
+    indicatorClassName: "bg-primary",
   },
   sent: {
     label: MESSAGE_HISTORY_STATUS_LABELS.sent,
@@ -294,7 +294,7 @@ export function MessageHistoryDetailPanel({
           data-component={`${dataComponentPrefix}_detail-avatar`}
           className={cn(
             "flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px]",
-            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-v3-primary-light text-v3-primary"
+            selectedRecord ? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].avatarClass : "bg-primary-light text-primary"
           )}
         >
           <History className="h-5 w-5" />
@@ -375,10 +375,10 @@ export function MessageHistoryDetailPanel({
 
           <div
             data-component={`${dataComponentPrefix}_detail-content_preview-card`}
-            className="rounded-[18px] bg-v3-dim-white p-4"
+            className="rounded-[18px] bg-surface p-4"
           >
-            <p className="text-[0.75rem] font-semibold text-v3-text-muted">메시지 내용</p>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-v3-dark">{selectedRecord.messagePreview}</p>
+            <p className="text-[0.75rem] font-semibold text-text-muted">메시지 내용</p>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-dark">{selectedRecord.messagePreview}</p>
           </div>
         </div>
       )}

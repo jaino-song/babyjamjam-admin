@@ -33,7 +33,7 @@ export function AuthCard({
       <Card
         className={cn(
           isV3
-            ? "w-full max-w-[440px] rounded-2xl border-[1.5px] border-v3-border bg-white shadow-v3"
+            ? "w-full max-w-[440px] rounded-2xl border-[1.5px] border-border bg-white shadow-v3"
             : "w-full max-w-[400px] shadow-lg",
           !disableAnimation && "animate-scale-in",
           className
@@ -42,10 +42,10 @@ export function AuthCard({
         {(title || description) && (
           <CardHeader className={cn("flex flex-col gap-1 text-center", isV3 && "pt-8 px-8 pb-2")}>
             {title && (
-              <CardTitle className={cn("text-2xl font-bold", isV3 && "text-xl font-extrabold text-v3-dark")}>{title}</CardTitle>
+              <CardTitle className={cn("text-2xl font-bold", isV3 && "text-xl font-extrabold text-dark")}>{title}</CardTitle>
             )}
             {description && (
-              <CardDescription className={cn("text-base", isV3 && "text-[0.85rem] text-v3-text-muted")}>{description}</CardDescription>
+              <CardDescription className={cn("text-base", isV3 && "text-[0.85rem] text-text-muted")}>{description}</CardDescription>
             )}
           </CardHeader>
         )}

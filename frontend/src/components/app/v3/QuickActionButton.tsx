@@ -17,10 +17,10 @@ export interface QuickActionColor {
 }
 
 export const DEFAULT_QUICK_ACTION_COLORS: readonly QuickActionColor[] = [
-    { bg: "bg-v3-primary-light", text: "text-v3-primary" },
-    { bg: "bg-v3-orange-light", text: "text-v3-orange" },
-    { bg: "bg-v3-green-light", text: "text-v3-green" },
-    { bg: "bg-v3-burgundy-light", text: "text-v3-burgundy" },
+    { bg: "bg-primary-light", text: "text-primary" },
+    { bg: "bg-orange-light", text: "text-orange" },
+    { bg: "bg-green-light", text: "text-green" },
+    { bg: "bg-burgundy-light", text: "text-burgundy" },
 ] as const;
 
 interface QuickActionButtonProps {
@@ -73,7 +73,7 @@ export function QuickActionButton({
             >
                 <IconComp className={cn("w-5 h-5", color.text)} strokeWidth={2.5} />
             </div>
-            <span className="text-xs font-bold text-v3-dark text-center leading-tight">
+            <span className="text-xs font-bold text-dark text-center leading-tight">
                 {label}
             </span>
         </Link>

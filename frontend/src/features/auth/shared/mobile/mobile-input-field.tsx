@@ -6,7 +6,7 @@ import { type MobileInputProps, MobileInput } from "@/features/auth/shared/mobil
 type MobileInputFieldProps = {
   title: React.ReactNode;
   message?: React.ReactNode;
-  messageTone?: "muted" | "error";
+  messageTone?: "muted" | "error" | "ok";
   className?: string;
   labelClassName?: string;
   headerClassName?: string;
@@ -36,7 +36,7 @@ export function MobileInputField({
     ...inputProps,
     className: cn(
       inputClassName,
-      hasErrorMessage && "border-v3-burgundy bg-v3-burgundy-light focus:border-v3-burgundy",
+      hasErrorMessage && "border-burgundy bg-burgundy-light focus:border-burgundy",
     ),
   };
 
@@ -45,7 +45,7 @@ export function MobileInputField({
       <div className={cn("flex items-center justify-between gap-2", headerClassName)}>
         <label
           htmlFor={typeof inputProps.id === "string" ? inputProps.id : undefined}
-          className={cn("text-xs font-semibold text-v3-text-muted", labelClassName)}
+          className={cn("text-xs font-semibold text-text-muted", labelClassName)}
         >
           {title}
         </label>
@@ -55,7 +55,7 @@ export function MobileInputField({
             aria-live="polite"
             className={cn(
               "text-[0.7rem] font-semibold leading-none",
-              messageTone === "error" ? "text-v3-burgundy" : "text-v3-text-muted",
+              messageTone === "error" ? "text-burgundy" : messageTone === "ok" ? "text-green" : "text-text-muted",
               messageClassName,
             )}
           >

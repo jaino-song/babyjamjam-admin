@@ -469,7 +469,7 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
     const hint = screen.getByText(HINT);
     expect(screen.getAllByText(HINT)).toHaveLength(1);
     expect(hint).toHaveAttribute("data-slot", "registered-value-diff-hint");
-    expect(hint).toHaveClass("text-v3-green", "text-right");
+    expect(hint).toHaveClass("text-green", "text-right");
     const phoneInput = queryInput(container, PHONE_SELECTOR);
     expect(phoneInput.getAttribute("aria-describedby")).toContain(hint.id);
     // The hint sits in the phone field's label row, not next to any other field.
@@ -633,13 +633,13 @@ describe("ContractCreationForm — validation messages share the label-row slot 
     act(() => {
       useFormStore.getState().setPhone("010-9999-8888");
     });
-    expect(within(phoneField).getByText(HINT)).toHaveClass("text-v3-green");
+    expect(within(phoneField).getByText(HINT)).toHaveClass("text-green");
 
     fireEvent.change(phoneInput, { target: { value: "010-abcd" } });
 
     const error = within(phoneField).getByText(PHONE_ERROR);
     expect(error).toHaveAttribute("data-slot", "field-error-message");
-    expect(error).toHaveClass("text-v3-burgundy", "text-right");
+    expect(error).toHaveClass("text-burgundy", "text-right");
     // It sits in the label row (next to the label), not below the input, and only one message shows.
     const labelRow = error.parentElement?.parentElement;
     expect(labelRow).toHaveClass("justify-between");
@@ -666,7 +666,7 @@ describe("ContractCreationForm — validation messages share the label-row slot 
     fireEvent.change(birthdayInput, { target: { value: "1990-02-30" } });
 
     const error = screen.getByText(BIRTHDAY_ERROR);
-    expect(error).toHaveClass("text-v3-burgundy");
+    expect(error).toHaveClass("text-burgundy");
     expect(birthdayInput).toHaveAttribute("aria-invalid", "true");
     expect(birthdayInput.getAttribute("aria-describedby")).toBe(error.id);
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
@@ -685,7 +685,7 @@ describe("ContractCreationForm — validation messages share the label-row slot 
     fireEvent.change(endDateInput, { target: { value: "2026-02-31" } });
 
     const error = screen.getByText(END_DATE_INVALID_ERROR);
-    expect(error).toHaveClass("text-v3-burgundy", "text-right", "truncate");
+    expect(error).toHaveClass("text-burgundy", "text-right", "truncate");
     expect(error.closest("div.justify-between")).toContainElement(screen.getByText("계약 종료일"));
     expect(endDateInput).toHaveAttribute("aria-invalid", "true");
     expect(endDateInput).toHaveAttribute("aria-describedby", error.id);

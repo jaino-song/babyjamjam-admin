@@ -66,18 +66,18 @@ export default function EditTemplatePage() {
           <div data-component="mobile_messages_templates_edit_page_content_body" className="space-y-4">
             <div
               data-component="mobile_messages_templates_edit_page_content_body_text"
-              className="whitespace-pre-wrap rounded-2xl border border-v3-border/60 bg-white p-4 text-[0.85rem] leading-relaxed text-v3-dark"
+              className="whitespace-pre-wrap rounded-2xl border border-border/60 bg-white p-4 text-[0.85rem] leading-relaxed text-dark"
             >
               {template.content}
             </div>
 
             <div
               data-component="mobile_messages_templates_edit_page_content_body_desktop-only"
-              className="flex items-start gap-3 rounded-2xl border border-dashed border-v3-border bg-v3-dim-white px-4 py-3"
+              className="flex items-start gap-3 rounded-2xl border border-dashed border-border bg-surface px-4 py-3"
             >
-              <Monitor className="mt-0.5 h-5 w-5 shrink-0 text-v3-primary" />
-              <p className="text-[0.78rem] text-v3-text-muted leading-relaxed">
-                <span className="font-semibold text-v3-dark">템플릿 편집은 데스크톱에서만 가능합니다.</span>
+              <Monitor className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <p className="text-[0.78rem] text-text-muted leading-relaxed">
+                <span className="font-semibold text-dark">템플릿 편집은 데스크톱에서만 가능합니다.</span>
                 <br />
                 이름·본문·변수 수정이 필요하면 데스크톱에서 열어 주세요.
               </p>

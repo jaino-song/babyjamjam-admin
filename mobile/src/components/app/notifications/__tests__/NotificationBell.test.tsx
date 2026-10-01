@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NotificationBell } from '../NotificationBell';
 import type { Notification } from '@/hooks/usePushNotification';
 
@@ -170,11 +170,11 @@ describe('NotificationBell', () => {
 
     fireEvent.click(screen.getByTestId('notification-item-unread'));
 
-    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(1);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(1, expect.objectContaining({ onError: expect.any(Function) }));
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
-  it('renders unread notification text in the accent foreground color so it stays readable on the blue background', async () => {
+  it('marks unread rows with a dot instead of the old accent background, and keeps both titles bold', async () => {
     mockNotifications = [mockUnreadNotificationWithUrl, mockReadNotificationWithUrl];
 
     render(<NotificationBell />);
@@ -186,15 +186,78 @@ describe('NotificationBell', () => {
     });
 
     const unread = screen.getByTestId('notification-item-unread');
-    expect(unread).toHaveClass('bg-accent', 'text-accent-foreground');
-    expect(unread.querySelector('.text-muted-foreground')).toBeNull();
-    // Regression guard: the dimmed /85 opacity variant fell below contrast
-    // requirements against the accent background and must not reappear.
-    expect(unread.querySelector('[class*="text-accent-foreground/85"]')).toBeNull();
+    // Regression guard: the old blue-row design must not reappear.
+    expect(unread).not.toHaveClass('bg-accent');
+    expect(unread).not.toHaveClass('text-accent-foreground');
+    expect(unread.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+    expect(screen.getByText(mockUnreadNotificationWithUrl.title).closest('p')).toHaveClass('font-bold');
 
     const read = screen.getByTestId('notification-item');
     expect(read).not.toHaveClass('bg-accent');
-    expect(read).not.toHaveClass('hover:bg-accent/90');
+    expect(read.querySelector('[data-slot="unread-dot"]')).toBeNull();
+    expect(screen.getByText(mockReadNotificationWithUrl.title).closest('p')).toHaveClass('font-bold');
+  });
+
+  it('gives unread rows a visually hidden "읽지 않음" label, since the dot itself is aria-hidden', async () => {
+    mockNotifications = [mockUnreadNotificationWithUrl, mockReadNotificationWithUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const unread = screen.getByTestId('notification-item-unread');
+    expect(unread.querySelector('.sr-only')).toHaveTextContent('읽지 않음');
+
+    const read = screen.getByTestId('notification-item');
+    expect(read.querySelector('.sr-only')).toBeNull();
+  });
+
+  it('removes the unread dot immediately on tap, even though the notification list still reports isRead=false', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+
+    fireEvent.click(item);
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(3, expect.objectContaining({ onError: expect.any(Function) }));
+    // mockNotificationWithoutUrl.isRead never flips (markAsRead is mocked),
+    // so this proves openedNotificationIds — not server isRead — drives the dot.
+    expect(item.querySelector('[data-slot="unread-dot"]')).toBeNull();
+    // data-testid stays keyed off server isRead, unaffected by local "opened" state.
+    expect(item).toHaveAttribute('data-testid', 'notification-item-unread');
+  });
+
+  it('renders "모두 읽음" as a link-styled button and still marks all as read', async () => {
+    mockNotifications = [mockUnreadNotificationWithUrl];
+    mockUnreadCount = 3;
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const markAllButton = screen.getByRole('button', { name: '모두 읽음' });
+    expect(markAllButton).toHaveAttribute('data-variant', 'link');
+
+    fireEvent.click(markAllButton);
+
+    expect(mockMarkAllAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
   it('should NOT call markAsRead.mutate when clicking already-read notification', async () => {
@@ -415,7 +478,7 @@ describe('NotificationBell', () => {
 
     fireEvent.click(item);
 
-    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7);
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(7, expect.objectContaining({ onError: expect.any(Function) }));
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
     expect(mockPush).not.toHaveBeenCalled();
     expect(screen.getByTestId('notification-popover')).toBeVisible();
@@ -546,6 +609,87 @@ describe('NotificationBell', () => {
     const reopenedItem = screen.getByTestId('notification-item-unread');
     expect(reopenedItem).toHaveAttribute('aria-expanded', 'false');
     expect(screen.getByText(mockLongBodyNotificationWithoutUrl.body)).toHaveClass('truncate');
+  });
+
+  it('does not truncate the title of an expanded notification, and truncates it collapsed', async () => {
+    mockNotifications = [mockLongBodyNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    const title = screen.getByText(mockLongBodyNotificationWithoutUrl.title);
+
+    // Collapsed: truncated.
+    expect(title).toHaveClass('truncate');
+    expect(title).not.toHaveClass('break-words');
+
+    fireEvent.click(item);
+
+    // Expanded: wraps instead of truncating.
+    expect(title).not.toHaveClass('truncate');
+    expect(title).toHaveClass('break-words');
+
+    // Negative control: reverting to an unconditional `truncate` class
+    // would make this assertion fail.
+  });
+
+  it('restores the unread dot when markAsRead fails', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+
+    fireEvent.click(item);
+
+    // Optimistically removed on tap.
+    expect(item.querySelector('[data-slot="unread-dot"]')).toBeNull();
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
+    const [, opts] = mockMarkAsReadMutate.mock.calls[0];
+    expect(typeof opts?.onError).toBe('function');
+
+    // Simulate the mutation failing.
+    act(() => {
+      opts.onError();
+    });
+
+    // Negative control: without wiring onError to undo openedNotificationIds,
+    // the dot would stay gone and this assertion would fail.
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+  });
+
+  it('gives the unread body pl-4 and loses it after a tap', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    const body = screen.getByText(mockNotificationWithoutUrl.body);
+    expect(body).toHaveClass('pl-4');
+
+    fireEvent.click(item);
+
+    expect(body).not.toHaveClass('pl-4');
   });
 
   it('still closes the popover and navigates for a notification with a url (unaffected by expand behaviour)', async () => {

@@ -48,14 +48,14 @@ function RibbonConfigSkeleton() {
           className="flex items-center justify-between gap-6 rounded-xl p-3"
         >
           <div data-component="desktop_website-admin_ribbon_loading-skeleton_row_copy" className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-4 w-28 bg-v3-dim-white" />
-            <Skeleton className="h-3 w-64 max-w-full bg-v3-dim-white" />
+            <Skeleton className="h-4 w-28 bg-surface" />
+            <Skeleton className="h-3 w-64 max-w-full bg-surface" />
           </div>
-          <Skeleton className="h-9 w-16 rounded-full bg-v3-dim-white" />
+          <Skeleton className="h-9 w-16 rounded-full bg-surface" />
         </div>
       ))}
       <div data-component="desktop_website-admin_ribbon_loading-skeleton_actions" className="flex justify-end">
-        <Skeleton className="h-10 w-24 rounded-xl bg-v3-dim-white" />
+        <Skeleton className="h-10 w-24 rounded-xl bg-surface" />
       </div>
     </div>
   );
@@ -132,8 +132,8 @@ export default function WebsiteAdminPage() {
                 <AnimatedSlotListItemContent
                   dataComponent="desktop_website-admin_split-layout_list-panel_website-admin-list-item"
                   icon={item.icon}
-                  iconContainerClassName="bg-v3-primary-light"
-                  iconClassName="text-v3-primary"
+                  iconContainerClassName="bg-primary-light"
+                  iconClassName="text-primary"
                   title={item.label}
                   subtitle="홈페이지 상단 알림 리본 설정"
                 />
@@ -178,7 +178,7 @@ export default function WebsiteAdminPage() {
                         value={form.message}
                         onChange={(e) => updateField("message", e.target.value)}
                         placeholder="리본에 표시할 메시지를 입력하세요"
-                        className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                        className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                       />
                     </div>
 
@@ -192,13 +192,13 @@ export default function WebsiteAdminPage() {
                             type="color"
                             value={form.backgroundColor}
                             onChange={(e) => updateField("backgroundColor", e.target.value)}
-                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--border))] cursor-pointer"
                           />
                           <input
                             type="text"
                             value={form.backgroundColor}
                             onChange={(e) => updateField("backgroundColor", e.target.value)}
-                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                           />
                         </div>
                       </div>
@@ -210,13 +210,13 @@ export default function WebsiteAdminPage() {
                             type="color"
                             value={form.textColor}
                             onChange={(e) => updateField("textColor", e.target.value)}
-                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--border))] cursor-pointer"
                           />
                           <input
                             type="text"
                             value={form.textColor}
                             onChange={(e) => updateField("textColor", e.target.value)}
-                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                           />
                         </div>
                       </div>
@@ -228,13 +228,13 @@ export default function WebsiteAdminPage() {
                             type="color"
                             value={form.linkColor}
                             onChange={(e) => updateField("linkColor", e.target.value)}
-                            className="w-10 h-10 rounded-lg border border-[hsl(var(--v3-border))] cursor-pointer"
+                            className="w-10 h-10 rounded-lg border border-[hsl(var(--border))] cursor-pointer"
                           />
                           <input
                             type="text"
                             value={form.linkColor}
                             onChange={(e) => updateField("linkColor", e.target.value)}
-                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                            className="flex-1 px-3 py-2 rounded-xl border border-[hsl(var(--border))] bg-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                           />
                         </div>
                       </div>
@@ -252,7 +252,7 @@ export default function WebsiteAdminPage() {
                           value={form.linkText}
                           onChange={(e) => updateField("linkText", e.target.value)}
                           placeholder="자세히 보기"
-                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                         />
                       </div>
                       <div>
@@ -263,7 +263,7 @@ export default function WebsiteAdminPage() {
                           value={form.linkHref}
                           onChange={(e) => updateField("linkHref", e.target.value)}
                           placeholder="/pricing"
-                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--v3-border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--v3-primary))]/20 focus:border-[hsl(var(--v3-primary))] transition-all"
+                          className="mt-1.5 w-full px-4 py-2.5 rounded-xl border border-[hsl(var(--border))] bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary))]/20 focus:border-[hsl(var(--primary))] transition-all"
                         />
                       </div>
                     </div>
@@ -274,7 +274,7 @@ export default function WebsiteAdminPage() {
                     <div>
                       <Label className="text-sm font-medium mb-3 block">미리보기</Label>
                       <div
-                        className="rounded-xl overflow-hidden border border-[hsl(var(--v3-border))]"
+                        className="rounded-xl overflow-hidden border border-[hsl(var(--border))]"
                       >
                         <div
                           style={{
@@ -323,7 +323,7 @@ export default function WebsiteAdminPage() {
                         className={`
                           inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                           ${isDirty
-                            ? "bg-[hsl(var(--v3-primary))] text-white hover:bg-[hsl(var(--v3-primary-hover))] shadow-md shadow-blue-500/20"
+                            ? "bg-[hsl(var(--primary))] text-white hover:bg-[hsl(var(--primary-hover))] shadow-md shadow-blue-500/20"
                             : "bg-muted text-muted-foreground cursor-not-allowed"
                           }
                         `}

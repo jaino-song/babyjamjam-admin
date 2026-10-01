@@ -90,7 +90,7 @@
   border: 0;
   border-radius: calc(999px*var(--glint-ui-scale, 1));
   background: transparent;
-  color: hsl(var(--v3-primary));
+  color: hsl(var(--primary));
   cursor: pointer;
   font-family: inherit;
   font-size: calc(0.8rem*var(--glint-ui-scale, 1));
@@ -100,7 +100,7 @@
 
 .backButton:focus-visible {
   outline: calc(2px*var(--glint-ui-scale, 1)) solid
-    hsl(var(--v3-primary));
+    hsl(var(--primary));
   outline-offset: calc(2px*var(--glint-ui-scale, 1));
 }
 

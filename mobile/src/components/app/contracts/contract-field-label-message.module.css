@@ -5,9 +5,9 @@
 }
 
 .helper_ok {
-  color: hsl(var(--v3-green));
+  color: hsl(var(--green));
 }
 
 .helper_err {
-  color: hsl(var(--v3-burgundy));
+  color: hsl(var(--burgundy));
 }

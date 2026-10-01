@@ -155,19 +155,19 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
           data-component="desktop_stats-inquiries_page_daily_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">일별 상담 신청 ({statsPeriodLabel(period)})</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-text">일별 상담 신청 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
+            <span className="ml-auto text-[0.7rem] text-text-muted">
               {posthogConfigured ? `총 ${summary.selectedRange.total}건` : "—"}
             </span>
           </header>
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_daily-unavailable" />
           ) : summary.selectedRange.total === 0 ? (
-              <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
+              <p className="text-center py-10 text-[0.85rem] text-text-muted">
               {statsPeriodLabel(period)} 상담 신청이 없어요.
             </p>
           ) : (
@@ -180,7 +180,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                     <div
                       key={i}
                       className={`flex-1 rounded-t-md ${
-                        isToday ? "bg-v3-primary" : "bg-blue-300/70"
+                        isToday ? "bg-primary" : "bg-blue-300/70"
                       }`}
                       style={{ height: `${Math.max(pct, 2)}%` }}
                       title={`${formatDateForDisplay(p.date)}: ${p.count}건`}
@@ -188,10 +188,10 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                   );
                 })}
               </div>
-              <div className="mt-2 flex justify-between text-[0.65rem] text-v3-text-muted">
+              <div className="mt-2 flex justify-between text-[0.65rem] text-text-muted">
                 <span>{formatDateForDisplay(selectedRange[0].date)}</span>
                 <span>{formatDateForDisplay(selectedRange[Math.floor((period - 1) / 2)].date)}</span>
-                <span className="text-v3-primary font-semibold">오늘 ({summary.today})</span>
+                <span className="text-primary font-semibold">오늘 ({summary.today})</span>
               </div>
             </>
           )}
@@ -207,8 +207,8 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
           data-component="desktop_stats-inquiries_page_breakdown_hourly-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">오늘 시간대별</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-text">오늘 시간대별</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -216,7 +216,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_hourly-unavailable" />
           ) : hourly.every((p) => p.count === 0) ? (
-            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
+            <p className="text-center py-6 text-[0.85rem] text-text-muted">
               오늘은 아직 상담 신청이 없어요.
             </p>
           ) : (
@@ -231,10 +231,10 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                       key={p.hour}
                       className={`flex-1 rounded-t-sm ${
                         isCurrent
-                          ? "bg-v3-primary"
+                          ? "bg-primary"
                           : p.count > 0
                             ? "bg-blue-300/70"
-                            : "bg-v3-dim-white"
+                            : "bg-surface"
                       }`}
                       style={{ height: `${Math.max(pct, 3)}%` }}
                       title={`${p.hour}시: ${p.count}건`}
@@ -242,7 +242,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                   );
                 })}
               </div>
-              <div className="mt-1.5 flex justify-between text-[0.65rem] text-v3-text-muted">
+              <div className="mt-1.5 flex justify-between text-[0.65rem] text-text-muted">
                 <span>00시</span>
                 <span>06시</span>
                 <span>12시</span>
@@ -258,8 +258,8 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             data-component="desktop_stats-inquiries_page_breakdown_branch-card"
             className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
           >
-            <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-              <h3 className="text-[0.95rem] font-bold text-v3-text">지점별 분포 ({statsPeriodLabel(period)})</h3>
+            <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
+              <h3 className="text-[0.95rem] font-bold text-text">지점별 분포 ({statsPeriodLabel(period)})</h3>
               <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
                 PostHog
               </span>
@@ -267,7 +267,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             {!posthogConfigured ? (
               <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_branch-unavailable" />
             ) : byBranch.length === 0 ? (
-              <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
+              <p className="text-center py-6 text-[0.85rem] text-text-muted">
                 지점별 데이터가 아직 없어요.
               </p>
             ) : (
@@ -277,9 +277,9 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                     <span className="w-[120px] truncate text-[0.78rem] font-medium">
                       {b.branchSlug}
                     </span>
-                    <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
+                    <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
                       <div
-                        className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
+                        className="h-full bg-gradient-to-r from-primary to-blue-700"
                         style={{ width: `${(b.count / maxBranch) * 100}%` }}
                       />
                     </div>
@@ -299,30 +299,30 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
           data-component="desktop_stats-inquiries_page_recent_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-v3-text">최근 상담 신청</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-text">최근 상담 신청</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.65rem] font-mono text-v3-text-muted">
+            <span className="ml-auto text-[0.65rem] font-mono text-text-muted">
               PII 마스킹 적용
             </span>
           </header>
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_recent-unavailable" />
           ) : recent.length === 0 ? (
-            <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
+            <p className="text-center py-8 text-[0.85rem] text-text-muted">
               {statsPeriodLabel(period)} 상담 신청이 없어요.
             </p>
           ) : (
             <table className="w-full text-[0.82rem]">
               <thead>
-                <tr className="bg-v3-dim-white border-b border-v3-border">
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">신청 ID</th>
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">지점</th>
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">시간</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">디바이스</th>
+                <tr className="bg-surface border-b border-border">
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">신청 ID</th>
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">지점</th>
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">경로</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">시간</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">디바이스</th>
                 </tr>
               </thead>
               <tbody>
@@ -330,9 +330,9 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                   <tr
                     key={`${r.distinctId}-${i}`}
                     data-component="desktop_stats-inquiries_page_recent_card_body_row"
-                    className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
+                    className="border-b border-border last:border-0 hover:bg-surface"
                   >
-                    <td className="px-3 py-3 font-mono text-[0.72rem] text-v3-text-muted">
+                    <td className="px-3 py-3 font-mono text-[0.72rem] text-text-muted">
                       #{r.distinctId}
                     </td>
                     <td className="px-3 py-3">{r.branchSlug ?? "—"}</td>
@@ -340,7 +340,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                       {r.pathname ?? "—"}
                       {r.source ? ` · ${r.source}` : ""}
                     </td>
-                    <td className="px-3 py-3 text-right text-v3-text-muted text-[0.75rem]">
+                    <td className="px-3 py-3 text-right text-text-muted text-[0.75rem]">
                       {new Date(r.timestamp).toLocaleTimeString("ko-KR", {
                         hour: "2-digit",
                         minute: "2-digit",

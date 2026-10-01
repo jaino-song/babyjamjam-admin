@@ -120,7 +120,7 @@ export function AutoFillMsgCardSide({
                 <div
                   key={`${item.token}-${item.label}`}
                   data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item"
-                  className="flex items-center justify-between gap-3 border-b border-v3-border py-2.5 text-[calc(12px*var(--glint-ui-scale,1))] last:border-b-0"
+                  className="flex items-center justify-between gap-3 border-b border-border py-2.5 text-[calc(12px*var(--glint-ui-scale,1))] last:border-b-0"
                 >
                   <div
                     data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_meta"
@@ -128,20 +128,20 @@ export function AutoFillMsgCardSide({
                   >
                     <span
                       data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_meta_label"
-                      className="text-v3-text-muted"
+                      className="text-text-muted"
                     >
                       {item.label}
                     </span>
                     <span
                       data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_meta_token"
-                      className="inline-flex items-center rounded-full bg-v3-primary-light px-3 py-1 text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold text-v3-primary"
+                      className="inline-flex items-center rounded-full bg-primary-light px-3 py-1 text-[calc(11.52px*var(--glint-ui-scale,1))] font-semibold text-primary"
                     >
                       {item.token}
                     </span>
                   </div>
                   <p
                     data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_value"
-                    className="shrink-0 text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-dark"
+                    className="shrink-0 text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-dark"
                   >
                     {item.value}
                   </p>
@@ -149,7 +149,7 @@ export function AutoFillMsgCardSide({
               ))}
             </div>
           ) : (
-            <p className="text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{variableEmptyText}</p>
+            <p className="text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{variableEmptyText}</p>
           )}
         </div>
       </InfoCard>
@@ -207,8 +207,8 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
           className="mb-4 flex items-start justify-between gap-4"
         >
           <div data-component="desktop_messages_sections_generated-msg-detail-content_header_title" className="min-w-0">
-            <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{bodyTitle}</h3>
-            <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{bodyDescription}</p>
+            <h3 className="text-[calc(14.4px*var(--glint-ui-scale,1))] font-bold text-dark">{bodyTitle}</h3>
+            <p className="mt-0.5 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{bodyDescription}</p>
           </div>
           <HeaderActionButton
             icon={Copy}
