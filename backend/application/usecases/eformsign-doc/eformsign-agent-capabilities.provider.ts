@@ -8,6 +8,7 @@ import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from
 import { FindEformsignDocsByClientIdUsecase } from "./find-eformsign-docs-by-client-id.usecase";
 import { FindRecentContractsUsecase, type RecentContractRow } from "./find-recent-contracts.usecase";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
@@ -52,13 +53,13 @@ const RECENT_CONTRACTS_FILTERED_WINDOW = 200;
  * the resolver's own precedence: a terminal "completed" status is never
  * downgraded.
  */
-function resolveRecentContractDisplayStatus(doc: RecentContractRow): EformsignDocDisplayStatus {
+function resolveRecentContractDisplayStatus(doc: RecentContractRow, calendar: KrBusinessDayCalendar): EformsignDocDisplayStatus {
     const resolved = resolveEformsignDocDisplayStatus({
         id: doc.documentId,
         current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName },
         ...(doc.clientId === null ? { [MIRROR_UNASSIGNED_KEY]: true } : {}),
         ...(doc.contractEndDate ? { contract_end_date: doc.contractEndDate } : {}),
-    });
+    }, new Date(), calendar);
     return doc.expired && resolved !== "completed" ? "expired" : resolved;
 }
 
@@ -78,7 +79,9 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                 inputSchema: InputSchema, outputSchema: OutputSchema,
                 execute: async (context, rawInput) => {
                     const docs = await this.findDocs.execute(context.principal.branchId, InputSchema.parse(rawInput).clientId);
-                    return { documents: docs.filter((doc) => doc.statusType !== "deleted").map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }), statusDetail: doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
+                    // Display only, for the principal's own branch; fetched once for all rows.
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId);
+                    return { documents: docs.filter((doc) => doc.statusType !== "deleted").map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }, new Date(), calendar), statusDetail: doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
                 },
             },
             {
@@ -96,10 +99,12 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                     if (!this.findRecentContracts) throw new Error("contracts.recent is not available");
                     const take = input.status ? RECENT_CONTRACTS_FILTERED_WINDOW : limit;
                     const docs = await this.findRecentContracts.execute(context.principal.branchId, take);
+                    // Display only, for the principal's own branch; fetched once for all rows.
+                    const calendar = await this.holidayCalendar.forBranch(context.principal.branchId);
 
                     const withDisplayStatus = docs.map((doc) => ({
                         ...doc,
-                        displayStatus: resolveRecentContractDisplayStatus(doc),
+                        displayStatus: resolveRecentContractDisplayStatus(doc, calendar),
                     }));
                     const filtered = input.status
                         ? withDisplayStatus.filter((doc) => doc.displayStatus === input.status)

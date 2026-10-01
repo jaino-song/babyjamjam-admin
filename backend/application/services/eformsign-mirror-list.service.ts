@@ -31,6 +31,7 @@ import {
     IEformsignDocRepository,
 } from "domain/repositories/eformsign-doc.repository.interface";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 export interface MirrorListQuery {
     branchId: string;
@@ -141,7 +142,11 @@ export class EformsignMirrorListService {
     }
 
     /** Applies the per-request filters to an already-loaded scope. */
-    filterScope(documents: EformsignListDoc[], query: MirrorListQuery): MirrorListResult {
+    filterScope(
+        documents: EformsignListDoc[],
+        query: MirrorListQuery,
+        calendar: KrBusinessDayCalendar,
+    ): MirrorListResult {
         const templateFiltered = filterDocumentsByTemplate(
             documents,
             query.templateId,
@@ -162,14 +167,19 @@ export class EformsignMirrorListService {
         const displayStatusFiltered = query.displayStatus === undefined
             ? statusFiltered
             : statusFiltered.filter((document) =>
-                resolveEformsignDocDisplayStatus(document) === query.displayStatus);
+                resolveEformsignDocDisplayStatus(document, new Date(), calendar) === query.displayStatus);
         const searchFiltered = filterBySearch(displayStatusFiltered, query.search);
 
         return { documents: sortDocumentsByCreatedDate(searchFiltered) };
     }
 
     async buildList(query: MirrorListQuery): Promise<MirrorListResult> {
-        return this.filterScope(await this.loadScopeDocuments(query), query);
+        // Display only, for the request's own branch: the cached calendar, fetched once.
+        const [documents, calendar] = await Promise.all([
+            this.loadScopeDocuments(query),
+            this.holidayCalendar.forBranch(query.branchId),
+        ]);
+        return this.filterScope(documents, query, calendar);
     }
 }
 
