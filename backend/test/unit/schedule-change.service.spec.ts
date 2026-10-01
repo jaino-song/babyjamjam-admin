@@ -9,6 +9,8 @@ import { ScheduleChangeService } from "application/services/schedule-change.serv
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -18,6 +20,12 @@ const BRANCH_ID = "org-1";
 const USER_ID = "user-1";
 
 const toDbDate = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
+
+/** The built-in calendar plus the extra dates one branch added as holidays. */
+const branchCalendarWith = (...extraHolidays: string[]) => createKrBusinessDayCalendar(
+    [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), ...extraHolidays],
+    { version: "kr-db-test", supportedYears: Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number) },
+);
 
 const createMockPrismaService = () => ({
     schedule_change_request: {
@@ -199,8 +207,10 @@ describe("ScheduleChangeService", () => {
     let triggerService: ReturnType<typeof createMockTriggerService>;
     let lifecycleService: ReturnType<typeof createMockLifecycleService>;
     let events: string[];
+    let holidayCalendar: HolidayCalendarService;
 
     beforeEach(() => {
+        holidayCalendar = createHolidayCalendarStub();
         prismaService = createMockPrismaService();
         txPrismaService = createMockPrismaService();
         tokenService = createMockTokenService();
@@ -222,7 +232,7 @@ describe("ScheduleChangeService", () => {
         service = new ScheduleChangeService(
             prismaService as unknown as PrismaService,
             tokenService as unknown as ServiceRecordTokenService,
-            createHolidayCalendarStub(), triggerService as unknown as MessageTriggerService,
+            holidayCalendar, triggerService as unknown as MessageTriggerService,
             lifecycleService as unknown as ServiceRecordLifecycleService,
         );
     });
@@ -1090,6 +1100,152 @@ describe("ScheduleChangeService", () => {
             expect(prismaService.schedule_change_request.update).not.toHaveBeenCalled();
             expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
             expect(prismaService.client.update).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("branch calendar", () => {
+        // 2026-07-06 (Mon) is a normal business day in the built-in calendar.
+        const useBranchHoliday = (...dates: string[]) => {
+            (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => {
+                events.push("calendar");
+                return branchCalendarWith(...dates);
+            });
+        };
+        const postponableDays = () => [
+            createDay(1, "2026-07-01", true),
+            createDay(2, "2026-07-02", true),
+            createDay(3, "2026-07-03", false),
+        ];
+
+        it("preview skips a branch holiday and reads the cached calendar of the token's branch", async () => {
+            useBranchHoliday("2026-07-06");
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            prismaService.service_record_day.findMany.mockResolvedValue(postponableDays());
+
+            await expect(service.preview(ctx)).resolves.toEqual({
+                sessionIndex: 3,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-07",
+            });
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
+        });
+
+        it("createRequest persists dates computed from a fresh branch calendar", async () => {
+            useBranchHoliday("2026-07-06");
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            prismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            prismaService.service_record_day.findMany.mockResolvedValue(postponableDays());
+            prismaService.schedule_change_request.create.mockResolvedValue(
+                createRequest({ id: "request-created", toDate: toDbDate("2026-07-07") }),
+            );
+
+            await service.createRequest(ctx);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+            expect(prismaService.schedule_change_request.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({
+                    toDate: toDbDate("2026-07-07"),
+                    newEndDate: toDbDate("2026-07-16"),
+                }),
+            });
+        });
+
+        it("previewAdminChange chains the next date over a branch holiday using the cached calendar", async () => {
+            useBranchHoliday("2026-07-02");
+            prismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule());
+            prismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1" });
+            prismaService.service_record_day.findMany.mockResolvedValue([createDay(1, "2026-07-01", true)]);
+
+            await expect(service.previewAdminChange(BRANCH_ID, SCHEDULE_ID)).resolves.toMatchObject({
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+            });
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
+        });
+
+        it("applyAdminChange rejects a branch holiday as the new date, reading the calendar fresh first", async () => {
+            useBranchHoliday("2026-07-23");
+
+            await expectBadRequestCode(
+                () => service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant),
+                "INVALID_SCHEDULE_DATE",
+            );
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+            expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
+        it("applyAdminChange cascades later sessions over a branch holiday", async () => {
+            useBranchHoliday("2026-07-24");
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-29"),
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1", formVersion: 1 });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-15", true),
+                    createDay(2, "2026-07-16", true),
+                    createDay(3, "2026-07-20", false),
+                    createDay(4, "2026-07-21", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-21", false)]);
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({ status: "approved" }));
+
+            await service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant);
+
+            expect(txPrismaService.service_record_day.update).toHaveBeenCalledWith({
+                where: { id: "day-4" },
+                data: { serviceDate: toDbDate("2026-07-27") },
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-08-04") },
+            });
+        });
+
+        it("approve reads the branch calendar fresh before its transaction and applies it", async () => {
+            useBranchHoliday("2026-07-06");
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce(postponableDays())
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.schedule_change_request.update.mockResolvedValue(
+                createRequest({ status: "approved", decidedBy: USER_ID, decidedAt: toDbDate("2026-07-02") }),
+            );
+
+            await service.approve("request-1", tenant);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+            expect(events.slice(0, 2)).toEqual(["calendar", "transaction:start"]);
+            expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith(
+                expect.objectContaining({ update: { serviceDate: toDbDate("2026-07-07") } }),
+            );
+            expect(txPrismaService.service_record_day.update).toHaveBeenCalledWith({
+                where: { id: "day-4" },
+                data: { serviceDate: toDbDate("2026-07-08") },
+            });
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-07-16") },
+            });
+        });
+
+        it("validates the persisted planned vector against the branch calendar", async () => {
+            // The vector holds 2026-07-06; the branch has since made that day a holiday,
+            // so the vector is no longer authoritative and the preview must refuse it.
+            useBranchHoliday("2026-07-06");
+            prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                client: { id: CLIENT_ID, duration: 3 },
+            }));
+            prismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                requiredSessionCount: 3,
+                plannedSessions: createPlannedSessions(["2026-07-01", "2026-07-03", "2026-07-06"]),
+            });
+            prismaService.service_record_day.findMany.mockResolvedValue([createDay(1, "2026-07-01", true)]);
+
+            await expectConflictCode(() => service.preview(ctx), "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE");
         });
     });
 });

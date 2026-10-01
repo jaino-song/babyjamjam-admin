@@ -19,7 +19,7 @@ import {
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
-import { addBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -58,6 +58,7 @@ type PlannedSessionVectorResult = {
 function plannedSessionVector(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): PlannedSessionVectorResult {
     if (raw === null || raw === undefined) return { state: "absent", entries: null };
     const values = Array.isArray(raw)
@@ -114,7 +115,7 @@ function plannedSessionVector(
     try {
         return {
             state: "valid",
-            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined),
+            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined, calendar),
         };
     } catch {
         return { state: "invalid", entries: null };
@@ -124,8 +125,9 @@ function plannedSessionVector(
 function persistedPlannedSessionDates(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): PlannedSessionVectorResult {
-    return plannedSessionVector(raw, requiredSessionCount);
+    return plannedSessionVector(raw, requiredSessionCount, calendar);
 }
 
 function hasAuthoritativeRevision(record: {
@@ -148,7 +150,7 @@ function entrySessionCount(record: {
     currentUsableRevisionId?: string | null;
     currentUsableDocumentVersion?: number | null;
     plannedSessions?: Prisma.JsonValue | null;
-}): number {
+}, calendar: KrBusinessDayCalendar): number {
     // A confirmed revision stores the actual N independently of the current
     // calendar span. Legacy transfers retain the provider flow's in-period
     // cap, while unsupported legacy years remain viewable with their stored N.
@@ -158,6 +160,7 @@ function entrySessionCount(record: {
             record.startDate,
             record.endDate,
             record.requiredSessionCount,
+            calendar,
         ) ?? 0;
     } catch (error) {
         if (error instanceof UnsupportedKoreanHolidayYearError) {
@@ -221,9 +224,12 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
+        // Display-only: the cached branch calendar is good enough here.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId);
         const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
             record.requiredSessionCount,
+            calendar,
         );
         if (
             persistedDates.state === "invalid"
@@ -238,7 +244,7 @@ export class ServiceRecordEntryService {
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: entrySessionCount(record),
+            totalSessions: entrySessionCount(record, calendar),
             startDate: record.startDate,
             endDate: record.endDate,
             recordStatus: record.status,
@@ -403,6 +409,9 @@ export class ServiceRecordEntryService {
                 .filter(([key]) => !["etcService", "notes", "paymentConfirmed"].includes(key)),
         );
         const answers = validateServiceRecordAnswers(answerInput);
+        // Saved computation: read the branch calendar fresh, before the
+        // transaction opens, so a holiday edit is honoured at once.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const saved = await this.prisma.$transaction(async (tx) => {
             // Discover the assignment before locking. Production rows carry a
             // client id, so the common policy then locks client -> employees ->
@@ -463,7 +472,7 @@ export class ServiceRecordEntryService {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
-            const total = entrySessionCount(record);
+            const total = entrySessionCount(record, calendar);
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/sessionIndex",
@@ -495,7 +504,7 @@ export class ServiceRecordEntryService {
             // Check the persisted vector after the common lock/reread and
             // before any schedule/client extension so stale provider input can
             // never mutate derived periods first.
-            const persistedDates = plannedSessionVector(record.plannedSessions, total);
+            const persistedDates = plannedSessionVector(record.plannedSessions, total, calendar);
             if (
                 persistedDates.state === "invalid"
                 || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
@@ -521,7 +530,7 @@ export class ServiceRecordEntryService {
             const currentEndIso = record.endDate ? toIso(record.endDate) : null;
             let requiredEndIso: string;
             try {
-                requiredEndIso = addBusinessDaysKr(serviceDateIso, total - sessionIndex);
+                requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
             } catch {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/serviceDate",

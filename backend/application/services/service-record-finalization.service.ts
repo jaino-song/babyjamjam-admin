@@ -28,6 +28,7 @@ import {
     type ServiceRecordRevisionDocumentState,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 const CASE_BATCH_SIZE = 10;
 const MAX_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
@@ -137,6 +138,7 @@ function payloadDocumentVersion(payload: Record<string, unknown> | null | undefi
 function currentPlannedSessionVector(
     raw: Prisma.JsonValue | null,
     requiredSessionCount: number | null,
+    calendar: KrBusinessDayCalendar,
 ): ServiceRecordPlannedSession[] | null {
     if (
         !Array.isArray(raw)
@@ -188,7 +190,7 @@ function currentPlannedSessionVector(
     }
 
     try {
-        return validateServiceRecordScheduleVector(entries, requiredSessionCount);
+        return validateServiceRecordScheduleVector(entries, requiredSessionCount, calendar);
     } catch {
         return null;
     }
@@ -243,12 +245,12 @@ function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[]
     return Array.isArray(row["sessions"]) ? row["sessions"] : null;
 }
 
-function isCompleteFinalizationSource(record: FinalizationCaseSnapshot): boolean {
+function isCompleteFinalizationSource(record: FinalizationCaseSnapshot, calendar: KrBusinessDayCalendar): boolean {
     if (!record.branchName?.trim()) return false;
     const required = record.requiredSessionCount;
     if (!Number.isInteger(required) || required === null || required < 1) return false;
     if (record.days.length !== required) return false;
-    const plannedSessions = currentPlannedSessionVector(record.plannedSessions, required);
+    const plannedSessions = currentPlannedSessionVector(record.plannedSessions, required, calendar);
     if (!plannedSessions || !currentPlannedSessionsMatchDays(record, plannedSessions)) return false;
     const completeHeader = [
         record.momName,
@@ -451,6 +453,9 @@ export class ServiceRecordFinalizationService {
         branchId: string,
         referenceDate: Date,
     ): Promise<{ claimed: boolean; attempts: number; blockedGeneration?: boolean }> {
+        // Eligibility validates the persisted planned vector against the
+        // branch calendar. Read it fresh before the transaction opens.
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         return this.prisma.$transaction(async (tx) => {
             const caseDelegate = tx.service_record_case as unknown as {
                 findUnique?: (args: unknown) => Promise<{
@@ -561,7 +566,7 @@ export class ServiceRecordFinalizationService {
                 return { claimed: false, attempts: 0 };
             }
             if (source.currentRevisionId !== null) {
-                if (!isCompleteFinalizationSource(source)) {
+                if (!isCompleteFinalizationSource(source, calendar)) {
                     // READY can be stale after a later provider edit. Let the
                     // existing lifecycle policy recalculate it while this
                     // transaction still owns the case/client lock.
@@ -570,7 +575,7 @@ export class ServiceRecordFinalizationService {
                     }
                     return { claimed: false, attempts: 0, blockedGeneration: true };
                 }
-                await this.freezeInitialFinalizationGeneration(tx, source);
+                await this.freezeInitialFinalizationGeneration(tx, source, calendar);
                 // Phase0 capability remains unverified. The durable job is a
                 // manual-review intent; no case claim or provider execution is
                 // allowed from this scheduler path.
@@ -712,12 +717,13 @@ export class ServiceRecordFinalizationService {
     private async freezeInitialFinalizationGeneration(
         tx: Prisma.TransactionClient,
         source: FinalizationCaseSnapshot,
+        calendar: KrBusinessDayCalendar,
     ): Promise<void> {
         const revisionId = source.currentRevisionId;
         if (!revisionId || !source.clientId) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
         }
-        if (!isCompleteFinalizationSource(source)) {
+        if (!isCompleteFinalizationSource(source, calendar)) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" });
         }
         if (!this.documentJobService) {

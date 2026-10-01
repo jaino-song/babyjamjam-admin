@@ -6,7 +6,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { countBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -92,9 +92,10 @@ function legacySessionCount(
     startDate: Date | null,
     endDate: Date | null,
     storedCount: number | null,
+    calendar: KrBusinessDayCalendar,
 ): number | null {
     try {
-        return serviceRecordSessionCount(startDate, endDate, storedCount);
+        return serviceRecordSessionCount(startDate, endDate, storedCount, calendar);
     } catch (error) {
         // Unsupported legacy years remain visible and retain their stored N;
         // the editor/preview path carries the explicit calendar blocker.
@@ -129,12 +130,13 @@ function todayKst(now: Date): string {
 function deriveInitialSessionCount(params: {
     startDate: Date | null;
     endDate: Date | null;
+    calendar: KrBusinessDayCalendar;
 }): number | null {
     const startDate = isoDate(params.startDate);
     const endDate = isoDate(params.endDate);
     if (!startDate || !endDate) return null;
     try {
-        const count = countBusinessDaysKr(startDate, endDate);
+        const count = params.calendar.countBusinessDays(startDate, endDate);
         return count && count > 0 ? count : null;
     } catch {
         // Unsupported years and malformed periods remain viewable as legacy
@@ -313,6 +315,10 @@ export class ServiceRecordLifecycleService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
+        // The derived session count is persisted, so read the branch calendar
+        // fresh. The branch is only known once the client is loaded, so this
+        // resolves here (a caller-owned transaction is already open).
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         const finalizationDueAt = client.endDate
             ? getServiceRecordFinalizationDueAt(client.endDate)
             : null;
@@ -331,8 +337,9 @@ export class ServiceRecordLifecycleService {
                     existing.startDate,
                     existing.endDate,
                     existing.requiredSessionCount,
+                    calendar,
                 )
-            : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate });
+            : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate, calendar });
         const immutableFinalized = Boolean(
             existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
         );
@@ -526,8 +533,10 @@ export class ServiceRecordLifecycleService {
         clientId: number;
         endDate: Date;
     }): Promise<void> {
+        // Saved computation: resolve the branch calendar before the transaction opens.
+        const calendar = await this.holidayCalendar.forBranch(params.branchId, { fresh: true });
         await this.prisma.$transaction(async (tx) => {
-            await this.syncEndDateFromContractInTransaction(params, tx);
+            await this.syncEndDateFromContractInTransaction(params, tx, calendar);
         });
     }
 
@@ -544,12 +553,13 @@ export class ServiceRecordLifecycleService {
         endDate: Date;
         documentId: string;
     }): Promise<boolean> {
+        const calendar = await this.holidayCalendar.forBranch(params.branchId, { fresh: true });
         return this.prisma.$transaction(async (tx) => {
             // Legacy unit-test doubles do not model the complete lock surface.
             // Production Prisma transactions always do; retain their historical
             // direct seam while routing real writes through the fence below.
             if (!this.hasCompleteServiceRecordWriteLockSurface(tx)) {
-                await this.syncEndDateFromContractInTransaction(params, tx);
+                await this.syncEndDateFromContractInTransaction(params, tx, calendar);
                 return true;
             }
 
@@ -611,7 +621,7 @@ export class ServiceRecordLifecycleService {
                 caseId: lockedWriteSet.caseId,
             })) return false;
 
-            await this.syncEndDateFromContractInTransaction(params, tx);
+            await this.syncEndDateFromContractInTransaction(params, tx, calendar);
             return true;
         });
     }
@@ -624,6 +634,7 @@ export class ServiceRecordLifecycleService {
         detailSourceUpdatedDate: Date;
         detailSyncedAt: Date;
     }): Promise<boolean> {
+        const calendar = await this.holidayCalendar.forBranch(params.branchId, { fresh: true });
         return await this.prisma.$transaction(async (tx) => {
             const completeLockSurface = this.hasCompleteServiceRecordWriteLockSurface(tx);
             const discoveredDocument = completeLockSurface
@@ -721,7 +732,7 @@ export class ServiceRecordLifecycleService {
                 })
             ) return false;
 
-            await this.syncEndDateFromContractInTransaction(params, tx);
+            await this.syncEndDateFromContractInTransaction(params, tx, calendar);
             return true;
         });
     }
@@ -972,6 +983,7 @@ export class ServiceRecordLifecycleService {
             endDate: Date;
         },
         tx: Prisma.TransactionClient,
+        calendar: KrBusinessDayCalendar,
     ): Promise<void> {
         if (this.hasCompleteServiceRecordWriteLockSurface(tx)) {
             const locked = await this.lockClientOwnedWriteSet(tx, {
@@ -1015,6 +1027,7 @@ export class ServiceRecordLifecycleService {
                     const derived = deriveInitialSessionCount({
                         startDate: currentClient.startDate,
                         endDate: params.endDate,
+                        calendar,
                     });
                     if (derived === null) {
                         throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -1150,6 +1163,12 @@ export class ServiceRecordLifecycleService {
                 return this.recomputeInTransaction(serviceRecordCaseId, this.prisma);
             }
 
+            // Saved computation: the persisted N depends on the branch calendar,
+            // so read it fresh before the owning transaction opens.
+            const calendar = typeof discovered.branchId === "string"
+                ? await this.holidayCalendar.forBranch(discovered.branchId, { fresh: true })
+                : undefined;
+
             // A legacy case can outlive its client because the client relation
             // is nullable. It still needs an owning transaction before this
             // recompute writes. There is no client row to serialize in that
@@ -1168,10 +1187,10 @@ export class ServiceRecordLifecycleService {
                         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
                             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                         }
-                        return this.recomputeInTransaction(serviceRecordCaseId, transaction);
+                        return this.recomputeInTransaction(serviceRecordCaseId, transaction, calendar);
                     });
                 }
-                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma);
+                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma, calendar);
             }
 
             return this.prisma.$transaction(async (transaction) => {
@@ -1180,14 +1199,23 @@ export class ServiceRecordLifecycleService {
                     clientId: discoveredClientId,
                     caseId: serviceRecordCaseId,
                 });
-                return this.recomputeInTransaction(serviceRecordCaseId, transaction);
+                return this.recomputeInTransaction(serviceRecordCaseId, transaction, calendar);
             });
         }
 
         return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma);
     }
 
-    private async recomputeInTransaction(serviceRecordCaseId: string, db: DbClient) {
+    /**
+     * `calendar` is the branch calendar a root caller already read before opening
+     * its transaction; a caller-owned transaction has no such seam, so it is
+     * resolved from the loaded case's branch below. Never a built-in fallback.
+     */
+    private async recomputeInTransaction(
+        serviceRecordCaseId: string,
+        db: DbClient,
+        calendar?: KrBusinessDayCalendar,
+    ) {
         const record = await db.service_record_case.findUnique({
             where: { id: serviceRecordCaseId },
             include: {
@@ -1219,7 +1247,12 @@ export class ServiceRecordLifecycleService {
         // and block preview.
         const required = hasAuthoritativeRevision(record)
             ? record.requiredSessionCount
-            : legacySessionCount(record.startDate, record.endDate, record.requiredSessionCount);
+            : legacySessionCount(
+                record.startDate,
+                record.endDate,
+                record.requiredSessionCount,
+                calendar ?? await this.holidayCalendar.forBranch(record.branchId, { fresh: true }),
+            );
         const usableRequired = required ?? 0;
         const inPeriodDays = record.days.filter((day) => (
             isWithinServicePeriod(day.serviceDate, record.startDate, record.endDate)
