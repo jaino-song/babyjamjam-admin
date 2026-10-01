@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type { ServiceRecordWizardProps } from "@babyjamjam/service-record-ui";
 import {
     DAILY_ITEMS,
@@ -271,6 +271,8 @@ describe("shared service-record UI contract", () => {
 
         expect(container.querySelector('[data-slot="segnum-input"]')).toBeEnabled();
         expect(container.querySelector('[data-slot="nav"] button')).toBeEnabled();
+        fireEvent.click(container.querySelector('[data-slot="nav"] button') as HTMLButtonElement);
+        for (const slot of Array.from(container.querySelectorAll('[data-slot="lab-msg"]'))) expect(slot).toBeEmptyDOMElement();
 
         const { container: publicContainer } = render(
             <ServiceRecordWizard
@@ -280,13 +282,19 @@ describe("shared service-record UI contract", () => {
                 })}
             />,
         );
-        expect(publicContainer.querySelector('[data-slot="nav"] button')).toBeDisabled();
+        // The public next button stays enabled; pressing it with blank answers is blocked and explained.
+        const publicNext = publicContainer.querySelector('[data-slot="nav"] button') as HTMLButtonElement;
+        expect(publicNext).toBeEnabled();
+        fireEvent.click(publicNext);
+        expect(publicContainer.querySelector('[aria-invalid="true"]')).toBeInTheDocument();
     });
 
     it("blocks the current public page and exposes an accessible Korean numeric error", () => {
+        const onNextPage = jest.fn();
         const { container } = render(
             <ServiceRecordWizard
                 {...makeProps({
+                    onNextPage,
                     pageIdx: 0,
                     draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "-1", meals_snack: "0" },
                 })}
@@ -296,9 +304,16 @@ describe("shared service-record UI contract", () => {
         const input = container.querySelector('[data-slot="segnum-input"]') as HTMLInputElement;
         expect(input).toHaveValue(-1);
         expect(input).toHaveAttribute("aria-invalid", "true");
-        expect(input).toHaveAttribute("aria-describedby");
-        expect(container.querySelector('[role="alert"]')).toHaveTextContent("0 이상");
-        expect(container.querySelector('[data-slot="nav"] button')).toBeDisabled();
+        const slot = document.getElementById(input.getAttribute("aria-describedby")!);
+        expect(slot).toHaveTextContent("식사: 0 이상으로 입력해 주세요");
+        expect(slot).toHaveClass("error");
+        expect(slot?.parentElement).toHaveClass("lab-row");
+        // Blocked without a disabled button: pressing it keeps the page and puts focus on the problem.
+        const next = container.querySelector('[data-slot="nav"] button') as HTMLButtonElement;
+        expect(next).toBeEnabled();
+        fireEvent.click(next);
+        expect(onNextPage).not.toHaveBeenCalled();
+        expect(input).toHaveFocus();
     });
 
     it("keeps a read-only historic invalid value navigable", () => {
@@ -320,7 +335,8 @@ describe("shared service-record UI contract", () => {
 
         expect(container.querySelector('[data-slot="segnum-input"]')).toBeDisabled();
         expect(container.querySelector('[data-slot="nav"] button')).toBeEnabled();
-        expect(container.querySelector('[role="alert"]')).toBeInTheDocument();
+        const input = container.querySelector('[data-slot="segnum-input"]') as HTMLInputElement;
+        expect(document.getElementById(input.getAttribute("aria-describedby")!)).toHaveTextContent("0 이상으로 입력해 주세요");
     });
 
     it("blocks the public final confirmation when any numeric answer is invalid", () => {

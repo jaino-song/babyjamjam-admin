@@ -97,6 +97,9 @@ describe("ClientService", () => {
             schedule_change_request: {
                 findMany: jest.fn().mockResolvedValue([]),
             },
+            service_record_case: {
+                findMany: jest.fn().mockResolvedValue([]),
+            },
             area: {
                 findFirst: jest.fn().mockResolvedValue({ id: "incheon" }),
             },
@@ -2843,6 +2846,27 @@ describe("ClientService", () => {
                     name: "지원자 2",
                     phone: "010-0000-2222",
                 },
+            });
+        });
+
+        it("flags serviceRecordPeriodLocked from one batched finalized-case lookup", async () => {
+            const lockedClient = createClientEntity();
+            const openClient = createClientEntity();
+            Object.assign(lockedClient, { id: 1 });
+            Object.assign(openClient, { id: 2 });
+            listClientsUsecase.execute.mockResolvedValue([lockedClient, openClient]);
+            prismaService.service_record_case.findMany.mockResolvedValue([{ clientId: 1 }]);
+
+            const result = await service.findAll(branchId);
+
+            expect(result.map((client) => [client.id, client.serviceRecordPeriodLocked])).toEqual([[1, true], [2, false]]);
+            expect(prismaService.service_record_case.findMany).toHaveBeenCalledTimes(1);
+            expect(prismaService.service_record_case.findMany).toHaveBeenCalledWith({
+                where: {
+                    clientId: { in: [1, 2] },
+                    status: { in: ["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"] },
+                },
+                select: { clientId: true },
             });
         });
 

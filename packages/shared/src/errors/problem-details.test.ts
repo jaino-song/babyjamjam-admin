@@ -233,6 +233,12 @@ describe("catalog coverage", () => {
         "SCHEDULE_DATE_NOT_POSTPONED",
         "REQUEST_STALE",
         "SCHEDULE_CHANGE_UNCOMPUTABLE",
+        "SERVICE_RECORD_FINALIZED",
+        "SERVICE_RECORD_START_DATE_LOCKED",
+        "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
+        "SERVICE_RECORD_END_DATE_REQUIRED",
+        "SERVICE_RECORD_DURATION_REQUIRED",
+        "SERVICE_RECORD_DURATION_CANNOT_DECREASE",
         // Registered contract-send guard codes (EM-CAT-03). BJJ-319 phase 5-1.
         "CLIENT_ASSIGNMENT_REQUIRED",
         "DOCUMENT_PROVIDER_MISMATCH",
@@ -389,6 +395,22 @@ describe("catalog coverage", () => {
     ];
 
     it.each(SCHEDULE_CHANGE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const SERVICE_RECORD_PERIOD_LOCK_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["SERVICE_RECORD_FINALIZED", "service-record-finalized"],
+        ["SERVICE_RECORD_START_DATE_LOCKED", "service-record-start-date-locked"],
+        ["SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION", "service-record-end-date-before-locked-session"],
+        ["SERVICE_RECORD_END_DATE_REQUIRED", "service-record-end-date-required"],
+        ["SERVICE_RECORD_DURATION_REQUIRED", "service-record-duration-required"],
+        ["SERVICE_RECORD_DURATION_CANNOT_DECREASE", "service-record-duration-cannot-decrease"],
+    ];
+
+    it.each(SERVICE_RECORD_PERIOD_LOCK_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
         const entry = PROBLEM_CATALOG[code];
         expect(entry.status).toBe(409);
         expect(entry.statuses).toEqual([409]);

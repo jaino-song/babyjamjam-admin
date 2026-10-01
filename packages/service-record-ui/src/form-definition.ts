@@ -1,6 +1,6 @@
 import { SERVICE_RECORD_FORM_LAYOUT } from "../../shared/src/constants/service-record-form-layout";
 import { HEADER_FIELDS, getServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
-export { HEADER_FIELDS, getServiceRecordHeaderErrors, getServiceRecordHeaderFieldError } from "../../shared/src/utils/service-record-input";
+export { HEADER_FIELDS, SERVICE_RECORD_HEADER_KEYS, getServiceRecordHeaderErrors, getServiceRecordHeaderFieldError } from "../../shared/src/utils/service-record-input";
 export type { ServiceRecordHeaderValidationKey, ServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
 
 export type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm";
@@ -90,24 +90,24 @@ function numericFieldErrorMessage(
     const min = count.min ?? 0;
     const step = count.step ?? 1;
     if (typeof rawValue !== "string" && typeof rawValue !== "number") {
-        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
+        return "숫자만 입력해 주세요";
     }
     if (typeof rawValue === "string" && !SERVICE_RECORD_NUMERIC_PATTERN.test(rawValue)) {
-        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
+        return "숫자만 입력해 주세요";
     }
 
     const parsed = typeof rawValue === "number" ? rawValue : Number(rawValue);
     if (!Number.isFinite(parsed)) {
-        return `${count.label}에는 단위나 글자 없이 숫자만 입력해 주세요.`;
+        return "숫자만 입력해 주세요";
     }
     if (parsed < min) {
-        return `${count.label}에는 ${min} 이상의 숫자를 입력해 주세요.`;
+        return `${min} 이상으로 입력해 주세요`;
     }
     if (!isStepAligned(parsed - min, step)) {
-        return step === 1 ? `${count.label}에는 소수점 없이 횟수나 양을 입력해 주세요(예: 0, 1, 2).` : `${count.label}은 소수점 첫째 자리까지만 입력해 주세요(예: 36.5).`;
+        return step === 1 ? "정수로 입력해 주세요" : "소수점 한 자리까지 (예: 36.5)";
     }
     if (step === 1 && !Number.isSafeInteger(parsed)) {
-        return `${count.label}에 입력한 숫자가 너무 크니 실제 횟수나 양을 확인해 주세요.`;
+        return "숫자가 너무 커요";
     }
     return null;
 }

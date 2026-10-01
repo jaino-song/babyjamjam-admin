@@ -15,6 +15,14 @@ import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/providers/LocaleProvider";
+import { useFieldMessages } from "@/hooks/use-field-messages";
+import {
+  focusFirstInvalidField,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+  type SlotTone,
+} from "@/lib/validations/field-message";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import { useEmployeeWizardStore } from "@/stores/employee-wizard-store";
 
@@ -52,8 +60,24 @@ const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
 
 const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
   locale === "ko"
-    ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
-    : "Checking for duplicate phone number. Please wait.";
+    ? "번호를 확인하고 있습니다."
+    : "Checking the number.";
+
+type EmployeeWizardValidatedField = "name" | "phone" | "workArea";
+
+// DOM id of each validated field, used to focus the first problem on "다음"/"등록".
+const FIELD_DOM_IDS: Readonly<Record<EmployeeWizardValidatedField, string>> = {
+  name: "employee-name",
+  phone: "employee-phone",
+  workArea: "employee-work-area",
+};
+
+const SLOT_TONE_CLASS_NAMES: Readonly<Record<SlotTone, string>> = {
+  muted: styles.slot_muted,
+  ok: styles.slot_ok,
+  err: styles.slot_err,
+  pending: styles.slot_pending,
+};
 
 export function sanitizeReturnTo(path: string | null): string | null {
   if (!path) return null;
@@ -99,29 +123,37 @@ export default function NewEmployeePage() {
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
-  const showPhoneValidationError =
-    phoneDigits.length === 11 && (isPhoneDuplicate || hasPhoneDuplicateCheckFailed);
-  const phoneInlineMessage = phoneDigits.length === 11
+  const fieldSpecs: Record<EmployeeWizardValidatedField, FieldSpec> = {
+    name: { kind: "text", label: t(locale, "employees.form.name"), required: true },
+    phone: { kind: "phone", label: t(locale, "employees.form.phone"), required: true, mobileOnly: true },
+    // Only tracks "had a selection" / "submitted"; its text is the work-area copy below.
+    workArea: { kind: "text", label: t(locale, "employees.form.work-area"), required: true },
+  };
+  const fieldMessages = useFieldMessages<EmployeeWizardValidatedField>({
+    values: {
+      name: store.name,
+      phone: store.phone,
+      workArea: store.workArea.length > 0 ? "selected" : "",
+    },
+    specs: fieldSpecs,
+    locale,
+  });
+  const phoneStatusMessage: SlotMessage | null = phoneDigits.length === 11
     ? hasPhoneDuplicateCheckFailed
-      ? getPhoneDuplicateCheckFailedMessage(locale)
+      ? { text: getPhoneDuplicateCheckFailedMessage(locale), tone: "err" }
       : isPhoneDuplicate
-        ? t(locale, "employees.form.error-phone-duplicate")
-        : null
+        ? { text: t(locale, "employees.form.error-phone-duplicate"), tone: "err" }
+        : isCheckingPhoneDuplicate
+          ? { text: getPhoneDuplicateCheckPendingMessage(locale), tone: "pending" }
+          : lastCheckedPhoneDigits === phoneDigits
+            ? { text: "등록 가능한 번호입니다.", tone: "ok" }
+            : null
     : null;
-  const phoneHelperTone = hasPhoneDuplicateCheckFailed || isPhoneDuplicate
-    ? "err"
-    : isCheckingPhoneDuplicate
-      ? "pending"
-      : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
-        ? "ok"
-        : "default";
-  const phoneHelperMessage = isCheckingPhoneDuplicate
-    ? getPhoneDuplicateCheckPendingMessage(locale)
-    : phoneInlineMessage
-      ? phoneInlineMessage
-      : phoneDigits.length === 11 && lastCheckedPhoneDigits === phoneDigits
-        ? "등록 가능한 번호입니다."
-        : null;
+  const phoneMessage = pickSlotMessage(fieldMessages.slot("phone"), phoneStatusMessage);
+  const nameMessage = fieldMessages.slot("name");
+  const workAreaMessage: SlotMessage = fieldMessages.slot("workArea")
+    ? { text: t(locale, "employees.form.work-area-required"), tone: "err" }
+    : { text: `${store.workArea.length}개 선택됨 · 복수 선택 가능`, tone: "muted" };
 
   const returnTo = useMemo(
     () => sanitizeReturnTo(searchParams.get("returnTo")),
@@ -215,47 +247,40 @@ export default function NewEmployeePage() {
     };
   }, [phoneDigits]);
 
-  const validateStep = (step: number): boolean => {
+  const isStepSatisfied = (step: number): boolean => {
     switch (step) {
       case 0:
-        if (!store.name.trim()) {
-          setError(
-            getUserErrorMessage(locale === "ko"
-              ? `${t(locale, "employees.form.name")}을 입력해주세요.`
-              : `Please enter ${t(locale, "employees.form.name").toLowerCase()}.`)
-          );
-          return false;
-        }
-        if (!store.phone.trim()) {
-          setError(getUserErrorMessage(t(locale, "employees.form.phone-required")));
-          return false;
-        }
-        if (phoneDigits.length !== 11) {
-          setError(getUserErrorMessage(t(locale, "employees.form.phone-required")));
-          return false;
-        }
-        if (isCheckingPhoneDuplicate || lastCheckedPhoneDigits !== phoneDigits) {
-          setError(getUserErrorMessage(getPhoneDuplicateCheckPendingMessage(locale)));
-          return false;
-        }
-        if (hasPhoneDuplicateCheckFailed) {
-          setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
-          return false;
-        }
-        if (isPhoneDuplicate) {
-          setError(getUserErrorMessage(t(locale, "employees.form.error-phone-duplicate")));
-          return false;
-        }
-        return true;
+        return (
+          fieldMessages.invalidFields(["name", "phone"]).length === 0 &&
+          !isCheckingPhoneDuplicate &&
+          lastCheckedPhoneDigits === phoneDigits &&
+          !hasPhoneDuplicateCheckFailed &&
+          !isPhoneDuplicate
+        );
       case 1:
-        if (store.workArea.length === 0) {
-          setError(getUserErrorMessage(t(locale, "employees.form.work-area-required")));
-          return false;
-        }
-        return true;
+        return store.workArea.length > 0;
       default:
         return true;
     }
+  };
+
+  const validateStep = (step: number): boolean => {
+    if (isStepSatisfied(step)) return true;
+
+    // Each problem is shown in its own field's message slot; reveal them all and
+    // take the user to the first one. Only a failed duplicate-check request,
+    // which belongs to no single field, goes to the form-level error box.
+    fieldMessages.markSubmitted();
+    const invalidFields = fieldMessages.invalidFields(step === 0 ? ["name", "phone"] : ["workArea"]);
+    if (invalidFields.length > 0) {
+      focusFirstInvalidField(invalidFields.map((field) => FIELD_DOM_IDS[field]));
+    } else if (step === 0) {
+      if (hasPhoneDuplicateCheckFailed) {
+        setError(getUserErrorMessage(getPhoneDuplicateCheckFailedMessage(locale)));
+      }
+      focusFirstInvalidField([FIELD_DOM_IDS.phone]);
+    }
+    return false;
   };
 
   const activeStep = Math.min(Math.max(currentStep, 0), TOTAL_STEPS - 1);
@@ -269,19 +294,7 @@ export default function NewEmployeePage() {
       : "근무 지역과 다음 배정 가능 여부를 선택해주세요.";
   const selectedSummary = [store.name.trim(), store.grade].filter(Boolean);
   const isBusy = createEmployee.isPending || isNavigationPending;
-  const isNextButtonDisabled =
-    isBusy ||
-    (
-      activeStep === 0 &&
-      (
-        !store.name.trim() ||
-        phoneDigits.length !== 11 ||
-        isCheckingPhoneDuplicate ||
-        hasPhoneDuplicateCheckFailed ||
-        isPhoneDuplicate ||
-        lastCheckedPhoneDigits !== phoneDigits
-      )
-    );
+  const isNextButtonDisabled = isBusy;
 
   const handleStepChange = (nextStep: number) => {
     if (nextStep > currentStep && !validateStep(currentStep)) {
@@ -416,52 +429,69 @@ export default function NewEmployeePage() {
         >
           <div className={styles.formCard} data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card">
             <div className={styles.formRow} data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_name-field">
-              <label htmlFor="employee-name" className={styles.formLabel}>
-                {t(locale, "employees.form.name")} <span className={styles.required}>*</span>
-              </label>
+              <div className={styles.fieldHeader} data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_name-field_header">
+                <label htmlFor="employee-name" className={styles.formLabel}>
+                  {t(locale, "employees.form.name")} <span className={styles.required}>*</span>
+                </label>
+                <span
+                  id="employee-name-message"
+                  className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[nameMessage?.tone ?? "muted"])}
+                  aria-live="polite"
+                  data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_name-field_helper"
+                >
+                  {nameMessage?.text}
+                </span>
+              </div>
               <input
                 id="employee-name"
-                className={styles.formInput}
+                className={cn(styles.formInput, nameMessage?.tone === "err" && styles.formInputError)}
                 value={store.name}
                 onChange={(event) => {
                   setField("name", event.target.value);
                   setError(null);
                 }}
+                {...fieldMessages.bind("name")}
                 placeholder="홍길동"
                 aria-required="true"
+                aria-invalid={nameMessage?.tone === "err"}
+                aria-describedby="employee-name-message"
                 required
               />
             </div>
 
             <div className={styles.formRow} data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_phone-field">
-              <label htmlFor="employee-phone" className={styles.formLabel}>
-                {t(locale, "employees.form.phone")} <span className={styles.required}>*</span>
-              </label>
+              <div className={styles.fieldHeader} data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_phone-field_header">
+                <label htmlFor="employee-phone" className={styles.formLabel}>
+                  {t(locale, "employees.form.phone")} <span className={styles.required}>*</span>
+                </label>
+                <span
+                  id="employee-phone-message"
+                  className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[phoneMessage?.tone ?? "muted"])}
+                  aria-live="polite"
+                  data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_phone-field_helper"
+                >
+                  {phoneMessage?.tone === "ok" ? "✓ " : ""}
+                  {phoneMessage?.text}
+                </span>
+              </div>
               <input
                 id="employee-phone"
-                className={cn(styles.formInput, showPhoneValidationError && styles.formInputError)}
+                className={cn(styles.formInput, phoneMessage?.tone === "err" && styles.formInputError)}
                 value={store.phone}
                 onChange={(event) => {
                   setField("phone", formatKoreanPhoneNumber(event.target.value));
                   setError(null);
                 }}
+                {...fieldMessages.bind("phone")}
                 placeholder="010-1234-5678"
                 type="tel"
                 inputMode="numeric"
                 maxLength={20}
-                aria-invalid={showPhoneValidationError}
+                aria-invalid={phoneMessage?.tone === "err"}
                 aria-required="true"
+                aria-describedby="employee-phone-message"
                 required
               />
-              {phoneHelperMessage && (
-                <div
-                  className={cn(styles.formHelper, styles[phoneHelperTone])}
-                  data-component="mobile_employees-new_screen_root_wizard_basic-step_basic-card_phone-field_helper"
-                >
-                  {phoneHelperTone === "ok" ? "✓ " : ""}
-                  {phoneHelperMessage}
-                </div>
-              )}
             </div>
           </div>
 
@@ -504,10 +534,25 @@ export default function NewEmployeePage() {
           data-component="mobile_employees-new_screen_root_wizard_work-step"
         >
           <div className={styles.formCard} data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card">
-            <div className={styles.cardTitle} data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_title">
-              {t(locale, "employees.form.work-area")} <span className={styles.required}>*</span>
+            <div className={styles.cardTitleRow} data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_title">
+              <span className={styles.cardTitleText}>
+                {t(locale, "employees.form.work-area")} <span className={styles.required}>*</span>
+              </span>
+              <span
+                id="employee-work-area-message"
+                className={cn(styles.formSlot, SLOT_TONE_CLASS_NAMES[workAreaMessage.tone])}
+                aria-live="polite"
+                data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_helper"
+              >
+                {workAreaMessage.text}
+              </span>
             </div>
-            <div className={styles.areaRow} data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_options">
+            <div
+              id="employee-work-area"
+              className={styles.areaRow}
+              data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_options"
+              aria-describedby="employee-work-area-message"
+            >
               {ORDERED_WORK_AREAS.map((area) => {
                 const isSelected = store.workArea.includes(area);
 
@@ -531,9 +576,6 @@ export default function NewEmployeePage() {
                   </button>
                 );
               })}
-            </div>
-            <div className={styles.formHelper} data-component="mobile_employees-new_screen_root_wizard_work-step_work-area-card_helper">
-              {store.workArea.length}개 지역 선택됨 · 복수 선택 가능
             </div>
           </div>
 

@@ -7,7 +7,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
 import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
+import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
+import { useFieldMessages } from "@/hooks/use-field-messages";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { authErrorSlot } from "@/lib/validations/auth-slot-copy";
+import {
+  focusFirstInvalidField,
+  pickSlotMessage,
+  type FieldSpec,
+  type SlotMessage,
+} from "@/lib/validations/field-message";
+import { useLocale } from "@/providers/LocaleProvider";
 import { authApi } from "@/services/api";
 import {
   registerSchema,
@@ -36,6 +48,32 @@ const ACCOUNT_FIELDS = ["email", "name", "password", "confirmPassword"] as const
 const PROFILE_FIELDS = ["phone", "birthDate"] as const;
 const APPROVAL_FIELDS = ["role"] as const;
 
+type AccountField = (typeof ACCOUNT_FIELDS)[number];
+type ProfileField = (typeof PROFILE_FIELDS)[number];
+
+const ACCOUNT_SPECS: Record<AccountField, FieldSpec> = {
+  email: { kind: "text", label: "이메일", required: true },
+  name: { kind: "text", label: "이름", required: true },
+  password: { kind: "text", label: "비밀번호", required: true },
+  confirmPassword: { kind: "text", label: "비밀번호 확인", required: true },
+};
+const PROFILE_SPECS: Record<ProfileField, FieldSpec> = {
+  phone: { kind: "phone", label: "전화번호", required: true },
+  birthDate: { kind: "birthday", label: "생년월일", required: true },
+};
+
+/** DOM id of each validated input, used to focus the first problem field. */
+const FIELD_INPUT_IDS: Record<AccountField | ProfileField, string> = {
+  email: "register-email",
+  name: "register-name",
+  password: "register-password",
+  confirmPassword: "register-password-confirm",
+  phone: "register-phone",
+  birthDate: "register-birth",
+};
+
+const ROLE_HELPER_COPY = "오너가 지점과 최종 권한을 배정합니다.";
+
 /** Registered-code discriminator for the duplicate-phone failure. */
 function isPhoneDuplicateFailure(errorData: RegisterErrorData | undefined, normalized: NormalizedApiError): boolean {
   // Legacy Prisma body: { code: "P2002", field: "phone" }.
@@ -60,6 +98,7 @@ const REGISTER_SUBMIT_FORM = `${REGISTER_BASE}_submit-form`;
 
 export default function RegisterPage() {
   const router = useRouter();
+  const locale = useLocale();
   const [formData, setFormData] = useState<Partial<RegisterFormData>>({
     email: "",
     password: "",
@@ -72,6 +111,8 @@ export default function RegisterPage() {
     role: "",
   });
   const [currentStep, setCurrentStep] = useState(1);
+  // A field to focus once its step is on screen (the step switch renders after the handler).
+  const [pendingFocus, setPendingFocus] = useState<ProfileField | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -81,6 +122,21 @@ export default function RegisterPage() {
   const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
   const [isEmailLinkable, setIsEmailLinkable] = useState(false);
   const [emailTouched, setEmailTouched] = useState(false);
+  const accountMessages = useFieldMessages<AccountField>({
+    values: {
+      email: formData.email ?? "",
+      name: formData.name ?? "",
+      password: formData.password ?? "",
+      confirmPassword: formData.confirmPassword ?? "",
+    },
+    specs: ACCOUNT_SPECS,
+    locale,
+  });
+  const profileMessages = useFieldMessages<ProfileField>({
+    values: { phone: profileData.phone, birthDate: profileData.birthDate },
+    specs: PROFILE_SPECS,
+    locale,
+  });
 
   const passwordStrength = checkPasswordStrength(formData.password || "");
   const passwordStrengthRows = [
@@ -101,13 +157,53 @@ export default function RegisterPage() {
   const emailFormatError = getEmailFormatError(formData.email ?? "");
   const canShowEmailTrailing = Boolean(normalizedEmail) && !emailFormatError;
   const passwordsMatch = Boolean(formData.confirmPassword) && formData.password === formData.confirmPassword;
-  const emailTrailingLabel = isCheckingEmailDuplicate
-    ? "확인 중"
-    : isEmailDuplicate
-      ? "중복 이메일"
+  // Duplicate-check status lives in the email label row; an error or hint outranks it.
+  const emailStatusSlot: SlotMessage | null = !canShowEmailTrailing || isEmailDuplicate
+    ? null
+    : isCheckingEmailDuplicate
+      ? { text: "확인 중", tone: "pending" }
       : isEmailLinkable
-        ? "카카오 연결 가능"
-        : "이메일 확인됨";
+        ? { text: "카카오 연결 가능", tone: "ok" }
+        : { text: "이메일 확인됨", tone: "ok" };
+
+  // One slot per field: field errors (zod / server) and the shared resolver's
+  // message outrank informational status.
+  const slots: Record<AccountField | ProfileField | "role", SlotMessage | null> = {
+    email: pickSlotMessage(
+      accountMessages.slot("email"),
+      authErrorSlot("email", errors.email),
+      emailStatusSlot,
+    ),
+    name: pickSlotMessage(accountMessages.slot("name"), authErrorSlot("name", errors.name)),
+    password: pickSlotMessage(
+      accountMessages.slot("password"),
+      authErrorSlot("password", errors.password),
+    ),
+    confirmPassword: pickSlotMessage(
+      accountMessages.slot("confirmPassword"),
+      authErrorSlot("confirmPassword", errors.confirmPassword),
+      passwordsMatch ? { text: "비밀번호가 일치해요", tone: "ok" } : null,
+    ),
+    phone: pickSlotMessage(
+      profileMessages.slot("phone"),
+      authErrorSlot("phone", errors.phone),
+      profileData.phone && !profileMessages.isInvalid("phone")
+        ? { text: "등록 가능한 번호예요", tone: "ok" }
+        : null,
+    ),
+    birthDate: pickSlotMessage(
+      profileMessages.slot("birthDate"),
+      authErrorSlot("birthDate", errors.birthDate),
+    ),
+    role: pickSlotMessage(
+      authErrorSlot("role", errors.role),
+      { text: ROLE_HELPER_COPY, tone: "muted" },
+    ),
+  };
+  const fieldProps = (field: AccountField | ProfileField | "role", inputId: string) => ({
+    "aria-invalid": slots[field]?.tone === "err" ? (true as const) : undefined,
+    "aria-describedby": fieldMessageId(inputId),
+  });
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
@@ -182,18 +278,33 @@ export default function RegisterPage() {
     setServerError(null);
   };
 
+  const updateProfileField = (field: keyof typeof profileData, value: string) => {
+    setProfileData((prev) => ({ ...prev, [field]: value }));
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+    setServerError(null);
+  };
+
   const handleProfileChange =
     (field: keyof typeof profileData) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      setProfileData((prev) => ({ ...prev, [field]: e.target.value }));
-      setErrors((prev) => {
-        if (!prev[field]) return prev;
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
-      setServerError(null);
+      updateProfileField(field, e.target.value);
     };
+
+  useEffect(() => {
+    if (pendingFocus === null || currentStep !== 2) return;
+    focusFirstInvalidField([FIELD_INPUT_IDS[pendingFocus]]);
+    setPendingFocus(null);
+  }, [pendingFocus, currentStep]);
+
+  // The field is on screen only after its step renders, so focus on the next tick.
+  const focusFirstField = (fields: ReadonlyArray<AccountField | ProfileField>) => {
+    window.setTimeout(() => focusFirstInvalidField(fields.map((field) => FIELD_INPUT_IDS[field])), 0);
+  };
 
   const getCombinedFormData = () => ({
     ...formData,
@@ -227,10 +338,12 @@ export default function RegisterPage() {
   const handleAccountStepNext = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setServerError(null);
+    accountMessages.markSubmitted();
 
     if (isCheckingEmailDuplicate) return;
     if (isEmailDuplicate) {
       setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
+      focusFirstField(["email"]);
       return;
     }
 
@@ -239,6 +352,7 @@ export default function RegisterPage() {
       const fieldErrors = collectFieldErrors(result.error.issues, ACCOUNT_FIELDS);
       if (Object.keys(fieldErrors).length > 0) {
         setErrors(fieldErrors);
+        focusFirstField(ACCOUNT_FIELDS.filter((field) => fieldErrors[field]));
         return;
       }
     }
@@ -250,11 +364,18 @@ export default function RegisterPage() {
   const handleProfileStepNext = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setServerError(null);
+    profileMessages.markSubmitted();
+    const invalidFields = profileMessages.invalidFields(PROFILE_FIELDS);
+    if (invalidFields.length > 0) {
+      focusFirstField(invalidFields);
+      return;
+    }
     const result = registerSchema.safeParse(getCombinedFormData());
     if (!result.success) {
       const fieldErrors = collectFieldErrors(result.error.issues, PROFILE_FIELDS);
       if (Object.keys(fieldErrors).length > 0) {
         setErrors((prev) => ({ ...prev, ...fieldErrors }));
+        focusFirstField(PROFILE_FIELDS.filter((field) => fieldErrors[field]));
         return;
       }
     }
@@ -274,11 +395,14 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setServerError(null);
+    accountMessages.markSubmitted();
+    profileMessages.markSubmitted();
 
     if (isCheckingEmailDuplicate) return;
     if (isEmailDuplicate) {
       setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
       setCurrentStep(1);
+      focusFirstField(["email"]);
       return;
     }
 
@@ -296,8 +420,13 @@ export default function RegisterPage() {
         ...APPROVAL_FIELDS,
       ]);
       setErrors(fieldErrors);
-      if (ACCOUNT_FIELDS.some((field) => fieldErrors[field])) setCurrentStep(1);
-      else if (PROFILE_FIELDS.some((field) => fieldErrors[field])) setCurrentStep(2);
+      if (ACCOUNT_FIELDS.some((field) => fieldErrors[field])) {
+        setCurrentStep(1);
+        focusFirstField(ACCOUNT_FIELDS.filter((field) => fieldErrors[field]));
+      } else if (PROFILE_FIELDS.some((field) => fieldErrors[field])) {
+        setCurrentStep(2);
+        focusFirstField(PROFILE_FIELDS.filter((field) => fieldErrors[field]));
+      }
       return;
     }
 
@@ -317,7 +446,9 @@ export default function RegisterPage() {
         // Registered-code discrimination only — the register flow cannot
         // produce another P2002, so no raw-message content check is needed.
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
-        setCurrentStep(1);
+        // The phone field lives on the profile step, not the account step.
+        setCurrentStep(2);
+        setPendingFocus("phone");
       } else {
         // The upstream `message` field is never rendered; locally authored
         // copy covers the unverified outcome.
@@ -333,7 +464,9 @@ export default function RegisterPage() {
 
       if (isPhoneDuplicateFailure(errorData, normalized)) {
         setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
-        setCurrentStep(1);
+        // The phone field lives on the profile step, not the account step.
+        setCurrentStep(2);
+        setPendingFocus("phone");
       } else {
         // Registered problem message (verified) or locally authored copy —
         // upstream body messages/arrays are never rendered.
@@ -432,57 +565,74 @@ export default function RegisterPage() {
       )}
 
       {currentStep === 1 && (
-        <form className="auth-form auth-step-view active" onSubmit={handleAccountStepNext} data-component={`${REGISTER_ACCOUNT_FORM}`}>
+        <form className="auth-form auth-step-view active" onSubmit={handleAccountStepNext} data-component={`${REGISTER_ACCOUNT_FORM}`} noValidate>
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}>
-            <label className="auth-label" htmlFor="register-email">이메일</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}
+              htmlFor="register-email"
+              label="이메일"
+              message={slots.email}
+            />
             <div className="auth-input-wrap" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_input-wrap`}>
               <input
                 id="register-email"
-                className={`auth-input has-trailing ${errors.email ? "error" : ""}`}
+                className={`auth-input ${slots.email?.tone === "err" ? "error" : ""}`}
                 type="email"
                 placeholder="example@email.com"
                 autoComplete="email"
                 value={formData.email ?? ""}
                 onChange={handleChange("email")}
-                onBlur={handleEmailBlur}
+                onFocus={accountMessages.bind("email").onFocus}
+                onBlur={() => {
+                  handleEmailBlur();
+                  accountMessages.bind("email").onBlur();
+                }}
                 disabled={isLoading}
-                aria-invalid={!!errors.email}
+                {...fieldProps("email", "register-email")}
               />
-              {canShowEmailTrailing && <span className="auth-input-trailing">{emailTrailingLabel}</span>}
             </div>
-            {errors.email && <div className="auth-helper error" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_error`}>{errors.email}</div>}
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_name-field`}>
-            <label className="auth-label" htmlFor="register-name">이름</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_ACCOUNT_FORM}_name-field`}
+              htmlFor="register-name"
+              label="이름"
+              message={slots.name}
+            />
             <input
               id="register-name"
-              className={`auth-input ${errors.name ? "error" : ""}`}
+              className={`auth-input ${slots.name?.tone === "err" ? "error" : ""}`}
               type="text"
               placeholder="이름 입력"
               autoComplete="name"
               value={formData.name ?? ""}
               onChange={handleChange("name")}
+              {...accountMessages.bind("name")}
               disabled={isLoading}
-              aria-invalid={!!errors.name}
+              {...fieldProps("name", "register-name")}
             />
-            {errors.name && <div className="auth-helper error" data-component={`${REGISTER_ACCOUNT_FORM}_name-field_error`}>{errors.name}</div>}
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_password-field`}>
-            <label className="auth-label" htmlFor="register-password">비밀번호</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_ACCOUNT_FORM}_password-field`}
+              htmlFor="register-password"
+              label="비밀번호"
+              message={slots.password}
+            />
             <input
               id="register-password"
-              className={`auth-input ${errors.password ? "error" : ""}`}
+              className={`auth-input ${slots.password?.tone === "err" ? "error" : ""}`}
               type="password"
               placeholder="8자 이상"
               autoComplete="new-password"
               value={formData.password ?? ""}
               onChange={handleChange("password")}
+              {...accountMessages.bind("password")}
               disabled={isLoading}
-              aria-invalid={!!errors.password}
+              {...fieldProps("password", "register-password")}
             />
-            {errors.password && <div className="auth-helper error" data-component={`${REGISTER_ACCOUNT_FORM}_password-field_error`}>{errors.password}</div>}
             <div className="pw-strength" data-component={`${REGISTER_ACCOUNT_FORM}_password-field_strength`}>
               {passwordStrengthRows.map((rule) => (
                 <div key={rule.label} className={`pw-strength-row ${rule.met ? "ok" : ""}`} data-component={`${REGISTER_ACCOUNT_FORM}_password-field_strength_row`}>
@@ -494,28 +644,24 @@ export default function RegisterPage() {
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_password-confirm-field`}>
-            <label className="auth-label" htmlFor="register-password-confirm">비밀번호 확인</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_ACCOUNT_FORM}_password-confirm-field`}
+              htmlFor="register-password-confirm"
+              label="비밀번호 확인"
+              message={slots.confirmPassword}
+            />
             <input
               id="register-password-confirm"
-              className={`auth-input ${errors.confirmPassword ? "error" : ""}`}
+              className={`auth-input ${slots.confirmPassword?.tone === "err" ? "error" : ""}`}
               type="password"
               placeholder="비밀번호 다시 입력"
               autoComplete="new-password"
               value={formData.confirmPassword ?? ""}
               onChange={handleChange("confirmPassword")}
+              {...accountMessages.bind("confirmPassword")}
               disabled={isLoading}
-              aria-invalid={!!errors.confirmPassword}
+              {...fieldProps("confirmPassword", "register-password-confirm")}
             />
-            {errors.confirmPassword ? (
-              <div className="auth-helper error" data-component={`${REGISTER_ACCOUNT_FORM}_password-confirm-field_error`}>{errors.confirmPassword}</div>
-            ) : (
-              <div
-                className={`auth-helper ${passwordsMatch ? "ok" : "placeholder"}`}
-                data-component={`${REGISTER_ACCOUNT_FORM}_password-confirm-field_match`}
-              >
-                ✓ 비밀번호가 일치합니다.
-              </div>
-            )}
           </div>
 
           <div className="auth-actions" data-component={`${REGISTER_ACCOUNT_FORM}_actions`}>
@@ -533,49 +679,51 @@ export default function RegisterPage() {
       )}
 
       {currentStep === 2 && (
-        <form className="auth-form auth-step-view active" onSubmit={handleProfileStepNext} data-component={`${REGISTER_PROFILE_FORM}`}>
+        <form className="auth-form auth-step-view active" onSubmit={handleProfileStepNext} data-component={`${REGISTER_PROFILE_FORM}`} noValidate>
           <div className="auth-input-group" data-component={`${REGISTER_PROFILE_FORM}_phone-field`}>
-            <label className="auth-label" htmlFor="register-phone">전화번호</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_PROFILE_FORM}_phone-field`}
+              htmlFor="register-phone"
+              label="전화번호"
+              message={slots.phone}
+            />
             <input
               id="register-phone"
-              className="auth-input"
+              className={`auth-input ${slots.phone?.tone === "err" ? "error" : ""}`}
               type="tel"
               placeholder="010-1234-5678"
               inputMode="numeric"
               maxLength={13}
               autoComplete="tel"
               value={profileData.phone}
-              onChange={handleProfileChange("phone")}
+              onChange={(e) => updateProfileField("phone", formatKoreanPhoneNumber(e.target.value))}
+              {...profileMessages.bind("phone")}
               disabled={isLoading}
-              aria-invalid={!!errors.phone}
+              {...fieldProps("phone", "register-phone")}
             />
-            {errors.phone ? (
-              <div className="auth-helper error" data-component={`${REGISTER_PROFILE_FORM}_phone-field_error`}>{errors.phone}</div>
-            ) : (
-              profileData.phone && <div className="auth-helper ok" data-component={`${REGISTER_PROFILE_FORM}_phone-field_ok`}>✓ 등록 가능한 번호입니다.</div>
-            )}
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_PROFILE_FORM}_birth-field`}>
-            <label className="auth-label" htmlFor="register-birth">생년월일</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_PROFILE_FORM}_birth-field`}
+              htmlFor="register-birth"
+              label="생년월일"
+              message={slots.birthDate}
+            />
             <input
               id="register-birth"
-              className="auth-input"
+              className={`auth-input ${slots.birthDate?.tone === "err" ? "error" : ""}`}
               type="text"
               placeholder="1990-01-01"
               inputMode="numeric"
               maxLength={10}
               autoComplete="bday"
               value={profileData.birthDate}
-              onChange={handleProfileChange("birthDate")}
+              onChange={(e) => updateProfileField("birthDate", formatIsoDateInput(e.target.value))}
+              {...profileMessages.bind("birthDate")}
               disabled={isLoading}
-              aria-invalid={!!errors.birthDate}
+              {...fieldProps("birthDate", "register-birth")}
             />
-            {errors.birthDate ? (
-              <div className="auth-helper error" data-component={`${REGISTER_PROFILE_FORM}_birth-field_error`}>{errors.birthDate}</div>
-            ) : (
-              <div className="auth-helper" data-component={`${REGISTER_PROFILE_FORM}_birth-field_helper`}>YYYY-MM-DD 형식으로 입력해 주세요.</div>
-            )}
           </div>
 
           <div className="auth-actions" data-component={`${REGISTER_PROFILE_FORM}_actions`}>
@@ -594,7 +742,12 @@ export default function RegisterPage() {
       {currentStep === 3 && (
         <form className="auth-form auth-step-view active" onSubmit={handleSubmit} data-component={`${REGISTER_SUBMIT_FORM}`}>
           <div className="auth-input-group" data-component={`${REGISTER_SUBMIT_FORM}_role-field`}>
-            <label className="auth-label" htmlFor="register-role">요청 권한</label>
+            <FieldLabelRow
+              data-component={`${REGISTER_SUBMIT_FORM}_role-field`}
+              htmlFor="register-role"
+              label="요청 권한"
+              message={slots.role}
+            />
             <div className="auth-select-wrap" data-component={`${REGISTER_SUBMIT_FORM}_role-field_select-wrap`}>
               <select
                 id="register-role"
@@ -602,7 +755,7 @@ export default function RegisterPage() {
                 value={profileData.role}
                 onChange={handleProfileChange("role")}
                 disabled={isLoading}
-                aria-invalid={!!errors.role}
+                {...fieldProps("role", "register-role")}
               >
                 <option value="">역할을 선택해주세요</option>
                 {REGISTERABLE_ROLE_OPTIONS.map((role) => (
@@ -613,8 +766,6 @@ export default function RegisterPage() {
               </select>
               <ChevronDown className="auth-select-chev" size={16} strokeWidth={2.5} aria-hidden="true" />
             </div>
-            {errors.role && <div className="auth-helper error" data-component={`${REGISTER_SUBMIT_FORM}_role-field_error`}>{errors.role}</div>}
-            <div className="auth-helper" data-component={`${REGISTER_SUBMIT_FORM}_role-field_helper`}>오너가 지점과 최종 권한을 배정합니다.</div>
           </div>
 
           <div className="auth-actions" data-component={`${REGISTER_SUBMIT_FORM}_actions`}>

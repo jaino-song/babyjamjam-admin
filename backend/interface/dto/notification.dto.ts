@@ -1,5 +1,6 @@
 import { IsString, IsNotEmpty, IsOptional, IsNumber, IsObject, Min, MaxLength } from "class-validator";
 import { Type } from "class-transformer";
+import { IsSafeNotificationData } from "./notification-data.validator";
 
 /**
  * Push subscription from browser - keys from PushSubscription.getKey()
@@ -45,6 +46,7 @@ export class SendNotificationDto {
 
     @IsObject()
     @IsOptional()
+    @IsSafeNotificationData()
     data?: Record<string, unknown>;
 }
 
@@ -61,6 +63,7 @@ export class BroadcastNotificationDto {
 
     @IsObject()
     @IsOptional()
+    @IsSafeNotificationData()
     data?: Record<string, unknown>;
 }
 
@@ -100,4 +103,9 @@ export class UnreadCountResponseDto {
 export class BroadcastResultResponseDto {
     sent!: number;
     failed!: number;
+}
+
+export class NotificationRecipientResponseDto {
+    id!: string;
+    name!: string;
 }

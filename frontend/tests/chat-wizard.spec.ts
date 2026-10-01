@@ -110,7 +110,7 @@ test.describe('Chat client registration wizard', () => {
       expect(body).toMatchObject({
         name: '홍길동',
         phone: '010-1234-5678',
-        birthday: '900101',
+        birthday: '1990-01-01',
         address: '인천 연수구',
         dueDate: '2026-02-01',
         voucherClient: true,
@@ -142,7 +142,8 @@ test.describe('Chat client registration wizard', () => {
 
     await page.getByLabel('이름').fill('홍길동');
     await page.getByLabel('연락처').fill('01012345678');
-    await page.getByLabel('생년월일').fill('900101');
+    await page.getByLabel('생년월일').fill('19900101');
+    await expect(page.getByLabel('생년월일')).toHaveValue('1990-01-01');
     await page.getByLabel('주소').fill('인천 연수구');
     await page.getByLabel('출산 예정일').fill('2026-02-01');
     await page.getByRole('button', { name: '다음' }).click();

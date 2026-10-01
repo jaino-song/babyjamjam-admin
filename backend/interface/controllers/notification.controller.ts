@@ -27,6 +27,7 @@ import {
     NotificationResponseDto,
     UnreadCountResponseDto,
     BroadcastResultResponseDto,
+    NotificationRecipientResponseDto,
 } from "../dto/notification.dto";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
@@ -160,6 +161,18 @@ export class NotificationController {
     }
 
     // ==================== Admin Endpoints ====================
+
+    /**
+     * List branch members who can receive a notification (recipient picker).
+     * Branch manager authority only; returns id/name only, never contact info.
+     */
+    @Get("recipients")
+    @UseGuards(JwtGuard, TenantGuard, BranchManagerGuard)
+    async listRecipients(
+        @CurrentTenant() tenant: { branchId?: string },
+    ): Promise<NotificationRecipientResponseDto[]> {
+        return this.notificationService.listRecipients(tenant.branchId ?? "");
+    }
 
     /**
      * Send notification to a specific user (admin only)

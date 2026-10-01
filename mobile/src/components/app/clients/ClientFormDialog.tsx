@@ -1,5 +1,6 @@
 "use client";
-import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { useState, useEffect, useMemo, useRef } from "react";
 import {
     findOutOfPocketPriceInfo,
@@ -28,6 +29,14 @@ import {
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { cn } from "@/lib/utils";
+import { useFieldMessages } from "@/hooks/use-field-messages";
+import {
+    focusFirstInvalidField,
+    type FieldSpec,
+    type SlotMessage,
+    type SlotTone,
+} from "@/lib/validations/field-message";
 import { getErrorMessage } from "@/lib/errors/api-error-mapper";
 import voucherOptions from "../messages/templates/json/voucher.json";
 
@@ -81,6 +90,72 @@ interface StructuredErrorPresentation {
 // Format number with commas (handles comma-formatted strings too)
 const CLIENT_FORM_DIALOG_BASE = "mobile_clients_form-dialog";
 const CLIENT_FORM_ERROR_SUMMARY_ID = `${CLIENT_FORM_DIALOG_BASE}_error-summary`;
+
+type ClientFormField = "name" | "birthday" | "dueDate" | "phone" | "address" | "startDate" | "endDate";
+
+// Top-to-bottom order of the validated fields; the first invalid one is focused on save.
+const CLIENT_FORM_FIELD_ORDER: readonly ClientFormField[] = [
+    "name",
+    "birthday",
+    "dueDate",
+    "phone",
+    "address",
+    "startDate",
+    "endDate",
+];
+
+const SLOT_TONE_CLASS: Record<SlotTone, string> = {
+    muted: "text-v3-text-muted",
+    ok: "text-v3-green",
+    err: "text-v3-burgundy",
+    pending: "text-v3-primary",
+};
+
+const messageIdFor = (field: ClientFormField): string => `${field}-message`;
+
+interface FieldLabelRowProps {
+    "data-component": string;
+    htmlFor: ClientFormField;
+    label: string;
+    required?: boolean;
+    message: SlotMessage | null;
+}
+
+/**
+ * Label plus the field's single message slot at its top right. The row is one
+ * label line tall (h-[1lh] on the label's own type), so a message never moves
+ * the input below it; one that does not fit is cut with an ellipsis.
+ */
+function FieldLabelRow({
+    "data-component": dataComponent,
+    htmlFor,
+    label,
+    required = false,
+    message,
+}: FieldLabelRowProps) {
+    return (
+        <div
+            className="flex h-[1lh] min-w-0 items-center gap-2 text-sm leading-none"
+            data-component={`${dataComponent}_label-row`}
+        >
+            <Label htmlFor={htmlFor} className="shrink-0">
+                {label}
+                {required ? <span className="text-destructive ml-1">*</span> : null}
+            </Label>
+            <span
+                id={messageIdFor(htmlFor)}
+                className={cn(
+                    "ml-auto min-w-0 truncate text-right text-[0.68rem] font-bold leading-[1.2]",
+                    SLOT_TONE_CLASS[message?.tone ?? "muted"],
+                )}
+                aria-live="polite"
+                data-component={`${dataComponent}_helper`}
+            >
+                {message?.text}
+            </span>
+        </div>
+    );
+}
 
 const getKnownFieldId = (problemError: ProblemError): "name" | "phone" | undefined => {
     if (problemError.location !== undefined && problemError.location !== "body") {
@@ -147,6 +222,34 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         breastPump: false,
         serviceStatus: "pre_booking",
     });
+
+    const fieldSpecs: Record<ClientFormField, FieldSpec> = {
+        name: { kind: "text", label: t(locale, "clients.form.name"), required: true },
+        birthday: { kind: "birthday", label: t(locale, "clients.form.birthday"), required: true },
+        dueDate: { kind: "date", label: t(locale, "clients.form.due-date"), required: true },
+        phone: { kind: "phone", label: t(locale, "clients.form.phone"), required: true, mobileOnly: true },
+        address: { kind: "text", label: t(locale, "clients.form.address"), required: true },
+        startDate: { kind: "date", label: t(locale, "clients.form.start-date") },
+        endDate: {
+            kind: "date",
+            label: t(locale, "clients.form.end-date"),
+            dateRange: { notBefore: formData.startDate ?? "" },
+        },
+    };
+    const fieldMessages = useFieldMessages<ClientFormField>({
+        values: {
+            name: formData.name,
+            birthday: formData.birthday ?? "",
+            dueDate: formData.dueDate ?? "",
+            phone: formData.phone ?? "",
+            address: formData.address ?? "",
+            startDate: formData.startDate ?? "",
+            endDate: formData.endDate ?? "",
+        },
+        specs: fieldSpecs,
+        locale,
+    });
+    const { reset: resetFieldMessages } = fieldMessages;
 
     const [errorState, setErrorState] = useState<ClientFormErrorState | null>(null);
     const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
@@ -315,10 +418,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             if (!client) {
                 clearPrefillName();
             }
+            resetFieldMessages();
             setErrorState(null);
             setHasUnknownMutationOutcome(false);
         });
-    }, [open, client, prefillName, clearPrefillName]);
+    }, [open, client, prefillName, clearPrefillName, resetFieldMessages]);
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setFormData(prev => ({ ...prev, [field]: value }));
@@ -347,24 +451,11 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         setErrorState(null);
 
         // 고객 기본 정보만 필수이며 서비스 정보는 상담 단계에서 비워둘 수 있다.
-        if (!formData.name.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-name-required"));
-            return;
-        }
-        if (!isValidBirthdayIsoDate(formData.birthday ?? "")) {
-            setErrorAndScroll(t(locale, "clients.form.error-birthday-required"));
-            return;
-        }
-        if (!formData.dueDate?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-due-date-required"));
-            return;
-        }
-        if (!formData.address?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-address-required"));
-            return;
-        }
-        if (!formData.phone?.trim()) {
-            setErrorAndScroll(t(locale, "clients.form.error-phone-required"));
+        // Each problem is shown in its own field's message slot; take the user to the first one.
+        fieldMessages.markSubmitted();
+        const invalidFields = fieldMessages.invalidFields(CLIENT_FORM_FIELD_ORDER);
+        if (invalidFields.length > 0) {
+            focusFirstInvalidField(invalidFields);
             return;
         }
         try {
@@ -469,6 +560,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         });
         return ids;
     }, [structuredErrors]);
+
+    const fieldHasError = (field: ClientFormField): boolean =>
+        fieldMessages.slot(field)?.tone === "err"
+        || (field === "name" && fieldErrorMessageIds.name.length > 0)
+        || (field === "phone" && fieldErrorMessageIds.phone.length > 0);
+    const describedBy = (field: ClientFormField, serverErrorIds: readonly string[] = []): string =>
+        [messageIdFor(field), ...serverErrorIds].join(" ");
 
     useEffect(() => {
         if (!errorState) {
@@ -584,61 +682,97 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                                <Label htmlFor="name">
-                                    {t(locale, "clients.form.name")}
-                                    <span className="text-destructive ml-1">*</span>
-                                </Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_name-field`}
+                                    htmlFor="name"
+                                    label={t(locale, "clients.form.name")}
+                                    required
+                                    message={fieldMessages.slot("name")}
+                                />
                                 <Input
                                     id="name"
                                     value={formData.name}
                                     onChange={(e) => handleChange("name", e.target.value)}
-                                    error={fieldErrorMessageIds.name.length > 0}
-                                    aria-invalid={fieldErrorMessageIds.name.length > 0}
-                                    aria-describedby={fieldErrorMessageIds.name.join(" ") || undefined}
+                                    {...fieldMessages.bind("name")}
+                                    error={fieldHasError("name")}
+                                    aria-invalid={fieldHasError("name")}
+                                    aria-describedby={describedBy("name", fieldErrorMessageIds.name)}
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="birthday">{t(locale, "clients.form.birthday")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_birthday-field`}
+                                    htmlFor="birthday"
+                                    label={t(locale, "clients.form.birthday")}
+                                    message={fieldMessages.slot("birthday")}
+                                />
                                 <Input
                                     id="birthday"
-                                    placeholder="YYYY-MM-DD"
+                                    placeholder="1958-03-03"
                                     inputMode="numeric"
                                     value={formData.birthday ?? ""}
-                                    onChange={(e) => handleChange("birthday", formatBirthdayInput(e.target.value))}
+                                    onChange={(e) => handleChange("birthday", formatIsoDateInput(e.target.value))}
+                                    {...fieldMessages.bind("birthday")}
                                     maxLength={10}
+                                    error={fieldHasError("birthday")}
+                                    aria-invalid={fieldHasError("birthday")}
+                                    aria-describedby={describedBy("birthday")}
                                 />
-                                <p className="text-xs text-muted-foreground">
-                                    {t(locale, "clients.form.birthday-helper")}
-                                </p>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="dueDate">{t(locale, "clients.form.due-date")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_due-date-field`}
+                                    htmlFor="dueDate"
+                                    label={t(locale, "clients.form.due-date")}
+                                    message={fieldMessages.slot("dueDate")}
+                                />
                                 <Input
                                     id="dueDate"
-                                    type="date"
+                                    placeholder="2026-11-20"
+                                    inputMode="numeric"
                                     value={formData.dueDate || ""}
-                                    onChange={(e) => handleChange("dueDate", e.target.value)}
+                                    onChange={(e) => handleChange("dueDate", formatIsoDateInput(e.target.value))}
+                                    {...fieldMessages.bind("dueDate")}
+                                    maxLength={10}
+                                    error={fieldHasError("dueDate")}
+                                    aria-invalid={fieldHasError("dueDate")}
+                                    aria-describedby={describedBy("dueDate")}
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="phone">{t(locale, "clients.form.phone")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_phone-field`}
+                                    htmlFor="phone"
+                                    label={t(locale, "clients.form.phone")}
+                                    message={fieldMessages.slot("phone")}
+                                />
                                 <Input
                                     id="phone"
                                     placeholder="010-1234-5678"
                                     value={formData.phone ?? ""}
                                     onChange={(e) => handleChange("phone", formatKoreanPhoneNumber(e.target.value))}
+                                    {...fieldMessages.bind("phone")}
                                     maxLength={20}
-                                    error={fieldErrorMessageIds.phone.length > 0}
-                                    aria-invalid={fieldErrorMessageIds.phone.length > 0}
-                                    aria-describedby={fieldErrorMessageIds.phone.join(" ") || undefined}
+                                    error={fieldHasError("phone")}
+                                    aria-invalid={fieldHasError("phone")}
+                                    aria-describedby={describedBy("phone", fieldErrorMessageIds.phone)}
                                 />
                             </div>
                             <div className="space-y-2 sm:col-span-2">
-                                <Label htmlFor="address">{t(locale, "clients.form.address")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_address-field`}
+                                    htmlFor="address"
+                                    label={t(locale, "clients.form.address")}
+                                    message={fieldMessages.slot("address")}
+                                />
                                 <Input
                                     id="address"
                                     value={formData.address ?? ""}
                                     onChange={(e) => handleChange("address", e.target.value)}
+                                    {...fieldMessages.bind("address")}
+                                    error={fieldHasError("address")}
+                                    aria-invalid={fieldHasError("address")}
+                                    aria-describedby={describedBy("address")}
                                 />
                             </div>
                         </div>
@@ -856,21 +990,43 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                 </Select>
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="startDate">{t(locale, "clients.form.start-date")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_start-date-field`}
+                                    htmlFor="startDate"
+                                    label={t(locale, "clients.form.start-date")}
+                                    message={fieldMessages.slot("startDate")}
+                                />
                                 <Input
                                     id="startDate"
-                                    type="date"
+                                    placeholder="2026-12-01"
+                                    inputMode="numeric"
                                     value={formData.startDate || ""}
-                                    onChange={(e) => handleChange("startDate", e.target.value)}
+                                    onChange={(e) => handleChange("startDate", formatIsoDateInput(e.target.value))}
+                                    {...fieldMessages.bind("startDate")}
+                                    maxLength={10}
+                                    error={fieldHasError("startDate")}
+                                    aria-invalid={fieldHasError("startDate")}
+                                    aria-describedby={describedBy("startDate")}
                                 />
                             </div>
                             <div className="space-y-2">
-                                <Label htmlFor="endDate">{t(locale, "clients.form.end-date")}</Label>
+                                <FieldLabelRow
+                                    data-component={`${CLIENT_FORM_DIALOG_BASE}_content_end-date-field`}
+                                    htmlFor="endDate"
+                                    label={t(locale, "clients.form.end-date")}
+                                    message={fieldMessages.slot("endDate")}
+                                />
                                 <Input
                                     id="endDate"
-                                    type="date"
+                                    placeholder="2026-12-19"
+                                    inputMode="numeric"
                                     value={formData.endDate || ""}
-                                    onChange={(e) => handleChange("endDate", e.target.value)}
+                                    onChange={(e) => handleChange("endDate", formatIsoDateInput(e.target.value))}
+                                    {...fieldMessages.bind("endDate")}
+                                    maxLength={10}
+                                    error={fieldHasError("endDate")}
+                                    aria-invalid={fieldHasError("endDate")}
+                                    aria-describedby={describedBy("endDate")}
                                 />
                             </div>
                         </div>

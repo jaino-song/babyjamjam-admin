@@ -1,13 +1,14 @@
 "use client";
 import { normalizeApiError } from "@babyjamjam/shared";
-import { formatBirthdayInput } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -25,12 +26,10 @@ import {
 import { AlertCircle } from "lucide-react";
 import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { useCreateClient } from "@/hooks/useClients";
+import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
-import {
-    CLIENT_REGISTRATION_ERROR_MESSAGES,
-    isStrictIsoDate,
-    isValidClientBirthdayInput,
-} from "@/lib/client/client-registration-formats";
+import { focusFirstInvalidField, type FieldSpec } from "@/lib/validations/field-message";
+import { useLocale } from "@/providers/LocaleProvider";
 import type { CreateClientDto } from "@/lib/client/types";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 
@@ -47,6 +46,13 @@ const steps = ["기본 정보", "바우처 정보", "설정"] as const;
 
 const WIZARD_MIN_HEIGHT_PX = 520;
 
+const WIZARD_BASE = "mobile_chat_registration-wizard";
+
+type BasicsField = "name" | "dueDate" | "phone" | "birthday" | "address";
+
+// Top-to-bottom order of the step-1 fields; the first problem one is focused on "다음".
+const BASICS_FIELD_ORDER: readonly BasicsField[] = ["name", "dueDate", "phone", "birthday", "address"];
+
 function formatPrice(price: string): string {
     const num = parseInt(price.replace(/[,원\s]/g, ""), 10);
     if (Number.isNaN(num)) return price;
@@ -54,6 +60,7 @@ function formatPrice(price: string): string {
 }
 
 export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizardProps) {
+    const locale = useLocale();
     const createClientMutation = useCreateClient();
     const [activeStep, setActiveStep] = useState(0);
 
@@ -97,26 +104,42 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
         grant.trim().length > 0 &&
         actualPrice.trim().length > 0;
 
-    const isBasicsValid =
-        name.trim().length > 0 &&
-        phone.replace(/\D/g, "").length === 11 &&
-        isValidClientBirthdayInput(birthday) &&
-        address.trim().length > 0 &&
-        isStrictIsoDate(dueDate);
+    const basicsSpecs: Record<BasicsField, FieldSpec> = {
+        name: { kind: "text", label: "이름", required: true },
+        dueDate: { kind: "date", label: "출산 예정일", required: true },
+        phone: { kind: "phone", label: "연락처", required: true, mobileOnly: true },
+        birthday: { kind: "birthday", label: "생년월일", required: true },
+        address: { kind: "text", label: "주소", required: true },
+    };
+    const basicsMessages = useFieldMessages<BasicsField>({
+        values: { name, dueDate, phone, birthday, address },
+        specs: basicsSpecs,
+        locale,
+    });
+    const isBasicsValid = basicsMessages.invalidFields(BASICS_FIELD_ORDER).length === 0;
 
     const canGoNext = useMemo(() => {
         if (activeStep === 0) {
-            return isBasicsValid;
+            // Step 1 stays pressable: pressing it with a problem shows every message.
+            return true;
         }
         if (activeStep === 1) {
             if (!voucherClient) return true;
             return isVoucherInfoComplete;
         }
         return true;
-    }, [activeStep, isBasicsValid, voucherClient, isVoucherInfoComplete]);
+    }, [activeStep, voucherClient, isVoucherInfoComplete]);
 
     const handleNext = () => {
         if (!canGoNext) return;
+        if (activeStep === 0) {
+            basicsMessages.markSubmitted();
+            const invalid = basicsMessages.invalidFields(BASICS_FIELD_ORDER);
+            if (invalid.length > 0) {
+                focusFirstInvalidField(invalid);
+                return;
+            }
+        }
         setActiveStep((s) => Math.min(s + 1, steps.length - 1));
     };
 
@@ -153,14 +176,9 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
 
     const handleSubmit = async () => {
         if (!isBasicsValid) {
-            // Local validation copy is authored by this repo — render as-is.
-            setSubmitError(
-                !name.trim() ? "이름을 입력해 주세요."
-                : phone.replace(/\D/g, "").length !== 11 ? "연락처는 11자리 휴대폰 번호여야 합니다."
-                : !isValidClientBirthdayInput(birthday) ? CLIENT_REGISTRATION_ERROR_MESSAGES.birthday
-                : !address.trim() ? "주소를 입력해 주세요."
-                : CLIENT_REGISTRATION_ERROR_MESSAGES.dueDate,
-            );
+            // Each problem is shown in its own field's message slot on the first step.
+            basicsMessages.markSubmitted();
+            setActiveStep(0);
             return;
         }
 
@@ -213,6 +231,31 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
         }
     };
 
+    const renderBasicsField = (
+        field: BasicsField,
+        label: string,
+        renderInput: (props: ReturnType<typeof basicsMessages.bind> & {
+            error: boolean;
+            "aria-invalid": true | undefined;
+            "aria-describedby": string;
+        }) => ReactNode,
+    ) => {
+        const slot = basicsMessages.slot(field);
+        const hasError = slot?.tone === "err";
+        const fieldBase = `${WIZARD_BASE}_steps_${field}-field`;
+        return (
+            <div className="space-y-2" data-component={fieldBase}>
+                <FieldLabelRow data-component={fieldBase} htmlFor={field} label={label} message={slot} />
+                {renderInput({
+                    ...basicsMessages.bind(field),
+                    error: hasError,
+                    "aria-invalid": hasError ? true : undefined,
+                    "aria-describedby": fieldMessageId(field),
+                })}
+            </div>
+        );
+    };
+
     return (
         <div data-component="mobile_chat_registration-wizard" className="flex flex-col" style={{ minHeight: WIZARD_MIN_HEIGHT_PX }}>
             <div className="mb-4">
@@ -232,57 +275,60 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                 ))}
             </Stepper>
 
-            <div data-component="mobile_chat_registration-wizard_steps" className="flex-1 min-h-0">
+            <div data-component={`${WIZARD_BASE}_steps`} className="flex-1 min-h-0">
                 {/* Step 1: Basic Info */}
                 {activeStep === 0 && (
                     <div className="grid gap-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="name">이름</Label>
+                        {renderBasicsField("name", "이름", (props) => (
                             <Input
                                 id="name"
                                 value={name}
                                 onChange={(e) => setName(e.target.value)}
                                 autoFocus
+                                {...props}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="dueDate">출산 예정일</Label>
+                        ))}
+                        {renderBasicsField("dueDate", "출산 예정일", (props) => (
                             <Input
                                 id="dueDate"
-                                type="date"
                                 value={dueDate}
-                                onChange={(e) => setDueDate(e.target.value)}
+                                onChange={(e) => setDueDate(formatIsoDateInput(e.target.value))}
+                                placeholder="2026-11-20"
+                                inputMode="numeric"
+                                maxLength={10}
+                                {...props}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="phone">연락처</Label>
+                        ))}
+                        {renderBasicsField("phone", "연락처", (props) => (
                             <Input
                                 id="phone"
                                 value={phone}
                                 onChange={(e) => setPhone(formatKoreanPhoneNumber(e.target.value))}
                                 placeholder="010-1234-5678"
+                                inputMode="numeric"
                                 maxLength={13}
+                                {...props}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="birthday">생년월일</Label>
+                        ))}
+                        {renderBasicsField("birthday", "생년월일", (props) => (
                             <Input
                                 id="birthday"
                                 value={birthday}
-                                onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
-                                placeholder="YYYY-MM-DD"
+                                onChange={(e) => setBirthday(formatIsoDateInput(e.target.value))}
+                                placeholder="1958-03-03"
                                 inputMode="numeric"
                                 maxLength={10}
+                                {...props}
                             />
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="address">주소</Label>
+                        ))}
+                        {renderBasicsField("address", "주소", (props) => (
                             <Input
                                 id="address"
                                 value={address}
                                 onChange={(e) => setAddress(e.target.value)}
+                                {...props}
                             />
-                        </div>
+                        ))}
                     </div>
                 )}
 

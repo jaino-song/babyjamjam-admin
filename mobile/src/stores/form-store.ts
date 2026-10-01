@@ -14,6 +14,9 @@ export interface ContractCreationPrefill {
     employeeId?: number | null;
     employeeName?: string;
     employeePhone?: string;
+    employee2Id?: number | null;
+    employee2Name?: string;
+    employee2Phone?: string;
     startDate?: string;
     endDate?: string;
     fullPrice?: string;
@@ -250,11 +253,11 @@ export const useFormStore = create<FormStore>((set) => {
             isEmployeeManualEntry: prefill.employeeId == null,
             employeeName: prefill.employeeName ?? "",
             employeePhone: prefill.employeePhone ?? "",
-            showEmployee2: false,
-            employee2Id: null,
+            showEmployee2: prefill.employee2Id != null,
+            employee2Id: prefill.employee2Id ?? null,
             isEmployee2ManualEntry: false,
-            employee2Name: "",
-            employee2Phone: "",
+            employee2Name: prefill.employee2Id != null ? prefill.employee2Name ?? "" : "",
+            employee2Phone: prefill.employee2Id != null ? prefill.employee2Phone ?? "" : "",
             startDate: prefill.startDate ?? "",
             endDate: prefill.endDate ?? "",
             fullPrice: prefill.fullPrice ?? "",

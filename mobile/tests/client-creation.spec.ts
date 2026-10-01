@@ -187,7 +187,16 @@ test.describe("clients/new wizard", () => {
 
     const primaryButton = page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_actions"] button').nth(1);
 
-    await expect(primaryButton).toBeDisabled();
+    // Nothing is flagged on first load, and the button stays pressable so a
+    // click can reveal what is missing instead of silently doing nothing.
+    await expect(page.locator("#name-message")).toBeEmpty();
+    await expect(primaryButton).toBeEnabled();
+    await primaryButton.click();
+
+    await expect(page.locator("#name-message")).toHaveText("이름을 입력해 주세요");
+    await expect(page.locator("#phone-message")).toHaveText("연락처를 입력해 주세요");
+    await expect(page.locator("#birthday-message")).toHaveText("생년월일을 입력해 주세요");
+    await expect(page.locator("#name")).toBeFocused();
     await expect(page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_header_progress-row_step-count"]')).toHaveText("1 / 3 단계");
     await expect(page.locator('[data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card"]')).toHaveCount(0);
   });
@@ -258,7 +267,7 @@ test.describe("clients/new wizard", () => {
       .toBe(true);
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_assignment"]')).toContainText("제공인력 1에 배정");
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-name"] input')).toHaveValue("김정인");
-    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-birthday"] input')).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-birthday"] input')).toHaveAttribute("placeholder", "1958-03-03");
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveText("등록");
     await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveClass(/btn-press/);
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveClass(/btn-press/);

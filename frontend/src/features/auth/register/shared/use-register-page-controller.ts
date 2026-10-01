@@ -5,6 +5,7 @@ import axios from "axios";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
 import { usePhoneDuplicateCheck } from "@/hooks/usePhoneDuplicateCheck";
 import { AUTH_ROUTES } from "@/lib/auth/routes";
@@ -45,20 +46,6 @@ function isPhoneDuplicateFailure(errorData: unknown, normalized: NormalizedApiEr
   return normalized.verified
     && normalized.problem?.code === "REQUEST_CONFLICT"
     && (normalized.problem.errors ?? []).some((problemError) => problemError.pointer === "/phone");
-}
-
-function formatBirthDateInput(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 8);
-
-  if (digits.length <= 4) {
-    return digits;
-  }
-
-  if (digits.length <= 6) {
-    return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-  }
-
-  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }
 
 function formatPhoneInput(value: string) {
@@ -337,7 +324,7 @@ export function useRegisterPageController() {
   };
 
   const handleBirthDateChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const value = formatBirthDateInput(event.target.value);
+    const value = formatIsoDateInput(event.target.value);
     setFormData((prev) => ({ ...prev, birthDate: value }));
 
     if (errors.birthDate) {

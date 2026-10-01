@@ -71,7 +71,7 @@ describe("ServiceRecordLifecycleService", () => {
             clientId: 1,
             startDate: date("2026-07-02"),
             now: new Date("2026-07-01T01:00:00.000Z"),
-        }), "REQUEST_CONFLICT");
+        }), "SERVICE_RECORD_START_DATE_LOCKED");
     });
 
     it("allows extending the end date without deleting existing sessions", async () => {
@@ -1403,7 +1403,7 @@ describe("ServiceRecordLifecycleService", () => {
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, endDate: date("2026-07-11") }),
-            "REQUEST_CONFLICT",
+            "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
         );
     });
 
@@ -1423,12 +1423,58 @@ describe("ServiceRecordLifecycleService", () => {
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, duration: null }),
-            "REQUEST_CONFLICT",
+            "SERVICE_RECORD_DURATION_REQUIRED",
         );
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, duration: 9 }),
-            "REQUEST_CONFLICT",
+            "SERVICE_RECORD_DURATION_CANNOT_DECREASE",
         );
+    });
+
+    it("rejects clearing the end date once sessions exist", async () => {
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+                    startDate: date("2026-07-01"),
+                    endDate: date("2026-07-20"),
+                    requiredSessionCount: 10,
+                    days: [{ serviceDate: date("2026-07-02"), locked: true }],
+                }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expectConflict(
+            service.validatePeriodChange({ clientId: 1, endDate: null }),
+            "SERVICE_RECORD_END_DATE_REQUIRED",
+        );
+    });
+
+    it("rejects any period change for a finalized service record with its own code", async () => {
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue({
+                    status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                    startDate: date("2026-09-07"),
+                    endDate: date("2026-09-30"),
+                    requiredSessionCount: 15,
+                    days: [],
+                }),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+
+        await expectConflict(
+            service.validatePeriodChange({ clientId: 1, endDate: date("2026-09-29") }),
+            "SERVICE_RECORD_FINALIZED",
+        );
+        await expect(service.validatePeriodChange({
+            clientId: 1,
+            startDate: date("2026-09-07"),
+            endDate: date("2026-09-30"),
+            duration: 15,
+        })).resolves.toBeUndefined();
     });
 
     it("completes four transferred service days while preserving outside rows", async () => {

@@ -15,6 +15,9 @@ export const APP_FORM_CONTROL_CLASS_NAME =
 const FORM_SECTION_SOURCE_COMPONENT = "FormSection";
 const FORM_GRID_SOURCE_COMPONENT = "FormGrid";
 const FORM_FIELD_SOURCE_COMPONENT = "FormField";
+// The label's line box. The label-accessory slot is sized from the same
+// classes (1lh) so an inline message can never change the label row height.
+const FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME = "text-[calc(12px*var(--glint-ui-scale,1))] leading-[1.3]";
 const FORM_TEXT_INPUT_SOURCE_COMPONENT = "FormTextInput";
 const FORM_TEXT_INPUT_WITH_SUFFIX_SOURCE_COMPONENT = "FormTextInputWithSuffix";
 const FORM_HELPER_TEXT_SOURCE_COMPONENT = "FormHelperText";
@@ -135,14 +138,14 @@ function FormField({
     <Label
       data-component={labelDataComponent ?? sub("label")}
       htmlFor={htmlFor}
-      className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </Label>
   ) : (
     <div
       data-component={labelDataComponent ?? sub("label")}
-      className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </div>
@@ -153,7 +156,7 @@ function FormField({
       {...props}
       data-component={dataComponent}
       data-source-component={FORM_FIELD_SOURCE_COMPONENT}
-      className={cn("grid gap-[calc(7px*var(--glint-ui-scale,1))]", className)}
+      className={cn("grid content-start gap-[calc(7px*var(--glint-ui-scale,1))]", className)}
     >
       {labelAccessory ? (
         <div
@@ -163,7 +166,7 @@ function FormField({
           {labelNode}
           <div
             data-component={sub("label-accessory")}
-            className="ml-auto min-w-0 text-right"
+            className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "ml-auto flex h-[1lh] min-w-0 items-center justify-end text-right")}
           >
             {labelAccessory}
           </div>

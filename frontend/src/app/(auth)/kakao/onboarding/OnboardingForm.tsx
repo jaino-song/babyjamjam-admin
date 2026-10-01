@@ -1,14 +1,23 @@
 "use client";
 
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import {
+    resolveFieldMessage,
+    type FieldInputState,
+} from "@babyjamjam/shared/utils/field-validation-message";
 import { AuthPanel } from "@/components/auth/auth-panel";
 import { FormField } from "@/components/auth/form-field";
 import { SelectField } from "@/components/auth/select-field";
 import { Button } from "@/components/ui/button";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import { resolveElevenDigitPhoneMessage, toFieldMessageView, type FieldMessageView } from "@/lib/forms/field-message-text";
+import { t } from "@/lib/i18n/translations";
 import { normalizeKoreanPhoneDigits } from "@/lib/phone";
+import { useLocale } from "@/providers/LocaleProvider";
 import { Alert } from "@/components/ui/alert";
 import { Spinner } from "@/components/ui/spinner";
 import { REGISTERABLE_ROLE_OPTIONS } from "@/lib/constants/roles";
@@ -31,18 +40,18 @@ interface OnboardingFormProps {
     returnPath?: string | null;
 }
 
-function formatBirthDateInput(value: string) {
-    const digits = value.replace(/\D/g, "").slice(0, 8);
+type OnboardingInputField = "phone" | "birthDate";
 
-    if (digits.length <= 4) {
-        return digits;
-    }
+const ONBOARDING_FIELD_LABELS: Record<OnboardingInputField, string> = {
+    phone: "전화번호",
+    birthDate: "생년월일",
+};
 
-    if (digits.length <= 6) {
-        return `${digits.slice(0, 4)}-${digits.slice(4)}`;
-    }
-
-    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
+/** The same rule the onboarding schema applies: a birth date must be in the past. */
+function isFutureBirthDate(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.getTime() >= Date.now();
 }
 
 function formatPhoneInput(value: string) {
@@ -95,15 +104,53 @@ export function OnboardingForm({
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [serverError, setServerError] = useState<string | null>(null);
     const [isPending, startTransition] = useTransition();
+    const locale = useLocale();
+    const fields = useFieldInputStates<OnboardingInputField>();
+    const formRef = useRef<HTMLFormElement>(null);
+    const [rejectedSubmitCount, setRejectedSubmitCount] = useState(0);
+    // Kakao prefills may already hold a value, so clearing one reports "required".
+    const [prefilledFields] = useState<ReadonlySet<OnboardingInputField>>(
+        () => new Set<OnboardingInputField>([
+            ...(phone ? (["phone"] as const) : []),
+            ...(birthDate ? (["birthDate"] as const) : []),
+        ]),
+    );
 
-    const isDisabled = useMemo(() => {
-        const result = kakaoOnboardingSchema.safeParse(formData);
-        return !result.success || isPending;
-    }, [formData, isPending]);
+    /** The one message a field shows in its label-row slot; a schema complaint is the last resort. */
+    const resolveInputMessage = (field: OnboardingInputField): FieldMessageView | null => {
+        const value = formData[field] ?? "";
+        const tracked = fields.stateOf(field, value);
+        const state: FieldInputState = {
+            ...tracked,
+            hadValue: tracked.hadValue || prefilledFields.has(field),
+        };
+        const opts = { required: true, submitted: fields.submitted };
+        const message = toFieldMessageView(
+            locale,
+            field === "phone"
+                ? resolveElevenDigitPhoneMessage(state, opts)
+                : resolveFieldMessage("date", state, opts),
+            ONBOARDING_FIELD_LABELS[field],
+        );
+        if (message) return message;
+        if (field === "birthDate" && isFutureBirthDate(value)) {
+            return { tone: "error", text: t(locale, "form.validation.birthday-future") };
+        }
+        return errors[field] ? { tone: "error", text: errors[field] } : null;
+    };
+    const phoneMessage = resolveInputMessage("phone");
+    const birthDateMessage = resolveInputMessage("birthDate");
+
+    // After a refused submit, move focus to the first field that now shows an error.
+    useEffect(() => {
+        if (rejectedSubmitCount === 0) return;
+        formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }, [rejectedSubmitCount]);
 
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         setServerError(null);
+        fields.setSubmitted(true);
 
         const result = kakaoOnboardingSchema.safeParse(formData);
         if (!result.success) {
@@ -115,6 +162,7 @@ export function OnboardingForm({
                 }
             });
             setErrors(nextErrors);
+            setRejectedSubmitCount((count) => count + 1);
             return;
         }
 
@@ -135,9 +183,12 @@ export function OnboardingForm({
         const value = field === "phone"
             ? formatPhoneInput(event.target.value)
             : field === "birthDate"
-                ? formatBirthDateInput(event.target.value)
+                ? formatIsoDateInput(event.target.value)
                 : event.target.value;
 
+        if (field === "phone" || field === "birthDate") {
+            fields.onChange(field, formData[field] ?? "", value);
+        }
         setFormData((prev) => ({ ...prev, [field]: value }));
         setErrors((prev) => {
             const next = { ...prev };
@@ -181,7 +232,7 @@ export function OnboardingForm({
                 </div>
             )}
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-[14px]" data-component="desktop_auth_kakao-onboarding_form">
+            <form ref={formRef} onSubmit={handleSubmit} className="flex flex-col gap-[14px]" data-component="desktop_auth_kakao-onboarding_form">
                 <FormField
                     label="이메일"
                     type="email"
@@ -205,7 +256,8 @@ export function OnboardingForm({
                     type="tel"
                     value={formData.phone}
                     onChange={handleFieldChange("phone")}
-                    error={errors.phone}
+                    message={phoneMessage}
+                    {...fields.focusProps("phone", formData.phone ?? "")}
                     inputMode="numeric"
                     maxLength={20}
                     placeholder="010-1234-5678"
@@ -217,10 +269,11 @@ export function OnboardingForm({
                     type="text"
                     value={formData.birthDate}
                     onChange={handleFieldChange("birthDate")}
-                    error={errors.birthDate}
+                    message={birthDateMessage}
+                    {...fields.focusProps("birthDate", formData.birthDate ?? "")}
                     inputMode="numeric"
                     maxLength={10}
-                    placeholder="1990-01-01"
+                    placeholder="1958-03-03"
                     disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_birthdate-field"
                 />
@@ -231,6 +284,7 @@ export function OnboardingForm({
                     options={REGISTERABLE_ROLE_OPTIONS}
                     placeholder="요청할 권한을 선택해주세요"
                     error={errors.role}
+                    errorDisplay="inline"
                     disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_role-field"
                 />
@@ -240,7 +294,7 @@ export function OnboardingForm({
                     variant="positive"
                     size="md"
                     className={PRIMARY_BUTTON_CLASS_NAME}
-                    disabled={isDisabled}
+                    disabled={isPending}
                     data-component="desktop_auth_kakao-onboarding_form_submit-btn"
                 >
                     {isPending ? <Spinner size="sm" /> : (

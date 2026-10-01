@@ -1,3 +1,4 @@
+import { formatIsoDateInput } from "./date-input";
 /** 기존 6자리와 YYYY-MM-DD 생년월일을 네 자리 연도로 표시한다. */
 export declare function formatBirthdayYYMMDD(raw: string): string;
 /**
@@ -12,4 +13,4 @@ export declare function normalizeBirthdayIsoDate(raw: string | null | undefined,
 /** 신규 생년월일은 세기를 추측하지 않는 YYYY-MM-DD 형식만 허용한다. */
 export declare function isValidBirthdayIsoDate(raw: string, now?: Date): boolean;
 /** 입력 중에는 일부 값도 유지하고, 여덟 자리 숫자에 날짜 구분자를 붙인다. */
-export declare function formatBirthdayInput(value: string): string;
+export declare const formatBirthdayInput: typeof formatIsoDateInput;

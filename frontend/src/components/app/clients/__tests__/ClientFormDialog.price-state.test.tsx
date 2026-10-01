@@ -307,10 +307,10 @@ describe("ClientFormPanel voucher pricing", () => {
 
     const startDateInput = screen.getByLabelText("시작일");
     const endDateInput = screen.getByLabelText("종료일");
-    expect(startDateInput).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    expect(startDateInput).toHaveAttribute("placeholder", "2026-12-01");
     expect(startDateInput).toHaveAttribute("maxLength", "10");
     expect(startDateInput).toHaveValue("2026-08-01");
-    expect(endDateInput).toHaveAttribute("placeholder", "YYYY-MM-DD");
+    expect(endDateInput).toHaveAttribute("placeholder", "2026-12-19");
     expect(endDateInput).toHaveAttribute("maxLength", "10");
     expect(endDateInput).toHaveValue("2026-08-05");
     expect(endDateInput).not.toHaveAttribute("readonly");

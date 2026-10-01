@@ -350,10 +350,10 @@ async function fillVoucherStep(page: Page) {
 }
 
 async function fillContractDates(page: Page, values: { startDate: string; endDate: string; paymentDate: string }) {
-  const dateInputs = page.getByPlaceholder("YYYY-MM-DD");
-  await dateInputs.nth(0).fill(values.startDate);
-  await dateInputs.nth(1).fill(values.endDate);
-  await dateInputs.nth(2).fill(values.paymentDate);
+  // Dates are typed as YYYY-MM-DD (auto-hyphenated text inputs with example placeholders).
+  await page.locator('[data-component="desktop_contracts_creation_form_start-date-input"]').fill(values.startDate);
+  await page.locator('[data-component="desktop_contracts_creation_form_end-date-input"]').fill(values.endDate);
+  await page.locator('[data-component="desktop_contracts_creation_form_payment-date-input"]').fill(values.paymentDate);
 }
 
 async function completeContractWizard(page: Page) {
@@ -882,7 +882,13 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.locator('[data-component="desktop_messages_sections_contract-form-error"]')).toContainText(
       "Request failed with status code 500"
     );
-    await expect(page.getByPlaceholder("YYYY-MM-DD")).toHaveCount(3);
+    await expect(page.locator(
+      [
+        '[data-component="desktop_contracts_creation_form_start-date-input"]',
+        '[data-component="desktop_contracts_creation_form_end-date-input"]',
+        '[data-component="desktop_contracts_creation_form_payment-date-input"]',
+      ].join(", ")
+    )).toHaveCount(3);
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
     await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
     const sdkCallCount = await page.evaluate(
