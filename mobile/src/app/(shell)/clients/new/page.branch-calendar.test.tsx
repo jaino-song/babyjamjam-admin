@@ -155,6 +155,15 @@ function renderCreate() {
   return view;
 }
 
+// Calls the element's React onClick directly, so the test reaches the handler even though the
+// (disabled) button would swallow a real click.
+function invokeReactClick(element: HTMLElement): void {
+  const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
+  const onClick = (element as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+  if (!onClick) throw new Error("element has no React onClick");
+  act(() => onClick());
+}
+
 const publicEnd = (start: string) => KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(start, 15);
 const branchEnd = (start: string) => BRANCH_CALENDAR.calcEndDateBusinessDays(start, 15);
 
@@ -295,5 +304,30 @@ describe("mobile client wizard on the branch holiday calendar", () => {
     expect(useClientWizardStore.getState().endDate).toBe("2028-01-12");
     expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "등록" })).toBeEnabled();
+  });
+
+  it("keeps the submit handler itself closed for an unsupported year, even with an end date present", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    renderCreate();
+    act(() => {
+      useClientWizardStore.setState({ startDate: "2027-11-01", endDate: "2027-11-19" });
+    });
+    fireEvent.change(screen.getByDisplayValue("2027-11-01"), { target: { value: "2027-12-15" } });
+    await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+    // A complete end date that did not come from the end-date input keeps the unsupported flag set.
+    act(() => {
+      useClientWizardStore.setState({ endDate: "2028-01-12" });
+    });
+    const register = screen.getByRole("button", { name: "등록" });
+    expect(register).toBeDisabled();
+
+    // The button is disabled, so a real click never reaches the handler; call it directly.
+    invokeReactClick(register);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument();
   });
 });

@@ -2,7 +2,7 @@ import { PROBLEM_CATALOG } from "@babyjamjam/shared";
 
 import type { HolidayReviewEvent } from "@/services/holiday-review";
 
-import { describeReviewEvent, describeSkipCode, formatMonthDay } from "./review-format";
+import { describeReviewEvent, describeSkipCode, formatMonthDay, reviewSourceLabel } from "./review-format";
 
 const BASE: HolidayReviewEvent = {
   id: "evt-1",
@@ -28,9 +28,16 @@ describe("review-format", () => {
   });
 
   it("words branch-override events without the name", () => {
-    const override = { ...BASE, source: "branch-override" as const };
+    const override = { ...BASE, source: "branch" as const, name: null };
     expect(describeReviewEvent(override)).toBe("10/5 이 지점 공휴일로 지정");
     expect(describeReviewEvent({ ...override, change: "removed" })).toBe("10/5 이 지점 공휴일에서 빠짐");
+  });
+
+  it("treats any non-public source as branch-sourced", () => {
+    const unknown = { ...BASE, source: "something-else" as unknown as HolidayReviewEvent["source"] };
+    expect(describeReviewEvent(unknown)).toBe("10/5 이 지점 공휴일로 지정");
+    expect(reviewSourceLabel(unknown)).toBe("지점 설정");
+    expect(reviewSourceLabel(BASE)).toBe("공공데이터");
   });
 
   it.each([
@@ -41,8 +48,19 @@ describe("review-format", () => {
     "ALREADY_MATCHES",
     "NO_LONGER_SAFE",
     "UPDATE_FAILED",
+    "RECALCULATED_CHANGED",
   ])("maps skip code %s to a specific Korean reason", (code) => {
     expect(describeSkipCode(code)).not.toBe("수정하지 못했어요");
+  });
+
+  it("tells the user a refreshed end date needs another look", () => {
+    expect(describeSkipCode("RECALCULATED_CHANGED")).toBe("새 종료일이 다시 계산됐어요. 목록에서 확인해 주세요.");
+  });
+
+  it("tells the user to check the list when a later chunk's request failed", () => {
+    expect(describeSkipCode("REQUEST_FAILED")).toBe(
+      "응답이 늦어 결과를 확인하지 못했어요. 목록을 새로고침해 확인해 주세요",
+    );
   });
 
   it("uses the problem catalog title for backend problem codes and a generic line otherwise", () => {

@@ -103,7 +103,7 @@ describe("HolidayReviewCards", () => {
   });
 
   it("words a branch-override event without a public name", async () => {
-    api.listEvents.mockResolvedValue([{ ...EVENT, source: "branch-override", change: "removed", name: null }]);
+    api.listEvents.mockResolvedValue([{ ...EVENT, source: "branch", change: "removed", name: null }]);
     renderCards();
 
     expect(await screen.findByText("10/5 이 지점 공휴일에서 빠짐")).toBeInTheDocument();
@@ -313,6 +313,93 @@ describe("HolidayReviewCards", () => {
         expect(invalidate).toHaveBeenCalledWith({ queryKey: clientKeys.all });
         expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardQueryKeys.overviewAll() });
       });
+    });
+
+    it("shows an indeterminate header checkbox when only some visible rows are selected", async () => {
+      const { dialog } = await openDialog();
+      const header = within(dialog).getByRole("checkbox", { name: "보이는 고객 모두 선택" });
+      expect(header).toHaveAttribute("aria-checked", "false");
+
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "김하늘 선택" }));
+      expect(header).toHaveAttribute("aria-checked", "mixed");
+
+      fireEvent.click(header);
+      expect(header).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("caps the name search at the backend's 100 characters", async () => {
+      const { dialog } = await openDialog();
+
+      expect(within(dialog).getByLabelText("고객 이름 검색")).toHaveAttribute("maxlength", "100");
+    });
+
+    it("never leaves a tab pointing at a missing panel", async () => {
+      const { dialog } = await openDialog();
+
+      for (const tab of within(dialog).getAllByRole("tab")) {
+        const panelId = tab.getAttribute("aria-controls");
+        expect(panelId).toBeTruthy();
+        expect(document.getElementById(panelId as string)).not.toBeNull();
+      }
+    });
+
+    it("keeps the dialog and the skipped reasons after the last open rows disappear from the events", async () => {
+      api.resolve.mockResolvedValue({
+        fixed: 1,
+        kept: 0,
+        skipped: [{ itemId: "i-2", code: "CLIENT_CHANGED" }],
+      });
+      const { dialog } = await openDialog();
+      // The backend closed every open row, so the refetched events no longer include this one.
+      api.listEvents.mockResolvedValue([]);
+
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "김하늘 선택" }));
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "이서연 선택" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "선택 고객 종료일 수정" }));
+
+      expect(await within(dialog).findByText("1명 수정했어요")).toBeInTheDocument();
+      await waitFor(() => expect(api.listEvents).toHaveBeenCalledTimes(2));
+      await waitFor(() =>
+        expect(document.querySelector("[data-slot='holiday-review-panel']")).not.toBeInTheDocument(),
+      );
+
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(within(dialog).getByText("1명은 수정하지 못했어요")).toBeInTheDocument();
+      expect(within(dialog).getByText(/그 사이 고객 정보나 종료일이 바뀌었어요/)).toBeInTheDocument();
+      expect(within(dialog).getByText("10/5 대체공휴일(개천절) 추가 · 남은 고객 0명")).toBeInTheDocument();
+
+      fireEvent.keyDown(dialog, { key: "Escape" });
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(document.querySelector("[data-slot='holiday-review-cards']")).toBeEmptyDOMElement();
+    });
+
+    it("refetches the open rows after a RECALCULATED_CHANGED skip so the refreshed new end date shows", async () => {
+      api.resolve.mockResolvedValue({
+        fixed: 1,
+        kept: 0,
+        skipped: [{ itemId: "i-2", code: "RECALCULATED_CHANGED" }],
+      });
+      const { dialog } = await openDialog();
+      const secondRow = within(dialog).getByText("이서연").closest("tr") as HTMLElement;
+      expect(within(secondRow).getByText("2026-10-13")).toBeInTheDocument();
+      const listCallsBefore = api.listItems.mock.calls.length;
+      // The backend refreshed the item's recomputed end date while skipping it.
+      api.listItems.mockResolvedValue([
+        item("i-2", "이서연", "safe"),
+        item("i-3", "박지은", "risk"),
+      ].map((row) => (row.id === "i-2" ? { ...row, recalculatedEnd: "2026-10-14" } : row)));
+
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "김하늘 선택" }));
+      fireEvent.click(within(dialog).getByRole("checkbox", { name: "이서연 선택" }));
+      fireEvent.click(within(dialog).getByRole("button", { name: "선택 고객 종료일 수정" }));
+
+      expect(
+        await within(dialog).findByText(/새 종료일이 다시 계산됐어요. 목록에서 확인해 주세요./),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(api.listItems.mock.calls.length).toBeGreaterThan(listCallsBefore));
+      const refreshedRow = (await within(dialog).findByText("2026-10-14")).closest("tr") as HTMLElement;
+      expect(within(refreshedRow).getByText("이서연")).toBeInTheDocument();
     });
 
     it("shows an empty state when a filter matches nobody", async () => {

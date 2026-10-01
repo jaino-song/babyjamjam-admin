@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { holidayReviewApi, holidayReviewKeys } from "@/services/holiday-review";
+import { holidayReviewApi, holidayReviewKeys, type HolidayReviewEvent } from "@/services/holiday-review";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import { HolidayReviewConfirmDialog } from "./HolidayReviewConfirmDialog";
@@ -34,7 +34,9 @@ interface LastResult {
 export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
   const { toast } = useToast();
   const [confirmEventId, setConfirmEventId] = useState<string | null>(null);
-  const [listEventId, setListEventId] = useState<string | null>(null);
+  // Snapshot taken when the list opens: the dialog (and its result notice) must outlive the refetch that
+  // drops the event once its last open items are resolved, until the user closes it.
+  const [openedEvent, setOpenedEvent] = useState<HolidayReviewEvent | null>(null);
   const [lastResult, setLastResult] = useState<LastResult | null>(null);
 
   const eventsQuery = useQuery({
@@ -45,7 +47,8 @@ export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
 
   const events = eventsQuery.data ?? [];
   const confirmEvent = events.find((event) => event.id === confirmEventId) ?? null;
-  const listEvent = events.find((event) => event.id === listEventId) ?? null;
+  const liveOpenedEvent = openedEvent ? events.find((event) => event.id === openedEvent.id) : undefined;
+  const listEvent = openedEvent ? (liveOpenedEvent ?? { ...openedEvent, safeOpen: 0, riskOpen: 0 }) : null;
   const fixingEventId = resolve.isPending ? (resolve.variables?.eventId ?? null) : null;
 
   function fixSafe(eventId: string, label: string) {
@@ -98,7 +101,7 @@ export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
               fixing={fixingEventId === event.id}
               disabled={resolve.isPending}
               dataComponent={`${DATA_COMPONENT}_event`}
-              onOpenList={() => setListEventId(event.id)}
+              onOpenList={() => setOpenedEvent(event)}
               onFixSafe={() => setConfirmEventId(event.id)}
             />
           ))}
@@ -136,7 +139,7 @@ export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
           branchId={branchId}
           event={listEvent}
           dataComponent={`${DATA_COMPONENT}_list-dialog`}
-          onClose={() => setListEventId(null)}
+          onClose={() => setOpenedEvent(null)}
         />
       ) : null}
     </div>

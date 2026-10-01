@@ -66,4 +66,20 @@ describe("holidayReviewApi", () => {
     expect(result.skipped).toHaveLength(10);
     expect(result.skipped[0]).toEqual({ itemId: "i-50", code: "REQUEST_FAILED" });
   });
+
+  it("stops after a failed middle chunk: no third request, the remaining ids are reported once", async () => {
+    mockPost
+      .mockResolvedValueOnce({ data: { fixed: 50, kept: 0, skipped: [] } })
+      .mockRejectedValueOnce(new Error("timeout"));
+
+    const result = await holidayReviewApi.resolve("b1", "e1", ids(120), "fix");
+
+    expect(mockPost).toHaveBeenCalledTimes(2);
+    expect(result.fixed).toBe(50);
+    expect(result.skipped).toHaveLength(70);
+    expect(result.skipped.every((skip) => skip.code === "REQUEST_FAILED")).toBe(true);
+    expect(new Set(result.skipped.map((skip) => skip.itemId)).size).toBe(70);
+    expect(result.skipped[0].itemId).toBe("i-50");
+    expect(result.skipped[69].itemId).toBe("i-119");
+  });
 });

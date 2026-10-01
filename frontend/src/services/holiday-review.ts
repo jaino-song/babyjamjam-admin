@@ -1,7 +1,8 @@
 import { api } from "@/lib/api/client";
 
 export type HolidayReviewChange = "added" | "removed";
-export type HolidayReviewSource = "kasi" | "branch-override";
+/** "kasi" = public data; "branch" = this branch's own override (what the backend writes). */
+export type HolidayReviewSource = "kasi" | "branch";
 export type HolidayReviewCategory = "safe" | "risk";
 export type HolidayReviewItemStatus = "open" | "fixed" | "kept" | "obsolete";
 export type HolidayReviewResolveAction = "fix" | "keep";
