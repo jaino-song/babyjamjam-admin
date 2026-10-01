@@ -589,6 +589,32 @@ export class ServiceRecordEntryService {
                     where: { id: schedule.clientId, branchId: ctx.branchId },
                     data: { endDate: newEndDate },
                 });
+                // The client's end date just moved, so its open holiday review
+                // item (at most one per client) no longer describes the stored
+                // end date. Close it in this same transaction so the review
+                // card stays accurate: "fixed" when the auto-extend landed on
+                // the date the review recommended (resolvedBy stays null: the
+                // system did it), otherwise "obsolete" because the item's
+                // recommendation is now stale. branchId is pinned for tenant
+                // isolation; the item id never leaves the transaction.
+                const openReviewItem = await tx.end_date_review_item.findFirst({
+                    where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
+                    select: { id: true, recalculatedEnd: true },
+                });
+                if (openReviewItem) {
+                    await tx.end_date_review_item.updateMany({
+                        where: {
+                            id: openReviewItem.id,
+                            clientId: schedule.clientId,
+                            branchId: ctx.branchId,
+                            status: "open",
+                        },
+                        data: {
+                            status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
+                            resolvedAt: new Date(),
+                        },
+                    });
+                }
                 await this.lifecycleService.ensureForClient(schedule.clientId, tx);
                 await this.tokenService.extendExpiryForCase(
                     record.id,
