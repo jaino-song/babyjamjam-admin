@@ -95,6 +95,8 @@ function createHarness(options: {
     ensureForClient?: jest.Mock;
     extendExpiryForCase?: jest.Mock;
     holidayCalendar?: HolidayCalendarService;
+    /** The client's open end_date_review_item, if any (what the auto-extend sees inside the tx). */
+    openReviewItem?: { id: string; recalculatedEnd: Date } | null;
 } = {}) {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
@@ -126,6 +128,8 @@ function createHarness(options: {
         if (data.endDate !== undefined) pendingEndDate = data.endDate;
         return Promise.resolve({});
     });
+    const reviewItemFindFirst = jest.fn().mockResolvedValue(options.openReviewItem ?? null);
+    const reviewItemUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const caseFindUnique = jest.fn().mockImplementation(() =>
         Promise.resolve({ ...transactionRecord, endDate: visibleEndDate }));
     const ensureForClientInner = options.ensureForClient ?? jest.fn().mockResolvedValue(null);
@@ -145,6 +149,10 @@ function createHarness(options: {
         },
         client: {
             update: clientUpdate,
+        },
+        end_date_review_item: {
+            findFirst: reviewItemFindFirst,
+            updateMany: reviewItemUpdateMany,
         },
         service_record_day: {
             findUnique: jest.fn().mockResolvedValue(existing),
@@ -182,6 +190,8 @@ function createHarness(options: {
         tokenService,
         scheduleUpdate,
         clientUpdate,
+        reviewItemFindFirst,
+        reviewItemUpdateMany,
     };
 }
 
@@ -1517,6 +1527,95 @@ describe("ServiceRecordEntryService branch calendar", () => {
         expect(branch.scheduleUpdate).toHaveBeenCalledWith({
             where: { id: 10, branchId: BRANCH_ID },
             data: { endDate: new Date("2026-07-07T00:00:00.000Z") },
+        });
+    });
+
+    describe("auto-extend closes the client's open holiday review item", () => {
+        // Case 2026-09-07..2026-09-29, N = 15 (추석 closes 09-24 and 09-25). The branch then adds
+        // 09-14, so saving session 1 on 09-07 needs end date 09-30 (a business day) instead of 09-29.
+        const record = () => createRecord({
+            requiredSessionCount: 15,
+            startDate: new Date("2026-09-07T00:00:00.000Z"),
+            endDate: new Date("2026-09-29T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+        const schedule = {
+            id: 10,
+            clientId: 100,
+            primaryEmployeeId: 20,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-09-07T00:00:00.000Z"),
+            endDate: new Date("2026-09-29T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "제공자" },
+        };
+        const save = (harness: ReturnType<typeof createHarness>, serviceDate = "2026-09-07T00:00:00.000Z") =>
+            harness.service.upsertSession(context, 1, createDto({ serviceDate }), false);
+        const harnessWith = (openReviewItem: { id: string; recalculatedEnd: Date } | null) => createHarness({
+            existing: null,
+            transactionRecord: record(),
+            schedule,
+            holidayCalendar: branchHolidayCalendar("2026-09-14"),
+            openReviewItem,
+        });
+
+        it("marks the item fixed when the extended end date is the one the review recommended", async () => {
+            const harness = harnessWith({ id: "item-1", recalculatedEnd: new Date("2026-09-30T00:00:00.000Z") });
+
+            await save(harness);
+
+            expect(harness.scheduleUpdate).toHaveBeenCalledWith({
+                where: { id: 10, branchId: BRANCH_ID },
+                data: { endDate: new Date("2026-09-30T00:00:00.000Z") },
+            });
+            expect(harness.reviewItemFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+                where: { clientId: 100, branchId: BRANCH_ID, status: "open" },
+            }));
+            expect(harness.reviewItemUpdateMany).toHaveBeenCalledTimes(1);
+            expect(harness.reviewItemUpdateMany).toHaveBeenCalledWith({
+                where: { id: "item-1", clientId: 100, branchId: BRANCH_ID, status: "open" },
+                data: { status: "fixed", resolvedAt: expect.any(Date) },
+            });
+            // System resolution: resolvedBy is never written.
+            expect(harness.reviewItemUpdateMany.mock.calls[0]![0].data).not.toHaveProperty("resolvedBy");
+            // Same transaction: the harness hands the callback its one tx client, and the write ran on it.
+            expect(harness.prisma.$transaction).toHaveBeenCalledTimes(1);
+        });
+
+        it("marks the item obsolete when the extended end date differs from the recommendation", async () => {
+            const harness = harnessWith({ id: "item-2", recalculatedEnd: new Date("2026-09-29T00:00:00.000Z") });
+
+            await save(harness);
+
+            expect(harness.reviewItemUpdateMany).toHaveBeenCalledWith({
+                where: { id: "item-2", clientId: 100, branchId: BRANCH_ID, status: "open" },
+                data: { status: "obsolete", resolvedAt: expect.any(Date) },
+            });
+        });
+
+        it("writes no review item when the client has no open one", async () => {
+            const harness = harnessWith(null);
+
+            await save(harness);
+
+            expect(harness.scheduleUpdate).toHaveBeenCalled();
+            expect(harness.reviewItemFindFirst).toHaveBeenCalled();
+            expect(harness.reviewItemUpdateMany).not.toHaveBeenCalled();
+        });
+
+        it("leaves the review item alone when no auto-extend is needed", async () => {
+            const harness = createHarness({
+                existing: null,
+                transactionRecord: record(),
+                schedule,
+                openReviewItem: { id: "item-3", recalculatedEnd: new Date("2026-09-30T00:00:00.000Z") },
+            });
+
+            await save(harness);
+
+            expect(harness.scheduleUpdate).not.toHaveBeenCalled();
+            expect(harness.reviewItemFindFirst).not.toHaveBeenCalled();
+            expect(harness.reviewItemUpdateMany).not.toHaveBeenCalled();
         });
     });
 
