@@ -64,7 +64,12 @@ export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
   }
 
   return (
-    <div data-component={SOURCE_COMPONENT} data-slot="holiday-review-cards" className="grid gap-3">
+    <div
+      data-component={`${DATA_COMPONENT}-cards`}
+      data-source-component={SOURCE_COMPONENT}
+      data-slot="holiday-review-cards"
+      className="grid gap-3"
+    >
       {eventsQuery.isError && events.length === 0 ? (
         <p
           data-component={`${DATA_COMPONENT}_load-error`}

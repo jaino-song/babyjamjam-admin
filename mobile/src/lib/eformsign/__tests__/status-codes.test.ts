@@ -2,6 +2,7 @@ import {
   getStatusCategory,
   getStatusColor,
   isDeletedStatusCode,
+  isReceiptSendableOnCalendar,
   mapDocStatusLabel,
   mapStatusToLabel,
   normalizeStatusCode,
@@ -106,6 +107,25 @@ describe("eformsign status code helpers", () => {
       });
 
       expect(mapDocStatusLabel(providerReviewStep, "2025-07-14", null, branchCalendar)).toBe("검토 필요");
+    });
+
+    it("gates the receipt action on the built-in list for an end date the branch calendar did not load", () => {
+      const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026)], {
+        version: "kr-db-test",
+        supportedYears: [2026],
+      });
+      const params = {
+        displayStatus: null,
+        category: "in-progress" as const,
+        currentStatus: providerReviewStep,
+        contractEndDate: "2024-12-20",
+      };
+
+      expect(() => isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).not.toThrow();
+      expect(isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).toBe(
+        isReceiptSendableOnCalendar({ ...params, calendar: KR_BUILTIN_CALENDAR }),
+      );
+      expect(isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).toBe(true);
     });
   });
 });

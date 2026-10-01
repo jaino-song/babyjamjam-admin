@@ -54,12 +54,12 @@ import {
   isContractReviewWindowOpen,
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
+  isReceiptSendableOnCalendar,
   mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
   isContractDocDisplayStatus,
-  isContractReceiptSendable,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
   UNKNOWN_CUSTOMER_NAME,
@@ -1564,9 +1564,9 @@ function ContractDetailContent({
                   // to send, so the action is gated to contracts only (isServiceRecord).
                   // It is also gated to customer-signed documents: the backend rejects
                   // sends until 서명 완료 (contract_not_signed), so hide the button instead
-                  // of surfacing the error (shared isContractReceiptSendable rule).
+                  // of surfacing the error (shared isContractReceiptSendable rule, via isReceiptSendableOnCalendar).
                   ...(isServiceRecord ||
-                  !isContractReceiptSendable({
+                  !isReceiptSendableOnCalendar({
                     displayStatus: doc.display_status,
                     category: getStatusCategory(doc.current_status?.status_type),
                     currentStatus: doc.current_status,

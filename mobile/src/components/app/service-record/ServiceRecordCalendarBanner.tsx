@@ -16,7 +16,9 @@ interface ServiceRecordCalendarBannerProps {
  * Bottom banner for the public service-record page while its branch holiday
  * calendar is loading or failed to load. Saved date computations wait for the
  * calendar, so the caregiver needs a visible reason (and a retry) outside the
- * date field itself.
+ * date field itself. It is sticky, not fixed: it takes its own space after the
+ * page content, so it never covers the page bottom (the last buttons stay
+ * reachable), and it clears the home-indicator safe area.
  */
 export function ServiceRecordCalendarBanner({
     "data-component": dataComponent,
@@ -26,7 +28,7 @@ export function ServiceRecordCalendarBanner({
 }: ServiceRecordCalendarBannerProps) {
     return (
         <div
-            className="fixed inset-x-0 bottom-0 z-40 flex justify-center border-t bg-background/95 px-4 py-3"
+            className="sticky inset-x-0 bottom-0 z-40 flex justify-center border-t bg-background/95 px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
             data-component={dataComponent}
             data-source-component={SOURCE_COMPONENT}
         >
