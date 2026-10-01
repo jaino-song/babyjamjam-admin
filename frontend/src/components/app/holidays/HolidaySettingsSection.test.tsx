@@ -26,6 +26,15 @@ jest.mock("@/services/holiday-settings", () => ({
   },
 }));
 
+jest.mock("@/services/holiday-review", () => ({
+  ...jest.requireActual("@/services/holiday-review"),
+  holidayReviewApi: {
+    listEvents: jest.fn().mockResolvedValue([]),
+    listItems: jest.fn().mockResolvedValue([]),
+    resolve: jest.fn(),
+  },
+}));
+
 const api = holidaySettingsApi as jest.Mocked<typeof holidaySettingsApi>;
 
 const YEAR_2026: BranchHolidayYear = {
