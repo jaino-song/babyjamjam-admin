@@ -5,6 +5,7 @@ import { EmployeeAgentCapabilitiesProvider } from "application/usecases/employee
 import { VoucherAgentCapabilitiesProvider } from "application/usecases/voucher-price-info/voucher-agent-capabilities.provider";
 import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-account-info/bank-account-agent-capabilities.provider";
 import { EformsignAgentCapabilitiesProvider } from "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const context = {
     principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
@@ -141,7 +142,7 @@ describe("Release A domain read capabilities", () => {
             stepRecipientType: "05", stepRecipientName: "이용자", stepRecipientSms: "010-0000-0000", expiredDate: new Date("2026-12-01T00:00:00Z"), expired: false, clientId: 10,
         });
         const find = { execute: jest.fn().mockResolvedValue([active, deleted]) };
-        const provider = new EformsignAgentCapabilitiesProvider(find as never);
+        const provider = new EformsignAgentCapabilitiesProvider(find as never, createHolidayCalendarStub());
         const output = await provider.getCapabilities()[0]!.execute(context, { clientId: 10 });
         expect(output).toMatchObject({ documents: [{ documentId: "doc-active", status: "completed" }] });
         expect(find.execute).toHaveBeenCalledWith("branch-a", 10);
@@ -172,7 +173,7 @@ describe("Release A domain read capabilities", () => {
                 updatedDate: new Date("2026-09-20T00:00:00.000Z"), expired: false,
             }]),
         };
-        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, findRecentContracts as never);
+        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, createHolidayCalendarStub(), findRecentContracts as never);
         const capability = provider.getCapabilities().find(({ meta }) => meta.name === "contracts.recent")!;
 
         const output = await capability.execute(context, {}) as { documents: Array<Record<string, unknown>> };

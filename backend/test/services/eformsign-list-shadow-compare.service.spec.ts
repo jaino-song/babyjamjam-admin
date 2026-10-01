@@ -9,6 +9,7 @@ import {
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
 import { eformsignListDocFromMirror } from "application/utils/eformsign-list-doc-from-mirror";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 function createConfigService(enabled: string | undefined): ConfigService {
     return {
@@ -114,7 +115,7 @@ describe("EformsignListShadowCompareService", () => {
         // serves from. Stubbing it would leave them asserting on nothing.
         return new EformsignListShadowCompareService(
             createConfigService(enabled),
-            new EformsignMirrorListService(repository as never),
+            new EformsignMirrorListService(repository as never, createHolidayCalendarStub()),
         );
     }
 

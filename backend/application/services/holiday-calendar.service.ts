@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { Inject, Injectable } from "@nestjs/common";
 
 import {
@@ -73,6 +75,18 @@ const BUILTIN_YEARS: readonly number[] = Object.keys(KOREAN_HOLIDAY_CALENDAR).ma
 
 function yearOf(iso: string): number {
     return Number(iso.slice(0, 4));
+}
+
+/**
+ * Content fingerprint of one branch's effective calendar. It must not follow the
+ * global revision: `calendarVersion` is hashed into the service-record edit
+ * `previewId` and compared at confirm, so a revision-based version would stale
+ * every branch's open previews whenever any branch edited its calendar.
+ */
+function calendarVersion(supportedYears: ReadonlySet<number>, sortedHolidays: readonly string[]): string {
+    const years = [...supportedYears].sort((a, b) => a - b);
+    const digest = createHash("sha256").update(JSON.stringify({ years, holidays: sortedHolidays })).digest("hex");
+    return `kr-db-${digest.slice(0, 12)}`;
 }
 
 /**
@@ -250,8 +264,9 @@ export class HolidayCalendarService {
 
         // Always explicit: a branch add must never make an otherwise unsupported year supported.
         const supportedYears = new Set<number>([...snapshotValidatedAt.keys(), ...BUILTIN_YEARS]);
-        const calendar = createKrBusinessDayCalendar([...holidays].sort(), {
-            version: `kr-db-r${revision}-b${branchId.slice(0, 8)}`,
+        const sortedHolidays = [...holidays].sort();
+        const calendar = createKrBusinessDayCalendar(sortedHolidays, {
+            version: calendarVersion(supportedYears, sortedHolidays),
             supportedYears,
         });
 

@@ -3,6 +3,7 @@ import { clientCodeOnlyProblemBody, clientProblemBody } from "application/usecas
 import { ClientEntity } from "domain/entities/client.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import type { Prisma } from "@prisma/client";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export type UpdateClientParams = {
     name?: string;
@@ -38,6 +39,7 @@ export class UpdateClientUsecase {
     constructor(
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(

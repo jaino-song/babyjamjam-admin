@@ -46,6 +46,7 @@ import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 /**
  * The schedule invariant policy signals a double-booking with a
@@ -171,6 +172,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
         private readonly systemSettingService: SystemSettingService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional()
         private readonly messageTriggerService?: MessageTriggerService,
         @Optional()

@@ -13,6 +13,7 @@ import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-
 import { addBusinessDaysKr } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { UpsertSessionDto } from "interface/dto/service-record-entry.dto";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const CASE_ID = "case-1";
 const BRANCH_ID = "11111111-1111-1111-1111-111111111111";
@@ -166,7 +167,7 @@ function createHarness(options: {
     const service = new ServiceRecordEntryService(
         prisma as unknown as PrismaService,
         tokenService as unknown as ServiceRecordTokenService,
-        lifecycle as unknown as ServiceRecordLifecycleService,
+        lifecycle as unknown as ServiceRecordLifecycleService, createHolidayCalendarStub(),
     );
 
     return {
@@ -294,7 +295,7 @@ function createConcurrentHarness() {
     const service = new ServiceRecordEntryService(
         prisma as unknown as PrismaService,
         {} as ServiceRecordTokenService,
-        lifecycle as unknown as ServiceRecordLifecycleService,
+        lifecycle as unknown as ServiceRecordLifecycleService, createHolidayCalendarStub(),
     );
 
     return { service, prisma, dayModel, lockQueries, getPersistedDay: () => persistedDay };
@@ -358,7 +359,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             prisma as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         const result = await service.getContext(context);
@@ -374,7 +375,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             createContextPrisma(record) as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         await expect(service.getContext(context)).rejects.toMatchObject({
@@ -387,7 +388,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             createContextPrisma(record) as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         const result = await service.getContext(context);
@@ -407,7 +408,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             createContextPrisma(record) as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         const result = await service.getContext(context);
@@ -430,7 +431,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             createContextPrisma(record) as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         const result = await service.getContext(context);
@@ -480,7 +481,7 @@ describe("ServiceRecordEntryService planned-session dates", () => {
         const service = new ServiceRecordEntryService(
             createContextPrisma(record) as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         await expect(service.getContext(context)).rejects.toMatchObject({
@@ -599,7 +600,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         const service = new ServiceRecordEntryService(
             prisma as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService,
+            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
         expect((await service.getContext(context)).totalSessions).toBe(4);
     });
@@ -1355,7 +1356,7 @@ describe("ServiceRecordEntryService.saveHeader", () => {
         const service = new ServiceRecordEntryService(
             prisma as unknown as PrismaService,
             {} as ServiceRecordTokenService,
-            lifecycle as unknown as ServiceRecordLifecycleService,
+            lifecycle as unknown as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
 
         await expect(service.saveHeader(context, {

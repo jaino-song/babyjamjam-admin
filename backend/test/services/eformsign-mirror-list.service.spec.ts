@@ -11,6 +11,7 @@ import {
 } from "application/utils/eformsign-list-doc-from-mirror";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { AreaTemplateEntity } from "domain/entities/area-template.entity";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 function createMirrorDocument(overrides: {
     documentId: string;
@@ -78,7 +79,7 @@ describe("EformsignMirrorListService", () => {
             findAllVisibleInMirrorForHeadquarters: jest.fn().mockResolvedValue([]),
             findContractEndDatesByDocumentIds: jest.fn().mockResolvedValue(new Map()),
         };
-        service = new EformsignMirrorListService(repository as never);
+        service = new EformsignMirrorListService(repository as never, createHolidayCalendarStub());
     });
 
     it("returns documents newest first, tie-broken by id", async () => {
@@ -313,7 +314,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([entity]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never);
+        } as never, createHolidayCalendarStub());
         const { documents } = await service.buildList(createQuery());
 
         const [enriched] = enrichMirrorPage(documents);
@@ -340,7 +341,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([titled, named]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never);
+        } as never, createHolidayCalendarStub());
         const { documents } = await service.buildList(createQuery());
 
         const enriched = enrichMirrorPage(documents);
@@ -363,7 +364,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([sentinel]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never);
+        } as never, createHolidayCalendarStub());
         const { documents } = await service.buildList(createQuery());
 
         expect(documentCustomerNameValue(enrichMirrorPage(documents)[0]!)).toBeNull();
@@ -378,7 +379,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([unassigned]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never);
+        } as never, createHolidayCalendarStub());
 
         const { documents } = await service.buildList(createQuery());
 

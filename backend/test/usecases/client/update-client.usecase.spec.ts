@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { UpdateClientUsecase } from "application/usecases/client/update-client.usecase";
 import { MockClientRepository, ClientFactory } from "../../utils";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("UpdateClientUsecase", () => {
     let usecase: UpdateClientUsecase;
@@ -9,7 +10,7 @@ describe("UpdateClientUsecase", () => {
 
     beforeEach(() => {
         mockRepository = new MockClientRepository();
-        usecase = new UpdateClientUsecase(mockRepository);
+        usecase = new UpdateClientUsecase(mockRepository, createHolidayCalendarStub());
     });
 
     afterEach(() => {

@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const branchId = "00000000-0000-4000-8000-000000000010";
 const caseId = "00000000-0000-4000-8000-000000000020";
@@ -99,7 +100,7 @@ function buildService(jobService: Record<string, jest.Mock>) {
         {} as never,
         {} as never,
         {} as never,
-        jobService as never,
+        createHolidayCalendarStub(), jobService as never,
         editRepository as never,
     );
 }

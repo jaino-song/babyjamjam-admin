@@ -65,6 +65,7 @@ import {
 } from "domain/repositories/agent-task.repository.interface";
 import { CLIENT_REPOSITORY, type IClientRepository } from "domain/repositories/client.repository.interface";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const TASK_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -207,6 +208,7 @@ export class AgentTaskService {
         @Inject(AGENT_TASK_REPOSITORY) private readonly repository: IAgentTaskRepository,
         private readonly policy: AgentTaskPolicyService,
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() @Inject(AGENT_TASK_REVIEW) private readonly reviews?: AgentTaskReviewPort,
         @Optional() @Inject(AGENT_TASK_AUTOMATION) private readonly automation?: AgentTaskAutomationPort,
     ) {}

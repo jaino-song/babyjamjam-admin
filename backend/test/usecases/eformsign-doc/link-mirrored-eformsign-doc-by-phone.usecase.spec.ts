@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 function contractDetail() {
     return {
@@ -195,7 +196,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 prisma as never,
                 config,
                 settings as never,
-                messageTrigger as never,
+                createHolidayCalendarStub(), messageTrigger as never,
                 serviceRecordLifecycle as never,
                 notificationService as never,
             ),

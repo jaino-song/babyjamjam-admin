@@ -107,12 +107,61 @@ describe("HolidayCalendarService.forBranch", () => {
         expect(() => calendar.isBusinessDay("2090-05-04")).toThrow(UnsupportedKoreanHolidayYearError);
     });
 
-    it("versions the calendar by revision and branch prefix", async () => {
+    it("versions the calendar by a content fingerprint, not by revision or branch", async () => {
         const { service } = makeService({ revision: 7 });
 
-        const calendar = await service.forBranch(BRANCH_A);
+        const a = await service.forBranch(BRANCH_A);
+        const b = await service.forBranch(BRANCH_B);
 
-        expect(calendar.version).toBe("kr-db-r7-baaaaaaaa");
+        expect(a.version).toMatch(/^kr-db-[0-9a-f]{12}$/);
+        expect(b.version).toBe(a.version);
+    });
+
+    it("changes the version only when this branch's effective calendar changes", async () => {
+        const { service, state } = makeService({
+            overrides: { [BRANCH_A]: [override({ date: "2027-04-07", kind: "add", name: "지점 휴무" })] },
+        });
+        const before = await service.forBranch(BRANCH_A);
+        const otherBefore = await service.forBranch(BRANCH_B);
+
+        // Another branch edits its calendar: the global revision moves, this branch's content does not.
+        state.overrides[BRANCH_B] = [override({ branchId: BRANCH_B, date: "2027-04-08", kind: "add", name: "다른 지점" })];
+        state.revision += 1;
+        service.invalidateRevisionCache();
+        const afterOtherEdit = await service.forBranch(BRANCH_A);
+        const otherAfter = await service.forBranch(BRANCH_B);
+
+        expect(afterOtherEdit.version).toBe(before.version);
+        expect(otherAfter.version).not.toBe(otherBefore.version);
+
+        // This branch edits its own calendar.
+        state.overrides[BRANCH_A] = [];
+        state.revision += 1;
+        service.invalidateRevisionCache();
+        const afterOwnEdit = await service.forBranch(BRANCH_A);
+
+        expect(afterOwnEdit.version).not.toBe(before.version);
+    });
+
+    it("keeps the version when a revision bump leaves the effective calendar identical", async () => {
+        const { service, state } = makeService();
+        const first = await service.forBranch(BRANCH_A);
+
+        state.revision = 2;
+        service.invalidateRevisionCache();
+        const second = await service.forBranch(BRANCH_A);
+
+        expect(second).not.toBe(first);
+        expect(second.version).toBe(first.version);
+    });
+
+    it("changes the version when a synced year changes the supported years or dates", async () => {
+        const builtin = await makeService().service.forBranch(BRANCH_A);
+        const synced = await makeService({
+            snapshots: [{ year: 2031, validatedAt: new Date() }],
+        }).service.forBranch(BRANCH_A);
+
+        expect(synced.version).not.toBe(builtin.version);
     });
 
     it("passes supportedYears explicitly: a synced year with no holiday rows is still supported", async () => {
@@ -170,7 +219,7 @@ describe("HolidayCalendarService caching", () => {
 
         expect(repository.readRevision).toHaveBeenCalledTimes(2);
         expect(rebuilt).not.toBe(first);
-        expect(rebuilt.version).toContain("-r2-");
+        expect(rebuilt.version).toBe(first.version);
     });
 
     it("rebuilds with the same revision untouched when the TTL passes without a change", async () => {
@@ -214,7 +263,7 @@ describe("HolidayCalendarService caching", () => {
         const calendar = await service.forBranch(BRANCH_A);
 
         expect(repository.readRevision).toHaveBeenCalledTimes(2);
-        expect(calendar.version).toContain("-r5-");
+        expect(calendar.version).toMatch(/^kr-db-[0-9a-f]{12}$/);
     });
 
     it("a revision read that straddles invalidateRevisionCache() does not repopulate the cache", async () => {
@@ -243,7 +292,7 @@ describe("HolidayCalendarService caching", () => {
         await expect(service.forBranch(BRANCH_A)).rejects.toThrow("db down");
         const calendar = await service.forBranch(BRANCH_A);
 
-        expect(calendar.version).toBe("kr-db-r1-baaaaaaaa");
+        expect(calendar.version).toMatch(/^kr-db-[0-9a-f]{12}$/);
     });
 });
 
@@ -427,7 +476,7 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
         const calendar = await service.forBranch(BRANCH_A);
         const year = await service.getEffectiveYear(BRANCH_A, 2026);
 
-        expect(calendar.version).toBe("kr-db-r6-baaaaaaaa");
+        expect(calendar.version).toMatch(/^kr-db-[0-9a-f]{12}$/);
         expect(year.revision).toBe(6);
     });
 

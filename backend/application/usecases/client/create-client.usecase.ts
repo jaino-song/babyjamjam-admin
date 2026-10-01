@@ -7,6 +7,7 @@ import {
     InitialClientSchedule,
 } from "domain/repositories/client.repository.interface";
 import type { Prisma } from "@prisma/client";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 type CreateClientParams = {
     name: string;
@@ -36,6 +37,7 @@ export class CreateClientUsecase {
     constructor(
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     execute(branchid: string, params: CreateClientParams, transaction?: Prisma.TransactionClient): Promise<ClientEntity> {

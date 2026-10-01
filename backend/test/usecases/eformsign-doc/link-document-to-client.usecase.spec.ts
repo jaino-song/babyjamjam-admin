@@ -1,6 +1,7 @@
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("LinkDocumentToClientUsecase", () => {
     const branchId = "branch-1";
@@ -81,7 +82,7 @@ describe("LinkDocumentToClientUsecase", () => {
         eformsignDocRepository.linkClientIfActive.mockResolvedValue(true);
         usecase = new LinkDocumentToClientUsecase(
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
     });
 

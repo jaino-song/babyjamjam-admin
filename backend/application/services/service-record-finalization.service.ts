@@ -27,6 +27,7 @@ import {
     type ServiceRecordEditJsonValue,
     type ServiceRecordRevisionDocumentState,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const CASE_BATCH_SIZE = 10;
 const MAX_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
@@ -355,6 +356,7 @@ export class ServiceRecordFinalizationService {
         private readonly prisma: PrismaService,
         private readonly lifecycleService: ServiceRecordLifecycleService,
         private readonly createSnapshotUsecase: CreateAndSendServiceRecordSnapshotUsecase,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional()
         private readonly documentJobService?: EformsignDocumentJobService,
         @Optional()

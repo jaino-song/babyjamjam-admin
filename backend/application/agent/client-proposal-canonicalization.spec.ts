@@ -3,6 +3,7 @@ import { ActionCoordinatorService } from "./action-coordinator.service";
 import { AgentRuntimeService } from "./agent-runtime.service";
 import { ClientWriteAgentCapabilitiesProvider } from "application/usecases/client/client-write-agent-capabilities.provider";
 import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease.mock";
+import { createHolidayCalendarStub } from "../../test/utils/holiday-calendar.stub";
 
 const principal = {
     userId: "user-a",
@@ -161,7 +162,7 @@ function buildClientProvider(existingOverrides: Record<string, unknown> = {}) {
         findClient as never,
         clientRepository as never,
         prisma as never,
-        serviceRecordLifecycle as never,
+        serviceRecordLifecycle as never, createHolidayCalendarStub(),
     );
     return { provider, existing, createClient, updateClient, findClient, prisma, transaction };
 }

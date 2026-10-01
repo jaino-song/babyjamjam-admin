@@ -1,6 +1,7 @@
 import { CreateEformsignDocParams, CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("CreateEformsignDocUsecase", () => {
     const branchId = "branch-1";
@@ -60,7 +61,7 @@ describe("CreateEformsignDocUsecase", () => {
         clientRepository.update.mockReset();
         usecase = new CreateEformsignDocUsecase(
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
     });
 

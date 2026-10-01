@@ -6,6 +6,7 @@ import type {
     ServiceRecordEditRevisionFactsSource,
     ServiceRecordEditSource,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const BRANCH_ID = "11111111-1111-4111-8111-111111111111";
 const CASE_ID = "22222222-2222-4222-8222-222222222222";
@@ -263,7 +264,7 @@ function createHarness(options: {
         discardDraft: jest.fn().mockResolvedValue(draft({ status: "DISCARDED", draftVersion: 2 })),
         confirmDraft: jest.fn(),
     };
-    const service = new AdminServiceRecordEditService(repository as never);
+    const service = new AdminServiceRecordEditService(repository as never, createHolidayCalendarStub());
     return { service, repository };
 }
 

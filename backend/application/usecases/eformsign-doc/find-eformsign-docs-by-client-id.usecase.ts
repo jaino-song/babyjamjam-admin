@@ -5,6 +5,7 @@ import {
 } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export type EformsignDocWithContractEndDate = ReturnType<EformsignDocEntity["toJSON"]> & {
     /** YYYY-MM-DD from the mirrored detail payload; null when not recoverable. */
@@ -18,6 +19,7 @@ export class FindEformsignDocsByClientIdUsecase {
     constructor(
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     execute(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {

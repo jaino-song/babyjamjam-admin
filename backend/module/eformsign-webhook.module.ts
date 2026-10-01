@@ -24,9 +24,10 @@ import { createEformsignClientRepository } from "infrastructure/vendor-stubs/e2e
 import { EformsignDocModule } from "./eformsign-doc.module";
 import { NotificationModule } from "./notification.module";
 import { ServiceRecordEntryModule } from "./service-record-entry.module";
+import { HolidayModule } from "./holiday.module";
 
 @Module({
-    imports: [DatabaseModule, EformsignDocModule, NotificationModule, ServiceRecordEntryModule],
+    imports: [DatabaseModule, EformsignDocModule, NotificationModule, ServiceRecordEntryModule, HolidayModule],
     controllers: [EformsignWebhookController],
     providers: [
         WebhookGuard,

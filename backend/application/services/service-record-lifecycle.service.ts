@@ -14,6 +14,7 @@ import {
     lockServiceRecordCaseForWrite,
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export const SERVICE_RECORD_CASE_STATUS = {
     WAITING_FOR_DETAILS: "WAITING_FOR_DETAILS",
@@ -193,7 +194,10 @@ function isReadyCurrentSnapshot(snapshot: LockedServiceRecordSnapshot): boolean 
 
 @Injectable()
 export class ServiceRecordLifecycleService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly holidayCalendar: HolidayCalendarService,
+    ) {}
 
     async ensureForSchedule(
         scheduleId: number,

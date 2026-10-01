@@ -38,6 +38,7 @@ import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -182,6 +183,7 @@ export class ServiceRecordEntryService {
         private readonly prisma: PrismaService,
         private readonly tokenService: ServiceRecordTokenService,
         private readonly lifecycleService: ServiceRecordLifecycleService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     /** Is this SMS link still usable (before asking for the phone number)? No PII returned. */

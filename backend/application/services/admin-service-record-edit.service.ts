@@ -55,6 +55,7 @@ import type {
     PreviewServiceRecordEditDraftDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
@@ -490,6 +491,7 @@ export class AdminServiceRecordEditService {
     constructor(
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly repository: IServiceRecordEditRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async startDraft(

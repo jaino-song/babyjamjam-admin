@@ -58,6 +58,7 @@ import {
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -234,6 +235,7 @@ export class EformsignController {
         private readonly getContractClientCandidateUsecase: GetContractClientCandidateUsecase,
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) { }
 
     /**

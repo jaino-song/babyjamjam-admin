@@ -8,6 +8,7 @@ import {
     getServiceRecordTokenExpiresAt,
 } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const date = (value: string) => new Date(`${value}T00:00:00.000Z`);
 const rawQueryBranchId = "11111111-1111-1111-1111-111111111111";
@@ -65,7 +66,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expectConflict(service.validatePeriodChange({
             clientId: 1,
@@ -88,7 +89,7 @@ describe("ServiceRecordLifecycleService", () => {
             },
             service_record_day: { deleteMany: jest.fn() },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.validatePeriodChange({
             clientId: 1,
@@ -123,7 +124,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -162,7 +163,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -216,7 +217,7 @@ describe("ServiceRecordLifecycleService", () => {
             eformsign_doc: { updateMany: jest.fn() },
             service_record_day: { findMany: jest.fn(), aggregate: jest.fn(), update: jest.fn() },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -252,7 +253,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -284,7 +285,7 @@ describe("ServiceRecordLifecycleService", () => {
             },
             service_record_token: { updateMany: jest.fn() },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
         await service.ensureForClient(1);
         expect(prisma.client.updateMany).not.toHaveBeenCalled();
@@ -326,7 +327,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -370,7 +371,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -430,7 +431,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -482,7 +483,7 @@ describe("ServiceRecordLifecycleService", () => {
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "recompute").mockResolvedValue(record as never);
 
         await service.ensureForClient(1);
@@ -520,7 +521,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         const ensureSpy = jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
 
         await service.syncEndDateFromContract({
@@ -559,7 +560,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
 
         await service.syncEndDateFromContract({
@@ -597,7 +598,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
 
         await service.syncEndDateFromContract({
@@ -637,7 +638,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
 
         // 2026-09-03 is later than the 15th Korean business day after
@@ -693,7 +694,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.syncEndDateFromMirroredContract({
             branchId: rawQueryBranchId,
@@ -729,7 +730,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         const ensureSpy = jest.spyOn(service, "ensureForClient");
 
         await expect(service.syncEndDateFromMirroredContract({
@@ -806,7 +807,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         const persistSpy = jest.spyOn(
             service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
             "syncEndDateFromContractInTransaction",
@@ -877,7 +878,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
         const persistSpy = jest.spyOn(
             service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
             "syncEndDateFromContractInTransaction",
@@ -913,7 +914,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: rawQueryBranchId,
@@ -980,7 +981,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: rawQueryBranchId,
@@ -1043,7 +1044,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: rawQueryBranchId,
@@ -1076,7 +1077,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: rawQueryBranchId,
@@ -1119,7 +1120,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: rawQueryBranchId,
@@ -1141,7 +1142,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1167,7 +1168,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1207,7 +1208,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1243,7 +1244,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1279,7 +1280,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1309,7 +1310,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.completeServiceRecordSnapshotIfReady({
             branchId: "branch-1",
@@ -1344,7 +1345,7 @@ describe("ServiceRecordLifecycleService", () => {
             $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
                 callback(transactionClient)),
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await Promise.all([
             service.completeServiceRecordSnapshotIfReady({
@@ -1379,7 +1380,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expect(service.validatePeriodChange({
             clientId: 1,
@@ -1399,7 +1400,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, endDate: date("2026-07-11") }),
@@ -1419,7 +1420,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, duration: null }),
@@ -1443,7 +1444,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, endDate: null }),
@@ -1463,7 +1464,7 @@ describe("ServiceRecordLifecycleService", () => {
                 }),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await expectConflict(
             service.validatePeriodChange({ clientId: 1, endDate: date("2026-09-29") }),
@@ -1516,7 +1517,7 @@ describe("ServiceRecordLifecycleService", () => {
                 update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await service.recompute("case-1");
 
@@ -1556,7 +1557,7 @@ describe("ServiceRecordLifecycleService", () => {
                 update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         const result = await service.recompute(record.id);
         const effectiveDeadline = getServiceRecordFinalizationDueAt(movedEndDate);
@@ -1634,7 +1635,7 @@ describe("ServiceRecordLifecycleService", () => {
                 update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...staleRecord, ...data })),
             },
         };
-        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
         await service.recompute(staleRecord.id);
 

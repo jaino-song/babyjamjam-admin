@@ -10,6 +10,7 @@ import {
     assertApprovedAgentTaskPersistenceDatabaseTarget,
     createApprovedAgentTaskPersistenceClient,
 } from "./agent-task-persistence.helper";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
 
@@ -159,7 +160,7 @@ function taskService(repository: PrismaAgentTaskRepository): AgentTaskService {
             assertCanPatch: jest.fn().mockReturnValue(capability),
             assertCanPrepareReview: jest.fn().mockResolvedValue(capability),
         } as never,
-        { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(null) } as never,
+        { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(null) } as never, createHolidayCalendarStub(),
     );
 }
 

@@ -7,6 +7,7 @@ import { resolveEformsignDocDisplayStatus, type EformsignDocDisplayStatus } from
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import { FindEformsignDocsByClientIdUsecase } from "./find-eformsign-docs-by-client-id.usecase";
 import { FindRecentContractsUsecase, type RecentContractRow } from "./find-recent-contracts.usecase";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
@@ -66,6 +67,7 @@ function resolveRecentContractDisplayStatus(doc: RecentContractRow): EformsignDo
 export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProviderContract {
     constructor(
         private readonly findDocs: FindEformsignDocsByClientIdUsecase,
+        private readonly holidayCalendar: HolidayCalendarService,
         private readonly findRecentContracts?: FindRecentContractsUsecase,
     ) {}
 
