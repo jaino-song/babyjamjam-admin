@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 function contractDetail() {
@@ -86,7 +87,7 @@ function expectedMirrorGeneration() {
 }
 
 describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
-    function setup(document = mirroredDocument()) {
+    function setup(document = mirroredDocument(), holidayCalendar = createHolidayCalendarStub()) {
         const transaction = {
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
@@ -186,6 +187,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         };
         return {
             document,
+            holidayCalendar,
             transaction,
             prisma,
             settings,
@@ -196,7 +198,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 prisma as never,
                 config,
                 settings as never,
-                createHolidayCalendarStub(), messageTrigger as never,
+                holidayCalendar, messageTrigger as never,
                 serviceRecordLifecycle as never,
                 notificationService as never,
             ),
@@ -894,6 +896,30 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         });
         expect(serviceRecordLifecycle.ensureForClient)
             .toHaveBeenCalledWith(31, expect.anything());
+    });
+
+    it("derives the created client's duration from the creating branch's calendar, loaded fresh", async () => {
+        // 2026-08-01..14 holds 10 business days; the branch adds 2026-08-12 off.
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), "2026-08-12"],
+            { supportedYears: [2026], version: "branch-test" },
+        ));
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            customerPhone: "01012345678",
+            detailPayload: contractDetail(),
+        });
+        const { transaction, usecase } = setup(document, holidayCalendar);
+        transaction.client.findMany.mockResolvedValue([]);
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("created");
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-1", { fresh: true });
+        expect(transaction.client.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ duration: 9 }),
+            select: { id: true },
+        });
     });
 
     it("auto-registers a branchless contract only after the observed generation and ownership fence", async () => {

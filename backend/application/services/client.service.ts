@@ -57,7 +57,7 @@ import {
 } from "domain/repositories/client.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeClientPricing } from "domain/services/client-pricing";
-import { addBusinessDaysKr, diffBusinessDaysKr, isoDateInKorea } from "domain/utils/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     computeServiceStatus,
@@ -531,7 +531,9 @@ export class ClientService {
             });
 
             if (shouldUpdateClientDocument) {
-                client.update({ eDocId: latestContract.documentId });
+                // SAVED computation: update() re-derives the client's duration.
+                const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+                client.update({ eDocId: latestContract.documentId }, calendar);
             }
             if (documentIdsToReassign.length > 0) {
                 await this.invalidateContractDocumentSnapshots(
@@ -622,7 +624,9 @@ export class ClientService {
             select: { eDocId: true },
         });
         if (persistedClient) {
-            client.update({ eDocId: persistedClient.eDocId });
+            // SAVED computation: update() re-derives the client's duration.
+            const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+            client.update({ eDocId: persistedClient.eDocId }, calendar);
         }
         await this.invalidateContractDocumentSnapshots(
             branchId,
@@ -768,7 +772,7 @@ export class ClientService {
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
-    }): ClientActionRequired | null {
+    }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
         if (
             params.serviceStatus === SERVICE_STATUS.PRE_BOOKING ||
             params.serviceStatus === SERVICE_STATUS.COMPLETED ||
@@ -779,7 +783,7 @@ export class ClientService {
 
         if (!params.startDate) return null;
 
-        const businessDaysUntilStart = diffBusinessDaysKr(
+        const businessDaysUntilStart = calendar.diffBusinessDays(
             params.startDate.toISOString().slice(0, 10),
         );
         if (businessDaysUntilStart === null) return null;
@@ -798,12 +802,12 @@ export class ClientService {
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
-    }): ClientActionRequired | null {
+    }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
         if (params.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED) {
             return { reason: "교체 요청", priority: 1 };
         }
 
-        return this.computeContractActionRequired(params);
+        return this.computeContractActionRequired(params, calendar);
     }
 
     private buildClientBadges(params: {
@@ -1085,7 +1089,9 @@ export class ClientService {
         const dueDate = parseClientDate(params.dueDate, "dueDate") ?? null;
         const birthDate = parseClientDate(params.birthDate, "birthDate") ?? null;
         mergeAndValidateClientServicePeriod(null, { startDate, endDate });
-        const derivedDuration = deriveClientDuration(startDate, endDate);
+        // SAVED computation: the derived duration is persisted.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+        const derivedDuration = deriveClientDuration(startDate, endDate, calendar);
         // On create there is no prior duration to clear, so an explicit null
         // carries the same "no opinion" as an omitted field and the count is
         // derived from the dates. Only a supplied number is checked against
@@ -1496,6 +1502,9 @@ export class ClientService {
         // 현재 페이지 고객의 계약 문서만 한 번에 조회하고, 고객별 최신 상태를 사용한다.
         const latestContractMap = await this.findLatestContractByClientId(clientIds);
 
+        // Display-only: the cached branch calendar is enough for the badges.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
+
         // Compute and update service status for each client (lazy update strategy)
         const clientsNeedingUpdate: {
             id: number;
@@ -1533,12 +1542,12 @@ export class ClientService {
                 hasActiveContractDocument,
             };
             const badges = this.buildClientBadges({
-                contractActionRequired: this.computeContractActionRequired(contractSignals),
+                contractActionRequired: this.computeContractActionRequired(contractSignals, calendar),
                 serviceStatus: computedStatus,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
             });
-            const actionRequired = this.computeActionRequired(contractSignals);
+            const actionRequired = this.computeActionRequired(contractSignals, calendar);
 
                 return {
                     id: client.id,
@@ -1804,9 +1813,13 @@ export class ClientService {
             endDate: endDateUpdate,
         });
         const hasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
+        // SAVED computation: validates and persists the duration. The same
+        // calendar instance is reused for the locked re-check below.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const derivedDuration = deriveClientDuration(
             mergedServicePeriod.startDate,
             mergedServicePeriod.endDate,
+            calendar,
         );
         assertClientDurationMatchesDates(params.duration, derivedDuration, params.allowBusinessDayMismatch);
         if (hasDateUpdate && params.duration === null && derivedDuration !== null) {
@@ -1906,6 +1919,7 @@ export class ClientService {
             const lockedDerivedDuration = deriveClientDuration(
                 lockedMergedServicePeriod.startDate,
                 lockedMergedServicePeriod.endDate,
+                calendar,
             );
             assertClientDurationMatchesDates(
                 params.duration,
@@ -2637,13 +2651,17 @@ export class ClientService {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        // Display-only: one cached calendar instance serves both the cutoff
+        // pre-filter and the per-client decision below.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
+
         // The window is business days, which spans more calendar days than its
         // count. Translate it into the exact calendar date it reaches so this
         // pre-filter only narrows the scan — computeActionRequired still decides
         // (it alone knows whether the latest document is active).
         const businessDayCutoff = (businessDays: number): Date => {
             const cutoff = new Date(
-                `${addBusinessDaysKr(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
+                `${calendar.addBusinessDays(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
             );
             cutoff.setHours(23, 59, 59, 999);
             return cutoff;
@@ -2695,7 +2713,7 @@ export class ClientService {
                     serviceStatus,
                     startDate: client.startDate,
                     hasActiveContractDocument: hasActiveDocumentByClientId.get(client.id) ?? false,
-                });
+                }, calendar);
 
                 if (!actionRequired) {
                     return null;

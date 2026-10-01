@@ -2,6 +2,7 @@ import { SbClientRepository } from "infrastructure/database/repositories/sb.clie
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientEntity } from "domain/entities/client.entity";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import {
     clientListTabWhere,
@@ -67,7 +68,7 @@ describe("SbClientRepository", () => {
         dueDate: null,
         birthDate: null,
         ...overrides,
-    });
+    }, KR_BUILTIN_CALENDAR);
 
     const branchId = "org-1";
 
@@ -993,6 +994,7 @@ describe("SbClientRepository", () => {
                 row.id,
                 clientAgentTargetVersion(current),
                 { name: "Updated" },
+                KR_BUILTIN_CALENDAR,
                 transaction as never,
             );
 
@@ -1014,6 +1016,7 @@ describe("SbClientRepository", () => {
                 row.id,
                 "stale-target-version",
                 { name: "Should not persist" },
+                KR_BUILTIN_CALENDAR,
                 transaction as never,
             );
 

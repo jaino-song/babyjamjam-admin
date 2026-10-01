@@ -40,24 +40,28 @@ export class CreateClientUsecase {
         private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
-    execute(branchid: string, params: CreateClientParams, transaction?: Prisma.TransactionClient): Promise<ClientEntity> {
+    async execute(branchid: string, params: CreateClientParams, transaction?: Prisma.TransactionClient): Promise<ClientEntity> {
+        // SAVED computation: the derived duration is persisted, so read the
+        // branch calendar fresh rather than from the cache.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = ClientEntity.create({
             ...params,
             eDocId: params.eDocId ?? null,
-        });
+        }, calendar);
         return this.clientRepository.create(branchid, client, transaction);
     }
 
-    executeWithInitialSchedule(
+    async executeWithInitialSchedule(
         branchid: string,
         params: CreateClientParams,
         schedule: InitialClientSchedule,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientWithInitialSchedule> {
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = ClientEntity.create({
             ...params,
             eDocId: params.eDocId ?? null,
-        });
+        }, calendar);
         return this.clientRepository.createWithInitialSchedule(branchid, client, schedule, transaction);
     }
 }

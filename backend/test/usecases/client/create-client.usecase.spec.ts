@@ -1,6 +1,13 @@
 import { CreateClientUsecase } from "application/usecases/client/create-client.usecase";
 import { MockClientRepository } from "../../utils/mocks";
 import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
+
+/** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
+const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
+    [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra],
+    { supportedYears: [2026], version: "branch-test" },
+);
 
 describe("CreateClientUsecase", () => {
     let usecase: CreateClientUsecase;
@@ -102,10 +109,46 @@ describe("CreateClientUsecase", () => {
                 breastPump: false,
             };
 
-            expect(() => usecase.execute(branchId, params)).toThrow(
+            await expect(usecase.execute(branchId, params)).rejects.toThrow(
                 "서비스 기간은 1일 이상 4일 이하여야 합니다.",
             );
             expect(mockRepository.getAllData()).toHaveLength(0);
+        });
+
+        it("should validate the persisted duration against the branch calendar, loaded fresh", async () => {
+            // 2026-05-04..08 has 4 business days (5/5 is a holiday); the branch adds 5/7 off.
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-05-07"]));
+            const branchUsecase = new CreateClientUsecase(mockRepository, holidayCalendar);
+            const params = {
+                name: "지점 휴일 고객",
+                address: null,
+                phone: null,
+                type: null,
+                duration: 3,
+                fullPrice: "1000",
+                grant: "0",
+                actualPrice: "1000",
+                startDate: new Date("2026-05-04T00:00:00.000Z"),
+                endDate: new Date("2026-05-08T00:00:00.000Z"),
+                careCenter: false,
+                voucherClient: false,
+                birthday: null,
+                dueDate: null,
+                birthDate: null,
+                serviceStatus: null,
+                breastPump: false,
+            };
+
+            const created = await branchUsecase.execute(branchId, params);
+            expect(created.duration).toBe(3);
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+
+            // Four sessions fit the built-in calendar but not the branch's.
+            const builtin = await usecase.execute(branchId, { ...params, duration: 4 });
+            expect(builtin.duration).toBe(4);
+            await expect(branchUsecase.execute(branchId, { ...params, duration: 4 }))
+                .rejects.toThrow("서비스 기간은 1일 이상 3일 이하여야 합니다.");
         });
 
         it("should create client with minimal required fields", async () => {

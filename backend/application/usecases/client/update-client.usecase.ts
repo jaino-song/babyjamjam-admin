@@ -49,6 +49,8 @@ export class UpdateClientUsecase {
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity> {
         assertNonNullableClientPatch(updates);
+        // SAVED computation: update() re-derives the persisted duration.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = transaction
             ? await this.clientRepository.findByIdForUpdate(branchid, id, transaction)
             : await this.clientRepository.findById(branchid, id);
@@ -56,7 +58,7 @@ export class UpdateClientUsecase {
             throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
         }
 
-        client.update(updates);
+        client.update(updates, calendar);
         return this.clientRepository.update(branchid, client, transaction);
     }
 
@@ -73,11 +75,14 @@ export class UpdateClientUsecase {
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity> {
         assertNonNullableClientPatch(updates);
+        // SAVED computation: loaded before the repository takes the row lock.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updated = await this.clientRepository.updateIfTargetVersion(
             branchid,
             id,
             expectedTargetVersion,
             updates,
+            calendar,
             transaction,
         );
         if (updated) return updated;

@@ -63,7 +63,10 @@ export class LinkDocumentToClientUsecase {
         }
 
         if (needsClientPointerUpdate) {
-            client.update({ eDocId: documentId });
+            // SAVED computation: update() re-derives the duration from the
+            // client's dates, so use the branch calendar fresh.
+            const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+            client.update({ eDocId: documentId }, calendar);
             this.logger.log(`Linked document ${documentId} to client ${client.id}`);
         }
     }
