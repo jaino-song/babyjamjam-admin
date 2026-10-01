@@ -282,6 +282,12 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 $queryRawUnsafe?: (query: string, ...values: unknown[]) => Promise<unknown>;
             };
             if (typeof rawTransaction.$queryRawUnsafe === "function") {
+                // Lock order must match reject() (user -> user_branch -> branch) to
+                // avoid a cross-transaction deadlock between the two paths.
+                await rawTransaction.$queryRawUnsafe(
+                    'SELECT "id" FROM "user" WHERE "id" = $1 FOR UPDATE',
+                    userId,
+                );
                 await rawTransaction.$queryRawUnsafe(
                     'SELECT "id" FROM "user_branch" WHERE "user_id" = $1 AND "branch_id" = $2 FOR UPDATE',
                     userId,
@@ -290,10 +296,6 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 await rawTransaction.$queryRawUnsafe(
                     'SELECT "id" FROM "branch" WHERE "id" = $1 FOR UPDATE',
                     context.principal.branchId,
-                );
-                await rawTransaction.$queryRawUnsafe(
-                    'SELECT "id" FROM "user" WHERE "id" = $1 FOR UPDATE',
-                    userId,
                 );
             }
             const [membership, branch, approvalUser] = await Promise.all([

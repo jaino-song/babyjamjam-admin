@@ -254,6 +254,42 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         expect(JSON.stringify(prisma.agent_action.updateMany.mock.calls)).not.toContain("member@example.com");
     });
 
+    it("locks the user row before user_branch and branch when staging the approved target (m1, matches reject()'s lock order)", async () => {
+        const prisma = {
+            $transaction: jest.fn(),
+            $queryRawUnsafe: jest.fn().mockResolvedValue(undefined),
+            notification: { findFirst: jest.fn().mockResolvedValue(null) },
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
+            agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        };
+        prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        const sendNotification = {
+            executeWithOutcome: jest.fn().mockResolvedValue({
+                status: "delivered", notification: { id: 12 }, subscriptions: 1, delivered: 1, failed: 0,
+            }),
+        };
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+        const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+
+        await expect(capability.executeApprovedTarget!(context, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
+            .resolves.toEqual({ status: "delivered", notificationId: 12, subscriptions: 1, delivered: 1, failed: 0 });
+
+        // $queryRawUnsafe calls on the same mock preserve await order, so array
+        // index doubles as call order: user must be locked first, then
+        // user_branch, then branch (consistent with UserService.reject).
+        expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(3);
+        const calls = prisma.$queryRawUnsafe.mock.calls;
+        expect(calls[0]?.[0]).toContain('FROM "user"');
+        expect(calls[0]?.[0]).not.toContain("user_branch");
+        expect(calls[1]?.[0]).toContain('FROM "user_branch"');
+        expect(calls[2]?.[0]).toContain('FROM "branch"');
+    });
+
     it("fails the final approval check (no send) when a member became rejected/pending after inspect (BJJ-357 follow-up)", async () => {
         const prisma = {
             $transaction: jest.fn(),

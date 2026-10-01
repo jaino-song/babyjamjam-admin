@@ -1038,9 +1038,11 @@ export class UserService {
                 throw new ForbiddenException(this.selfRejectionProblem());
             }
 
+            await this.lockRow(tx, "user", id);
+
             const target = await tx.user.findUnique({
                 where: { id },
-                select: { id: true, role: true },
+                select: { id: true, role: true, approvalStatus: true },
             });
             if (!target) {
                 throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -1051,7 +1053,7 @@ export class UserService {
 
             const removedMemberships = await tx.user_branch.findMany({
                 where: { userId: id },
-                select: { branchId: true },
+                select: { branchId: true, role: true, joinedAt: true },
             });
             const ownedBranches = await tx.branch.findMany({
                 where: { ownerId: id },
@@ -1079,12 +1081,10 @@ export class UserService {
 
             await tx.user_branch.deleteMany({ where: { userId: id } });
 
-            if (ownedBranches.length > 0) {
-                await tx.branch.updateMany({
-                    where: { ownerId: id },
-                    data: { ownerId: null },
-                });
-            }
+            await tx.branch.updateMany({
+                where: { ownerId: id },
+                data: { ownerId: null },
+            });
 
             await tx.auth_session.updateMany({
                 where: { userId: id, revokedAt: null },
@@ -1097,7 +1097,16 @@ export class UserService {
                 action: "user.rejected",
                 targetType: "user",
                 targetId: id,
-                before: { id, approvalStatus: "pending" },
+                before: {
+                    id,
+                    approvalStatus: target.approvalStatus,
+                    role: target.role,
+                    memberships: removedMemberships.map((membership) => ({
+                        branchId: membership.branchId,
+                        role: membership.role,
+                    })),
+                    ownedBranchIds: ownedBranches.map((branch) => branch.id),
+                },
                 after: {
                     id,
                     approvalStatus: "rejected",
