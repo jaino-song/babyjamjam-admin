@@ -16,7 +16,7 @@ import { HolidayChange } from "domain/utils/holiday-review";
 
 /**
  * Why an item was not resolved. Plain strings: ITEM_NOT_FOUND, ITEM_NOT_OPEN, ITEM_RISK,
- * CLIENT_CHANGED, ALREADY_MATCHES, NO_LONGER_SAFE, UPDATE_FAILED, or a problem code
+ * CLIENT_CHANGED, ALREADY_MATCHES, NO_LONGER_SAFE, RECALCULATED_CHANGED, UPDATE_FAILED, or a problem code
  * surfaced from `ClientService.update` (e.g. SERVICE_RECORD_FINALIZED).
  */
 export type ReviewSkipCode = string;
@@ -171,7 +171,7 @@ export class HolidayReviewResolveService {
     }
 
     /**
-     * Loads what every fix needs once per request (the event date and a fresh branch
+     * Loads what every fix needs once per request (the event, for the 404, and a fresh branch
      * calendar) and returns the per-item fixer. A calendar that cannot be loaded fails
      * the request before anything is changed.
      */
@@ -220,7 +220,8 @@ export class HolidayReviewResolveService {
             }
 
             // State may have changed since the item was filed (a session was recorded, a case finalized).
-            const verdict = classifyReviewItem(facts, event.date, recalculatedEnd);
+            // `affectedFrom`, not this event's date: the item may also stand for an earlier change.
+            const verdict = classifyReviewItem(facts, item.affectedFrom, recalculatedEnd);
             if (verdict.category !== "safe") {
                 await this.repository.reclassifyOpenItem(branchId, eventId, item.id, {
                     category: verdict.category,
@@ -228,6 +229,18 @@ export class HolidayReviewResolveService {
                     recalculatedEnd,
                 });
                 return skip("NO_LONGER_SAFE");
+            }
+
+            // The manager confirmed the date on screen (`item.recalculatedEnd`); never write another one.
+            // The calendar moved since the item was filed (e.g. a later holiday between the stored
+            // and the shown end that no event refreshed): show the new date and ask again.
+            if (recalculatedEnd !== item.recalculatedEnd) {
+                await this.repository.reclassifyOpenItem(branchId, eventId, item.id, {
+                    category: verdict.category,
+                    reason: verdict.reason,
+                    recalculatedEnd,
+                });
+                return skip("RECALCULATED_CHANGED");
             }
 
             return this.applyFix(branchId, eventId, item, recalculatedEnd, userId);

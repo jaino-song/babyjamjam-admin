@@ -9,6 +9,7 @@ import {
     ReviewCandidateClient,
     ReviewEventSummary,
     ReviewFixSnapshot,
+    OpenReviewItemRef,
     ReviewItemFilters,
     ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
@@ -25,9 +26,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 export const HOLIDAY_REVIEW_LOCK_KEY = "holiday-review-process";
 const REVIEW_TRANSACTION_TIMEOUT_MS = 60_000;
-/** More than a sync plus a few overrides ever produce between two cron runs; the rest waits for the next run. */
-const UNPROCESSED_EVENT_LIMIT = 1_000;
-
 const toDbDate = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
 const fromDbDate = (date: Date): string => date.toISOString().slice(0, 10);
 
@@ -61,6 +59,7 @@ const toItemRecord = (row: {
     clientId: number;
     storedEnd: Date;
     recalculatedEnd: Date;
+    affectedFrom: Date;
     category: string;
     reason: string | null;
     status: string;
@@ -71,6 +70,7 @@ const toItemRecord = (row: {
     clientName: row.client.name,
     storedEnd: fromDbDate(row.storedEnd),
     recalculatedEnd: fromDbDate(row.recalculatedEnd),
+    affectedFrom: fromDbDate(row.affectedFrom),
     category: row.category as ReviewCategory,
     reason: row.reason as ReviewReason,
     status: row.status as ReviewStatus,
@@ -97,7 +97,6 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
         const rows = await this.prisma.holiday_change_event.findMany({
             where: { processedAt: null },
             orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-            take: UNPROCESSED_EVENT_LIMIT,
         });
         return rows.map(toEventRecord);
     }
@@ -117,9 +116,17 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 branchId,
                 duration: { not: null },
                 startDate: { lte: day },
-                endDate: { gte: day },
-                // `{ not: x }` would also drop NULL statuses, which are live clients.
-                OR: [{ serviceStatus: null }, { serviceStatus: { not: SERVICE_STATUS.TERMINATED } }],
+                AND: [
+                    {
+                        // In the period, or its open item's shown new end is still ahead of the date.
+                        OR: [
+                            { endDate: { gte: day } },
+                            { endDateReviewItems: { some: { status: "open", recalculatedEnd: { gte: day } } } },
+                        ],
+                    },
+                    // `{ not: x }` would also drop NULL statuses, which are live clients.
+                    { OR: [{ serviceStatus: null }, { serviceStatus: { not: SERVICE_STATUS.TERMINATED } }] },
+                ],
             },
             select: {
                 id: true,
@@ -152,6 +159,15 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             });
         }
         return candidates;
+    }
+
+    async listOpenItemsForClients(exceptEventId: string, clientIds: number[]): Promise<OpenReviewItemRef[]> {
+        if (clientIds.length === 0) return [];
+        const rows = await this.prisma.end_date_review_item.findMany({
+            where: { status: "open", clientId: { in: clientIds }, changeEventId: { not: exceptEventId } },
+            select: { id: true, clientId: true, affectedFrom: true },
+        });
+        return rows.map((row) => ({ id: row.id, clientId: row.clientId, affectedFrom: fromDbDate(row.affectedFrom) }));
     }
 
     async listOpenEventSummaries(branchId: string): Promise<ReviewEventSummary[]> {
@@ -282,7 +298,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
 
     private async applyInTransaction(
         tx: Prisma.TransactionClient,
-        { eventId, drafts, expectedUnprocessedEventIds }: ApplyReviewEventInput,
+        { eventId, drafts, assumedOpenItemIds, expectedUnprocessedEventIds }: ApplyReviewEventInput,
     ): Promise<ApplyReviewEventResult> {
         // Same lock form as the sync lock: two instances never process the same event.
         await tx.$executeRaw(Prisma.sql`
@@ -318,6 +334,13 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 select: { id: true, clientId: true },
             });
             const openByClient = new Map(openRows.map((row) => [row.clientId, row.id]));
+            // `affectedFrom` was derived from the open item seen before this transaction. A
+            // different one now (resolved, replaced) makes that classification wrong: retry later.
+            for (const draft of drafts) {
+                if (openByClient.get(draft.clientId) !== assumedOpenItemIds[draft.clientId]) {
+                    return { status: "items_changed" };
+                }
+            }
 
             for (const draft of drafts) {
                 const openItemId = openByClient.get(draft.clientId);
@@ -346,6 +369,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                             clientId: draft.clientId,
                             storedEnd: toDbDate(draft.storedEnd),
                             recalculatedEnd: toDbDate(draft.recalculatedEnd),
+                            affectedFrom: toDbDate(draft.affectedFrom),
                             category: draft.category,
                             reason: draft.reason,
                         },

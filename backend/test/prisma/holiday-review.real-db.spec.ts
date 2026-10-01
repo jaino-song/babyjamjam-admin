@@ -178,7 +178,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
             const clientId = await makeClient(branchA);
             const e1 = await makeEvent("2026-11-10", "added");
             const e2 = await makeEvent("2026-11-11", "added");
-            const base = { branchId: branchA, clientId, storedEnd: d("2026-11-13"), recalculatedEnd: d("2026-11-16"), category: "safe" };
+            const base = { branchId: branchA, clientId, storedEnd: d("2026-11-13"), recalculatedEnd: d("2026-11-16"), affectedFrom: d("2026-11-10"), category: "safe" };
             const first = await prisma.end_date_review_item.create({ data: { ...base, changeEventId: e1 } });
 
             await expect(
@@ -208,6 +208,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
                     clientId,
                     storedEnd: d("2026-11-13"),
                     recalculatedEnd: d("2026-11-16"),
+                    affectedFrom: d("2026-11-10"),
                     category: "safe",
                     status: "kept",
                 },
@@ -263,6 +264,144 @@ describeReal("holiday review (real PostgreSQL)", () => {
                 days: [{ date: "2026-11-03", locked: true }],
             });
         });
+    });
+
+    describe("B1: a later event must not downgrade a risk item (audit repro)", () => {
+        async function sessionOn(clientId: number, date: string): Promise<void> {
+            const record = await prisma.service_record_case.create({
+                data: { branchId: branchA, clientId, status: "AWAITING_COMPLETION" },
+            });
+            await prisma.service_record_day.create({
+                data: {
+                    branchId: branchA,
+                    serviceRecordCaseId: record.id,
+                    sessionIndex: 1,
+                    caseSessionIndex: 1,
+                    serviceDate: d(date),
+                },
+            });
+        }
+
+        it("keeps the first change's date on the recreated item, so it stays risk", async () => {
+            // Public e1 added 2026-11-04, e2 added 2026-11-11; start 11-02, duration 10, stored end 11-13,
+            // one session on 11-04. Between the two events the client is already risk.
+            const clientId = await makeClient(branchA, { start: "2026-11-02", end: "2026-11-13", duration: 10 });
+            await sessionOn(clientId, "2026-11-04");
+            await setPublic2026(["2026-11-04"]);
+            const e1 = await makeEvent("2026-11-04", "added", { createdAt: OLD });
+            await processor.processDueEvents(NOW);
+            expect((await itemsOf(clientId))[0]).toMatchObject({
+                changeEventId: e1,
+                category: "risk",
+                reason: "session_on_or_after_date",
+            });
+
+            await setPublic2026(["2026-11-04", "2026-11-11"]);
+            const e2 = await makeEvent("2026-11-11", "added", { createdAt: new Date(OLD.getTime() + 1000) });
+            await processor.processDueEvents(NOW);
+
+            const items = await itemsOf(clientId);
+            expect(items.map((i) => [i.changeEventId, i.status])).toEqual([
+                [e1, "obsolete"],
+                [e2, "open"],
+            ]);
+            expect(items[1]).toMatchObject({ category: "risk", reason: "session_on_or_after_date" });
+            expect(iso(items[0]!.affectedFrom)).toBe("2026-11-04");
+            expect(iso(items[1]!.affectedFrom)).toBe("2026-11-04"); // min(e2 date, the replaced item's date)
+        });
+
+        it("a first-time item takes the event's own date", async () => {
+            await setPublic2026(["2026-11-10"]);
+            const clientId = await makeClient(branchA);
+            await makeEvent("2026-11-10", "added");
+            await processor.processDueEvents(NOW);
+            expect(iso((await itemsOf(clientId))[0]!.affectedFrom)).toBe("2026-11-10");
+        });
+    });
+
+    describe("F4: a later holiday beyond the stored end refreshes the open item", () => {
+        it("includes a client whose end is before the date but whose open item's shown end is not", async () => {
+            const clientId = await makeClient(branchA); // 11-02 .. 11-13
+            const e1 = await makeEvent("2026-11-10", "added");
+            await prisma.end_date_review_item.create({
+                data: {
+                    changeEventId: e1,
+                    branchId: branchA,
+                    clientId,
+                    storedEnd: d("2026-11-13"),
+                    recalculatedEnd: d("2026-11-16"),
+                    affectedFrom: d("2026-11-10"),
+                    category: "safe",
+                },
+            });
+
+            const onDate = await repository.findReviewCandidates(branchA, "2026-11-16");
+            expect(onDate.map((c) => c.clientId)).toContain(clientId);
+            // Past the shown end the item no longer reaches the date.
+            const beyond = await repository.findReviewCandidates(branchA, "2026-11-17");
+            expect(beyond.map((c) => c.clientId)).not.toContain(clientId);
+            // A client with no open item and end < date is still out.
+            const plain = await makeClient(branchA, { start: "2026-11-02", end: "2026-11-13" });
+            const found = await repository.findReviewCandidates(branchA, "2026-11-16");
+            expect(found.map((c) => c.clientId)).not.toContain(plain);
+        });
+
+        it("end to end: the later event replaces the item with the date the manager will now see", async () => {
+            const clientId = await makeClient(branchA);
+            await setPublic2026(["2026-11-10"]);
+            await makeEvent("2026-11-10", "added", { createdAt: OLD });
+            await processor.processDueEvents(NOW);
+            expect(iso((await itemsOf(clientId))[0]!.recalculatedEnd)).toBe("2026-11-16");
+
+            // 11-16 (Mon) becomes a holiday: it lies between the stored end (11-13) and the shown end.
+            await setPublic2026(["2026-11-10", "2026-11-16"]);
+            const e2 = await makeEvent("2026-11-16", "added", { createdAt: new Date(OLD.getTime() + 1000) });
+            await processor.processDueEvents(NOW);
+
+            const items = await itemsOf(clientId);
+            expect(items.map((i) => i.status)).toEqual(["obsolete", "open"]);
+            expect(items[1]).toMatchObject({ changeEventId: e2 });
+            expect(iso(items[1]!.recalculatedEnd)).toBe("2026-11-17");
+            expect(iso(items[1]!.affectedFrom)).toBe("2026-11-10");
+        });
+    });
+
+    describe("F1: a backlog beyond 1000 events still makes progress", () => {
+        it("drains 1001 unprocessed events over several runs instead of stalling", async () => {
+            await setPublic2026([]);
+            const count = 1001;
+            const base = OLD.getTime();
+            // Branch events on a Sunday (never a business day, so every one is a cheap no-op for the
+            // branch) keep the test fast; the guard and the undo set are what is under test.
+            const rows = Array.from({ length: count }, (_, i) => ({
+                branchId: branchA,
+                date: d("2026-11-15"),
+                change: "added",
+                name: "x",
+                source: "branch-override",
+                createdAt: new Date(base + i),
+            }));
+            await prisma.holiday_change_event.createMany({ data: rows });
+            const created = await prisma.holiday_change_event.findMany({
+                where: { branchId: branchA, processedAt: null },
+                select: { id: true },
+            });
+            expect(created).toHaveLength(count);
+            eventIds.push(...created.map((row) => row.id));
+
+            let runs = 0;
+            let total = 0;
+            for (; runs < 10; runs += 1) {
+                const summary = await processor.processDueEvents(NOW);
+                expect(summary.stopped).toBe(false);
+                if (summary.processed === 0) break;
+                total += summary.processed;
+            }
+
+            expect(total).toBe(count);
+            expect(runs).toBeGreaterThan(1); // bounded per run, drained across runs
+            expect(await prisma.holiday_change_event.count({ where: { branchId: branchA, processedAt: null } })).toBe(0);
+        }, 120_000);
     });
 
     describe("processor end to end", () => {
@@ -387,6 +526,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
             storedEnd: "2026-11-13",
             recalculatedEnd: "2026-11-16",
             previousEnd: "2026-11-13",
+            affectedFrom: "2026-11-10",
             category: "safe" as const,
             reason: "no_sessions_after_date" as const,
         });
@@ -399,6 +539,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
             const result = await repository.applyEventResult({
                 eventId,
                 drafts: [draft(clientId, branchA)],
+                assumedOpenItemIds: {},
                 expectedUnprocessedEventIds: [eventId],
             });
 
@@ -416,12 +557,51 @@ describeReal("holiday review (real PostgreSQL)", () => {
             const result = await repository.applyEventResult({
                 eventId,
                 drafts: [draft(clientId, branchA)],
+                assumedOpenItemIds: {},
                 expectedUnprocessedEventIds: [eventId],
             });
 
             expect(result).toEqual({ status: "events_changed" });
             expect(await itemsOf(clientId)).toHaveLength(0);
             expect((await prisma.holiday_change_event.findUnique({ where: { id: eventId } }))?.processedAt).toBeNull();
+        });
+
+        it("applies nothing when a client's open item is no longer the one the drafts assumed", async () => {
+            const clientId = await makeClient(branchA);
+            const older = await makeEvent("2026-11-09", "added");
+            await prisma.holiday_change_event.update({ where: { id: older }, data: { processedAt: NOW } });
+            const eventId = await makeEvent("2026-11-10", "added");
+            await prisma.holiday_change_event.update({ where: { id: eventId }, data: { processedAt: null } });
+            const open = await prisma.end_date_review_item.create({
+                data: {
+                    changeEventId: older,
+                    branchId: branchA,
+                    clientId,
+                    storedEnd: d("2026-11-13"),
+                    recalculatedEnd: d("2026-11-16"),
+                    affectedFrom: d("2026-11-09"),
+                    category: "safe",
+                },
+            });
+
+            // The drafts saw no open item, but one exists now.
+            const stale = await repository.applyEventResult({
+                eventId,
+                drafts: [draft(clientId, branchA)],
+                assumedOpenItemIds: {},
+                expectedUnprocessedEventIds: [eventId],
+            });
+            expect(stale).toEqual({ status: "items_changed" });
+            expect((await prisma.holiday_change_event.findUnique({ where: { id: eventId } }))?.processedAt).toBeNull();
+
+            // With the right assumption it replaces the item.
+            const ok = await repository.applyEventResult({
+                eventId,
+                drafts: [{ ...draft(clientId, branchA), affectedFrom: "2026-11-09" }],
+                assumedOpenItemIds: { [clientId]: open.id },
+                expectedUnprocessedEventIds: [eventId],
+            });
+            expect(ok).toEqual({ status: "applied", created: 1, obsoleted: 1 });
         });
 
         it("rolls the whole event back when one draft fails", async () => {
@@ -433,6 +613,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
                 repository.applyEventResult({
                     eventId,
                     drafts: [draft(clientId, branchA), draft(2_000_000_000, branchA)], // no such client: FK violation
+                    assumedOpenItemIds: {},
                     expectedUnprocessedEventIds: [eventId],
                 }),
             ).rejects.toBeDefined();
