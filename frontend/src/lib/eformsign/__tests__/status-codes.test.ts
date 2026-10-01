@@ -1,3 +1,4 @@
+import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import {
   getStatusCategory,
   mapDocStatusLabel,
@@ -69,5 +70,43 @@ describe("mapDocStatusLabel", () => {
         step_recipients: [{ recipient_type: "01" }],
       }),
     ).toBe("검토 필요");
+  });
+});
+
+describe("mapDocStatusLabel with a branch calendar", () => {
+  const reviewStep = {
+    status_type: "060",
+    step_type: "06",
+    step_name: "제공기관 검토",
+    step_recipients: [{ recipient_type: "01" }],
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // Sat 2026-08-01, KST.
+    jest.setSystemTime(new Date("2026-08-01T03:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("flips 서명 완료 to 검토 필요 earlier when the branch closes a day in the window", () => {
+    const branchCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-03"], {
+      version: "kr-db-test",
+      supportedYears: [2025, 2026, 2027],
+    });
+    expect(mapDocStatusLabel(reviewStep, "2026-08-04")).toBe("서명 완료");
+    expect(mapDocStatusLabel(reviewStep, "2026-08-04", null, branchCalendar)).toBe("검토 필요");
+  });
+
+  it("does not throw when the review window reaches back past New Year", () => {
+    const narrowCalendar = createKrBusinessDayCalendar([], { version: "kr-db-test", supportedYears: [2026] });
+    expect(mapDocStatusLabel(reviewStep, "2026-01-02", null, narrowCalendar)).toBe("검토 필요");
+  });
+
+  it("does not throw for an end date outside the branch calendar's years", () => {
+    const narrowCalendar = createKrBusinessDayCalendar([], { version: "kr-db-test", supportedYears: [2026] });
+    expect(mapDocStatusLabel(reviewStep, "2024-12-31", null, narrowCalendar)).toBe("검토 필요");
   });
 });

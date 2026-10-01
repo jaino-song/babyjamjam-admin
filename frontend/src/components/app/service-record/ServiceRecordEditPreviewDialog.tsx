@@ -199,7 +199,6 @@ export function ServiceRecordEditPreviewDialog({
                             <div data-component={`${dataComponent}_content_meta`} data-slot="meta" className="flex flex-wrap gap-2">
                                 <Badge variant="secondary">초안 버전 {preview.draftVersion}</Badge>
                                 {preview.requiredSessionCount ? <Badge variant="secondary">총 {preview.requiredSessionCount}회차</Badge> : null}
-                                {preview.calendarVersion ? <Badge variant="secondary">달력 {preview.calendarVersion}</Badge> : null}
                             </div>
 
                             {hasBlockingReasons ? (

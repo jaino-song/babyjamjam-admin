@@ -103,6 +103,9 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(screen.getByText("2026.07.10 ~ 2026.07.14")).toBeInTheDocument();
         expect(screen.getByText("2026.07.13 ~ 2026.07.17")).toBeInTheDocument();
         expect(screen.getAllByText("2026.07.13").length).toBeGreaterThan(0);
+        // The calendar version is an opaque fingerprint now; it is not shown.
+        expect(screen.getByText("초안 버전 4")).toBeInTheDocument();
+        expect(screen.queryByText(/달력/)).not.toBeInTheDocument();
         expect(screen.getByText("assignment-1")).toBeInTheDocument();
         expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
         expect(screen.getByText("기본정보: 변경됨")).toBeInTheDocument();

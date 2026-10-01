@@ -8,6 +8,7 @@ import {
     isSelectableServiceRecordDate,
     ServiceRecordDateSelectionDialog,
 } from "./ServiceRecordDateSelectionDialog";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 
 const DATA_COMPONENT = "desktop_service-record-admin_date-selection-dialog";
 
@@ -18,6 +19,7 @@ function renderDialog(
         open: true,
         onOpenChange: jest.fn(),
         currentServiceDate: "2026-07-16",
+        calendar: KR_BUILTIN_CALENDAR,
         sessionLabel: "3회차",
         onApply: jest.fn(),
         ...overrides,
@@ -44,8 +46,8 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(dialog.querySelector('[data-slot="notice"]')).toBeNull();
     });
     it("derives supported years from the shared calendar and filters weekends and holidays", () => {
-        const years = getSupportedKoreanBusinessYears();
-        const julyOptions = getBusinessDayOptions(2026, 7);
+        const years = getSupportedKoreanBusinessYears(KR_BUILTIN_CALENDAR);
+        const julyOptions = getBusinessDayOptions(2026, 7, KR_BUILTIN_CALENDAR);
 
         expect(years).toEqual([...years].sort((left, right) => left - right));
         expect(years.length).toBeGreaterThan(1);
@@ -53,20 +55,20 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(julyOptions.map((option) => option.value)).not.toEqual(
             expect.arrayContaining(["17", "18", "19"]),
         );
-        expect(isSelectableServiceRecordDate("2026-07-17")).toBe(false);
-        expect(isSelectableServiceRecordDate("2026-07-18")).toBe(false);
-        expect(isSelectableServiceRecordDate("2026-07-16")).toBe(true);
+        expect(isSelectableServiceRecordDate("2026-07-17", KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isSelectableServiceRecordDate("2026-07-18", KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isSelectableServiceRecordDate("2026-07-16", KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("blocks malformed and unsupported initial dates without guessing a fallback", () => {
-        const years = getSupportedKoreanBusinessYears();
+        const years = getSupportedKoreanBusinessYears(KR_BUILTIN_CALENDAR);
         const unsupportedDate = `${Math.max(...years) + 1}-01-02`;
 
-        expect(getInitialServiceRecordDateSelection("2026-02-30")).toEqual({
+        expect(getInitialServiceRecordDateSelection("2026-02-30", KR_BUILTIN_CALENDAR)).toEqual({
             parts: null,
             reason: "malformed",
         });
-        expect(getInitialServiceRecordDateSelection(unsupportedDate)).toEqual({
+        expect(getInitialServiceRecordDateSelection(unsupportedDate, KR_BUILTIN_CALENDAR)).toEqual({
             parts: null,
             reason: "unsupported-year",
         });
@@ -81,6 +83,7 @@ describe("ServiceRecordDateSelectionDialog", () => {
                 open
                 onOpenChange={jest.fn()}
                 currentServiceDate={unsupportedDate}
+                calendar={KR_BUILTIN_CALENDAR}
                 sessionLabel="3회차"
                 onApply={jest.fn()}
             />,
@@ -181,5 +184,30 @@ describe("ServiceRecordDateSelectionDialog", () => {
             "data-slot",
             "date-controls",
         );
+    });
+
+    it("treats a branch-added holiday as a non-business day and drops it from the day options", () => {
+        const branchCalendar = createKrBusinessDayCalendar(["2026-07-15"], {
+            version: "kr-db-test",
+            supportedYears: [2025, 2026, 2027],
+        });
+        expect(isSelectableServiceRecordDate("2026-07-15", KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isSelectableServiceRecordDate("2026-07-15", branchCalendar)).toBe(false);
+        expect(getBusinessDayOptions(2026, 7, branchCalendar).map((option) => option.value)).not.toContain("15");
+
+        renderDialog({ calendar: branchCalendar, currentServiceDate: "2026-07-15" });
+        expect(screen.getByRole("alert")).toHaveTextContent("주말 또는 공휴일");
+    });
+
+    it("offers only the years the branch calendar covers and blocks a date outside them", () => {
+        const branchCalendar = createKrBusinessDayCalendar(["2026-07-15"], {
+            version: "kr-db-test",
+            supportedYears: [2026],
+        });
+        expect(getSupportedKoreanBusinessYears(branchCalendar)).toEqual([2026]);
+        expect(getInitialServiceRecordDateSelection("2025-07-16", branchCalendar)).toEqual({
+            parts: null,
+            reason: "unsupported-year",
+        });
     });
 });
