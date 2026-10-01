@@ -91,7 +91,7 @@ export function ServiceScheduleChangeModal({
                 >
                     <label
                         htmlFor={DATE_INPUT_ID}
-                        className="shrink-0 whitespace-nowrap font-medium text-v3-text-primary"
+                        className="shrink-0 whitespace-nowrap font-medium text-primary"
                     >
                         {label}
                     </label>
