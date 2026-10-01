@@ -57,15 +57,15 @@ function TemplateEditorLoadingSkeleton({ name }: { name: string }) {
   return (
     <div data-component={name} className="flex flex-col gap-6">
       <div data-component={`${name}-name`} className="space-y-2">
-        <Skeleton className="h-3 w-28 bg-surface" />
-        <Skeleton className="h-11 w-full rounded-[14px] bg-surface" />
+        <Skeleton className="h-3 w-28 bg-v3-dim-white" />
+        <Skeleton className="h-11 w-full rounded-[14px] bg-v3-dim-white" />
       </div>
       <div data-component={`${name}-content`} className="space-y-2">
-        <Skeleton className="h-3 w-24 bg-surface" />
-        <Skeleton className="h-48 w-full rounded-[14px] bg-surface" />
+        <Skeleton className="h-3 w-24 bg-v3-dim-white" />
+        <Skeleton className="h-48 w-full rounded-[14px] bg-v3-dim-white" />
       </div>
       <div data-component={`${name}-action`} className="flex justify-end">
-        <Skeleton className="h-10 w-20 rounded-[12px] bg-surface" />
+        <Skeleton className="h-10 w-20 rounded-[12px] bg-v3-dim-white" />
       </div>
     </div>
   );
@@ -336,7 +336,7 @@ export default function TemplatesPage() {
                       <>
                         <div
                           data-component="desktop_messages_sections_templates_split-layout_list-panel_templates-list_templates-list-skeleton-icon"
-                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-surface"
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
                         >
                           <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                         </div>
@@ -344,8 +344,8 @@ export default function TemplatesPage() {
                           data-component="desktop_messages_sections_templates_split-layout_list-panel_templates-list_templates-list-skeleton-text"
                           className="min-w-0 flex-1 space-y-1.5"
                         >
-                          <Skeleton className="h-4 w-32 bg-surface" />
-                          <Skeleton className="h-3 w-20 bg-surface" />
+                          <Skeleton className="h-4 w-32 bg-v3-dim-white" />
+                          <Skeleton className="h-3 w-20 bg-v3-dim-white" />
                         </div>
                       </>
                     );

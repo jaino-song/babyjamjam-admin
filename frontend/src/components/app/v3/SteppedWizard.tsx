@@ -67,14 +67,14 @@ function MobileStepIndicator({
   return (
     <div data-component="desktop_v3_stepped-wizard_stepper-mobile" className="md:hidden">
       <div data-component="desktop_v3_stepped-wizard_stepper-mobile_header" className="mb-2 flex items-center justify-end">
-        <span className="text-[0.7rem] font-semibold text-text-muted">
+        <span className="text-[0.7rem] font-semibold text-v3-text-muted">
           {currentStep + 1} / {steps.length} 단계
         </span>
       </div>
-      <div data-component="desktop_v3_stepped-wizard_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-border">
+      <div data-component="desktop_v3_stepped-wizard_stepper-mobile_track" className="h-1.5 w-full overflow-hidden rounded-full bg-v3-border">
         <div
           data-component="desktop_v3_stepped-wizard_stepper-mobile_track_progress"
-          className="h-full rounded-full bg-gradient-to-r from-primary to-blue-500 transition-all duration-400"
+          className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
           style={{
             width: `${progress}%`,
             transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -98,10 +98,10 @@ function CompletedStepSummary({
 
   return (
     <>
-      <div className="hidden md:block bg-green-light rounded-[18px] p-4 mb-6">
+      <div className="hidden md:block bg-v3-green-light rounded-[18px] p-4 mb-6">
         <div
           className={cn(
-            "text-[0.7rem] uppercase tracking-[0.1em] text-green font-semibold",
+            "text-[0.7rem] uppercase tracking-[0.1em] text-v3-green font-semibold",
             step.summary ? "mb-3" : undefined,
           )}
         >
@@ -114,19 +114,19 @@ function CompletedStepSummary({
         <button
           type="button"
           onClick={onEdit}
-          className="w-full bg-green-light rounded-2xl p-3.5 flex items-center justify-between border-[1.5px] border-transparent hover:border-[hsl(137,40%,80%)] active:border-[hsl(137,40%,80%)] transition-all"
+          className="w-full bg-v3-green-light rounded-2xl p-3.5 flex items-center justify-between border-[1.5px] border-transparent hover:border-[hsl(137,40%,80%)] active:border-[hsl(137,40%,80%)] transition-all"
         >
           <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 rounded-full bg-green flex items-center justify-center shrink-0">
+            <div className="w-7 h-7 rounded-full bg-v3-green flex items-center justify-center shrink-0">
               <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />
             </div>
             <div className="text-left">
-              <div className="text-[0.8rem] font-bold text-dark">
+              <div className="text-[0.8rem] font-bold text-v3-dark">
                 {stepIndex + 1}단계: {step.label}
               </div>
             </div>
           </div>
-          <span className="text-[0.7rem] font-semibold text-primary px-3 py-1.5 rounded-[10px] bg-primary-light shrink-0">
+          <span className="text-[0.7rem] font-semibold text-v3-primary px-3 py-1.5 rounded-[10px] bg-v3-primary-light shrink-0">
             수정
           </span>
         </button>
@@ -178,7 +178,7 @@ export function SteppedWizard({
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-text-muted hover:text-primary transition-colors mb-4 md:mb-6 self-start"
+          className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
         >
           {backLabel}
         </button>

@@ -120,7 +120,7 @@ export function EmployeeAutocomplete({
                                     "px-2 py-0.5 rounded-full text-[0.7rem] font-medium",
                                     highlighted
                                         ? "bg-white/20 text-white"
-                                        : "bg-primary-light text-primary"
+                                        : "bg-v3-primary-light text-v3-primary"
                                 )}
                             >
                                 {stripCityPrefix(area)}

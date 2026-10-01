@@ -67,7 +67,7 @@ export default function AdminFeedbackPage() {
   if (error) {
     return (
       <div data-component="desktop_admin_error_state" className="p-6">
-        <div data-component="desktop_admin_error_state_message" className="bg-burgundy-light text-burgundy rounded-[18px] p-6 text-center">
+        <div data-component="desktop_admin_error_state_message" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           피드백을 불러오는데 실패했습니다.
         </div>
       </div>
@@ -116,14 +116,14 @@ export default function AdminFeedbackPage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div data-component="desktop_admin_split-layout_list-panel_admin-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-surface flex items-center justify-center">
+                      <div data-component="desktop_admin_split-layout_list-panel_admin-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
                       <div data-component="desktop_admin_split-layout_list-panel_admin-list-item-skeleton-content" className="flex-1 min-w-0">
-                        <Skeleton className="h-4 w-24 mb-1.5 bg-surface" />
-                        <Skeleton className="h-3 w-32 bg-surface" />
+                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
-                      <Skeleton className="h-3 w-12 bg-surface shrink-0" />
+                      <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
                     </>
                   );
                 }
@@ -137,7 +137,7 @@ export default function AdminFeedbackPage() {
                     title={feedback.user.name || feedback.user.email || '익명'}
                     subtitle={truncateText(feedback.comment, 30)}
                     status={
-                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-text-muted">
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {formatDate(feedback.createdAt)}
                       </span>
                     }
@@ -200,8 +200,8 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
             <div data-component="desktop_admin_detail-panel_info-card-2_loading-messages" className="space-y-3">
               {[1, 2, 3].map(i => (
                 <div key={i} data-component="desktop_admin_detail-panel_info-card-2_loading-messages_message" className="space-y-2">
-                  <Skeleton className="h-3 w-20 bg-surface" />
-                  <Skeleton className="h-12 w-full bg-surface rounded-[14px]" />
+                  <Skeleton className="h-3 w-20 bg-v3-dim-white" />
+                  <Skeleton className="h-12 w-full bg-v3-dim-white rounded-[14px]" />
                 </div>
               ))}
             </div>
@@ -222,18 +222,18 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                       isHighlighted
                         ? 'ring-2 ring-amber-400 bg-amber-50'
                         : isUser
-                          ? 'bg-primary-light'
-                          : 'bg-surface'
+                          ? 'bg-v3-primary-light'
+                          : 'bg-v3-dim-white'
                     )}
                   >
                      <div data-component="desktop_admin_detail-panel_info-card-3_messages_card_meta" className="flex items-center gap-2 mb-1.5">
                       <span className={cn(
                         'text-[0.7rem] font-semibold',
-                        isHighlighted ? 'text-amber-600' : isUser ? 'text-primary' : 'text-text-muted'
+                        isHighlighted ? 'text-amber-600' : isUser ? 'text-v3-primary' : 'text-v3-text-muted'
                       )}>
                         {isUser ? '사용자' : 'AI 어시스턴트'}
                       </span>
-                      <span className="text-[0.65rem] text-text-muted">
+                      <span className="text-[0.65rem] text-v3-text-muted">
                         {formatDate(message.timestamp)}
                       </span>
                       {isHighlighted && (
@@ -241,9 +241,9 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                       )}
                     </div>
                     {isUser ? (
-                      <p className="text-text whitespace-pre-wrap break-words">{message.content}</p>
+                      <p className="text-v3-text whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
-                       <div data-component="desktop_admin_detail-panel_info-card-3_messages_card_content" className="prose prose-sm max-w-none text-text">
+                       <div data-component="desktop_admin_detail-panel_info-card-3_messages_card_content" className="prose prose-sm max-w-none text-v3-text">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
@@ -255,12 +255,12 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                             code: ({ className, children }) => {
                               const isInline = !className;
                               return isInline ? (
-                                <code className="bg-white/60 text-dark px-1 py-0.5 rounded text-[0.75rem] font-mono">{children}</code>
+                                <code className="bg-white/60 text-v3-dark px-1 py-0.5 rounded text-[0.75rem] font-mono">{children}</code>
                               ) : (
                                 <code className={className}>{children}</code>
                               );
                             },
-                            pre: ({ children }) => <pre className="bg-dark text-white p-3 rounded-[10px] overflow-x-auto mb-2 text-[0.75rem]">{children}</pre>,
+                            pre: ({ children }) => <pre className="bg-v3-dark text-white p-3 rounded-[10px] overflow-x-auto mb-2 text-[0.75rem]">{children}</pre>,
                           }}
                         >
                           {message.content}

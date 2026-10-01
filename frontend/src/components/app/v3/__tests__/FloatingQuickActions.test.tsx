@@ -9,8 +9,8 @@ describe("FloatingQuickActions", () => {
         );
 
         const priceAction = screen.getByRole("link", { name: "가격표" });
-        expect(priceAction.firstElementChild).toHaveClass("bg-purple-light");
-        expect(priceAction.querySelector("svg")).toHaveClass("text-purple");
-        expect(priceAction.querySelector("svg")).not.toHaveClass("text-burgundy");
+        expect(priceAction.firstElementChild).toHaveClass("bg-v3-purple-light");
+        expect(priceAction.querySelector("svg")).toHaveClass("text-v3-purple");
+        expect(priceAction.querySelector("svg")).not.toHaveClass("text-v3-burgundy");
     });
 });

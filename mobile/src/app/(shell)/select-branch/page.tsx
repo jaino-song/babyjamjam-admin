@@ -24,11 +24,11 @@ interface Branch {
 }
 
 const BRANCH_ICON_COLORS = [
-  "hsl(var(--primary))",
+  "hsl(var(--v3-primary))",
   "hsl(267, 50%, 46%)",
-  "hsl(var(--orange))",
-  "hsl(var(--green))",
-  "hsl(var(--burgundy))",
+  "hsl(var(--v3-orange))",
+  "hsl(var(--v3-green))",
+  "hsl(var(--v3-burgundy))",
 ];
 
 /** Canonical data-component base for the /select-branch route. */
@@ -155,7 +155,7 @@ export default function SelectBranchPage() {
             flexDirection: "column",
             alignItems: "center",
             gap: 16,
-            color: "hsl(var(--text-muted))",
+            color: "hsl(var(--v3-text-muted))",
             fontSize: "0.86rem",
           }}
         >
@@ -202,11 +202,11 @@ export default function SelectBranchPage() {
             gap: 12,
             padding: "32px 16px",
             textAlign: "center",
-            color: "hsl(var(--text-muted))",
+            color: "hsl(var(--v3-text-muted))",
           }}
         >
           <Building2 size={48} strokeWidth={1.5} />
-          <p style={{ fontSize: "0.86rem", lineHeight: 1.55, color: "hsl(var(--dark))" }}>
+          <p style={{ fontSize: "0.86rem", lineHeight: 1.55, color: "hsl(var(--v3-dark))" }}>
             관리자에게 지점 접근 권한을 요청해주세요.
           </p>
           <p style={{ fontSize: "0.74rem" }}>권한이 부여되면 이 페이지를 새로고침하세요.</p>

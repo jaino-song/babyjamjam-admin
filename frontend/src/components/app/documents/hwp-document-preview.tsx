@@ -148,8 +148,8 @@ export function HwpDocumentPreview({
   if (state.status === "loading") {
     return (
       <div className="flex min-h-full items-center justify-center">
-        <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-text shadow-sm">
-          <Spinner size="sm" className="text-primary" />
+        <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
+          <Spinner size="sm" className="text-v3-primary" />
           한글 문서를 불러오는 중입니다
         </div>
       </div>
@@ -159,7 +159,7 @@ export function HwpDocumentPreview({
   if (state.status === "error") {
     return (
       <div className="flex min-h-full items-center justify-center">
-        <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-burgundy shadow-sm">
+        <div className="rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-burgundy shadow-sm">
           한글 문서 미리보기를 불러오지 못했습니다.
         </div>
       </div>

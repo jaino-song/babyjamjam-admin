@@ -91,7 +91,7 @@ export function HeadlessProgressStepper({
                 data-component={sub("connector")}
                 className={cn(
                   "absolute left-[15px] top-8 h-[calc(100%-2rem)] w-0.5 rounded-full",
-                  idx < currentIndex ? "bg-primary" : "bg-border",
+                  idx < currentIndex ? "bg-v3-primary" : "bg-v3-border",
                 )}
                 aria-hidden="true"
               />
@@ -100,10 +100,10 @@ export function HeadlessProgressStepper({
               data-component={sub("circle")}
               className={cn(
                 "relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[0.7rem] font-bold transition-colors",
-                state === "done" && "bg-primary text-white",
-                state === "active" && "bg-primary text-white ring-2 ring-primary/25 ring-offset-2",
+                state === "done" && "bg-v3-primary text-white",
+                state === "active" && "bg-v3-primary text-white ring-2 ring-v3-primary/25 ring-offset-2",
                 state === "error" && "bg-destructive text-destructive-foreground",
-                state === "pending" && "border border-border bg-surface text-text-muted",
+                state === "pending" && "border border-v3-border bg-v3-dim-white text-v3-text-muted",
               )}
             >
               {state === "done" ? (
@@ -129,18 +129,18 @@ export function HeadlessProgressStepper({
                 data-component={sub("label")}
                 className={cn(
                   "text-sm font-semibold leading-5",
-                  (state === "done" || state === "active") && "text-dark",
-                  state === "pending" && "text-text-muted",
+                  (state === "done" || state === "active") && "text-v3-dark",
+                  state === "pending" && "text-v3-text-muted",
                   state === "error" && "text-destructive",
                 )}
               >
                 {state === "error" ? item.errorLabel : item.label}
               </span>
               {state === "active" && (
-                <span className="text-xs font-medium text-text-muted">처리 중</span>
+                <span className="text-xs font-medium text-v3-text-muted">처리 중</span>
               )}
               {state === "error" && errorHint && (
-                <span className="text-xs font-medium text-text-muted">{errorHint}</span>
+                <span className="text-xs font-medium text-v3-text-muted">{errorHint}</span>
               )}
             </span>
           </li>

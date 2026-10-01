@@ -28,12 +28,12 @@ export interface ClientMessageHistoryDetailView {
 }
 
 const HERO_ICON_TONE_CLASS: Record<MessageHistoryDetailTone, string> = {
-  green: "bg-green-light text-green",
-  primary: "bg-primary-light text-primary",
-  orange: "bg-orange-light text-orange",
-  muted: "bg-surface text-text-muted",
-  burgundy: "bg-burgundy-light text-burgundy",
-  purple: "bg-purple-light text-purple",
+  green: "bg-v3-green-light text-v3-green",
+  primary: "bg-v3-primary-light text-v3-primary",
+  orange: "bg-v3-orange-light text-v3-orange",
+  muted: "bg-v3-dim-white text-v3-text-muted",
+  burgundy: "bg-v3-burgundy-light text-v3-burgundy",
+  purple: "bg-v3-purple-light text-v3-purple",
 };
 
 /**
@@ -106,13 +106,13 @@ export function ClientMessageHistoryDetail({
           data-component={sub("head-text")}
         >
           <h2
-            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-dark"
+            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-v3-dark"
             data-component={sub("title")}
           >
             {view.title}
           </h2>
           <p
-            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-text-muted"
+            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-v3-text-muted"
             data-component={sub("subtitle")}
           >
             {view.channelLabel} · {view.sentAtLabel}

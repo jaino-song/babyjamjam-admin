@@ -43,7 +43,7 @@ export function InfoTooltip({
             aria-label={ariaLabel}
             data-component={dataComponent}
             className={cn(
-              "inline-flex items-center justify-center rounded-full text-text-muted hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 transition-colors",
+              "inline-flex items-center justify-center rounded-full text-v3-text-muted hover:text-v3-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/40 transition-colors",
               className
             )}
           >
@@ -53,7 +53,7 @@ export function InfoTooltip({
         <TooltipContent
           side={side}
           align="start"
-          className="max-w-[280px] whitespace-pre-line bg-text/95 text-white border-transparent text-[0.75rem] leading-snug font-medium"
+          className="max-w-[280px] whitespace-pre-line bg-v3-text/95 text-white border-transparent text-[0.75rem] leading-snug font-medium"
         >
           {text}
         </TooltipContent>

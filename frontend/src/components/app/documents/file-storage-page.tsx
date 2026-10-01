@@ -87,10 +87,10 @@ export function FileStoragePage() {
   }, [selectedDocId, filteredDocs]);
 
   function getFileIcon(doc: Document) {
-    if (doc.mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-burgundy" />;
-    if (isHangulDocument(doc)) return <FileText className="w-4 h-4 text-primary" />;
-    if (doc.mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-primary" />;
-    return <File className="w-4 h-4 text-text-muted" />;
+    if (doc.mimeType.includes("pdf")) return <FileText className="w-4 h-4 text-v3-burgundy" />;
+    if (isHangulDocument(doc)) return <FileText className="w-4 h-4 text-v3-primary" />;
+    if (doc.mimeType.includes("image")) return <ImageIcon className="w-4 h-4 text-v3-primary" />;
+    return <File className="w-4 h-4 text-v3-text-muted" />;
   }
 
   function getCategoryLabel(doc: Document): string {
@@ -152,7 +152,7 @@ export function FileStoragePage() {
   if (error) {
     return (
       <div data-component="desktop_files_error_container" className="p-6">
-        <div data-component="desktop_files_error_container_message" className="bg-burgundy-light text-burgundy rounded-[18px] p-6 text-center">
+        <div data-component="desktop_files_error_container_message" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
           문서를 불러오는데 실패했습니다.
         </div>
       </div>
@@ -210,14 +210,14 @@ export function FileStoragePage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div data-component="desktop_files_split-layout_list-panel_files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-surface flex items-center justify-center">
+                      <div data-component="desktop_files_split-layout_list-panel_files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
                       <div data-component="desktop_files_split-layout_list-panel_files-list-item-skeleton-content" className="flex-1 min-w-0">
-                        <Skeleton className="h-4 w-24 mb-1.5 bg-surface" />
-                        <Skeleton className="h-3 w-32 bg-surface" />
+                        <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                        <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
-                      <Skeleton className="h-3 w-12 bg-surface shrink-0" />
+                      <Skeleton className="h-3 w-12 bg-v3-dim-white shrink-0" />
                     </>
                   );
                 }
@@ -226,11 +226,11 @@ export function FileStoragePage() {
                   <AnimatedSlotListItemContent
                     dataComponent="desktop_files_split-layout_list-panel_files-list-item"
                     icon={getFileIcon(doc)}
-                    iconContainerClassName="bg-primary-light"
+                    iconContainerClassName="bg-v3-primary-light"
                     title={doc.name}
                     subtitle={`${getCategoryLabel(doc)} · ${doc.visibilityScope === "all_branches" ? "모든 지점" : "현재 지점"}`}
                     status={
-                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-text-muted">
+                      <span className="whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {formatDate(doc.createdAt)}
                       </span>
                     }
@@ -267,12 +267,12 @@ export function FileStoragePage() {
         <DialogContent
           data-component="desktop_files_upload-dialog"
           showCloseButton={false}
-          className="flex max-h-[90vh] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] flex-col overflow-hidden rounded-[28px] border-none bg-surface p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] gap-0"
+          className="flex max-h-[90vh] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] flex-col overflow-hidden rounded-[28px] border-none bg-v3-dim-white p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] gap-0"
         >
-          <DialogHeader className="shrink-0 flex-row items-start justify-between border-b border-border bg-white p-6 text-left">
+          <DialogHeader className="shrink-0 flex-row items-start justify-between border-b border-v3-border bg-white p-6 text-left">
             <div data-component="desktop_files_upload-dialog_heading" className="flex min-w-0 flex-col items-start gap-2 pr-12">
-              <DialogTitle className="flex items-center gap-2 text-[1.35rem] font-bold tracking-[-0.02em] text-dark">
-                <Upload className="h-5 w-5 text-primary" />
+              <DialogTitle className="flex items-center gap-2 text-[1.35rem] font-bold tracking-[-0.02em] text-v3-dark">
+                <Upload className="h-5 w-5 text-v3-primary" />
                 파일 업로드
               </DialogTitle>
               <DialogDescription className="sr-only">
@@ -302,7 +302,7 @@ export function FileStoragePage() {
               capabilities={uploadCapabilities}
             />
           </div>
-          <DialogFooter className="shrink-0 border-t border-border bg-white px-6 py-4 sm:justify-between">
+          <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4 sm:justify-between">
             <Button variant="outline" onClick={() => handleUploadOpenChange(false)} disabled={uploadMutation.isPending}>취소</Button>
             {uploadDropzoneState.hasSelectedFile && (
               <Button
@@ -378,10 +378,10 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       title={doc.name}
       badges={
         <div data-component="desktop_files_split-layout_detail-panel_visibility-badges" className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-primary-light text-primary">
+          <span className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
             {getCategoryLabel(doc)}
           </span>
-          <span className="inline-flex items-center rounded-[50px] bg-surface px-3 py-1 text-[0.65rem] font-semibold text-text-muted">
+          <span className="inline-flex items-center rounded-[50px] bg-v3-dim-white px-3 py-1 text-[0.65rem] font-semibold text-v3-text-muted">
             {doc.visibilityScope === "all_branches" ? "모든 지점 공개" : "현재 지점 전용"}
           </span>
         </div>
@@ -404,9 +404,9 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
               <button
                 type="button"
                 aria-label="문서 작업 더보기"
-                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-surface transition-colors"
+                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
               >
-                <MoreVertical className="w-5 h-5 text-text-muted" />
+                <MoreVertical className="w-5 h-5 text-v3-text-muted" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[140px]">
@@ -436,7 +436,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
 
         {doc.description && (
           <InfoCard data-component="desktop_files_detail-panel_info-card-2" title="설명">
-            <p className="text-[0.8rem] text-text">{doc.description}</p>
+            <p className="text-[0.8rem] text-v3-text">{doc.description}</p>
           </InfoCard>
         )}
 
@@ -444,7 +444,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
           <InfoCard data-component="desktop_files_detail-panel_info-card-3" title="태그">
             <div data-component="desktop_files_detail-panel_info-card-3_files-detail-tags" className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
-                <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-primary-light text-primary">
+                <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}
                 </span>
               ))}

@@ -44,8 +44,8 @@ describe("Select Component", () => {
     const item = document.body.querySelector('[data-slot="select-item"]');
 
     expect(content).toHaveClass("rounded-[22px]");
-    expect(content).toHaveClass("border-border");
+    expect(content).toHaveClass("border-v3-border");
     expect(item).toHaveClass("rounded-[16px]");
-    expect(item).toHaveClass("text-dark");
+    expect(item).toHaveClass("text-v3-dark");
   });
 });

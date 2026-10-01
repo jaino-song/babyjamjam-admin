@@ -199,14 +199,14 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           data-component="desktop_stats-traffic_page_trend_card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-text">조회수 · 방문자 추이 ({statsPeriodLabel(period)})</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">조회수 · 방문자 추이 ({statsPeriodLabel(period)})</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
             <div className="ml-auto flex gap-3 text-[0.7rem]">
               <span className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-0.5 bg-primary" />
+                <span className="inline-block w-3 h-0.5 bg-v3-primary" />
                 조회수
               </span>
               <span className="flex items-center gap-1.5">
@@ -218,7 +218,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_trend-unavailable" />
           ) : summary.selectedRange.total.pv === 0 ? (
-            <p className="text-center py-10 text-[0.85rem] text-text-muted">
+            <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 트래픽 데이터가 없어요.
             </p>
           ) : (
@@ -293,8 +293,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           data-component="desktop_stats-traffic_page_pages-sources_top-pages-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">인기 페이지</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">인기 페이지</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -302,15 +302,15 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_top-pages-unavailable" />
           ) : topPages.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-text-muted">데이터 없음</p>
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
             <table className="w-full text-[0.82rem]">
               <thead>
-                <tr className="bg-surface border-b border-border">
-                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">경로</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">조회수</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">방문자</th>
-                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-text-muted px-3 py-2.5">비중</th>
+                <tr className="bg-v3-dim-white border-b border-v3-border">
+                  <th className="text-left font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">경로</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">조회수</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">방문자</th>
+                  <th className="text-right font-semibold uppercase tracking-wider text-[0.65rem] text-v3-text-muted px-3 py-2.5">비중</th>
                 </tr>
               </thead>
               <tbody>
@@ -323,12 +323,12 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
                     <tr
                       key={`${p.path}-${i}`}
                       data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_body_row"
-                      className="border-b border-border last:border-0 hover:bg-surface"
+                      className="border-b border-v3-border last:border-0 hover:bg-v3-dim-white"
                     >
-                      <td className="px-3 py-3 font-mono text-text">{p.path}</td>
+                      <td className="px-3 py-3 font-mono text-v3-text">{p.path}</td>
                       <td className="px-3 py-3 text-right font-semibold tabular-nums">{p.pv}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{p.unique}</td>
-                      <td className="px-3 py-3 text-right text-text-muted tabular-nums">
+                      <td className="px-3 py-3 text-right text-v3-text-muted tabular-nums">
                         {share.toFixed(1)}%
                       </td>
                     </tr>
@@ -343,8 +343,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           data-component="desktop_stats-traffic_page_pages-sources_sources-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">유입 소스</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">유입 소스</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -352,21 +352,21 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_sources-unavailable" />
           ) : sources.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-text-muted">데이터 없음</p>
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
             <div className="space-y-2.5">
               {sources.slice(0, 6).map((s) => (
                 <div key={s.source} className="flex items-center gap-3">
                   <span className="w-[110px] truncate text-[0.78rem] font-medium">{s.source}</span>
-                  <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-primary to-blue-700"
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
                       style={{ width: `${s.pct}%` }}
                     />
                   </div>
                   <span className="w-16 text-right text-[0.78rem] font-semibold tabular-nums">
                     {s.count}
-                    <span className="ml-1 text-[0.65rem] font-normal text-text-muted">{s.pct.toFixed(0)}%</span>
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">{s.pct.toFixed(0)}%</span>
                   </span>
                 </div>
               ))}
@@ -383,8 +383,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           data-component="desktop_stats-traffic_page_device-region_device-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-4">
-            <h3 className="text-[0.95rem] font-bold text-text">디바이스 · 브라우저</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-4">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">디바이스 · 브라우저</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -393,11 +393,11 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_device-unavailable" />
           ) : <div className="space-y-5">
             <div>
-              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-text-muted mb-2">
+              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-2">
                 디바이스
               </div>
-              <div className="flex h-3 rounded-full overflow-hidden bg-surface">
-                <div className="bg-primary" style={{ width: `${mobile.pct}%` }} />
+              <div className="flex h-3 rounded-full overflow-hidden bg-v3-dim-white">
+                <div className="bg-v3-primary" style={{ width: `${mobile.pct}%` }} />
                 <div className="bg-blue-400" style={{ width: `${desktop.pct}%` }} />
               </div>
               <div className="mt-1.5 flex justify-between text-[0.72rem]">
@@ -410,19 +410,19 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               </div>
             </div>
             <div>
-              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-text-muted mb-2">
+              <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-2">
                 브라우저
               </div>
               {browsers.length === 0 ? (
-                <p className="text-[0.78rem] text-text-muted">데이터 없음</p>
+                <p className="text-[0.78rem] text-v3-text-muted">데이터 없음</p>
               ) : (
                 <div>
                   {browsers.slice(0, 6).map((b) => (
                     <div
                       key={b.browser}
-                      className="flex justify-between items-center py-1.5 border-b border-border last:border-0 text-[0.78rem]"
+                      className="flex justify-between items-center py-1.5 border-b border-v3-border last:border-0 text-[0.78rem]"
                     >
-                      <span className="text-text">{b.browser}</span>
+                      <span className="text-v3-text">{b.browser}</span>
                       <span className="font-semibold tabular-nums">
                         {b.pct.toFixed(1)}% · {b.count}
                       </span>
@@ -438,8 +438,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           data-component="desktop_stats-traffic_page_device-region_region-card"
           className="animate-v3-slide-up bg-white rounded-[28px] shadow-v3 p-6"
         >
-          <header className="flex items-center gap-2.5 pb-3.5 border-b border-border mb-3">
-            <h3 className="text-[0.95rem] font-bold text-text">지역</h3>
+          <header className="flex items-center gap-2.5 pb-3.5 border-b border-v3-border mb-3">
+            <h3 className="text-[0.95rem] font-bold text-v3-text">지역</h3>
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
@@ -447,7 +447,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_region-unavailable" />
           ) : regions.length === 0 ? (
-            <p className="text-center py-6 text-[0.85rem] text-text-muted">
+            <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               지역 데이터가 없어요.
             </p>
           ) : (
@@ -455,15 +455,15 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               {regions.slice(0, 8).map((r) => (
                 <div key={r.region} className="flex items-center gap-3">
                   <span className="w-[180px] truncate text-[0.78rem] font-medium">{r.region}</span>
-                  <div className="flex-1 h-5 rounded-md bg-surface overflow-hidden">
+                  <div className="flex-1 h-5 rounded-md bg-v3-dim-white overflow-hidden">
                     <div
-                      className="h-full bg-gradient-to-r from-primary to-blue-700"
+                      className="h-full bg-gradient-to-r from-v3-primary to-blue-700"
                       style={{ width: `${r.pct}%` }}
                     />
                   </div>
                   <span className="w-16 text-right text-[0.78rem] font-semibold tabular-nums">
                     {r.count}
-                    <span className="ml-1 text-[0.65rem] font-normal text-text-muted">{r.pct.toFixed(0)}%</span>
+                    <span className="ml-1 text-[0.65rem] font-normal text-v3-text-muted">{r.pct.toFixed(0)}%</span>
                   </span>
                 </div>
               ))}

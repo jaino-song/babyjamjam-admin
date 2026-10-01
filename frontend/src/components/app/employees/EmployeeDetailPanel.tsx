@@ -75,8 +75,8 @@ function employeeInitial(name: string) {
 
 function getEmployeeAvatarClassName(openToNextWork: boolean) {
     return openToNextWork
-        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-green"
-        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-text-muted";
+        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted";
 }
 
 function getGradeBadge(grade: string) {
@@ -179,7 +179,7 @@ function ActiveClientsPanel({
                     }}
                 />
             ) : (
-                <p data-component="desktop_employees_detail-panel_info-card-3_empty" className="py-4 text-center text-sm text-text-muted">
+                <p data-component="desktop_employees_detail-panel_info-card-3_empty" className="py-4 text-center text-sm text-v3-text-muted">
                     현재 담당 고객이 없습니다.
                 </p>
             )}
@@ -409,7 +409,7 @@ export function EmployeeDetailPanel({
                     canManage ? <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button type="button" variant="ghost" size="icon" aria-label="직원 작업 메뉴 열기">
-                                <MoreVertical className="h-5 w-5 text-text-muted" aria-hidden="true" />
+                                <MoreVertical className="h-5 w-5 text-v3-text-muted" aria-hidden="true" />
                             </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="min-w-[140px]">

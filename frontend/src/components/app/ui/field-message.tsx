@@ -39,7 +39,7 @@ export function FieldMessageText({
             data-component={dataComponent}
             data-slot={tone === "error" ? "field-error-message" : "field-message"}
             tone={tone === "error" ? "error" : "default"}
-            className={cn("m-0 truncate text-right", tone === "ok" && "text-green", className)}
+            className={cn("m-0 truncate text-right", tone === "ok" && "text-v3-green", className)}
             aria-live="polite"
         >
             {children}

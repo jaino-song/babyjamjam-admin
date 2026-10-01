@@ -75,7 +75,7 @@ export function MobileBottomNav() {
     width: `calc((100% - ${(navPaddingPx * 2) + (navGapPx * (NAV_ITEMS.length - 1))}px) / ${NAV_ITEMS.length})`,
     padding: 0,
     borderRadius: "0.875rem",
-    background: "hsl(var(--primary))",
+    background: "hsl(var(--v3-primary))",
     opacity: indicatorVisible ? 1 : 0,
     pointerEvents: "none",
     transform: `translate3d(calc(${indicatorIndex * 100}% + ${indicatorIndex * navGapPx}px), 0, 0)`,

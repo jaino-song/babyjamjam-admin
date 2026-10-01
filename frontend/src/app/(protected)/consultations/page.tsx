@@ -92,7 +92,7 @@ function getReadVariant(readAt: string | null): "neutral" | "warning" {
 
 function getConsultationAvatarClassName(readAt: string | null): string {
     return readAt
-        ? "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-text-muted"
+        ? "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted"
         : "border border-[hsla(38,92%,35%,0.18)] bg-[hsl(47,100%,92%)] text-[hsl(38,92%,35%)]";
 }
 
@@ -260,12 +260,12 @@ export default function ConsultationsPage() {
                             if (slotLoading) {
                                 return (
                                     <>
-                                        <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-surface" />
+                                        <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-v3-dim-white" />
                                         <div data-component="desktop_consultations_split-layout_list-panel_consultations-list-item-skeleton-content" className="min-w-0 flex-1">
-                                            <Skeleton className="mb-2 h-4 w-28 bg-surface" />
-                                            <Skeleton className="h-3 w-44 bg-surface" />
+                                            <Skeleton className="mb-2 h-4 w-28 bg-v3-dim-white" />
+                                            <Skeleton className="h-3 w-44 bg-v3-dim-white" />
                                         </div>
-                                        <Skeleton className="h-6 w-14 rounded-full bg-surface" />
+                                        <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white" />
                                     </>
                                 );
                             }
@@ -361,9 +361,9 @@ export default function ConsultationsPage() {
                                                     }
                                                 />
                                                 {previousConsultationDates.length > 0 ? (
-                                                    <div data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-border last:border-b-0">
-                                                        <span className="shrink-0 text-[0.8rem] text-text-muted">이전 상담</span>
-                                                        <span data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history_values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-dark text-right">
+                                                    <div data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
+                                                        <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
+                                                        <span data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history_values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
                                                             {previousConsultationDates.map((date) => (
                                                                 <span key={date} className="block">
                                                                     {date}

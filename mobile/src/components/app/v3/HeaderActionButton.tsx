@@ -8,8 +8,8 @@ const baseStyles =
   "flex items-center gap-1 px-2.5 py-1.5 rounded-2xl text-[0.75rem] font-semibold transition-colors";
 
 const variantStyles = {
-  primary: "text-primary hover:bg-primary-light",
-  muted: "text-text-muted hover:bg-surface",
+  primary: "text-v3-primary hover:bg-v3-primary-light",
+  muted: "text-v3-text-muted hover:bg-v3-dim-white",
 } as const;
 
 const SOURCE_COMPONENT = "HeaderActionButton";

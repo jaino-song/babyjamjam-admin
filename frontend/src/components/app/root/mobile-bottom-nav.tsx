@@ -60,11 +60,11 @@ export function MobileBottomNav() {
               "flex flex-col items-center gap-1 p-2 rounded-2xl transition-all duration-200",
               item.kind === "chat"
                 ? isActive
-                  ? "bg-primary-light text-primary"
-                  : "text-primary hover:bg-primary-light"
+                  ? "bg-v3-primary-light text-v3-primary"
+                  : "text-v3-primary hover:bg-v3-primary-light"
                 : isActive
-                  ? "bg-primary text-white"
-                  : "text-gray-500 hover:bg-primary-light"
+                  ? "bg-v3-primary text-white"
+                  : "text-gray-500 hover:bg-v3-primary-light"
             )}
           >
             <Icon

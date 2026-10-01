@@ -27,7 +27,7 @@ const FLOATING_ACTIONS: FloatingAction[] = [
     href: "/prices",
     label: "가격표",
     icon: Calculator,
-    color: { bg: "bg-purple-light", text: "text-purple" },
+    color: { bg: "bg-v3-purple-light", text: "text-v3-purple" },
   },
 ];
 
@@ -77,7 +77,7 @@ export function FloatingQuickActions({
             >
               <IconComp className={cn("h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]", color.text)} strokeWidth={2.5} />
             </div>
-            <span className="text-center text-[calc(10px*var(--glint-ui-scale,1))] font-bold leading-tight text-text-muted transition-colors group-hover:text-dark">
+            <span className="text-center text-[calc(10px*var(--glint-ui-scale,1))] font-bold leading-tight text-v3-text-muted transition-colors group-hover:text-v3-dark">
               {action.label}
             </span>
           </Link>

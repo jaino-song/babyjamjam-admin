@@ -69,8 +69,8 @@ function DesktopStepIndicator({
               data-component={sub(`item-${idx + 1}`, "stepped-wizard-stepper-desktop-item")}
               className={cn(
                 "flex items-center gap-2",
-                isCurrent && "text-primary",
-                isCompleted && "text-dark"
+                isCurrent && "text-v3-primary",
+                isCompleted && "text-v3-dark"
               )}
             >
               <div
@@ -78,12 +78,12 @@ function DesktopStepIndicator({
                 className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300",
                   isCompleted &&
-                  "bg-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
+                  "bg-v3-primary text-white shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
                   isCurrent &&
-                  "bg-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)] scale-110",
+                  "bg-v3-primary text-white shadow-[0_2px_12px_hsla(214,100%,34%,0.3)] scale-110",
                   !isCompleted &&
                   !isCurrent &&
-                  "bg-surface text-text-muted border-2 border-border"
+                  "bg-v3-dim-white text-v3-text-muted border-2 border-v3-border"
                 )}
               >
                 {isCompleted ? (
@@ -96,9 +96,9 @@ function DesktopStepIndicator({
                 data-component={sub(`item-${idx + 1}_label`, "stepped-wizard-stepper-desktop-label")}
                 className={cn(
                   "text-xs font-semibold",
-                  isCurrent && "text-primary font-bold",
-                  isCompleted && "text-dark",
-                  !isCompleted && !isCurrent && "text-text-muted"
+                  isCurrent && "text-v3-primary font-bold",
+                  isCompleted && "text-v3-dark",
+                  !isCompleted && !isCurrent && "text-v3-text-muted"
                 )}
               >
                 {step.label}
@@ -110,7 +110,7 @@ function DesktopStepIndicator({
                 data-component={sub(`connector-${idx + 1}`, "stepped-wizard-stepper-desktop-connector")}
                 className={cn(
                   "w-12 h-0.5 mx-2 rounded-full",
-                  idx < currentStep ? "bg-primary" : "bg-border"
+                  idx < currentStep ? "bg-v3-primary" : "bg-v3-border"
                 )}
               />
             )}
@@ -141,17 +141,17 @@ function MobileStepIndicator({
   return (
     <div data-component={dataComponent} className={cn("md:hidden pb-5", className)}>
       <div data-component={sub("header", "stepped-wizard-stepper-mobile-header")} className="flex items-center justify-between mb-2.5">
-        <span data-component={sub("current-label", "stepped-wizard-stepper-mobile-current-label")} className="text-xs font-bold text-primary">
+        <span data-component={sub("current-label", "stepped-wizard-stepper-mobile-current-label")} className="text-xs font-bold text-v3-primary">
           {steps[currentStep]?.label}
         </span>
-        <span data-component={sub("progress-label", "stepped-wizard-stepper-mobile-progress-label")} className="text-[0.7rem] font-semibold text-text-muted">
+        <span data-component={sub("progress-label", "stepped-wizard-stepper-mobile-progress-label")} className="text-[0.7rem] font-semibold text-v3-text-muted">
           {currentStep + 1} / {steps.length} 단계
         </span>
       </div>
-      <div data-component={sub("progress-track", "stepped-wizard-stepper-mobile-progress-track")} className="w-full h-1.5 rounded-full bg-border overflow-hidden">
+      <div data-component={sub("progress-track", "stepped-wizard-stepper-mobile-progress-track")} className="w-full h-1.5 rounded-full bg-v3-border overflow-hidden">
         <div
           data-component={sub("progress-track_bar", "stepped-wizard-stepper-mobile-progress-bar")}
-          className="h-full rounded-full bg-gradient-to-r from-primary to-blue-500 transition-all duration-400"
+          className="h-full rounded-full bg-gradient-to-r from-v3-primary to-blue-500 transition-all duration-400"
           style={{
             width: `${progress}%`,
             transitionTimingFunction: "cubic-bezier(0.34, 1.56, 0.64, 1)",
@@ -179,8 +179,8 @@ function CompletedStepSummary({
 
   return (
     <>
-      <div data-component={dataComponent} className="hidden md:block bg-green-light rounded-2xl p-4 mb-6">
-        <div data-component={sub("title", "stepped-wizard-completed-summary-title")} className="text-[0.7rem] uppercase tracking-[0.1em] text-green font-semibold mb-3">
+      <div data-component={dataComponent} className="hidden md:block bg-v3-green-light rounded-2xl p-4 mb-6">
+        <div data-component={sub("title", "stepped-wizard-completed-summary-title")} className="text-[0.7rem] uppercase tracking-[0.1em] text-v3-green font-semibold mb-3">
           ✓ {stepIndex + 1}단계 완료 — {step.label}
         </div>
         <div data-component={sub("content", "stepped-wizard-completed-summary-content")}>{step.summary}</div>
@@ -249,7 +249,7 @@ export function SteppedWizard({
           data-component={sub("back-button", "stepped-wizard-back-button")}
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-text-muted hover:text-primary transition-colors mb-4 md:mb-6 self-start"
+          className="inline-flex items-center gap-1.5 text-[0.85rem] md:text-[0.85rem] text-[0.8rem] font-semibold text-v3-text-muted hover:text-v3-primary transition-colors mb-4 md:mb-6 self-start"
         >
           <ChevronLeft className="w-5 h-5 md:w-5 md:h-5 w-[18px] h-[18px]" />
           {backLabel}
@@ -264,11 +264,11 @@ export function SteppedWizard({
         )}
       >
         <div data-component={sub("panel_header", "stepped-wizard-header")} className="text-center">
-          <h2 data-component={sub("panel_header_title", "stepped-wizard-title")} className="text-lg md:text-xl font-extrabold text-dark mb-1">
+          <h2 data-component={sub("panel_header_title", "stepped-wizard-title")} className="text-lg md:text-xl font-extrabold text-v3-dark mb-1">
             {title}
           </h2>
           {subtitle && (
-            <p data-component={sub("panel_header_subtitle", "stepped-wizard-subtitle")} className="text-xs md:text-[0.8rem] text-text-muted mb-4 md:mb-7">
+            <p data-component={sub("panel_header_subtitle", "stepped-wizard-subtitle")} className="text-xs md:text-[0.8rem] text-v3-text-muted mb-4 md:mb-7">
               {subtitle}
             </p>
           )}
@@ -327,9 +327,9 @@ export function SteppedWizard({
             onClick={handlePrev}
             disabled={isFirstStep}
             className={cn(
-              "inline-flex items-center gap-1.5 px-4 md:px-5 py-2.5 md:py-2.5 rounded-2xl border-[1.5px] border-border",
-              "bg-white text-[0.8rem] md:text-[0.85rem] font-semibold text-text-muted transition-all",
-              "hover:border-text-muted",
+              "inline-flex items-center gap-1.5 px-4 md:px-5 py-2.5 md:py-2.5 rounded-2xl border-[1.5px] border-v3-border",
+              "bg-white text-[0.8rem] md:text-[0.85rem] font-semibold text-v3-text-muted transition-all",
+              "hover:border-v3-text-muted",
               isFirstStep && "opacity-0 pointer-events-none"
             )}
           >
@@ -337,7 +337,7 @@ export function SteppedWizard({
             {prevLabel}
           </button>
 
-          <span data-component={sub("panel_footer_progress", "stepped-wizard-footer-progress")} className="hidden md:block text-xs text-text-muted font-semibold">
+          <span data-component={sub("panel_footer_progress", "stepped-wizard-footer-progress")} className="hidden md:block text-xs text-v3-text-muted font-semibold">
             {currentStep + 1} / {steps.length} 단계
           </span>
 
@@ -350,9 +350,9 @@ export function SteppedWizard({
             width="md"
             className={cn(
               "gap-1.5 rounded-2xl border-none",
-              "bg-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white",
+              "bg-v3-primary text-[0.8rem] md:text-[0.85rem] font-bold text-white",
               "shadow-[0_2px_8px_hsla(214,100%,34%,0.2)]",
-              "hover:bg-primary-hover hover:-translate-y-px",
+              "hover:bg-v3-primary-hover hover:-translate-y-px",
               "disabled:opacity-60",
               isMobile ? "" : "px-7"
             )}

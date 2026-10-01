@@ -81,7 +81,7 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
   };
 }
 
-const FIELD_CLASS = "min-h-11 w-full rounded-xl border border-border bg-white px-3 text-sm text-dark outline-none focus:border-primary";
+const FIELD_CLASS = "min-h-11 w-full rounded-xl border border-v3-border bg-white px-3 text-sm text-v3-dark outline-none focus:border-v3-primary";
 
 export function MessageTriggerEditor({
   "data-component": dataComponent,
@@ -200,7 +200,7 @@ export function MessageTriggerEditor({
           void handleSave();
         }}
       >
-        <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+        <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
           <span>규칙 이름</span>
           <input
             name="ruleName"
@@ -211,7 +211,7 @@ export function MessageTriggerEditor({
           />
         </label>
 
-        <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+        <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
           <span>발송 이벤트</span>
           <select
             name="eventType"
@@ -223,7 +223,7 @@ export function MessageTriggerEditor({
           </select>
         </label>
 
-        <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+        <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
           <span>발송 시점</span>
           <select
             name="offsetType"
@@ -254,7 +254,7 @@ export function MessageTriggerEditor({
         )}
 
         {needsDays ? (
-          <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+          <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
             <span>기준 일수</span>
             <input
               name="offsetDays"
@@ -268,7 +268,7 @@ export function MessageTriggerEditor({
           </label>
         ) : null}
 
-        <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+        <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
           <span>수신자</span>
           <select
             name="recipientType"
@@ -280,7 +280,7 @@ export function MessageTriggerEditor({
           </select>
         </label>
 
-        <label className="block space-y-1.5 text-xs font-semibold text-text-muted">
+        <label className="block space-y-1.5 text-xs font-semibold text-v3-text-muted">
           <span>메시지 템플릿</span>
           <select
             name="templateKey"
@@ -293,7 +293,7 @@ export function MessageTriggerEditor({
           </select>
         </label>
 
-        <label className="flex min-h-11 items-center justify-between rounded-xl border border-border bg-white px-3 text-sm font-semibold text-dark">
+        <label className="flex min-h-11 items-center justify-between rounded-xl border border-v3-border bg-white px-3 text-sm font-semibold text-v3-dark">
           <span>규칙 활성화</span>
           <input
             name="isActive"
@@ -303,7 +303,7 @@ export function MessageTriggerEditor({
           />
         </label>
 
-        {error ? <p className="text-sm font-semibold text-burgundy" role="alert">{error}</p> : null}
+        {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
         <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
           {rule ? (

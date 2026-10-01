@@ -110,7 +110,7 @@ function DetailContent({
       >
         <span
           data-component={`${dataComponent}_hero_icon`}
-          className="flex h-[calc(46px*var(--glint-ui-scale,1))] w-[calc(46px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(14px*var(--glint-ui-scale,1))] bg-primary-light text-primary"
+          className="flex h-[calc(46px*var(--glint-ui-scale,1))] w-[calc(46px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-primary-light text-v3-primary"
           aria-hidden="true"
         >
           <ItemIcon
@@ -124,13 +124,13 @@ function DetailContent({
         >
           <h2
             data-component={`${dataComponent}_hero_copy_title`}
-            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-dark"
+            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-v3-dark"
           >
             {item.title}
           </h2>
           <p
             data-component={`${dataComponent}_hero_copy_description`}
-            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-text-muted"
+            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-v3-text-muted"
           >
             {item.subtitle}
           </p>
@@ -411,7 +411,7 @@ export function MessagesSettingsPage(): ReactElement {
                 <StatusPill
                   data-component={`${SLIDING_CARD_BASE}_stage_detail-pane_header_status`}
                   variant="primary"
-                  className="!gap-0 !rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-primary/15 !bg-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-primary"
+                  className="!gap-0 !rounded-[calc(999px*var(--glint-ui-scale,1))] !border-[calc(1px*var(--glint-ui-scale,1))] !border-v3-primary/15 !bg-v3-primary-light !px-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(4px*var(--glint-ui-scale,1))] !text-[calc(0.62rem*var(--glint-ui-scale,1))] !text-v3-primary"
                 >
                   {detailStatusLabel}
                 </StatusPill>

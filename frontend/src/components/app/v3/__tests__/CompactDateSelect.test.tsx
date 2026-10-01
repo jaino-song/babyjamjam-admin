@@ -26,7 +26,7 @@ describe("CompactDateSelect", () => {
       "w-[4.75rem]",
     );
     expect(document.body.querySelector('[data-slot="select-item"][data-state="checked"]')).toHaveClass(
-      "data-[state=checked]:!bg-[hsl(var(--primary))]",
+      "data-[state=checked]:!bg-[hsl(var(--v3-primary))]",
       "data-[state=checked]:!text-white",
       "[&_span[data-slot=select-item-indicator]]:hidden",
     );

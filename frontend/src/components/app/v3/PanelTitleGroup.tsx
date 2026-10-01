@@ -39,7 +39,7 @@ export function PanelTitleGroup({
     >
       <div data-component={`${dataComponent}_title-row`} className="flex flex-wrap items-center gap-[calc(6px*var(--glint-ui-scale,1))]">
         {badgesLeft}
-        <h2 data-component={`${dataComponent}_title-row_title`} className={cn("truncate font-bold text-dark", titleClassName)}>
+        <h2 data-component={`${dataComponent}_title-row_title`} className={cn("truncate font-bold text-v3-dark", titleClassName)}>
           {title}
         </h2>
         {badges}
@@ -53,7 +53,7 @@ export function PanelTitleGroup({
         ) : null}
       </div>
       {subtitle ? (
-        <p data-component={`${dataComponent}_subtitle`} data-slot="panel-subtitle" className={cn("text-[calc(12.8px*var(--glint-ui-scale,1))] text-text-muted", subtitleClassName)}>
+        <p data-component={`${dataComponent}_subtitle`} data-slot="panel-subtitle" className={cn("text-[calc(12.8px*var(--glint-ui-scale,1))] text-v3-text-muted", subtitleClassName)}>
           {subtitle}
         </p>
       ) : null}

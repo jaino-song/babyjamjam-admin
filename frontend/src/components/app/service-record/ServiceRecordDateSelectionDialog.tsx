@@ -337,7 +337,7 @@ export function ServiceRecordDateSelectionDialog({
                         data-slot="current-date"
                         className="flex flex-col gap-1"
                     >
-                        <span className="text-sm text-text-muted">
+                        <span className="text-sm text-v3-text-muted">
                             {currentDisplayDate ? `현재 ${Number(currentServiceDate.slice(0, 4))}년 ${Number(currentServiceDate.slice(5, 7))}월 ${Number(currentServiceDate.slice(8, 10))}일` : "현재 제공일을 확인할 수 없습니다."}
                         </span>
                     </div>
@@ -345,7 +345,7 @@ export function ServiceRecordDateSelectionDialog({
                     <p
                         data-component={`${dataComponent}_content_date-form_policy`}
                         data-slot="policy"
-                        className="text-sm font-semibold text-dark"
+                        className="text-sm font-semibold text-v3-dark"
                     >
                         변경할 날짜
                     </p>
@@ -440,7 +440,7 @@ export function ServiceRecordDateSelectionDialog({
                             <p
                                 data-component={`${dataComponent}_content_date-form_selection-hint`}
                                 data-slot="selection-hint"
-                                className="text-xs leading-5 text-text-muted"
+                                className="text-xs leading-5 text-v3-text-muted"
                             >
                                 주말·공휴일을 제외한 영업일만 선택할 수 있어요.
                             </p>
@@ -448,7 +448,7 @@ export function ServiceRecordDateSelectionDialog({
                                 <p
                                     data-component={`${dataComponent}_content_date-form_validation-error`}
                                     data-slot="validation-error"
-                                    className="text-sm text-burgundy"
+                                    className="text-sm text-v3-burgundy"
                                     role="alert"
                                 >
                                     {applyError}

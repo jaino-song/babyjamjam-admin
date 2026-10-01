@@ -17,7 +17,7 @@ const statusBadgeVariants = cva(
         warning: STATUS_SURFACE.warning,
         danger: STATUS_SURFACE.danger,
         amber: "bg-amber-100 border-amber-200 text-amber-700",
-        outline: "bg-transparent border-border text-dark",
+        outline: "bg-transparent border-border text-v3-dark",
 
         waiting: STATUS_SURFACE.warning,
         in_progress: STATUS_SURFACE.info,
