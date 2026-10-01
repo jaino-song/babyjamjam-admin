@@ -2608,6 +2608,7 @@ export class ClientService {
         const latestContracts = await this.findLatestContractByClientId(
             branchClients.map((client) => client.id),
         );
+        const calendar = await this.holidayCalendar.forBranch(branchid);
         const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
             if (
                 doc.permanentPurgeRequestedAt != null
@@ -2626,7 +2627,7 @@ export class ClientService {
                     step_name: doc.stepName,
                 },
                 ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
-            }) === "review";
+            }, now, calendar) === "review";
         }).length;
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };

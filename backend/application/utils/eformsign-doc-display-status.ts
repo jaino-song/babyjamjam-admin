@@ -6,7 +6,6 @@ import {
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import {
     isoDateInKorea,
-    KR_BUILTIN_CALENDAR,
     type KrBusinessDayCalendar,
 } from "domain/utils/business-days";
 
@@ -62,13 +61,12 @@ function parseYmdToUtc(ymd: string): Date | null {
  * contract end date — weekends and the given calendar's holidays are both
  * skipped; a missing or malformed end date opens the window (legacy behavior).
  *
- * `calendar` is the branch calendar. It is optional only until the last
- * default caller (ClientService) passes one; it then becomes required.
+ * `calendar` is the branch calendar.
  */
 export function isContractReviewWindowOpen(
     contractEndDate: string | null | undefined,
-    now: Date = new Date(),
-    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    now: Date,
+    calendar: KrBusinessDayCalendar,
 ): boolean {
     const endDate = contractEndDate ? parseYmdToUtc(contractEndDate) : null;
     if (!endDate) return true;
@@ -81,8 +79,8 @@ export function isContractReviewWindowOpen(
 /** Resolve the display status of a projected list document. */
 export function resolveEformsignDocDisplayStatus(
     document: EformsignListDoc,
-    now: Date = new Date(),
-    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    now: Date,
+    calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
     const category = getDocumentStatusCategory(document);
     if (category === "completed") return "completed";
