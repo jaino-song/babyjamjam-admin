@@ -284,13 +284,12 @@ describe("mobile contract form - registered-value hints and stored placeholders"
     expect(hintIn(ADDRESS_FIELD)).toBeNull();
   });
 
-  it("uses the stored area as the empty select's label and hints once a different area is picked", async () => {
+  it("selects the stored area for real, keeps the empty option as 선택하세요, and hints once a different area is picked", async () => {
     await renderPage();
     fireEvent.click(screen.getByRole("button", { name: "기존 고객 선택" }));
 
-    expect(areaSelect()).toHaveValue("");
-    expect(within(areaSelect()).getAllByRole("option")[0]).toHaveTextContent("남동구");
-    expect(areaSelect()).toHaveClass("storedPlaceholderSelect");
+    expect(areaSelect()).toHaveValue("Namdonggu");
+    expect(within(areaSelect()).getAllByRole("option")[0]).toHaveTextContent("선택하세요");
     expect(hintIn(AREA_FIELD)).toBeNull();
 
     fireEvent.change(areaSelect(), { target: { value: "Seogu" } });
@@ -629,18 +628,17 @@ describe("mobile contract form - entering with a prefilled store (client detail)
     });
   }
 
-  it("shows no hint until a value really differs, even though the prefill reset the area and reformatted the dates", async () => {
-    // 저장값은 타임스탬프 형식이고, 프리필은 날짜만 남기고 area는 비워요.
+  it("shows no hint until a value really differs, even though the prefill reformatted the dates", async () => {
+    // 저장값은 타임스탬프 형식이고, 프리필은 날짜만 남겨요. 계약서 유형은 저장된 값이 그대로 선택돼요.
     mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
     prefillLikeClientDetail(mockClients[0] as Client);
     await renderPage();
 
     expect(phoneInput()).toHaveValue("010-5555-6666");
     expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
-    expect(areaSelect()).toHaveValue("");
-    expect(within(areaSelect()).getAllByRole("option")[0]).toHaveTextContent("남동구");
+    expect(areaSelect()).toHaveValue("Namdonggu");
+    expect(within(areaSelect()).getAllByRole("option")[0]).toHaveTextContent("선택하세요");
 
-    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
     expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();
     next(); next(); next();
     expect(document.querySelector('[data-slot="registered-value-diff-hint"]')).toBeNull();

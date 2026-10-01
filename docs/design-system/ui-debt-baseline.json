@@ -824,11 +824,11 @@
         "111:10-111:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1111:13-1117:14|rawUiElement",
-        "1123:13-1129:14|rawUiElement",
-        "1502:25-1509:26|rawUiElement",
-        "1579:15-1584:16|rawUiElement",
-        "1587:15-1592:16|rawUiElement"
+        "1118:13-1124:14|rawUiElement",
+        "1130:13-1136:14|rawUiElement",
+        "1509:25-1516:26|rawUiElement",
+        "1586:15-1591:16|rawUiElement",
+        "1594:15-1599:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
@@ -838,27 +838,27 @@
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "1432:13-1438:14|rawUiElement",
-        "1442:13-1448:14|rawUiElement",
-        "1571:23-1588:25|rawUiElement",
-        "1595:23-1611:25|rawUiElement",
-        "1618:23-1633:25|rawUiElement",
-        "1640:23-1647:25|rawUiElement",
-        "1659:25-1665:26|rawUiElement",
-        "1701:23-1710:25|rawUiElement",
-        "1757:27-1766:29|rawUiElement",
-        "1783:27-1788:28|rawUiElement",
-        "1803:27-1809:28|rawUiElement",
-        "1831:25-1838:26|rawUiElement",
-        "1862:25-1870:27|rawUiElement",
-        "1881:25-1889:27|rawUiElement",
-        "1900:25-1908:27|rawUiElement",
-        "1929:23-1945:25|rawUiElement",
-        "1954:23-1970:25|rawUiElement",
-        "1985:23-2001:25|rawUiElement",
-        "2044:15-2050:16|rawUiElement",
-        "2053:15-2059:16|rawUiElement",
-        "2160:13-2166:14|rawUiElement"
+        "1456:13-1462:14|rawUiElement",
+        "1466:13-1472:14|rawUiElement",
+        "1595:23-1612:25|rawUiElement",
+        "1619:23-1635:25|rawUiElement",
+        "1642:23-1657:25|rawUiElement",
+        "1664:23-1671:25|rawUiElement",
+        "1683:25-1692:26|rawUiElement",
+        "1728:23-1737:25|rawUiElement",
+        "1784:27-1793:29|rawUiElement",
+        "1810:27-1815:28|rawUiElement",
+        "1830:27-1836:28|rawUiElement",
+        "1858:25-1865:26|rawUiElement",
+        "1889:25-1897:27|rawUiElement",
+        "1908:25-1916:27|rawUiElement",
+        "1927:25-1935:27|rawUiElement",
+        "1956:23-1972:25|rawUiElement",
+        "1981:23-1997:25|rawUiElement",
+        "2012:23-2028:25|rawUiElement",
+        "2071:15-2077:16|rawUiElement",
+        "2080:15-2086:16|rawUiElement",
+        "2187:13-2193:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {
