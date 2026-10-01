@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { api } from "@/lib/api/client";
 import { ClientFormPanel } from "../ClientFormDialog";
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

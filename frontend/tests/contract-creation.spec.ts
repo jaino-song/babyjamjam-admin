@@ -1,4 +1,5 @@
 import { expect, Page, test } from "@playwright/test";
+import { KOREAN_HOLIDAY_CALENDAR } from "@babyjamjam/shared/utils/business-days";
 
 test.beforeEach(async ({ page, baseURL }) => {
   const appUrl = baseURL ?? "http://localhost:3000";
@@ -185,6 +186,27 @@ async function installCommonRoutes(
     }
 
     return route.fallback();
+  });
+
+  // The form waits for the branch holiday calendar before it computes or saves
+  // dates. Serve the built-in list for whichever year is requested. Registered
+  // after the catch-all above because Playwright matches the last route first.
+  await page.route("**/api/branches/*/holidays*", (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    const dates = KOREAN_HOLIDAY_CALENDAR[year] ?? [];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        year,
+        revision: "e2e-builtin",
+        supported: dates.length > 0,
+        synced: false,
+        lastSyncedAt: null,
+        holidays: dates.map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null })),
+        inactiveOverrides: [],
+      }),
+    });
   });
 
   await page.route("**/api/eformsign/auth-status", (route) =>

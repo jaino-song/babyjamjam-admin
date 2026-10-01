@@ -4,6 +4,7 @@ import { createProblemDetails } from "@babyjamjam/shared";
 import { api } from "@/lib/api/client";
 import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

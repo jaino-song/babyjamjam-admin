@@ -19,6 +19,7 @@ const mockGenerateDocument = jest.fn();
 const mockAuthenticate = jest.fn();
 const mockAdoptDocument = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
     useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));
