@@ -282,6 +282,12 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                 $queryRawUnsafe?: (query: string, ...values: unknown[]) => Promise<unknown>;
             };
             if (typeof rawTransaction.$queryRawUnsafe === "function") {
+                // Lock order must match reject() (user -> user_branch -> branch) to
+                // avoid a cross-transaction deadlock between the two paths.
+                await rawTransaction.$queryRawUnsafe(
+                    'SELECT "id" FROM "user" WHERE "id" = $1 FOR UPDATE',
+                    userId,
+                );
                 await rawTransaction.$queryRawUnsafe(
                     'SELECT "id" FROM "user_branch" WHERE "user_id" = $1 AND "branch_id" = $2 FOR UPDATE',
                     userId,
@@ -292,7 +298,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                     context.principal.branchId,
                 );
             }
-            const [membership, branch] = await Promise.all([
+            const [membership, branch, approvalUser] = await Promise.all([
                 transaction.user_branch.findFirst({
                     where: { userId, branchId: context.principal.branchId },
                     select: {
@@ -309,8 +315,21 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                         owner: { select: { name: true, phone: true, email: true } },
                     },
                 }),
+                transaction.user.findUnique({
+                    where: { id: userId },
+                    select: { approvalStatus: true, role: true },
+                }),
             ]);
-            const target = membership?.user
+            // Re-check approval inside the execution transaction: a user approved
+            // at inspect time (resolveNotificationTarget / findApprovedByIdInBranch)
+            // may have been rejected or reset to pending since. Matches the same
+            // approved-or-owner rule as findApprovedByIdInBranch, and treats a
+            // rejected/pending non-owner exactly like a vanished target below
+            // rather than as a separate failure path.
+            const isApproved = approvalUser != null && (approvalUser.approvalStatus === "approved" || approvalUser.role === "owner");
+            const target = !isApproved
+                ? null
+                : membership?.user
                 ? {
                     membershipId: membership.id,
                     role: membership.role,
