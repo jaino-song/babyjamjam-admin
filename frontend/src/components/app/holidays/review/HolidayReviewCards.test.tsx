@@ -89,6 +89,16 @@ describe("HolidayReviewCards", () => {
     expect(root).toBeEmptyDOMElement();
   });
 
+  it("names its wrapper with the platform-prefixed data-component and the component in data-source-component", async () => {
+    renderCards();
+    await screen.findByText("공휴일 변경으로 종료일 확인이 필요해요");
+
+    const root = document.querySelector("[data-slot='holiday-review-cards']");
+    expect(root).toHaveAttribute("data-component", "desktop_settings_sections_holidays_review-cards");
+    expect(root).toHaveAttribute("data-source-component", "HolidayReviewCards");
+    expect(document.querySelectorAll("[data-component='desktop_settings_sections_holidays_review']")).toHaveLength(1);
+  });
+
   it("shows the change, the counts, the help text and both actions", async () => {
     renderCards();
 

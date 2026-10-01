@@ -37,6 +37,7 @@ const SKIP_REASON_LABEL: Record<string, string> = {
   ITEM_NOT_OPEN: "이미 처리된 항목이에요",
   ITEM_NOT_FOUND: "항목을 찾지 못했어요",
   CLIENT_CHANGED: "그 사이 고객 정보나 종료일이 바뀌었어요",
+  CLIENT_FINISHED: "서비스가 끝난 고객이라 수정하지 않았어요",
   ALREADY_MATCHES: "이미 새 종료일과 같아요",
   NO_LONGER_SAFE: "이제는 바로 수정할 수 없는 상태예요",
   UPDATE_FAILED: "저장하지 못했어요",

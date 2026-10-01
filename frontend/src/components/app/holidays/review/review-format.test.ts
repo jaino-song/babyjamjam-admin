@@ -45,12 +45,17 @@ describe("review-format", () => {
     "ITEM_NOT_OPEN",
     "ITEM_NOT_FOUND",
     "CLIENT_CHANGED",
+    "CLIENT_FINISHED",
     "ALREADY_MATCHES",
     "NO_LONGER_SAFE",
     "UPDATE_FAILED",
     "RECALCULATED_CHANGED",
   ])("maps skip code %s to a specific Korean reason", (code) => {
     expect(describeSkipCode(code)).not.toBe("수정하지 못했어요");
+  });
+
+  it("tells the user a finished-service client was left alone", () => {
+    expect(describeSkipCode("CLIENT_FINISHED")).toBe("서비스가 끝난 고객이라 수정하지 않았어요");
   });
 
   it("tells the user a refreshed end date needs another look", () => {

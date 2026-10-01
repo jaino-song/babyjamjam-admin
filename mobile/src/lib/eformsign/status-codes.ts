@@ -20,6 +20,7 @@ import {
 import {
   CONTRACT_DOC_DISPLAY_STATUS_LABELS,
   isContractDocDisplayStatus,
+  isContractReceiptSendable,
   resolveContractDocStatusLabel,
   type ContractDocDisplayStatusLabel,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -98,6 +99,22 @@ export function mapDocStatusLabel(
   } catch {
     // Display-only: an end-date year the branch calendar did not load reads on the built-in list.
     return resolveContractDocStatusLabel(params);
+  }
+}
+
+/**
+ * Display-only receipt-action gate on the branch calendar. An end-date year the
+ * branch calendar did not load (an old contract) reads on the built-in list
+ * instead of throwing — the backend still rejects an unsigned send.
+ */
+export function isReceiptSendableOnCalendar(
+  params: Parameters<typeof isContractReceiptSendable>[0],
+): boolean {
+  if (!params.calendar) return isContractReceiptSendable(params);
+  try {
+    return isContractReceiptSendable(params);
+  } catch {
+    return isContractReceiptSendable({ ...params, calendar: undefined });
   }
 }
 

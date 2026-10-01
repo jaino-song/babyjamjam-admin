@@ -138,7 +138,7 @@ describe("mobile contracts action lifecycle", () => {
   // gate around the action entry.
   it("gates the receipt-send action out of the 제공기록지 detail and unsigned documents (I1 + signed gate)", () => {
     expect(source).toContain(
-      "...(isServiceRecord ||\n                  !isContractReceiptSendable({\n                    displayStatus: doc.display_status,",
+      "...(isServiceRecord ||\n                  !isReceiptSendableOnCalendar({\n                    displayStatus: doc.display_status,",
     );
     expect(source).toContain(
       "contractEndDate: doc.contract_end_date,\n                    calendar,\n                  })\n                    ? []\n                    : [",
