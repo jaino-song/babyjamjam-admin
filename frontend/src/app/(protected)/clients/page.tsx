@@ -331,9 +331,6 @@ export default function ClientsPage() {
         () => isSearchSettled && directory.isBranchContextReady ? directory.clients : [],
         [directory.clients, directory.isBranchContextReady, isSearchSettled],
     );
-    const matchedTotal = isSearchSettled && directory.isBranchContextReady && directory.data !== undefined
-        ? directory.matchedTotal
-        : null;
     const summary = isSearchSettled && listSummary.isBranchContextReady
         ? listSummary.data
         : undefined;
@@ -750,9 +747,6 @@ export default function ClientsPage() {
     const isDirectoryUnavailable = !directory.isBranchContextReady;
     const isDirectoryInitialError = isSearchSettled && directory.isInitialError;
     const isDirectoryRefreshError = isSearchSettled && directory.hasStaleData;
-    const listScopeSubtitle = matchedTotal !== null && !isDirectoryInitialError
-        ? `${summaryScopeLabel} · 일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시`
-        : undefined;
     const listSubHeader = isDirectoryRefreshError ? (
         <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
             <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
@@ -850,7 +844,6 @@ export default function ClientsPage() {
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
                     title="고객 목록"
-                    subtitle={listScopeSubtitle}
                     tabs={FILTER_CHIPS}
                     activeTab={activeFilter}
                     onTabChange={handleFilterChange}
