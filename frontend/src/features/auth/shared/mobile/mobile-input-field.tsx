@@ -6,7 +6,7 @@ import { type MobileInputProps, MobileInput } from "@/features/auth/shared/mobil
 type MobileInputFieldProps = {
   title: React.ReactNode;
   message?: React.ReactNode;
-  messageTone?: "muted" | "error";
+  messageTone?: "muted" | "error" | "ok";
   className?: string;
   labelClassName?: string;
   headerClassName?: string;
@@ -55,7 +55,7 @@ export function MobileInputField({
             aria-live="polite"
             className={cn(
               "text-[0.7rem] font-semibold leading-none",
-              messageTone === "error" ? "text-v3-burgundy" : "text-v3-text-muted",
+              messageTone === "error" ? "text-v3-burgundy" : messageTone === "ok" ? "text-v3-green" : "text-v3-text-muted",
               messageClassName,
             )}
           >

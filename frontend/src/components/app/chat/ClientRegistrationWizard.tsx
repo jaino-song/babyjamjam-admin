@@ -112,28 +112,38 @@ function isoDueDateToCompact(iso: string): string {
     return normalizeCompactDateForSubmit(compact) === iso ? compact : "";
 }
 
+/** The read-only provider row that reports the provider lookup (not an inline-validated input). */
+const EMPLOYEE_LOOKUP_ROW = { label: "제공인력", id: "employee-lookup" } as const;
+
 interface WizardFieldRowProps {
-    field: WizardInputField;
+    field: WizardInputField | "employeeLookup";
     message: FieldMessageView | null;
+    /** A small link-style action that sits next to the message in the slot, e.g. a retry. */
+    action?: ReactNode;
     children: ReactNode;
 }
 
 /** A label whose validation message sits at the right end of the same row and never changes its height. */
-function WizardFieldRow({ field, message, children }: WizardFieldRowProps) {
-    const { id, label } = WIZARD_INPUT_FIELD_CONFIG[field];
+function WizardFieldRow({ field, message, action, children }: WizardFieldRowProps) {
+    const { id, label } = field === "employeeLookup" ? EMPLOYEE_LOOKUP_ROW : WIZARD_INPUT_FIELD_CONFIG[field];
     return (
         <div className="space-y-2" data-component={`${WIZARD_BASE}_${id}-field`}>
             <div className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-sm leading-[1.3]">
                 <Label htmlFor={id} className="shrink-0 whitespace-nowrap leading-[1.3]">{label}</Label>
-                {message ? (
-                    <FieldMessageText
-                        id={`${id}-message`}
-                        tone={message.tone}
-                        data-component={`${WIZARD_BASE}_${id}-field_message`}
-                        className="ml-auto min-w-0"
-                    >
-                        {message.text}
-                    </FieldMessageText>
+                {message || action ? (
+                    <div className="ml-auto flex h-[1lh] min-w-0 items-center justify-end gap-2">
+                        {message ? (
+                            <FieldMessageText
+                                id={`${id}-message`}
+                                tone={message.tone}
+                                data-component={`${WIZARD_BASE}_${id}-field_message`}
+                                className="min-w-0"
+                            >
+                                {message.text}
+                            </FieldMessageText>
+                        ) : null}
+                        {action}
+                    </div>
                 ) : null}
             </div>
             {children}
@@ -367,6 +377,17 @@ export function ClientRegistrationWizard({
             ...fields.focusProps(field, inputValueOf(field)),
         };
     };
+
+    // The provider named in the chat is looked up in the background; a failed or
+    // running re-check shows in this row's slot, with the retry beside it.
+    const isEmployeeLookupProblemVisible = Boolean(employeeName.trim())
+        && createdEmployeeId === null
+        && (isEmployeesError || isEmployeeRetrying);
+    const employeeLookupMessage: FieldMessageView | null = isEmployeeRetrying
+        ? { tone: "hint", text: "다시 확인하고 있어요" }
+        : isEmployeesError
+            ? { tone: "error", text: "제공인력 정보를 불러오지 못했어요" }
+            : null;
 
     const hasBasicsProblem = WIZARD_BASIC_FIELDS.some(
         (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
@@ -633,6 +654,35 @@ export function ClientRegistrationWizard({
                                 {...getInputFieldProps("address")}
                             />
                         </WizardFieldRow>
+                        {isEmployeeLookupProblemVisible && (
+                            <WizardFieldRow
+                                field="employeeLookup"
+                                message={employeeLookupMessage}
+                                action={
+                                    <Button
+                                        type="button"
+                                        variant="link"
+                                        size="sm"
+                                        data-component={`${WIZARD_BASE}_${EMPLOYEE_LOOKUP_ROW.id}-field_retry`}
+                                        className="h-auto shrink-0 p-0 text-[calc(12px*var(--glint-ui-scale,1))]"
+                                        onClick={() => void handleEmployeeRetry()}
+                                        disabled={isEmployeeRetrying}
+                                        aria-busy={isEmployeeRetrying}
+                                    >
+                                        {isEmployeeRetrying ? "재시도 중..." : "다시 시도"}
+                                    </Button>
+                                }
+                            >
+                                <Input
+                                    id={EMPLOYEE_LOOKUP_ROW.id}
+                                    value={employeeName}
+                                    readOnly
+                                    error={!isEmployeeRetrying}
+                                    aria-invalid={!isEmployeeRetrying}
+                                    aria-describedby={`${EMPLOYEE_LOOKUP_ROW.id}-message`}
+                                />
+                            </WizardFieldRow>
+                        )}
                         {createdEmployeeId === null && matchingEmployees.length > 0 && (matchingEmployees.length > 1 || hasInvalidEmployeeSelection) && (
                             <div className="space-y-2">
                                 <Label htmlFor="employee-selection">제공인력 선택</Label>
@@ -843,34 +893,6 @@ export function ClientRegistrationWizard({
                 <Alert variant="destructive" className="mt-4">
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>{submitError}</AlertDescription>
-                </Alert>
-            )}
-
-            {employeeName.trim() && createdEmployeeId === null && (isEmployeesError || isEmployeeRetrying) && (
-                <Alert variant={isEmployeeRetrying ? "default" : "destructive"} className="mt-4">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription className="flex items-center justify-between gap-3">
-                        <span>
-                            {isEmployeeRetrying
-                                ? "제공인력 정보를 다시 확인하고 있습니다."
-                                : "제공인력 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."}
-                        </span>
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleEmployeeRetry()}
-                            disabled={isEmployeeRetrying}
-                            aria-busy={isEmployeeRetrying}
-                        >
-                            {isEmployeeRetrying ? (
-                                <>
-                                    <Spinner size="sm" aria-hidden="true" />
-                                    재시도 중...
-                                </>
-                            ) : "다시 시도"}
-                        </Button>
-                    </AlertDescription>
                 </Alert>
             )}
 

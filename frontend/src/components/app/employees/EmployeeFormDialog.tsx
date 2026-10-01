@@ -133,6 +133,8 @@ const EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX = "desktop_employees_form-dialog_erro
 
 type EmployeeFormField = "name" | "phone";
 
+const isEmployeeFormField = (field: string): field is EmployeeFormField => field === "name" || field === "phone";
+
 /** Text inputs that show their validation message in the label-row slot. */
 type EmployeeInputField = "name" | "phone" | "birthday";
 
@@ -453,6 +455,8 @@ function EmployeeFormContent({
     const fields = useFieldInputStates<EmployeeInputField>();
     const resetFieldStates = fields.reset;
     const [error, setError] = useState<EmployeeFormErrorState | null>(null);
+    // Fields whose server error the user already edited away; set again by each new error.
+    const [editedServerErrorFields, setEditedServerErrorFields] = useState<EmployeeFormField[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const formDataBaselineRef = useRef<FormData>(initialFormData);
 
@@ -562,6 +566,9 @@ function EmployeeFormContent({
 
     const handleChange = <K extends keyof FormData>(field: K, value: FormData[K]) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
+        if (isEmployeeFormField(field)) {
+            setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
+        }
     };
 
     const handleInputChange = (field: EmployeeInputField, value: string) => {
@@ -603,8 +610,26 @@ function EmployeeFormContent({
             : null;
     };
 
+    // Server errors that map to a field show in that field's label-row slot
+    // until the user edits the field; only unmapped ones go to the summary.
+    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
+        fieldError,
+        field: fieldForProblemError(fieldError),
+        id: `${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_${index}`,
+    }));
+    const serverFieldMessages: Partial<Record<EmployeeFormField, FieldMessageView>> = {};
+    for (const { fieldError, field } of formErrorEntries) {
+        if (field && !editedServerErrorFields.includes(field) && !serverFieldMessages[field]) {
+            serverFieldMessages[field] = { tone: "error", text: fieldError.detail };
+        }
+    }
+    const summaryErrorEntries = formErrorEntries.filter(({ field }) => field === undefined);
+
     const inputMessages = Object.fromEntries(
-        EMPLOYEE_INPUT_FIELDS.map((field) => [field, resolveInputMessage(field)]),
+        EMPLOYEE_INPUT_FIELDS.map((field) => [
+            field,
+            (isEmployeeFormField(field) ? serverFieldMessages[field] : undefined) ?? resolveInputMessage(field),
+        ]),
     ) as Record<EmployeeInputField, FieldMessageView | null>;
 
     const inputMessageId = (field: EmployeeInputField) => `employees-form-${surface}-${field}-helper`;
@@ -620,11 +645,11 @@ function EmployeeFormContent({
     };
 
     /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
-    const getInputProps = (field: EmployeeInputField, serverErrorIds: readonly string[] = []) => {
+    const getInputProps = (field: EmployeeInputField) => {
         const message = inputMessages[field];
         return {
-            error: message?.tone === "error" || serverErrorIds.length > 0,
-            "aria-describedby": combineAriaDescribedBy(message ? inputMessageId(field) : undefined, ...serverErrorIds),
+            error: message?.tone === "error",
+            "aria-describedby": combineAriaDescribedBy(message ? inputMessageId(field) : undefined),
             ...fields.focusProps(field, formData[field]),
         };
     };
@@ -643,6 +668,7 @@ function EmployeeFormContent({
             return;
         }
 
+        setEditedServerErrorFields([]);
         setError({
             message: normalized.message,
             fieldErrors: normalized.problem?.errors ?? [],
@@ -797,17 +823,6 @@ function EmployeeFormContent({
         </div>
     );
 
-    const formErrorEntries = (error?.fieldErrors ?? []).map((fieldError, index) => ({
-        fieldError,
-        field: fieldForProblemError(fieldError),
-        id: `${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_${index}`,
-    }));
-    const nameErrorIds = formErrorEntries
-        .filter((entry) => entry.field === "name")
-        .map((entry) => entry.id);
-    const phoneErrorIds = formErrorEntries
-        .filter((entry) => entry.field === "phone")
-        .map((entry) => entry.id);
     const problemPresentation = resolveProblemPresentation(locale);
 
     const focusFormField = (field: EmployeeInputField | "workArea") => {
@@ -823,35 +838,13 @@ function EmployeeFormContent({
             <AlertDescription>
                 <div className="flex flex-col gap-2">
                     <p>{error.message}</p>
-                    {formErrorEntries.length > 0 ? (
+                    {summaryErrorEntries.length > 0 ? (
                         <ul className="flex flex-col gap-1">
-                            {formErrorEntries.map(({ fieldError, field, id }) => {
-                                const fieldLabel = field === "name"
-                                    ? t(locale, "employees.form.name")
-                                    : field === "phone"
-                                        ? t(locale, "employees.form.phone")
-                                        : problemPresentation.unmappedField;
-                                const detail = `${fieldLabel}: ${fieldError.detail}`;
-
-                                return (
-                                    <li key={id} id={id}>
-                                        {field ? (
-                                            <Button
-                                                type="button"
-                                                variant="link"
-                                                size="sm"
-                                                className="h-auto whitespace-normal p-0 text-left"
-                                                onClick={() => focusFormField(field)}
-                                                data-component={`${EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX}_entry_${field}`}
-                                            >
-                                                {detail}
-                                            </Button>
-                                        ) : (
-                                            <span>{detail}</span>
-                                        )}
-                                    </li>
-                                );
-                            })}
+                            {summaryErrorEntries.map(({ fieldError, id }) => (
+                                <li key={id} id={id}>
+                                    <span>{`${problemPresentation.unmappedField}: ${fieldError.detail}`}</span>
+                                </li>
+                            ))}
                         </ul>
                     ) : null}
                     {error.outcome === "UNKNOWN" ? (
@@ -890,7 +883,7 @@ function EmployeeFormContent({
                             value={formData.name}
                             onChange={(e) => handleInputChange("name", e.target.value)}
                             placeholder="홍길동"
-                            {...getInputProps("name", nameErrorIds)}
+                            {...getInputProps("name")}
                         />
                     </FormField>
 
@@ -909,7 +902,7 @@ function EmployeeFormContent({
                             value={formatKoreanPhoneNumber(formData.phone)}
                             onChange={(e) => handleInputChange("phone", normalizeKoreanPhoneDigits(e.target.value))}
                             maxLength={20}
-                            {...getInputProps("phone", phoneErrorIds)}
+                            {...getInputProps("phone")}
                         />
                     </FormField>
 
@@ -1042,7 +1035,7 @@ function EmployeeFormContent({
                     onChange={(event) => handleInputChange("name", event.target.value)}
                     placeholder="홍길동"
                     data-component="desktop_employees_form-panel_name-field_input"
-                    {...getInputProps("name", nameErrorIds)}
+                    {...getInputProps("name")}
                 />
             </FormField>
 
@@ -1066,7 +1059,7 @@ function EmployeeFormContent({
                     maxLength={20}
                     placeholder="010-1234-5678"
                     data-component="desktop_employees_form-panel_phone-field_input"
-                    {...getInputProps("phone", phoneErrorIds)}
+                    {...getInputProps("phone")}
                 />
             </FormField>
 
@@ -1139,16 +1132,31 @@ function EmployeeFormContent({
                 />
             </FormField>
 
-            <FormSwitchRow
+            <FormField
                 data-component="desktop_employees_form-panel_open-status-field"
-                className="self-end h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--glint-ui-scale,1))] py-0"
-                title={t(locale, "employees.form.open-to-next-work")}
-                checked={formData.openToNextWork}
-                onToggle={() => handleChange("openToNextWork", !formData.openToNextWork)}
-                buttonAriaLabel={t(locale, "employees.form.open-to-next-work")}
-                buttonDataComponent="desktop_employees_form-panel_open-status-switch"
-                thumbDataComponent="desktop_employees_form-panel_open-status-switch-thumb"
-            />
+                label={t(locale, "employees.form.open-to-next-work")}
+                labelAccessory={
+                    <FieldMessageText
+                        id="employee-panel-open-status-guidance"
+                        tone="hint"
+                        data-component="desktop_employees_form-panel_open-status-field_helper"
+                    >
+                        {OPEN_STATUS_GUIDANCE}
+                    </FieldMessageText>
+                }
+            >
+                <FormSwitchRow
+                    data-component="desktop_employees_form-panel_open-status-field_control"
+                    className="h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] rounded-[13px] border-[1.35px] px-[calc(14px*var(--glint-ui-scale,1))] py-0"
+                    title="다음 근무 배정 가능"
+                    checked={formData.openToNextWork}
+                    onToggle={() => handleChange("openToNextWork", !formData.openToNextWork)}
+                    buttonAriaLabel="다음 근무 배정 가능"
+                    buttonDescribedBy="employee-panel-open-status-guidance"
+                    buttonDataComponent="desktop_employees_form-panel_open-status-switch"
+                    thumbDataComponent="desktop_employees_form-panel_open-status-switch-thumb"
+                />
+            </FormField>
         </>
     );
 
