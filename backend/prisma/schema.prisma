@@ -1671,9 +1671,15 @@ model holiday_change_event {
   @@index([branchId, createdAt], map: "idx_holiday_change_event_branch_created")
 }
 
-// Client service end dates affected by a holiday change, awaiting review.
-// `category` is 'safe' | 'risk'; `status` is 'open' | 'fixed' | 'kept' |
-// 'obsolete' (CHECKs in SQL).
+/// Database note: partial unique index `uq_end_date_review_item_client_open` on
+/// (client_id) WHERE status = 'open' exists in the database but cannot be
+/// expressed in Prisma (created via migration SQL). It allows at most one open
+/// review item per client; the processor obsoletes the older open item before
+/// inserting a newer one.
+///
+/// Client service end dates affected by a holiday change, awaiting review.
+/// `category` is 'safe' | 'risk'; `status` is 'open' | 'fixed' | 'kept' |
+/// 'obsolete' (CHECKs in SQL).
 model end_date_review_item {
   id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   changeEventId   String               @map("change_event_id") @db.Uuid
@@ -1688,7 +1694,7 @@ model end_date_review_item {
   resolvedAt      DateTime?            @map("resolved_at") @db.Timestamptz(6)
   createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  changeEvent     holiday_change_event @relation(fields: [changeEventId], references: [id], onDelete: Cascade)
+  changeEvent     holiday_change_event @relation(fields: [changeEventId], references: [id], onDelete: Restrict)
   branch          branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
   client          client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
 

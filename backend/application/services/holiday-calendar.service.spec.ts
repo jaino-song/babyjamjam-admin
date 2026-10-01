@@ -493,3 +493,62 @@ describe("HolidayCalendarService.getEffectiveYear", () => {
         expect(repository.readCalendar).not.toHaveBeenCalledWith(BRANCH_B);
     });
 });
+
+describe("HolidayCalendarService.forBranchWithAdjustedDates", () => {
+    const publicRows = [{ date: "2026-12-24", name: "임시공휴일" }];
+
+    it("adds and removes dates on top of the branch's effective set without touching the cached calendar", async () => {
+        const { service } = makeService({ snapshots: [SNAPSHOT_2026], holidays: publicRows });
+        const current = await service.forBranch(BRANCH_A);
+        expect(current.isBusinessDay("2026-12-24")).toBe(false);
+
+        const adjusted = await service.forBranchWithAdjustedDates(BRANCH_A, {
+            add: ["2026-11-10"],
+            remove: ["2026-12-24"],
+        });
+
+        expect(adjusted.isBusinessDay("2026-11-10")).toBe(false);
+        expect(adjusted.isBusinessDay("2026-12-24")).toBe(true);
+        expect(adjusted.version).not.toBe(current.version);
+        // The cached branch calendar is unchanged.
+        const again = await service.forBranch(BRANCH_A);
+        expect(again).toBe(current);
+        expect(again.isBusinessDay("2026-11-10")).toBe(true);
+    });
+
+    it("starts from the branch's own overrides", async () => {
+        const { service } = makeService({
+            snapshots: [SNAPSHOT_2026],
+            overrides: { [BRANCH_A]: [override({ date: "2026-11-10", kind: "add", name: "창립기념일" })] },
+        });
+
+        const adjusted = await service.forBranchWithAdjustedDates(BRANCH_A, { add: [], remove: ["2026-11-10"] });
+        const unchanged = await service.forBranchWithAdjustedDates(BRANCH_A, { add: [], remove: [] });
+
+        expect(adjusted.isBusinessDay("2026-11-10")).toBe(true);
+        expect(unchanged.isBusinessDay("2026-11-10")).toBe(false);
+        // No adjustment reproduces the current calendar, version included.
+        expect(unchanged.version).toBe((await service.forBranch(BRANCH_A)).version);
+    });
+
+    it("keeps the same supported years: an added date never makes an unsupported year supported", async () => {
+        const { service } = makeService({ snapshots: [SNAPSHOT_2026] });
+
+        const adjusted = await service.forBranchWithAdjustedDates(BRANCH_A, { add: ["2031-05-06"], remove: [] });
+
+        expect(() => adjusted.assertSupportedYear(2031)).toThrow(UnsupportedKoreanHolidayYearError);
+        expect(() => adjusted.assertSupportedYear(2026)).not.toThrow();
+    });
+
+    it("honours fresh by re-reading the revision", async () => {
+        const { service, repository } = makeService({ snapshots: [SNAPSHOT_2026] });
+        await service.forBranch(BRANCH_A);
+        repository.readRevision.mockClear();
+
+        await service.forBranchWithAdjustedDates(BRANCH_A, { add: [], remove: [] });
+        expect(repository.readRevision).not.toHaveBeenCalled();
+
+        await service.forBranchWithAdjustedDates(BRANCH_A, { add: [], remove: [] }, { fresh: true });
+        expect(repository.readRevision).toHaveBeenCalledTimes(1);
+    });
+});

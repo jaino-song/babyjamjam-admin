@@ -41,6 +41,7 @@ import { getJwtSecret } from "./infrastructure/auth/jwt-secret";
 import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
 import { AgentModule } from "module/agent.module";
 import { HolidayModule } from "module/holiday.module";
+import { HolidayReviewModule } from "module/holiday-review.module";
 import { HolidaySyncModule } from "module/holiday-sync.module";
 import { resolveSchedulerModuleOptions } from "infrastructure/config/scheduler-config";
 import { HealthController } from "interface/controllers/health.controller";
@@ -98,6 +99,7 @@ const ENV_FILE_PATHS = [
         ReceiptLinkModule,
         HolidayModule,
         HolidaySyncModule,
+        HolidayReviewModule,
     ],
     controllers: [EformsignController, HealthController],
     providers: [

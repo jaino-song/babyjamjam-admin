@@ -90,6 +90,11 @@ CREATE INDEX IF NOT EXISTS "idx_holiday_change_event_branch_created" ON "holiday
 CREATE UNIQUE INDEX IF NOT EXISTS "uq_end_date_review_item_event_client" ON "end_date_review_item"("change_event_id", "client_id");
 
 -- CreateIndex
+-- Partial unique index (Prisma cannot model it, see the note on model end_date_review_item):
+-- one open review item per client, so a client is never listed twice for review.
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_end_date_review_item_client_open" ON "end_date_review_item"("client_id") WHERE "status" = 'open';
+
+-- CreateIndex
 CREATE INDEX IF NOT EXISTS "idx_end_date_review_item_branch_client_status" ON "end_date_review_item"("branch_id", "client_id", "status");
 
 -- CreateIndex
@@ -120,14 +125,24 @@ BEGIN
 END $$;
 
 -- AddForeignKey
+-- RESTRICT: an event with review items (kept decisions included) must not be deletable.
+-- Self-healing: a database that already holds the earlier CASCADE version is repaired in place.
 DO $$
 BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'end_date_review_item_change_event_id_fkey'
+          AND conrelid = '"end_date_review_item"'::regclass
+          AND confdeltype <> 'r'
+    ) THEN
+        ALTER TABLE "end_date_review_item" DROP CONSTRAINT "end_date_review_item_change_event_id_fkey";
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'end_date_review_item_change_event_id_fkey'
           AND conrelid = '"end_date_review_item"'::regclass
     ) THEN
-        ALTER TABLE "end_date_review_item" ADD CONSTRAINT "end_date_review_item_change_event_id_fkey" FOREIGN KEY ("change_event_id") REFERENCES "holiday_change_event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+        ALTER TABLE "end_date_review_item" ADD CONSTRAINT "end_date_review_item_change_event_id_fkey" FOREIGN KEY ("change_event_id") REFERENCES "holiday_change_event"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
     END IF;
 END $$;
 
