@@ -9,11 +9,13 @@ let mockEmployeesLoading = false;
 let mockEmployeesFetching = false;
 let mockEmployeesError = false;
 let mockRefetchEmployees = jest.fn();
+let mockVoucherYearsLoading = false;
+let mockVoucherPriceInfosLoading = false;
 
 jest.mock("@/hooks/useVoucherData", () => ({
     useAvailableClientAreas: () => ({ data: [], isLoading: false }),
     useAreaTemplates: () => ({ data: [], isLoading: false }),
-    useVoucherYears: () => ({ data: [2026], isLoading: false }),
+    useVoucherYears: () => ({ data: [2026], isLoading: mockVoucherYearsLoading }),
     useVoucherPriceInfos: (type: string) => {
         if (type === "A가1형") {
             return {
@@ -27,7 +29,7 @@ jest.mock("@/hooks/useVoucherData", () => ({
                         actualPrice: "50000",
                     },
                 ],
-                isLoading: false,
+                isLoading: mockVoucherPriceInfosLoading,
             };
         }
         return { data: [], isLoading: false };
@@ -70,6 +72,8 @@ describe("ClientRegistrationWizard", () => {
         mockEmployeesLoading = false;
         mockEmployeesFetching = false;
         mockEmployeesError = false;
+        mockVoucherYearsLoading = false;
+        mockVoucherPriceInfosLoading = false;
         mockRefetchEmployees = jest.fn().mockResolvedValue({ data: [] });
     });
 
@@ -951,6 +955,100 @@ describe("ClientRegistrationWizard", () => {
             fireEvent.click(registerButton);
             expect(mockCreateEmployeeMutateAsync).not.toHaveBeenCalled();
             expect(employeePhone).toHaveFocus();
+        });
+    });
+
+    describe("label rows for select fields", () => {
+        const draft = {
+            name: "홍길동",
+            phone: "01012345678",
+            birthday: "1990-01-01",
+            address: "인천 연수구",
+            dueDate: "260201",
+        };
+
+        /** The field's label row: a visible label linked to its control, above it, with nothing below the control. */
+        const expectLabelRow = (label: string, id: string) => {
+            const control = screen.getByLabelText(label);
+            expect(control).toHaveAttribute("id", id);
+            const labelElement = document.querySelector<HTMLLabelElement>(`label[for="${id}"]`);
+            expect(labelElement).toHaveTextContent(label);
+            expect(labelElement).toHaveClass("shrink-0", "whitespace-nowrap");
+            expect(labelElement!.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+            const row = labelElement!.parentElement!;
+            expect(row).not.toContainElement(control);
+            expect(row.nextElementSibling).toContainElement(control);
+        };
+
+        test("the provider registration selects have a label row linked to their controls", async () => {
+            render(<ClientRegistrationWizard initialDraft={{ ...draft, employeeName: "김제공" }} />);
+
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            await screen.findByLabelText("제공인력 이름");
+
+            expectLabelRow("등급", "employee-grade");
+            expectLabelRow("근무 가능 지역", "employee-work-area");
+            expectNoFieldMessageBelowControl(document.body);
+        });
+
+        test("the same-name provider select has a label row linked to its control", () => {
+            mockEmployees = [
+                { id: 10, name: "김제공", phone: "010-1111-1111" },
+                { id: 11, name: "김제공", phone: "010-2222-2222" },
+            ];
+            render(<ClientRegistrationWizard initialDraft={{ ...draft, employeeName: "김제공" }} />);
+
+            expectLabelRow("제공인력 선택", "employee-selection");
+            expectNoFieldMessageBelowControl(document.body);
+        });
+
+        test("the voucher selects have label rows linked to their controls and show no message below", async () => {
+            render(<ClientRegistrationWizard initialDraft={draft} />);
+
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            await screen.findByRole("checkbox", { name: "바우처 대상" });
+
+            expectLabelRow("바우처 연도", "voucher-year");
+            expectLabelRow("바우처 유형", "voucher-type");
+            expect(screen.queryByLabelText("기간")).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByLabelText("바우처 유형"));
+            fireEvent.click(await screen.findByRole("option", { name: "A가-1형" }));
+            expectLabelRow("기간", "voucher-duration");
+
+            fireEvent.click(screen.getByLabelText("기간"));
+            fireEvent.click(await screen.findByRole("option", { name: "10일" }));
+            expect(screen.getByText("총액: 100,000원")).toBeInTheDocument();
+            expectNoFieldMessageBelowControl(document.body);
+        });
+
+        test("the voucher selects report loading in their slots and the status goes away afterwards", async () => {
+            mockVoucherYearsLoading = true;
+            const { rerender } = render(<ClientRegistrationWizard initialDraft={draft} />);
+
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            await screen.findByRole("checkbox", { name: "바우처 대상" });
+
+            const yearMessage = screen.getByText("불러오는 중이에요");
+            expect(yearMessage).toHaveAttribute("data-slot", "field-message");
+            expect(yearMessage.closest('[data-component$="voucher-year-field"]')).not.toBeNull();
+            expect(screen.getByLabelText("바우처 연도")).toBeDisabled();
+            expectNoFieldMessageBelowControl(document.body);
+
+            mockVoucherYearsLoading = false;
+            rerender(<ClientRegistrationWizard initialDraft={draft} />);
+            expect(screen.queryByText("불러오는 중이에요")).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByLabelText("바우처 유형"));
+            fireEvent.click(await screen.findByRole("option", { name: "A가-1형" }));
+            mockVoucherPriceInfosLoading = true;
+            rerender(<ClientRegistrationWizard initialDraft={draft} />);
+
+            const durationMessage = screen.getByText("불러오는 중이에요");
+            expect(durationMessage).toHaveAttribute("data-slot", "field-message");
+            expect(durationMessage.closest('[data-component$="voucher-duration-field"]')).not.toBeNull();
+            expect(screen.queryByRole("status")).not.toBeInTheDocument();
+            expectNoFieldMessageBelowControl(document.body);
         });
     });
 });

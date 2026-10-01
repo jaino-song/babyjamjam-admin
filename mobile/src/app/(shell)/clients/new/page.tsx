@@ -299,8 +299,6 @@ export default function NewClientPage() {
   } | null>(null);
   const [errorState, setErrorState] = useState<NormalizedApiError | null>(null);
   const [hasUnknownMutationOutcome, setHasUnknownMutationOutcome] = useState(false);
-  // True once 다음 was pressed on the service step with a voucher type/period still missing.
-  const [serviceStepAttempted, setServiceStepAttempted] = useState(false);
   const lastInitializedFormKeyRef = useRef<string | null>(null);
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
@@ -374,7 +372,6 @@ export default function NewClientPage() {
     setHasUnknownMutationOutcome(false);
     reset();
     resetFieldMessages();
-    setServiceStepAttempted(false);
   }, [formSessionKey, reset, resetFieldMessages]);
 
   useEffect(() => {
@@ -402,7 +399,6 @@ export default function NewClientPage() {
     setPendingDurationConfirmation(null);
     reset();
     resetFieldMessages();
-    setServiceStepAttempted(false);
 
     if (prefillClient.name !== undefined) setField("name", prefillClient.name);
     if (prefillClient.birthday !== undefined) setField("birthday", normalizeBirthdayIsoDate(prefillClient.birthday) ?? prefillClient.birthday);
@@ -682,8 +678,7 @@ export default function NewClientPage() {
   // change clears it, so it can never be a stale leftover.
   const storedDuration = store.duration != null && store.duration > 0 ? store.duration : null;
   const chosenDuration = effectiveDuration ?? storedDuration;
-  // Prices of the picked voucher type: still loading, or failed (no period can be picked).
-  const isVoucherPricePending = store.voucherClient && Boolean(store.type) && isPriceLoading;
+  // The prices of the picked voucher type failed to load (no period can be picked).
   const isVoucherPriceUnavailable = store.voucherClient && Boolean(store.type) && isVoucherPriceError;
 
   const serviceDateDurationCheck = useMemo(
@@ -828,7 +823,6 @@ export default function NewClientPage() {
     hasUserEditedServicePeriodRef.current = true;
     setPricesManuallyEdited(false);
     setField("voucherClient", voucherClient);
-    setServiceStepAttempted(false);
     setField("type", "");
     setField("duration", null);
     setField("fullPrice", "");
@@ -859,8 +853,8 @@ export default function NewClientPage() {
 
         return true;
       case 1:
-        // A voucher client needs its voucher type and period to be priced.
-        return !store.voucherClient || (Boolean(store.type) && Boolean(chosenDuration));
+        // Voucher type and period are optional here; they can be set later.
+        return true;
       case 2:
         return fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[2]).length === 0;
       case 3:
@@ -876,11 +870,6 @@ export default function NewClientPage() {
     // Each problem is already shown in its own field's message slot; reveal them
     // all and take the user to the first one. Only the failed duplicate-check
     // request (which belongs to no single field) is reported as a toast.
-    if (step === 1) {
-      setServiceStepAttempted(true);
-      focusFirstInvalidField([store.type ? "duration" : "type"]);
-      return false;
-    }
     fieldMessages.markSubmitted();
     const invalidFields = fieldMessages.invalidFields(STEP_VALIDATED_FIELDS[step] ?? []);
     if (invalidFields.length > 0) {
@@ -1054,18 +1043,9 @@ export default function NewClientPage() {
   ): boolean => slot?.tone === "err" || fieldErrorMessageIds[field].length > 0;
   const describedBy = (field: WizardValidatedField): string =>
     [`${field}-message`, ...fieldErrorMessageIds[field]].join(" ");
-  // Voucher type/period are only ever wrong after 다음 was pressed with one missing.
-  const typeMessage: SlotMessage | null = serviceStepAttempted && store.voucherClient && !store.type
-    ? { text: t(locale, "clients.form.error-type-required"), tone: "err" }
-    : null;
   const durationMessage = pickSlotMessage(
-    // A failed price lookup is its own problem, not a missing choice; and nothing is
-    // "missing" while the prices that fill the select are still on their way.
     (store.voucherClient ? isVoucherPriceUnavailable : isOutOfPocketPriceError)
       ? { text: "요금 정보를 불러오지 못했어요", tone: "err" }
-      : null,
-    serviceStepAttempted && store.voucherClient && !chosenDuration && !isVoucherPricePending
-      ? { text: t(locale, "clients.form.error-duration-required"), tone: "err" }
       : null,
   );
 
@@ -1358,7 +1338,7 @@ export default function NewClientPage() {
                         options={voucherYearOptions}
                       />
                     </Field> : null}
-                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형" htmlFor="type" slot={typeMessage}>
+                    {store.voucherClient ? <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field" label="바우처 유형" htmlFor="type">
                       <FormNativeSelect
                         id="type"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_voucher-card_voucher-type-field_select-wrap"
@@ -1368,7 +1348,7 @@ export default function NewClientPage() {
                           { value: "", label: "선택하세요" },
                           ...VOUCHER_TYPE_SELECT_OPTIONS,
                         ]}
-                        aria-invalid={typeMessage !== null || fieldErrorMessageIds.type.length > 0}
+                        aria-invalid={fieldErrorMessageIds.type.length > 0}
                         aria-describedby={["type-message", ...fieldErrorMessageIds.type].join(" ")}
                       />
                     </Field> : null}
