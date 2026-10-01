@@ -356,7 +356,10 @@ export class AdminServiceRecordService {
                 record.endDate,
                 record.requiredSessionCount,
                 calendar,
-                hasAuthoritativeRevision(record),
+                // A stored N is the case's own count (display must agree with
+                // what the caregiver page accepts); a holiday-calendar edit
+                // never moves it. The period only derives N when none is stored.
+                hasAuthoritativeRevision(record) || record.requiredSessionCount !== null,
             ),
             completedAt: record.completedAt,
             finalizationDueAt: record.finalizationDueAt,

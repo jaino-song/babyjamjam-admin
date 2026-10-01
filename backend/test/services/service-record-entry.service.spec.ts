@@ -594,9 +594,9 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         ]);
     });
 
-    it("returns four provider sessions for a legacy case with a 15-day voucher count", async () => {
+    it("returns the four stored provider sessions for a transferred case with a 15-day voucher", async () => {
         const record = createRecord({
-            requiredSessionCount: 15, days: [],
+            requiredSessionCount: 4, days: [],
             startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"),
         });
         const prisma = {
@@ -620,7 +620,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
 
     it("rejects a fifth session for a transferred four-day service period", async () => {
         const { service, upsert } = createHarness({ transactionRecord: createRecord({
-            requiredSessionCount: 15,
+            requiredSessionCount: 4,
             startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"),
         }) });
         await expect(service.upsertSession(context, 5, createDto({ serviceDate: "2026-09-09" }), false)).rejects.toMatchObject({
@@ -1416,9 +1416,10 @@ describe("ServiceRecordEntryService branch calendar", () => {
     }
 
     it("getContext counts a legacy case's sessions against the branch calendar (cached read)", async () => {
-        // 2026-07-01..07-06 holds 4 business days; a branch holiday on 07-06 leaves 3.
+        // No N is stored yet, so it derives from the period: 2026-07-01..07-06
+        // holds 4 business days; a branch holiday on 07-06 leaves 3.
         const record = createRecord({
-            requiredSessionCount: 5,
+            requiredSessionCount: null,
             endDate: new Date("2026-07-06T00:00:00.000Z"),
             plannedSessions: null,
         });
@@ -1429,6 +1430,46 @@ describe("ServiceRecordEntryService branch calendar", () => {
         expect((await builtin.getContext(context)).totalSessions).toBe(4);
         expect((await branch.getContext(context)).totalSessions).toBe(3);
         expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
+    });
+
+    // Legacy case 2026-09-07..2026-09-29 stores N = 15 (추석 closes 09-24 and 09-25).
+    // A branch holiday added inside the period must not shrink the stored N.
+    it("getContext keeps a stored legacy N after the branch adds a holiday inside the period", async () => {
+        const record = createRecord({
+            requiredSessionCount: 15,
+            startDate: new Date("2026-09-07T00:00:00.000Z"),
+            endDate: new Date("2026-09-29T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+
+        expect((await contextService(record, branchHolidayCalendar("2026-09-14")).getContext(context)).totalSessions)
+            .toBe(15);
+    });
+
+    it("upsertSession still saves session 15 after the branch adds a holiday inside the period", async () => {
+        const record = createRecord({
+            requiredSessionCount: 15,
+            startDate: new Date("2026-09-07T00:00:00.000Z"),
+            endDate: new Date("2026-09-29T00:00:00.000Z"),
+            plannedSessions: null,
+        });
+        const harness = createHarness({
+            existing: null,
+            transactionRecord: record,
+            holidayCalendar: branchHolidayCalendar("2026-09-14"),
+        });
+        // No row for session 15 yet; session 14 is locked.
+        harness.transactionClient.service_record_day.findUnique
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(createDay({ caseSessionIndex: 14, sessionIndex: 14, serviceDate: new Date("2026-09-28T00:00:00.000Z") }));
+
+        await expect(harness.service.upsertSession(
+            context,
+            15,
+            createDto({ serviceDate: "2026-09-29T00:00:00.000Z" }),
+            false,
+        )).resolves.toEqual(expect.objectContaining({ sessionIndex: 15 }));
+        expect(harness.upsert).toHaveBeenCalled();
     });
 
     it("getContext refuses a persisted planned vector that lands on a branch holiday", async () => {

@@ -80,11 +80,14 @@ describe("AdminServiceRecordService", () => {
         serviceRecordTokens: [],
     });
 
+    // A stored N is shown as is (the lifecycle ensure path caps it when the
+    // period itself changes); only a case with no stored N derives it from the period.
     it.each([
-        ["2026-09-03", "2026-09-08", 15, 4],
+        ["2026-09-03", "2026-09-08", 15, 15],
         ["2026-08-10", "2026-09-03", 15, 15],
         ["2026-09-03", "2026-09-09", 4, 4],
-    ])("bounds the stored count by the service period %s to %s", async (start, end, stored, expected) => {
+        ["2026-09-03", "2026-09-08", null, 4],
+    ])("shows the stored count over the service period %s to %s (stored %s)", async (start, end, stored, expected) => {
         const prisma = createPrisma();
         prisma.service_record_case.findFirst.mockResolvedValue({
             id: "case-1",
@@ -155,7 +158,7 @@ describe("AdminServiceRecordService", () => {
             status: "IN_PROGRESS",
             startDate: new Date("2026-09-03"),
             endDate: new Date("2026-09-08"),
-            requiredSessionCount: 15,
+            requiredSessionCount: null,
             completedAt: null,
             finalizationDueAt: null,
             finalizedAt: null,

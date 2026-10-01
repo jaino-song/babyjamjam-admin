@@ -9,7 +9,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
-import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
+import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 /** A calendar service whose branch calendar is the built-in one plus the dates that branch added. */
@@ -278,7 +278,14 @@ describe("ServiceRecordLifecycleService", () => {
         }));
     });
 
-    it.each([null, 15, 4])("uses actual remaining days with stored count %s without rewriting voucher duration", async (stored) => {
+    // A stored N is re-capped only when the client's own period moved: 15 was
+    // stored for the longer period 09-03..09-22 that has since been shortened to
+    // 09-03..09-08 (four business days).
+    it.each([
+        [null, null],
+        [15, "2026-09-22"],
+        [4, "2026-09-08"],
+    ] as const)("uses actual remaining days with stored count %s without rewriting voucher duration", async (stored, caseEnd) => {
         const record = { id: "case-1" };
         const prisma = {
             client: {
@@ -292,7 +299,7 @@ describe("ServiceRecordLifecycleService", () => {
             service_record_case: {
                 findUnique: jest.fn().mockResolvedValue(stored === null ? null : {
                     ...record, requiredSessionCount: stored, status: "IN_PROGRESS",
-                    startDate: date("2026-09-03"), endDate: date("2026-09-08"),
+                    startDate: date("2026-09-03"), endDate: date(caseEnd!),
                 }),
                 upsert: jest.fn().mockResolvedValue(record),
             },
@@ -307,6 +314,10 @@ describe("ServiceRecordLifecycleService", () => {
             update: expect.objectContaining({ requiredSessionCount: 4 }),
         }));
         if (stored !== null) {
+            prisma.service_record_case.findUnique.mockResolvedValue({
+                ...record, requiredSessionCount: 4, status: "IN_PROGRESS",
+                startDate: date("2026-09-03"), endDate: date("2026-09-08"),
+            });
             prisma.client.findUnique.mockResolvedValue({
                 ...(await prisma.client.findUnique()), endDate: date("2026-09-09"),
             });
@@ -553,7 +564,9 @@ describe("ServiceRecordLifecycleService", () => {
             },
             data: { endDate: date("2026-07-20") },
         });
-        expect(ensureSpy).toHaveBeenCalledWith(1, transactionClient);
+        // The branch calendar read before the transaction is handed on, so the
+        // lifecycle repair never reads one inside the transaction.
+        expect(ensureSpy).toHaveBeenCalledWith(1, transactionClient, KR_BUILTIN_CALENDAR);
     });
 
     it("persists the canonical business-day duration with a contract end-date sync when the client has no duration yet", async () => {
@@ -1498,7 +1511,7 @@ describe("ServiceRecordLifecycleService", () => {
             status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
             startDate: date("2026-09-03"),
             endDate: date("2026-09-08"),
-            requiredSessionCount: 15,
+            requiredSessionCount: 4,
             finalizationDueAt: new Date("2026-09-08T11:00:00.000Z"),
             completedAt: null,
             momName: "산모",
@@ -1731,41 +1744,195 @@ describe("ServiceRecordLifecycleService", () => {
             }));
         });
 
-        it("recompute caps a legacy case's N by the business days of the branch calendar", async () => {
-            jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
-            const record = {
-                id: "case-1",
-                branchId: rawQueryBranchId,
-                status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
-                startDate: date("2026-09-03"),
-                endDate: date("2026-09-08"),
-                requiredSessionCount: 15,
-                finalizationDueAt: new Date("2026-09-08T11:00:00.000Z"),
-                completedAt: null,
-                momName: "산모",
-                momBirth: "900101",
-                babyName: "아기",
-                babyBirth: "260701",
-                deliveryType: "자연분만",
-                babyWeight: "3.2",
-                assignments: [{ schedule: { replaced: false } }],
-                days: [],
+        // Legacy case 2026-09-07..2026-09-29 (15 business days under the built-in
+        // calendar; 추석 closes 09-24 and 09-25), stored N = 15.
+        const legacyCase = () => ({
+            id: "case-1",
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            startDate: date("2026-09-07"),
+            endDate: date("2026-09-29"),
+            requiredSessionCount: 15,
+            finalizationDueAt: new Date("2026-09-29T11:00:00.000Z"),
+            completedAt: null,
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+            assignments: [{ schedule: { replaced: false } }],
+            days: [],
+        });
+
+        it("recompute keeps a legacy case's N when only the branch calendar changed (holiday added, then removed)", async () => {
+            const record = legacyCase();
+            const persisted: Array<number | null> = [];
+            const prisma = {
+                service_record_case: {
+                    findUnique: jest.fn().mockImplementation(async () => ({ ...record })),
+                    update: jest.fn().mockImplementation(({ data }) => {
+                        Object.assign(record, data);
+                        persisted.push(record.requiredSessionCount);
+                        return Promise.resolve({ ...record });
+                    }),
+                },
             };
+            // The branch closes on 09-14: the period now holds 14 business days.
+            const withHoliday = branchHolidayCalendar("2026-09-14");
+            await new ServiceRecordLifecycleService(prisma as unknown as PrismaService, withHoliday)
+                .recompute("case-1");
+            // The holiday is removed again: the period holds 15 once more.
+            const withoutHoliday = branchHolidayCalendar();
+            await new ServiceRecordLifecycleService(prisma as unknown as PrismaService, withoutHoliday)
+                .recompute("case-1");
+
+            expect(persisted).toEqual([15, 15]);
+        });
+
+        it("recompute derives a null legacy N from the branch calendar", async () => {
+            const record = { ...legacyCase(), requiredSessionCount: null as number | null };
             const prisma = {
                 service_record_case: {
                     findUnique: jest.fn().mockResolvedValue(record),
                     update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
                 },
             };
-            // 09-03, 09-04, 09-07, 09-08 are four business days; a branch closure on 09-04 leaves three.
-            const holidayCalendar = branchHolidayCalendar("2026-09-04");
-            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
-
-            await service.recompute("case-1");
+            const holidayCalendar = branchHolidayCalendar("2026-09-14");
+            await new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar)
+                .recompute("case-1");
 
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
             expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
-                data: expect.objectContaining({ requiredSessionCount: 3 }),
+                data: expect.objectContaining({ requiredSessionCount: 14 }),
+            }));
+        });
+
+        const ensurePrisma = (clientEnd: string, existing: ReturnType<typeof legacyCase> | null) => {
+            const record = { id: "case-1" };
+            return {
+                client: {
+                    findUnique: jest.fn().mockResolvedValue({
+                        id: 1, branchId: rawQueryBranchId, startDate: date("2026-09-07"),
+                        endDate: date(clientEnd), duration: 15, serviceStatus: "in_progress", employeeSchedules: [],
+                    }),
+                    updateMany: jest.fn(),
+                },
+                service_record_case: {
+                    findUnique: jest.fn().mockResolvedValue(existing),
+                    upsert: jest.fn().mockResolvedValue(record),
+                },
+                service_record_token: { updateMany: jest.fn() },
+            };
+        };
+
+        it("ensureForClient keeps a legacy case's N when only the branch calendar changed", async () => {
+            const prisma = ensurePrisma("2026-09-29", legacyCase());
+            const holidayCalendar = branchHolidayCalendar("2026-09-14");
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+            jest.spyOn(service, "recompute").mockResolvedValue({ id: "case-1" } as never);
+
+            await service.ensureForClient(1);
+
+            expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                update: expect.objectContaining({ requiredSessionCount: 15 }),
+            }));
+        });
+
+        it("ensureForClient caps a legacy case's N by the new period when the end date moves earlier", async () => {
+            // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
+            const prisma = ensurePrisma("2026-09-18", legacyCase());
+            const holidayCalendar = branchHolidayCalendar("2026-09-14");
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+            jest.spyOn(service, "recompute").mockResolvedValue({ id: "case-1" } as never);
+
+            await service.ensureForClient(1);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
+            expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                update: expect.objectContaining({ requiredSessionCount: 9 }),
+            }));
+        });
+
+        it("ensureForClient uses a calendar handed in by the caller instead of reading one", async () => {
+            const prisma = ensurePrisma("2026-09-18", legacyCase());
+            const holidayCalendar = branchHolidayCalendar();
+            const handedIn = (await branchHolidayCalendar("2026-09-14").forBranch(rawQueryBranchId)) as never;
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+            jest.spyOn(service, "recompute").mockResolvedValue({ id: "case-1" } as never);
+
+            await service.ensureForClient(1, prisma as never, handedIn);
+
+            expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+            expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                update: expect.objectContaining({ requiredSessionCount: 9 }),
+            }));
+        });
+
+        it("syncEndDateFromCurrentContract derives the duration from the branch calendar", async () => {
+            const transactionClient = {
+                service_record_case: { findUnique: jest.fn().mockResolvedValue(null) },
+                client: {
+                    findUnique: jest.fn().mockResolvedValue({ startDate: date("2026-08-03"), duration: null }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            const prisma = {
+                $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                    callback(transactionClient)),
+            };
+            const holidayCalendar = branchHolidayCalendar("2026-08-05");
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+            jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
+
+            await expect(service.syncEndDateFromCurrentContract({
+                branchId: rawQueryBranchId,
+                clientId: 1,
+                endDate: date("2026-08-10"),
+                documentId: rawQueryDocumentId,
+            })).resolves.toBe(true);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+            // 08-03..08-10 holds six business days; the branch closing on 08-05 leaves five.
+            expect(transactionClient.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                data: { endDate: date("2026-08-10"), duration: 5 },
+            }));
+        });
+
+        it("syncEndDateFromMirroredContract derives the duration from the branch calendar", async () => {
+            const transactionClient = {
+                $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+                service_record_case: { findUnique: jest.fn().mockResolvedValue(null) },
+                client: {
+                    findUnique: jest.fn().mockResolvedValue({ startDate: date("2026-08-03"), duration: null }),
+                    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+                },
+            };
+            const prisma = {
+                $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                    callback(transactionClient)),
+            };
+            const holidayCalendar = branchHolidayCalendar("2026-08-05");
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+            jest.spyOn(service, "ensureForClient").mockResolvedValue(null);
+
+            await expect(service.syncEndDateFromMirroredContract({
+                branchId: rawQueryBranchId,
+                clientId: 1,
+                endDate: date("2026-08-10"),
+                documentId: rawQueryDocumentId,
+                detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+                detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+            })).resolves.toBe(true);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+            expect(transactionClient.client.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                data: { endDate: date("2026-08-10"), duration: 5 },
             }));
         });
 
@@ -1777,7 +1944,7 @@ describe("ServiceRecordLifecycleService", () => {
                 status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
                 startDate: date("2026-08-03"),
                 endDate: date("2026-08-10"),
-                requiredSessionCount: 10,
+                requiredSessionCount: null,
                 finalizationDueAt: new Date("2026-08-10T11:00:00.000Z"),
                 completedAt: null,
                 momName: null,

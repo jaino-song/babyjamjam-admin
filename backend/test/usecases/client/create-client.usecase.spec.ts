@@ -151,6 +151,47 @@ describe("CreateClientUsecase", () => {
                 .rejects.toThrow("서비스 기간은 1일 이상 3일 이하여야 합니다.");
         });
 
+        it("should use a calendar passed by the caller instead of reading one (execute and executeWithInitialSchedule)", async () => {
+            // The caller loaded the calendar before opening its transaction; the
+            // in-transaction read is only a fallback. Built-in calendar: four
+            // sessions fit 2026-05-04..08; the passed branch calendar (5/7 off) allows three.
+            const holidayCalendar = createHolidayCalendarStub();
+            const branchUsecase = new CreateClientUsecase(mockRepository, holidayCalendar);
+            const calendar = branchCalendar2026(["2026-05-07"]);
+            const params = {
+                name: "전달된 달력 고객",
+                address: null,
+                phone: null,
+                type: null,
+                duration: 4,
+                fullPrice: "1000",
+                grant: "0",
+                actualPrice: "1000",
+                startDate: new Date("2026-05-04T00:00:00.000Z"),
+                endDate: new Date("2026-05-08T00:00:00.000Z"),
+                careCenter: false,
+                voucherClient: false,
+                birthday: null,
+                dueDate: null,
+                birthDate: null,
+                serviceStatus: null,
+                breastPump: false,
+            };
+
+            await expect(branchUsecase.execute(branchId, params, undefined, calendar))
+                .rejects.toThrow("서비스 기간은 1일 이상 3일 이하여야 합니다.");
+            const schedule = {
+                primaryEmployeeId: 1,
+                secondaryEmployeeId: null,
+                workAddress: "",
+                startDate: params.startDate,
+                endDate: params.endDate,
+            };
+            await expect(branchUsecase.executeWithInitialSchedule(branchId, params, schedule, undefined, calendar))
+                .rejects.toThrow("서비스 기간은 1일 이상 3일 이하여야 합니다.");
+            expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+        });
+
         it("should create client with minimal required fields", async () => {
             // Arrange
             const params = {

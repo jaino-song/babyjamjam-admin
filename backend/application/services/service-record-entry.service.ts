@@ -151,10 +151,15 @@ function entrySessionCount(record: {
     currentUsableDocumentVersion?: number | null;
     plannedSessions?: Prisma.JsonValue | null;
 }, calendar: KrBusinessDayCalendar): number {
-    // A confirmed revision stores the actual N independently of the current
-    // calendar span. Legacy transfers retain the provider flow's in-period
-    // cap, while unsupported legacy years remain viewable with their stored N.
-    if (hasAuthoritativeRevision(record)) return record.requiredSessionCount ?? 0;
+    // A stored N is the authoritative count: a confirmed revision stores it
+    // independently of the calendar span, and a legacy case keeps the N its
+    // lifecycle ensure path capped when the period last changed. A holiday
+    // calendar edit must not shrink it (it would reject a session the caregiver
+    // may still write). The calendar only derives N when none is stored;
+    // unsupported legacy years remain viewable with their stored N.
+    if (hasAuthoritativeRevision(record) || record.requiredSessionCount !== null) {
+        return record.requiredSessionCount ?? 0;
+    }
     try {
         return serviceRecordSessionCount(
             record.startDate,

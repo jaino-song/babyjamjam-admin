@@ -224,9 +224,16 @@ export class ServiceRecordLifecycleService {
         return this.ensureForClient(schedule.clientId, tx);
     }
 
+    /**
+     * `calendar` is the branch calendar a transaction-opening caller already
+     * read (fresh) before its transaction began. It is optional: without it the
+     * calendar is read in here, and only when a count actually has to be
+     * derived (a brand-new case, a null N, or a period that really changed).
+     */
     async ensureForClient(
         clientId: number,
         tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<ServiceRecordCaseRecord | null> {
         // A no-transaction lifecycle call still performs a business write.
         // Put the complete read/lock/reread/upsert sequence in one owning
@@ -234,14 +241,15 @@ export class ServiceRecordLifecycleService {
         // set and then repair it from a separate root transaction.
         if (!tx && typeof this.prisma.$transaction === "function") {
             return this.prisma.$transaction((transaction) =>
-                this.ensureForClient(clientId, transaction));
+                this.ensureForClient(clientId, transaction, calendar));
         }
-        return this.ensureForClientInTransaction(clientId, tx);
+        return this.ensureForClientInTransaction(clientId, tx, calendar);
     }
 
     private async ensureForClientInTransaction(
         clientId: number,
         tx?: Prisma.TransactionClient,
+        passedCalendar?: KrBusinessDayCalendar,
     ): Promise<ServiceRecordCaseRecord | null> {
         const db = tx ?? this.prisma;
         let client = await db.client.findUnique({
@@ -315,10 +323,16 @@ export class ServiceRecordLifecycleService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
         }
-        // The derived session count is persisted, so read the branch calendar
-        // fresh. The branch is only known once the client is loaded, so this
-        // resolves here (a caller-owned transaction is already open).
-        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        // The derived session count is persisted, so any calendar used for it
+        // is read fresh (or handed in by a caller that read it before opening
+        // its transaction). It is resolved lazily: a holiday-calendar edit must
+        // never change a stored N on its own, so an existing case with a stored
+        // N and an unchanged period needs no calendar at all.
+        let calendar = passedCalendar;
+        const resolveCalendar = async (): Promise<KrBusinessDayCalendar> => {
+            calendar ??= await this.holidayCalendar.forBranch(branchId, { fresh: true });
+            return calendar;
+        };
         const finalizationDueAt = client.endDate
             ? getServiceRecordFinalizationDueAt(client.endDate)
             : null;
@@ -328,18 +342,30 @@ export class ServiceRecordLifecycleService {
         // N is a service-record fact, separate from the nominal voucher
         // duration. A case keeps its initialized N through postponed or
         // shortened outer periods; only a brand-new case may derive N from a
-        // complete supported client period. Legacy null/zero values remain
-        // visible and are not silently backfilled.
+        // complete supported client period. A legacy case (no revision) keeps
+        // its stored N unless the client's own period moved, in which case N is
+        // re-capped by the business days of the NEW period. A holiday-calendar
+        // change alone never lowers (or restores) N. Legacy null/zero values
+        // remain visible and are not silently backfilled.
+        const periodChanged = existing
+            ? isoDate(existing.startDate) !== isoDate(client.startDate)
+                || isoDate(existing.endDate) !== isoDate(client.endDate)
+            : false;
         const sessionCount = existing
             ? hasAuthoritativeRevision(existing)
+                || (existing.requiredSessionCount !== null && !periodChanged)
                 ? existing.requiredSessionCount
                 : legacySessionCount(
-                    existing.startDate,
-                    existing.endDate,
+                    client.startDate,
+                    client.endDate,
                     existing.requiredSessionCount,
-                    calendar,
+                    await resolveCalendar(),
                 )
-            : deriveInitialSessionCount({ startDate: client.startDate, endDate: client.endDate, calendar });
+            : deriveInitialSessionCount({
+                startDate: client.startDate,
+                endDate: client.endDate,
+                calendar: await resolveCalendar(),
+            });
         const immutableFinalized = Boolean(
             existing && IMMUTABLE_FINALIZATION_STATUSES.has(existing.status),
         );
@@ -462,7 +488,7 @@ export class ServiceRecordLifecycleService {
             });
         }
 
-        return this.recompute(record.id, tx);
+        return this.recompute(record.id, tx, calendar);
     }
 
     async validatePeriodChange(params: {
@@ -1054,7 +1080,7 @@ export class ServiceRecordLifecycleService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
-        await this.ensureForClient(params.clientId, tx);
+        await this.ensureForClient(params.clientId, tx, calendar);
     }
 
     private hasCompleteServiceRecordWriteLockSurface(
@@ -1137,7 +1163,11 @@ export class ServiceRecordLifecycleService {
         };
     }
 
-    async recompute(serviceRecordCaseId: string, tx?: Prisma.TransactionClient) {
+    async recompute(
+        serviceRecordCaseId: string,
+        tx?: Prisma.TransactionClient,
+        calendar?: KrBusinessDayCalendar,
+    ) {
         // A root recompute is itself a business write. Discover only the
         // owning identifiers before opening the transaction, then acquire the
         // complete client -> employees -> case -> schedules/assignments/days
@@ -1165,9 +1195,9 @@ export class ServiceRecordLifecycleService {
 
             // Saved computation: the persisted N depends on the branch calendar,
             // so read it fresh before the owning transaction opens.
-            const calendar = typeof discovered.branchId === "string"
+            const rootCalendar = calendar ?? (typeof discovered.branchId === "string"
                 ? await this.holidayCalendar.forBranch(discovered.branchId, { fresh: true })
-                : undefined;
+                : undefined);
 
             // A legacy case can outlive its client because the client relation
             // is nullable. It still needs an owning transaction before this
@@ -1187,10 +1217,10 @@ export class ServiceRecordLifecycleService {
                         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
                             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                         }
-                        return this.recomputeInTransaction(serviceRecordCaseId, transaction, calendar);
+                        return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar);
                     });
                 }
-                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma, calendar);
+                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma, rootCalendar);
             }
 
             return this.prisma.$transaction(async (transaction) => {
@@ -1199,11 +1229,11 @@ export class ServiceRecordLifecycleService {
                     clientId: discoveredClientId,
                     caseId: serviceRecordCaseId,
                 });
-                return this.recomputeInTransaction(serviceRecordCaseId, transaction, calendar);
+                return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar);
             });
         }
 
-        return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma);
+        return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma, calendar);
     }
 
     /**
@@ -1239,13 +1269,13 @@ export class ServiceRecordLifecycleService {
             return record;
         }
 
-        // Confirmed revision rows keep their persisted actual N. Legacy rows
-        // retain the provider flow's in-period cap so transferred cases with
-        // a nominal 15-day voucher expose only their actual remaining days.
-        // The lifecycle ensure path owns initialization for a brand-new case;
-        // existing null/zero and inconsistent legacy evidence remain visible
-        // and block preview.
-        const required = hasAuthoritativeRevision(record)
+        // A stored N is kept as is: confirmed revision rows persist their
+        // actual N, and a legacy row's in-period cap is applied by the
+        // lifecycle ensure path when the client's period itself changes (a
+        // holiday-calendar edit alone must never move N). Only a null legacy N
+        // is derived from the case period. Existing zero and inconsistent
+        // legacy evidence remain visible and block preview.
+        const required = hasAuthoritativeRevision(record) || record.requiredSessionCount !== null
             ? record.requiredSessionCount
             : legacySessionCount(
                 record.startDate,

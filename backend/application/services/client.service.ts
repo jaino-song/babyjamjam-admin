@@ -1166,7 +1166,7 @@ export class ClientService {
                 // own owning transaction so the lifecycle service can lock and
                 // reread the client/schedule set before any case repair.
                 await this.prismaService.$transaction(async (transaction) => {
-                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction);
+                    await this.serviceRecordLifecycleService?.ensureForClient(existing.id, transaction, calendar);
                 });
             }
             await this.linkContractDocumentsByPhone(branchid, existing, normalizedPhone);
@@ -1295,7 +1295,7 @@ export class ClientService {
                     workAddress: params.address ?? "",
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
-                }, transaction);
+                }, transaction, calendar);
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1315,6 +1315,7 @@ export class ClientService {
                 await this.serviceRecordLifecycleService?.ensureForClient(
                     created.client.id,
                     transaction,
+                    calendar,
                 );
                 return created;
             });
@@ -1322,7 +1323,12 @@ export class ClientService {
             createdScheduleId = result.scheduleId;
         } else {
             client = await this.prismaService.$transaction(async (transaction) => {
-                const created = await this.createClientUsecase.execute(branchid, createParams, transaction);
+                const created = await this.createClientUsecase.execute(
+                    branchid,
+                    createParams,
+                    transaction,
+                    calendar,
+                );
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -1335,6 +1341,7 @@ export class ClientService {
                 await this.serviceRecordLifecycleService?.ensureForClient(
                     created.id,
                     transaction,
+                    calendar,
                 );
                 return created;
             });
@@ -2132,7 +2139,7 @@ export class ClientService {
             } else if (!currentClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
-            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction);
+            await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
             if (
                 automationImpact
                 && automationImpact.availability === "available"
@@ -2229,6 +2236,11 @@ export class ClientService {
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
         const ordinaryMutationId = randomUUID();
+        // SAVED computation (the update re-derives the persisted duration):
+        // read the branch calendar before the transaction opens, never inside
+        // it, so the locked client row does not wait on a second pooled
+        // connection.
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2275,7 +2287,7 @@ export class ClientService {
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
                 endDate: terminationAt,
-            }, transaction);
+            }, transaction, calendar);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },
                 data: { terminatedAt: terminationAt },
@@ -2493,6 +2505,9 @@ export class ClientService {
 
         this.logger.log(`Completing replacement for client ${clientId}`);
 
+        // SAVED computation: loaded before the transaction opens (see
+        // terminateService).
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const updatedClient = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
@@ -2542,8 +2557,8 @@ export class ClientService {
             );
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: computedStatus,
-            }, transaction);
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction);
+            }, transaction, calendar);
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return updated;
         });
         return updatedClient;
