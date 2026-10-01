@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import { Separator } from "@/components/ui/separator";
@@ -112,12 +111,26 @@ function isoDueDateToCompact(iso: string): string {
     return normalizeCompactDateForSubmit(compact) === iso ? compact : "";
 }
 
-/** The read-only provider row that reports the provider lookup (not an inline-validated input). */
-const EMPLOYEE_LOOKUP_ROW = { label: "제공인력", id: "employee-lookup" } as const;
+/**
+ * Rows that are not inline-validated text inputs: the read-only provider lookup
+ * and the selects. Each still gets the label row with a message slot.
+ */
+const WIZARD_OTHER_ROW_CONFIG = {
+    employeeLookup: { label: "제공인력", id: "employee-lookup" },
+    employeeSelection: { label: "제공인력 선택", id: "employee-selection" },
+    employeeGrade: { label: "등급", id: "employee-grade" },
+    employeeWorkArea: { label: "근무 가능 지역", id: "employee-work-area" },
+    voucherYear: { label: "바우처 연도", id: "voucher-year" },
+    voucherType: { label: "바우처 유형", id: "voucher-type" },
+    voucherDuration: { label: "기간", id: "voucher-duration" },
+} as const;
+type WizardOtherRow = keyof typeof WIZARD_OTHER_ROW_CONFIG;
+const EMPLOYEE_LOOKUP_ROW = WIZARD_OTHER_ROW_CONFIG.employeeLookup;
 
 interface WizardFieldRowProps {
-    field: WizardInputField | "employeeLookup";
-    message: FieldMessageView | null;
+    field: WizardInputField | WizardOtherRow;
+    /** Omit for a field that has no message: its slot stays empty. */
+    message?: FieldMessageView | null;
     /** A small link-style action that sits next to the message in the slot, e.g. a retry. */
     action?: ReactNode;
     children: ReactNode;
@@ -125,7 +138,9 @@ interface WizardFieldRowProps {
 
 /** A label whose validation message sits at the right end of the same row and never changes its height. */
 function WizardFieldRow({ field, message, action, children }: WizardFieldRowProps) {
-    const { id, label } = field === "employeeLookup" ? EMPLOYEE_LOOKUP_ROW : WIZARD_INPUT_FIELD_CONFIG[field];
+    const { id, label } = field in WIZARD_OTHER_ROW_CONFIG
+        ? WIZARD_OTHER_ROW_CONFIG[field as WizardOtherRow]
+        : WIZARD_INPUT_FIELD_CONFIG[field as WizardInputField];
     return (
         <div className="space-y-2" data-component={`${WIZARD_BASE}_${id}-field`}>
             <div className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-sm leading-[1.3]">
@@ -388,6 +403,14 @@ export function ClientRegistrationWizard({
         : isEmployeesError
             ? { tone: "error", text: "제공인력 정보를 불러오지 못했어요" }
             : null;
+
+    // Loading status of the voucher selects, shown in their label-row slots.
+    const voucherYearMessage: FieldMessageView | null = isVoucherYearsLoading
+        ? { tone: "hint", text: "불러오는 중이에요" }
+        : null;
+    const voucherDurationMessage: FieldMessageView | null = isVoucherPriceInfosLoading
+        ? { tone: "hint", text: "불러오는 중이에요" }
+        : null;
 
     const hasBasicsProblem = WIZARD_BASIC_FIELDS.some(
         (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
@@ -684,8 +707,7 @@ export function ClientRegistrationWizard({
                             </WizardFieldRow>
                         )}
                         {createdEmployeeId === null && matchingEmployees.length > 0 && (matchingEmployees.length > 1 || hasInvalidEmployeeSelection) && (
-                            <div className="space-y-2">
-                                <Label htmlFor="employee-selection">제공인력 선택</Label>
+                            <WizardFieldRow field="employeeSelection">
                                 <Select
                                     value={selectedEmployeeId?.toString() ?? ""}
                                     onValueChange={(value) => setSelectedEmployeeId(Number(value))}
@@ -701,7 +723,7 @@ export function ClientRegistrationWizard({
                                         ))}
                                     </SelectContent>
                                 </Select>
-                            </div>
+                            </WizardFieldRow>
                         )}
                     </div>
                 )}
@@ -727,8 +749,7 @@ export function ClientRegistrationWizard({
                                 {...getInputFieldProps("employeePhone")}
                             />
                         </WizardFieldRow>
-                        <div className="space-y-2">
-                            <Label htmlFor="employee-grade">등급</Label>
+                        <WizardFieldRow field="employeeGrade">
                             <Select value={employeeGrade} onValueChange={setEmployeeGrade}>
                                 <SelectTrigger id="employee-grade" aria-label="등급">
                                     <SelectValue />
@@ -739,9 +760,8 @@ export function ClientRegistrationWizard({
                                     ))}
                                 </SelectContent>
                             </Select>
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="employee-work-area">근무 가능 지역</Label>
+                        </WizardFieldRow>
+                        <WizardFieldRow field="employeeWorkArea">
                             <Select value={employeeWorkArea} onValueChange={setEmployeeWorkArea}>
                                 <SelectTrigger id="employee-work-area" aria-label="근무 가능 지역">
                                     <SelectValue />
@@ -752,7 +772,7 @@ export function ClientRegistrationWizard({
                                     ))}
                                 </SelectContent>
                             </Select>
-                        </div>
+                        </WizardFieldRow>
                     </div>
                 )}
 
@@ -770,41 +790,37 @@ export function ClientRegistrationWizard({
 
                         {voucherClient && (
                             <>
-	                                <div className="flex gap-4 items-center flex-wrap">
-	                                    <div className="space-y-2 min-w-[140px]">
-	                                        <Label>바우처 연도</Label>
-	                                        <Select
-	                                            value={resolvedVoucherYear?.toString() ?? ""}
-	                                            onValueChange={handleVoucherYearChange}
-	                                            disabled={isVoucherYearsLoading}
-	                                        >
-	                                            <SelectTrigger className="w-[140px]" aria-label="바우처 연도">
-	                                                <SelectValue placeholder="연도 선택" />
-	                                            </SelectTrigger>
-	                                            <SelectContent>
-	                                                {voucherYears.map((year) => (
-	                                                    <SelectItem key={year} value={year.toString()}>
-                                                        {year}년
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
+                                <WizardFieldRow field="voucherYear" message={voucherYearMessage}>
+                                    <Select
+                                        value={resolvedVoucherYear?.toString() ?? ""}
+                                        onValueChange={handleVoucherYearChange}
+                                        disabled={isVoucherYearsLoading}
+                                    >
+                                        <SelectTrigger id="voucher-year" className="w-full" aria-label="바우처 연도">
+                                            <SelectValue placeholder="연도 선택" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {voucherYears.map((year) => (
+                                                <SelectItem key={year} value={year.toString()}>
+                                                    {year}년
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </WizardFieldRow>
 
-	                                <div className="space-y-2">
-	                                    <Label>바우처 유형</Label>
-	                                    <Select
-	                                        value={voucherType}
-	                                        onValueChange={handleVoucherTypeChange}
-	                                        disabled={resolvedVoucherYear === null}
-	                                    >
-	                                        <SelectTrigger className="w-full" aria-label="바우처 유형">
-	                                            <SelectValue placeholder="유형 선택" />
-	                                        </SelectTrigger>
-	                                        <SelectContent>
-	                                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
-	                                                <SelectGroup key={groupName}>
+                                <WizardFieldRow field="voucherType">
+                                    <Select
+                                        value={voucherType}
+                                        onValueChange={handleVoucherTypeChange}
+                                        disabled={resolvedVoucherYear === null}
+                                    >
+                                        <SelectTrigger id="voucher-type" className="w-full" aria-label="바우처 유형">
+                                            <SelectValue placeholder="유형 선택" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
+                                                <SelectGroup key={groupName}>
                                                     <SelectGroupLabel>{groupName}</SelectGroupLabel>
                                                     {Object.entries(types).map(([typeValue, typeData]) => (
                                                         <SelectItem key={typeValue} value={typeValue}>
@@ -815,34 +831,27 @@ export function ClientRegistrationWizard({
                                             ))}
                                         </SelectContent>
                                     </Select>
-                                </div>
+                                </WizardFieldRow>
 
                                 {voucherType && (
-	                                    <div className="space-y-2">
-	                                        <Label>기간</Label>
-	                                        <Select
-	                                            value={voucherDuration}
-	                                            onValueChange={handleVoucherDurationChange}
-	                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
-	                                        >
-	                                            <SelectTrigger className="w-full" aria-label="기간">
-	                                                <SelectValue placeholder="기간 선택" />
-	                                            </SelectTrigger>
-	                                            <SelectContent>
-	                                                {voucherPriceInfos.map((v) => (
-	                                                    <SelectItem key={v.duration} value={v.duration}>
+                                    <WizardFieldRow field="voucherDuration" message={voucherDurationMessage}>
+                                        <Select
+                                            value={voucherDuration}
+                                            onValueChange={handleVoucherDurationChange}
+                                            disabled={isVoucherPriceInfosLoading || voucherPriceInfos.length === 0}
+                                        >
+                                            <SelectTrigger id="voucher-duration" className="w-full" aria-label="기간">
+                                                <SelectValue placeholder="기간 선택" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {voucherPriceInfos.map((v) => (
+                                                    <SelectItem key={v.duration} value={v.duration}>
                                                         {v.duration}일
                                                     </SelectItem>
                                                 ))}
                                             </SelectContent>
                                         </Select>
-                                    </div>
-                                )}
-
-                                {voucherType && isVoucherPriceInfosLoading && (
-                                    <div className="flex justify-center py-2">
-                                        <Spinner size="sm" />
-                                    </div>
+                                    </WizardFieldRow>
                                 )}
 
                                 {voucherDuration && fullPrice && grant && actualPrice && (
