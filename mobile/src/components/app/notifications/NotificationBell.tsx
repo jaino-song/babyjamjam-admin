@@ -438,11 +438,14 @@ export function NotificationBell({
                                             <div className="flex justify-between items-center">
                                                 <p className="flex min-w-0 items-center gap-2 text-sm font-bold">
                                                     {showsUnread && (
-                                                        <span
-                                                            data-slot="unread-dot"
-                                                            aria-hidden="true"
-                                                            className="h-2 w-2 shrink-0 rounded-full bg-primary"
-                                                        />
+                                                        <>
+                                                            <span
+                                                                data-slot="unread-dot"
+                                                                aria-hidden="true"
+                                                                className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                                                            />
+                                                            <span className="sr-only">읽지 않음</span>
+                                                        </>
                                                     )}
                                                     <span className="truncate">{notification.title}</span>
                                                 </p>
