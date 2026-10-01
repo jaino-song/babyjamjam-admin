@@ -112,6 +112,9 @@ export function NotificationBell({
     const [dialogFilterType, setDialogFilterType] = useState<FilterType | null>(null);
     const [dialogClientId, setDialogClientId] = useState<number | undefined>(undefined);
     const [expandedNotificationId, setExpandedNotificationId] = useState<number | null>(null);
+    // Rows the user has already opened in this session read as read immediately,
+    // without waiting for the mark-as-read refetch.
+    const [openedNotificationIds, setOpenedNotificationIds] = useState<ReadonlySet<number>>(() => new Set());
 
     // Subscription state
     const {
@@ -195,6 +198,7 @@ export function NotificationBell({
 
     const handleNotificationClick = (notification: Notification) => {
         if (!notification.isRead) {
+            setOpenedNotificationIds((previous) => new Set(previous).add(notification.id));
             markAsRead.mutate(notification.id);
         }
 
@@ -309,12 +313,13 @@ export function NotificationBell({
         // Subscribed - show notifications list
         return (
             <>
-                <div className="p-4 flex justify-between items-center bg-popover border-b">
+                <div className="px-4 py-3 flex justify-between items-center bg-popover border-b">
                     <h2 className="text-lg font-semibold">알림</h2>
                     {unreadCount !== undefined && unreadCount > 0 && (
                         <Button
-                            variant="ghost"
+                            variant="link"
                             size="sm"
+                            className="h-auto px-0"
                             onClick={handleMarkAllAsRead}
                             disabled={markAllAsRead.isPending}
                         >
@@ -407,6 +412,7 @@ export function NotificationBell({
                                 {group.notifications.map((notification) => {
                                     const isExpandable = !notification.data?.url;
                                     const isExpanded = isExpandable && expandedNotificationId === notification.id;
+                                    const showsUnread = !notification.isRead && !openedNotificationIds.has(notification.id);
                                     const bodyId = `notification-body-${notification.id}`;
 
                                     return (
@@ -426,22 +432,27 @@ export function NotificationBell({
                                             data-testid={notification.isRead ? 'notification-item' : 'notification-item-unread'}
                                             className={`
                                                 px-4 py-3 cursor-pointer border-b transition-colors
-                                                ${notification.isRead
-                                                    ? 'bg-transparent hover:bg-muted'
-                                                    : 'bg-accent text-accent-foreground hover:bg-accent/90'}
+                                                bg-transparent hover:bg-muted
                                             `}
                                         >
                                             <div className="flex justify-between items-center">
-                                                <p className={`text-sm ${notification.isRead ? 'font-normal' : 'font-bold'}`}>
-                                                    {notification.title}
+                                                <p className="flex min-w-0 items-center gap-2 text-sm font-bold">
+                                                    {showsUnread && (
+                                                        <span
+                                                            data-slot="unread-dot"
+                                                            aria-hidden="true"
+                                                            className="h-2 w-2 shrink-0 rounded-full bg-primary"
+                                                        />
+                                                    )}
+                                                    <span className="truncate">{notification.title}</span>
                                                 </p>
-                                                <span className={`text-xs ml-2 shrink-0 ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground'}`}>
+                                                <span className="text-xs ml-2 shrink-0 text-muted-foreground">
                                                     {format(new Date(notification.sentAt), "a h:mm", { locale: ko })}
                                                 </span>
                                             </div>
                                             <p
                                                 id={bodyId}
-                                                className={`text-xs mt-1 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'} ${notification.isRead ? 'text-muted-foreground' : 'text-accent-foreground'}`}
+                                                className={`text-xs mt-1 ${isExpanded ? 'whitespace-pre-wrap break-words' : 'truncate'} text-muted-foreground ${showsUnread ? 'pl-4' : ''}`}
                                             >
                                                 {notification.body}
                                             </p>
