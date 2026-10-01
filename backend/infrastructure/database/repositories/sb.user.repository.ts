@@ -32,10 +32,25 @@ export class SbUserRepository implements IUserRepository {
         const user = await this.prismaService.user.findFirst({
             where: {
                 id,
-                approvalStatus: "approved",
-                OR: [
-                    { userBranches: { some: { branchId, branch: { isActive: true } } } },
-                    { ownedBranches: { some: { id: branchId, isActive: true } } },
+                // Matches the login rule (auth.service.ts / auth-session.service.ts
+                // assertUserApproved): an owner bypasses the approval gate regardless of
+                // approvalStatus, so they must be reachable here too, not only via
+                // approvalStatus: "approved". Nested under AND so it combines with the
+                // membership OR below instead of clobbering it (a where-clause can only
+                // have one top-level OR key).
+                AND: [
+                    {
+                        OR: [
+                            { approvalStatus: "approved" },
+                            { role: "owner" },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { userBranches: { some: { branchId, branch: { isActive: true } } } },
+                            { ownedBranches: { some: { id: branchId, isActive: true } } },
+                        ],
+                    },
                 ],
             },
         });
@@ -174,12 +189,25 @@ export class SbUserRepository implements IUserRepository {
             where: {
                 // BJJ-357: approval_status is NOT NULL (CHECK constraint restricts it to
                 // 'pending' | 'approved' | 'rejected' — see the 20260713100000 migration),
-                // so an explicit null branch isn't reachable. Owners are always written with
-                // approvalStatus: "approved" by UserService.approve, so this never drops them.
-                approvalStatus: "approved",
-                OR: [
-                    { ownedBranches: { some: { id: branchId, isActive: true } } },
-                    { userBranches: { some: { branchId, branch: { isActive: true } } } },
+                // so an explicit null branch isn't reachable. BJJ-356 follow-up: the login
+                // rule (auth.service.ts / auth-session.service.ts assertUserApproved) lets
+                // an owner in regardless of approvalStatus, so owners are included here via
+                // `role: "owner"` too — not only via approvalStatus: "approved". Nested under
+                // AND so it combines with the membership OR below instead of clobbering it
+                // (a where-clause can only have one top-level OR key).
+                AND: [
+                    {
+                        OR: [
+                            { approvalStatus: "approved" },
+                            { role: "owner" },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { ownedBranches: { some: { id: branchId, isActive: true } } },
+                            { userBranches: { some: { branchId, branch: { isActive: true } } } },
+                        ],
+                    },
                 ],
             },
         });

@@ -254,6 +254,18 @@ describe("NotificationService", () => {
     describe("deliveryMode: background (BJJ-356)", () => {
         it("sendNotification resolves with the stored notification before push/email delivery finishes", async () => {
             systemSettingService.getUserEmailNotificationsEnabled.mockResolvedValue(true);
+            // Deferred (not resolved-by-default) so the test can prove sendNotification
+            // settles while push delivery is still in flight. If the await on
+            // deliverNotification were ever hoisted out of the background closure and
+            // into the synchronous path before `return`, this promise never resolving
+            // yet would hang the `await service.sendNotification(...)` call below and
+            // fail the test on timeout.
+            let resolveDeliver!: (value: { status: string; subscriptions: number; delivered: number; failed: number }) => void;
+            const deliverPromise = new Promise<{ status: string; subscriptions: number; delivered: number; failed: number }>(
+                (resolve) => { resolveDeliver = resolve; },
+            );
+            sendNotificationUsecase.deliverNotification.mockImplementation(() => deliverPromise);
+
             let resolveEmail!: (value: string) => void;
             const emailPromise = new Promise<string>((resolve) => { resolveEmail = resolve; });
             emailPort.send.mockImplementation(() => emailPromise);
@@ -266,6 +278,7 @@ describe("NotificationService", () => {
             expect(sendNotificationUsecase.createNotificationRecord).toHaveBeenCalledTimes(1);
             expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
 
+            resolveDeliver({ status: "delivered", subscriptions: 1, delivered: 1, failed: 0 });
             resolveEmail("email-id");
             await service.whenBackgroundDeliveryIdle();
 
