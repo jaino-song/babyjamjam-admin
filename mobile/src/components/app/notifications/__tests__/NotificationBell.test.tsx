@@ -174,7 +174,7 @@ describe('NotificationBell', () => {
     expect(mockMarkAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
-  it('renders unread notification text in the accent foreground color so it stays readable on the blue background', async () => {
+  it('marks unread rows with a dot instead of the old accent background, and keeps both titles bold', async () => {
     mockNotifications = [mockUnreadNotificationWithUrl, mockReadNotificationWithUrl];
 
     render(<NotificationBell />);
@@ -186,15 +186,78 @@ describe('NotificationBell', () => {
     });
 
     const unread = screen.getByTestId('notification-item-unread');
-    expect(unread).toHaveClass('bg-accent', 'text-accent-foreground');
-    expect(unread.querySelector('.text-muted-foreground')).toBeNull();
-    // Regression guard: the dimmed /85 opacity variant fell below contrast
-    // requirements against the accent background and must not reappear.
-    expect(unread.querySelector('[class*="text-accent-foreground/85"]')).toBeNull();
+    // Regression guard: the old blue-row design must not reappear.
+    expect(unread).not.toHaveClass('bg-accent');
+    expect(unread).not.toHaveClass('text-accent-foreground');
+    expect(unread.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+    expect(screen.getByText(mockUnreadNotificationWithUrl.title).closest('p')).toHaveClass('font-bold');
 
     const read = screen.getByTestId('notification-item');
     expect(read).not.toHaveClass('bg-accent');
-    expect(read).not.toHaveClass('hover:bg-accent/90');
+    expect(read.querySelector('[data-slot="unread-dot"]')).toBeNull();
+    expect(screen.getByText(mockReadNotificationWithUrl.title).closest('p')).toHaveClass('font-bold');
+  });
+
+  it('gives unread rows a visually hidden "읽지 않음" label, since the dot itself is aria-hidden', async () => {
+    mockNotifications = [mockUnreadNotificationWithUrl, mockReadNotificationWithUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const unread = screen.getByTestId('notification-item-unread');
+    expect(unread.querySelector('.sr-only')).toHaveTextContent('읽지 않음');
+
+    const read = screen.getByTestId('notification-item');
+    expect(read.querySelector('.sr-only')).toBeNull();
+  });
+
+  it('removes the unread dot immediately on tap, even though the notification list still reports isRead=false', async () => {
+    mockNotifications = [mockNotificationWithoutUrl];
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const item = screen.getByTestId('notification-item-unread');
+    expect(item.querySelector('[data-slot="unread-dot"]')).not.toBeNull();
+
+    fireEvent.click(item);
+
+    expect(mockMarkAsReadMutate).toHaveBeenCalledWith(3);
+    // mockNotificationWithoutUrl.isRead never flips (markAsRead is mocked),
+    // so this proves openedNotificationIds — not server isRead — drives the dot.
+    expect(item.querySelector('[data-slot="unread-dot"]')).toBeNull();
+    // data-testid stays keyed off server isRead, unaffected by local "opened" state.
+    expect(item).toHaveAttribute('data-testid', 'notification-item-unread');
+  });
+
+  it('renders "모두 읽음" as a link-styled button and still marks all as read', async () => {
+    mockNotifications = [mockUnreadNotificationWithUrl];
+    mockUnreadCount = 3;
+
+    render(<NotificationBell />);
+
+    fireEvent.click(screen.getByTestId('notification-bell'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-popover')).toBeVisible();
+    });
+
+    const markAllButton = screen.getByRole('button', { name: '모두 읽음' });
+    expect(markAllButton).toHaveAttribute('data-variant', 'link');
+
+    fireEvent.click(markAllButton);
+
+    expect(mockMarkAllAsReadMutate).toHaveBeenCalledTimes(1);
   });
 
   it('should NOT call markAsRead.mutate when clicking already-read notification', async () => {
