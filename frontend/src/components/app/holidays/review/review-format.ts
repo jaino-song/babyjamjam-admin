@@ -12,7 +12,8 @@ export function formatMonthDay(isoDate: string): string {
 /** "10/5 대체공휴일(개천절) 추가" (public data) or "10/20 이 지점 공휴일로 지정" (a branch override). */
 export function describeReviewEvent(event: HolidayReviewEvent): string {
   const date = formatMonthDay(event.date);
-  if (event.source === "branch-override") {
+  // Anything that is not public data is a branch's own setting.
+  if (event.source !== "kasi") {
     return `${date} ${event.change === "added" ? "이 지점 공휴일로 지정" : "이 지점 공휴일에서 빠짐"}`;
   }
   return `${date} ${event.name ?? "공휴일"} ${event.change === "added" ? "추가" : "삭제"}`;
@@ -39,7 +40,8 @@ const SKIP_REASON_LABEL: Record<string, string> = {
   ALREADY_MATCHES: "이미 새 종료일과 같아요",
   NO_LONGER_SAFE: "이제는 바로 수정할 수 없는 상태예요",
   UPDATE_FAILED: "저장하지 못했어요",
-  [REQUEST_FAILED_CODE]: "요청이 실패했어요. 다시 시도해 주세요",
+  RECALCULATED_CHANGED: "새 종료일이 다시 계산됐어요. 목록에서 확인해 주세요.",
+  [REQUEST_FAILED_CODE]: "응답이 늦어 결과를 확인하지 못했어요. 목록을 새로고침해 확인해 주세요",
 };
 
 /** A short Korean reason for a skip code: the local map first, then the backend problem catalog. */

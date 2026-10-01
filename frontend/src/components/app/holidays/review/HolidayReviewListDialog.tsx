@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   holidayReviewApi,
@@ -35,8 +35,11 @@ import { useHolidayReviewResolve, type ReviewResolveSummary } from "./useHoliday
 
 const SOURCE_COMPONENT = "HolidayReviewListDialog";
 const SEARCH_DEBOUNCE_MS = 300;
+/** The backend caps `q` at 100 characters. */
+const SEARCH_MAX_LENGTH = 100;
 
 type FilterTab = "all" | "safe" | "risk";
+const FILTER_TABS: readonly FilterTab[] = ["all", "safe", "risk"];
 
 interface HolidayReviewListDialogProps {
   branchId: string;
@@ -73,6 +76,7 @@ export function HolidayReviewListDialog({
   // Only what is on screen can be acted on: a selection hidden by a filter or search is ignored.
   const selectedRows = rows.filter((row) => selected.has(row.id));
   const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+  const someSelected = selectedRows.length > 0 && !allSelected;
   const hasRiskSelected = selectedRows.some((row) => row.category === "risk");
   const busy = resolve.isPending;
 
@@ -144,109 +148,117 @@ export function HolidayReviewListDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div data-component={`${dataComponent}_tools`} className="flex flex-wrap items-center justify-between gap-2 pb-3">
-          <Tabs value={tab} onValueChange={(value) => setTab(value as FilterTab)}>
+        <Tabs value={tab} onValueChange={(value) => setTab(value as FilterTab)}>
+          <div data-component={`${dataComponent}_tools`} className="flex flex-wrap items-center justify-between gap-2 pb-3">
             <TabsList aria-label="분류">
               <TabsTrigger value="all">{`전체 ${totalOpen}`}</TabsTrigger>
               <TabsTrigger value="safe">{`바로 수정 가능 ${event.safeOpen}`}</TabsTrigger>
               <TabsTrigger value="risk">{`직접 확인 필요 ${event.riskOpen}`}</TabsTrigger>
             </TabsList>
-          </Tabs>
-          <Input
-            type="search"
-            value={search}
-            placeholder="고객 이름 검색"
-            aria-label="고객 이름 검색"
-            autoComplete="off"
-            className="max-w-[220px]"
-            data-component={`${dataComponent}_tools_search`}
-            onChange={(changeEvent) => setSearch(changeEvent.target.value)}
-          />
-        </div>
+            <Input
+              type="search"
+              value={search}
+              placeholder="고객 이름 검색"
+              aria-label="고객 이름 검색"
+              autoComplete="off"
+              maxLength={SEARCH_MAX_LENGTH}
+              className="max-w-[220px]"
+              data-component={`${dataComponent}_tools_search`}
+              onChange={(changeEvent) => setSearch(changeEvent.target.value)}
+            />
+          </div>
 
-        <div data-component={`${dataComponent}_body`} className="max-h-[45vh] overflow-y-auto">
-          {itemsQuery.isLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-              <Skeleton className="h-9 w-full" />
-            </div>
-          ) : itemsQuery.isError ? (
-            <p
-              role="alert"
-              data-component={`${dataComponent}_body_error`}
-              className="flex flex-wrap items-center gap-2 py-6 text-sm text-v3-burgundy"
-            >
-              고객 목록을 불러오지 못했어요.
-              <Button type="button" variant="outline" size="sm" onClick={() => void itemsQuery.refetch()}>
-                다시 시도
-              </Button>
-            </p>
-          ) : rows.length === 0 ? (
-            <p data-component={`${dataComponent}_body_empty`} className="py-8 text-center text-sm text-v3-text-muted">
-              해당하는 고객이 없어요.
-            </p>
-          ) : (
-            <Table data-component={`${dataComponent}_table`}>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-10">
-                    <Checkbox
-                      checked={allSelected}
-                      aria-label="보이는 고객 모두 선택"
-                      disabled={busy}
-                      onCheckedChange={(checked) => toggleAll(checked === true)}
-                    />
-                  </TableHead>
-                  <TableHead className="w-28">이름</TableHead>
-                  <TableHead className="w-56">저장된 종료일 → 새 종료일</TableHead>
-                  <TableHead>사유</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    data-component={`${dataComponent}_table_row`}
-                    data-slot="holiday-review-item"
-                    data-category={row.category}
-                  >
-                    <TableCell>
-                      <Checkbox
-                        checked={selected.has(row.id)}
-                        aria-label={`${row.clientName} 선택`}
-                        disabled={busy}
-                        onCheckedChange={(checked) => toggleRow(row.id, checked === true)}
-                      />
-                    </TableCell>
-                    <TableCell className="font-semibold">{row.clientName}</TableCell>
-                    <TableCell className="whitespace-nowrap tabular-nums">
-                      <span className="text-v3-text-muted line-through">{row.storedEnd}</span>
-                      {" → "}
-                      <b>{row.recalculatedEnd}</b>
-                    </TableCell>
-                    <TableCell className="whitespace-normal">
-                      <span className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant={row.category === "risk" ? "warning" : "success"}>
-                          {row.category === "risk" ? "직접 확인 필요" : "바로 수정 가능"}
-                        </Badge>
-                        <span className="text-xs">{REVIEW_REASON_LABEL[row.reason] ?? ""}</span>
-                      </span>
-                      {row.category === "risk" ? (
-                        <span
-                          data-slot="holiday-review-risk-hint"
-                          className="mt-0.5 block text-[11px] text-v3-text-muted"
-                        >
-                          고객 정보에서 직접 수정해 주세요
-                        </span>
-                      ) : null}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
+          {/* One panel per tab (kept mounted, hidden when inactive) so every trigger's aria-controls resolves. */}
+          {FILTER_TABS.map((value) => (
+            <TabsContent key={value} value={value} forceMount className="mt-0">
+              {value === tab ? (
+                <div data-component={`${dataComponent}_body`} className="max-h-[45vh] overflow-y-auto">
+                  {itemsQuery.isLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-9 w-full" />
+                      <Skeleton className="h-9 w-full" />
+                      <Skeleton className="h-9 w-full" />
+                    </div>
+                  ) : itemsQuery.isError ? (
+                    <p
+                      role="alert"
+                      data-component={`${dataComponent}_body_error`}
+                      className="flex flex-wrap items-center gap-2 py-6 text-sm text-v3-burgundy"
+                    >
+                      고객 목록을 불러오지 못했어요.
+                      <Button type="button" variant="outline" size="sm" onClick={() => void itemsQuery.refetch()}>
+                        다시 시도
+                      </Button>
+                    </p>
+                  ) : rows.length === 0 ? (
+                    <p data-component={`${dataComponent}_body_empty`} className="py-8 text-center text-sm text-v3-text-muted">
+                      해당하는 고객이 없어요.
+                    </p>
+                  ) : (
+                    <Table data-component={`${dataComponent}_table`}>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-10">
+                            <Checkbox
+                              checked={someSelected ? "indeterminate" : allSelected}
+                              aria-label="보이는 고객 모두 선택"
+                              disabled={busy}
+                              onCheckedChange={(checked) => toggleAll(checked === true)}
+                            />
+                          </TableHead>
+                          <TableHead className="w-28">이름</TableHead>
+                          <TableHead className="w-56">저장된 종료일 → 새 종료일</TableHead>
+                          <TableHead>사유</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {rows.map((row) => (
+                          <TableRow
+                            key={row.id}
+                            data-component={`${dataComponent}_table_row`}
+                            data-slot="holiday-review-item"
+                            data-category={row.category}
+                          >
+                            <TableCell>
+                              <Checkbox
+                                checked={selected.has(row.id)}
+                                aria-label={`${row.clientName} 선택`}
+                                disabled={busy}
+                                onCheckedChange={(checked) => toggleRow(row.id, checked === true)}
+                              />
+                            </TableCell>
+                            <TableCell className="font-semibold">{row.clientName}</TableCell>
+                            <TableCell className="whitespace-nowrap tabular-nums">
+                              <span className="text-v3-text-muted line-through">{row.storedEnd}</span>
+                              {" → "}
+                              <b>{row.recalculatedEnd}</b>
+                            </TableCell>
+                            <TableCell className="whitespace-normal">
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <Badge variant={row.category === "risk" ? "warning" : "success"}>
+                                  {row.category === "risk" ? "직접 확인 필요" : "바로 수정 가능"}
+                                </Badge>
+                                <span className="text-xs">{REVIEW_REASON_LABEL[row.reason] ?? ""}</span>
+                              </span>
+                              {row.category === "risk" ? (
+                                <span
+                                  data-slot="holiday-review-risk-hint"
+                                  className="mt-0.5 block text-[11px] text-v3-text-muted"
+                                >
+                                  고객 정보에서 직접 수정해 주세요
+                                </span>
+                              ) : null}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              ) : null}
+            </TabsContent>
+          ))}
+        </Tabs>
 
         {lastResult ? (
           <div className="pt-3">

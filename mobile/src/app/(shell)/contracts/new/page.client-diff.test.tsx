@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChangeEvent } from "react";
 
 import type { Client } from "@/lib/client/types";
@@ -240,6 +240,15 @@ async function renderOnStep(step: 0 | 3, options: { pickClient?: boolean } = {})
   await renderPage();
   if (options.pickClient !== false) selectStoredClient();
   for (let i = 0; i < step; i += 1) next();
+}
+
+// Calls the element's React onClick directly, so the test reaches the handler even though the
+// (disabled) button would swallow a real click.
+function invokeReactClick(element: HTMLElement): void {
+  const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
+  const onClick = (element as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+  if (!onClick) throw new Error("element has no React onClick");
+  act(() => onClick());
 }
 
 function submit() {
@@ -885,6 +894,29 @@ describe("mobile contract form - branch holiday calendar", () => {
       await waitFor(() => expect(endDateInput()).toHaveValue(STORED_END));
       expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+    });
+
+    it("keeps the submit handler itself closed for an unsupported year, even with an end date present", async () => {
+      await renderOnPeriodStep();
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+      await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+      // A complete end date that did not come from the end-date input keeps the unsupported flag set.
+      act(() => {
+        useFormStore.getState().setEndDate("2028-01-07");
+      });
+      const submitButton = screen.getByRole("button", { name: "계약서 생성" });
+      expect(submitButton).toBeDisabled();
+
+      // The button is disabled, so a real click never reaches the handler; call it directly.
+      invokeReactClick(submitButton);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // Past the guard the form would open the "고객 정보와 다른 내용이 있어요" confirmation (or dispatch).
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(mockDispatchHeadless).not.toHaveBeenCalled();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
     });
 
     it("drops the notice once the user types an end date", async () => {
