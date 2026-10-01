@@ -775,7 +775,7 @@
       "approvalPolicy": "strong",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/notification/notification-agent-capabilities.provider.ts",
-      "sourceDigest": "df9a27eca20ed537837476e50c9499fbde32da7ce3a0589dcb5f480758e0d7c6"
+      "sourceDigest": "870380f82fe451a21be835a7d85ade36cdb3a661eb191468d100751847d9e71c"
     },
     {
       "name": "policy.retrieve",

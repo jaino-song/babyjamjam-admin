@@ -209,6 +209,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
         prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
@@ -231,6 +232,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
             notification: { findFirst: jest.fn().mockResolvedValue(null) },
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
             agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         };
         prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
@@ -250,5 +252,92 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         expect(prisma.agent_action.updateMany.mock.invocationCallOrder[0]).toBeLessThan(sendNotification.executeWithOutcome.mock.invocationCallOrder[0]!);
         expect(JSON.stringify(prisma.agent_action.updateMany.mock.calls)).not.toContain("010-1234-5678");
         expect(JSON.stringify(prisma.agent_action.updateMany.mock.calls)).not.toContain("member@example.com");
+    });
+
+    it("locks the user row before user_branch and branch when staging the approved target (m1, matches reject()'s lock order)", async () => {
+        const prisma = {
+            $transaction: jest.fn(),
+            $queryRawUnsafe: jest.fn().mockResolvedValue(undefined),
+            notification: { findFirst: jest.fn().mockResolvedValue(null) },
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
+            agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        };
+        prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        const sendNotification = {
+            executeWithOutcome: jest.fn().mockResolvedValue({
+                status: "delivered", notification: { id: 12 }, subscriptions: 1, delivered: 1, failed: 0,
+            }),
+        };
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+        const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+
+        await expect(capability.executeApprovedTarget!(context, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
+            .resolves.toEqual({ status: "delivered", notificationId: 12, subscriptions: 1, delivered: 1, failed: 0 });
+
+        // $queryRawUnsafe calls on the same mock preserve await order, so array
+        // index doubles as call order: user must be locked first, then
+        // user_branch, then branch (consistent with UserService.reject).
+        expect(prisma.$queryRawUnsafe).toHaveBeenCalledTimes(3);
+        const calls = prisma.$queryRawUnsafe.mock.calls;
+        expect(calls[0]?.[0]).toContain('FROM "user"');
+        expect(calls[0]?.[0]).not.toContain("user_branch");
+        expect(calls[1]?.[0]).toContain('FROM "user_branch"');
+        expect(calls[2]?.[0]).toContain('FROM "branch"');
+    });
+
+    it("fails the final approval check (no send) when a member became rejected/pending after inspect (BJJ-357 follow-up)", async () => {
+        const prisma = {
+            $transaction: jest.fn(),
+            notification: { findFirst: jest.fn().mockResolvedValue(null) },
+            user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
+            branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "approved", role: "admin" }) },
+            agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        };
+        prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        const sendNotification = { executeWithOutcome: jest.fn() };
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+        const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+
+        // Approved at inspect time; rejected (non-owner) by the time the
+        // execution transaction re-reads the locked user row.
+        prisma.user.findUnique.mockResolvedValue({ approvalStatus: "rejected", role: "admin" });
+        await expect(capability.executeApprovedTarget!(context, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
+            .rejects.toThrow("membership changed");
+        expect(sendNotification.executeWithOutcome).not.toHaveBeenCalled();
+    });
+
+    it("still succeeds for a global owner with pending approvalStatus at the atomic execution boundary (BJJ-357 follow-up)", async () => {
+        const prisma = {
+            $transaction: jest.fn(),
+            notification: { findFirst: jest.fn().mockResolvedValue(null) },
+            user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
+            user: { findUnique: jest.fn().mockResolvedValue({ approvalStatus: "pending", role: "owner" }) },
+            agent_action: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        };
+        prisma.$transaction.mockImplementation(async (callback: (transaction: typeof prisma) => Promise<unknown>) => callback(prisma));
+        const sendNotification = {
+            executeWithOutcome: jest.fn().mockResolvedValue({
+                status: "delivered", notification: { id: 11 }, subscriptions: 1, delivered: 1, failed: 0,
+            }),
+        };
+        const provider = new NotificationAgentCapabilitiesProvider(
+            sendNotification as never, prisma as never, userRepositoryStub({ id: targetUserId }) as never,
+        );
+        const capability = provider.getCapabilities()[0]!;
+        const expected = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
+
+        await expect(capability.executeApprovedTarget!(context, { userId: targetUserId, title: "테스트", body: "본문" }, expected.targetVersion!))
+            .resolves.toEqual({ status: "delivered", notificationId: 11, subscriptions: 1, delivered: 1, failed: 0 });
+        expect(sendNotification.executeWithOutcome).toHaveBeenCalled();
     });
 });
