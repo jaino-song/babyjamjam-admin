@@ -46,3 +46,43 @@ export function resolveElevenDigitPhoneMessage(
     const digits = state.value.replace(/\D/g, "");
     return digits.length === 11 ? null : resolveFieldMessage("phone", { ...state, value: "0" }, opts);
 }
+
+/**
+ * The one message a field shows in its label-row slot. Whatever the field's own
+ * rules and status report (error, then in-progress hint, then status) wins;
+ * static guidance is the lowest priority and returns as soon as nothing else
+ * applies, so clearing an error brings the guidance back.
+ */
+export function withGuidance(
+    message: FieldMessageView | null,
+    guidance?: string | null,
+): FieldMessageView | null {
+    if (message) return message;
+    return guidance ? { tone: "hint", text: guidance } : null;
+}
+
+/** Static guidance for a new-password field: what a valid password needs. */
+export const PASSWORD_GUIDANCE = "소문자·숫자·특수문자 8자 이상";
+
+const PASSWORD_REQUIREMENT_SHORT_LABELS: Record<string, string> = {
+    "최소 8자 이상": "8자 이상",
+    "소문자 포함": "소문자",
+    "숫자 포함": "숫자",
+    "특수문자 포함": "특수문자",
+};
+
+/**
+ * Live progress for a password being typed, as one slot message: the
+ * requirements still missing (hint) or a confirmation once all are met (ok).
+ * Returns null for an empty password so the static guidance shows instead.
+ */
+export function getPasswordRequirementMessage(
+    password: string,
+    requirements: ReadonlyArray<{ label: string; met: boolean }>,
+): FieldMessageView | null {
+    if (!password) return null;
+    const missing = requirements.filter((requirement) => !requirement.met);
+    if (missing.length === 0) return { tone: "ok", text: "사용할 수 있는 비밀번호예요" };
+    const names = missing.map((requirement) => PASSWORD_REQUIREMENT_SHORT_LABELS[requirement.label] ?? requirement.label);
+    return { tone: "hint", text: `${names.join("·")} 필요` };
+}

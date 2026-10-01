@@ -47,6 +47,7 @@ import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import {
     resolveElevenDigitPhoneMessage,
     toFieldMessageView,
+    withGuidance,
     type FieldMessageView,
 } from "@/lib/forms/field-message-text";
 import voucherOptions from "../messages/templates/json/voucher.json";
@@ -102,6 +103,10 @@ export interface ClientFormPanelProps extends Omit<ClientFormDialogProps, "open"
 }
 
 export type { ClientFormData };
+
+/** Static guidance shown in a field's label-row slot while nothing more urgent applies. */
+const AREA_FIELD_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
+const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
 
 const PANEL_STEP_CONTENT_CLASS_NAME =
     "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
@@ -981,6 +986,21 @@ function ClientFormContent({
         ) : null;
     };
 
+    /** The label-row slot content for a select, which has no input rules of its own. */
+    const renderSlotMessage = (message: FieldMessageView | null, id: string, dataComponent: string) =>
+        message ? (
+            <FieldMessageText id={id} data-component={dataComponent} tone={message.tone}>
+                {message.text}
+            </FieldMessageText>
+        ) : null;
+
+    const areaFieldMessage = withGuidance(null, AREA_FIELD_GUIDANCE);
+    const areaMessageId = `clients-form-${surface}-area-helper`;
+    const durationFieldMessage: FieldMessageView | null = !formData.voucherClient && isOutOfPocketPriceError
+        ? { tone: "error", text: OUT_OF_POCKET_PRICE_ERROR }
+        : null;
+    const durationMessageId = `clients-form-${surface}-duration-helper`;
+
     /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
     const getInputFieldProps = (field: ClientInputField, serverErrorIds: readonly string[] = []) => {
         const message = inputFieldMessages[field];
@@ -1493,9 +1513,11 @@ function ClientFormContent({
                     data-component={`${base}_basic-grid_field-area`}
                     htmlFor="clients-form-area"
                     label="관할 지역"
+                    labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_basic-grid_field-area_helper`)}
                 >
                     <FormNativeSelect
                         id="clients-form-area"
+                        aria-describedby={areaMessageId}
                         value={formData.areaId ?? ""}
                         options={areaOptions}
                         placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
@@ -1505,9 +1527,6 @@ function ClientFormContent({
                         selectDataComponent={`${base}_basic-grid_field-area_select`}
                         iconDataComponent={`${base}_basic-grid_field-area_select-icon`}
                     />
-                    <FormHelperText data-component={`${base}_basic-grid_field-area_helper`}>
-                        비용 안내 자동문자에서 관할 지역에 연결된 입금 계좌를 사용합니다.
-                    </FormHelperText>
                 </FormField>
 
                 <FormField
@@ -1631,10 +1650,13 @@ function ClientFormContent({
                         data-component={`${base}_service-grid_field-duration`}
                         htmlFor="clients-form-duration"
                         label={t(locale, "clients.form.duration")}
+                        labelAccessory={renderSlotMessage(durationFieldMessage, durationMessageId, `${base}_service-grid_field-duration_helper`)}
                     >
                         <div className="relative">
                             <FormNativeSelect
                                 id="clients-form-duration"
+                                aria-describedby={durationFieldMessage ? durationMessageId : undefined}
+                                aria-invalid={durationFieldMessage ? true : undefined}
                                 value={formData.duration?.toString() || ""}
                                 options={durationOptions}
                                 placeholder={t(locale, "clients.form.duration")}
@@ -1657,11 +1679,6 @@ function ClientFormContent({
                         </div>
                     </FormField>
                 </FormGrid>
-                {!formData.voucherClient && isOutOfPocketPriceError && (
-                    <FormHelperText tone="error" data-component={`${base}_out-of-pocket-price-error`}>
-                        자부담 요금 정보를 불러오지 못했습니다.
-                    </FormHelperText>
-                )}
             </ClientDialogSection>
 
             <ClientDialogSection
@@ -1939,9 +1956,11 @@ function ClientFormContent({
                 data-component={`${base}_area-field`}
                 htmlFor="clients-form-panel-area"
                 label="관할 지역"
+                labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_area-field_helper`)}
             >
                 <FormNativeSelect
                     id="clients-form-panel-area"
+                    aria-describedby={areaMessageId}
                     value={formData.areaId ?? ""}
                     options={areaOptions}
                     placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
@@ -1951,9 +1970,6 @@ function ClientFormContent({
                     selectDataComponent={`${base}_area-field_select`}
                     iconDataComponent={`${base}_area-field_select-icon`}
                 />
-                <FormHelperText data-component={`${base}_area-field_helper`}>
-                    비용 안내 자동문자에서 관할 지역에 연결된 입금 계좌를 사용합니다.
-                </FormHelperText>
             </FormField>
 
             <FormField
@@ -2064,10 +2080,13 @@ function ClientFormContent({
                 data-component={`${base}_duration-field`}
                 htmlFor="clients-form-panel-duration"
                 label={t(locale, "clients.form.duration")}
+                labelAccessory={renderSlotMessage(durationFieldMessage, durationMessageId, `${base}_duration-field_helper`)}
             >
                 <div className="relative">
                     <FormNativeSelect
                         id="clients-form-panel-duration"
+                        aria-describedby={durationFieldMessage ? durationMessageId : undefined}
+                        aria-invalid={durationFieldMessage ? true : undefined}
                         value={formData.duration?.toString() || ""}
                         options={durationOptions}
                         placeholder={t(locale, "clients.form.duration")}
@@ -2089,16 +2108,6 @@ function ClientFormContent({
                     )}
                 </div>
             </FormField>
-
-            {!formData.voucherClient && isOutOfPocketPriceError && (
-                <FormHelperText
-                    tone="error"
-                    className={PANEL_FULL_FIELD_CLASS_NAME}
-                    data-component={`${base}_out-of-pocket-price-error`}
-                >
-                    자부담 요금 정보를 불러오지 못했습니다.
-                </FormHelperText>
-            )}
 
             <FormField
                 data-component={`${base}_full-price-input`}

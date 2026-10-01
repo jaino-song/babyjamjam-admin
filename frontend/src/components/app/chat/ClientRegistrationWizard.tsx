@@ -124,7 +124,7 @@ function WizardFieldRow({ field, message, children }: WizardFieldRowProps) {
     return (
         <div className="space-y-2" data-component={`${WIZARD_BASE}_${id}-field`}>
             <div className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-sm leading-[1.3]">
-                <Label htmlFor={id} className="shrink-0 leading-[1.3]">{label}</Label>
+                <Label htmlFor={id} className="shrink-0 whitespace-nowrap leading-[1.3]">{label}</Label>
                 {message ? (
                     <FieldMessageText
                         id={`${id}-message`}

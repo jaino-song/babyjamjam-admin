@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ClientAutocomplete } from "../ClientAutocomplete";
 import type { Client } from "@/lib/client/types";
+import { expectNoFieldMessageBelowControl, getFieldMessages } from "@/test-utils/field-message-slot";
 
 let mockClients: Client[] = [];
 const mockSetPrefillName = jest.fn();
@@ -412,5 +413,34 @@ describe("ClientAutocomplete", () => {
     });
 
     expect(onChange).toHaveBeenCalledWith(client.id, client);
+  });
+
+  it("puts helperText in the label-row slot: guidance, replaced by the error, restored when fixed", () => {
+    const props = { value: null, onChange: jest.fn(), label: "산모 성함" };
+    const { container, rerender } = render(<ClientAutocomplete {...props} helperText="목록에서 선택해 주세요" />);
+
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["목록에서 선택해 주세요"]);
+    expect(getFieldMessages(container)[0]).toHaveAttribute("data-slot", "field-message");
+    expectNoFieldMessageBelowControl(container);
+
+    rerender(<ClientAutocomplete {...props} error helperText="산모님을 선택해 주세요" />);
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["산모님을 선택해 주세요"]);
+    expect(getFieldMessages(container)[0]).toHaveAttribute("data-slot", "field-error-message");
+    expectNoFieldMessageBelowControl(container);
+
+    rerender(<ClientAutocomplete {...props} helperText="목록에서 선택해 주세요" />);
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["목록에서 선택해 주세요"]);
+  });
+
+  it("lets labelMessage take priority over guidance and restores the guidance after it clears", () => {
+    const props = { value: null, onChange: jest.fn(), label: "산모 성함", helperText: "목록에서 선택해 주세요" };
+    const { container, rerender } = render(
+      <ClientAutocomplete {...props} labelMessage={{ tone: "error", text: "산모님 성함을 입력해 주세요" }} />,
+    );
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["산모님 성함을 입력해 주세요"]);
+
+    rerender(<ClientAutocomplete {...props} labelMessage={null} />);
+    expect(getFieldMessages(container).map((message) => message.textContent)).toEqual(["목록에서 선택해 주세요"]);
+    expectNoFieldMessageBelowControl(container);
   });
 });

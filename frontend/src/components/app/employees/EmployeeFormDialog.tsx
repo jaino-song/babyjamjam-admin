@@ -389,6 +389,9 @@ function WorkAreaMultiSelect({
     );
 }
 
+/** Static guidance for the open-status field; it sits in the label-row slot. */
+const OPEN_STATUS_GUIDANCE = "배정 후보에 표시돼요";
+
 const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
     locale === "ko"
         ? "문제가 발생했어요. 새로고침 해주세요."
@@ -961,14 +964,13 @@ function EmployeeFormContent({
                         label={t(locale, "employees.form.work-area")}
                         required
                         labelAccessory={touched.workArea && !isWorkAreaValid ? (
-                            <FormHelperText
+                            <FieldMessageText
                                 id="employee-form-work-area-error"
                                 tone="error"
                                 data-component="desktop_employees_form-dialog_section-work_grid_field-work-area_error"
-                                className="m-0 text-right"
                             >
                                 {t(locale, "employees.form.work-area-required")}
-                            </FormHelperText>
+                            </FieldMessageText>
                         ) : null}
                     >
                         <WorkAreaMultiSelect
@@ -983,17 +985,28 @@ function EmployeeFormContent({
                     </FormField>
                 </FormGrid>
 
-                <FormField data-component="desktop_employees_form-dialog_section-work_field-open-status" label="다음 배정 가능 여부">
+                <FormField
+                    data-component="desktop_employees_form-dialog_section-work_field-open-status"
+                    label="다음 배정 가능 여부"
+                    labelAccessory={
+                        <FieldMessageText
+                            id="employee-form-open-status-guidance"
+                            tone="hint"
+                            data-component="desktop_employees_form-dialog_section-work_field-open-status_helper"
+                        >
+                            {OPEN_STATUS_GUIDANCE}
+                        </FieldMessageText>
+                    }
+                >
                     <FormSwitchRow
                         data-component="desktop_employees_form-dialog_section-work_field-open-status_control"
                         title="다음 근무 배정 가능"
-                        description="고객 생성 완료 후 배정 후보에 표시합니다."
                         checked={formData.openToNextWork}
                         onToggle={() => handleChange("openToNextWork", !formData.openToNextWork)}
                         buttonAriaLabel="다음 근무 배정 가능"
+                        buttonDescribedBy="employee-form-open-status-guidance"
                         copyDataComponent="desktop_employees_form-dialog_field-open-status-copy"
                         titleDataComponent="desktop_employees_form-dialog_field-open-status-title"
-                        descriptionDataComponent="desktop_employees_form-dialog_field-open-status-description"
                         buttonDataComponent="desktop_employees_form-dialog_field-open-status-switch"
                         thumbDataComponent="desktop_employees_form-dialog_field-open-status-switch-thumb"
                     />
@@ -1106,14 +1119,13 @@ function EmployeeFormContent({
                     </>
                 }
                 labelAccessory={touched.workArea && !isWorkAreaValid ? (
-                    <FormHelperText
+                    <FieldMessageText
                         id="employee-panel-work-area-error"
                         tone="error"
                         data-component="desktop_employees_form-panel_work-area-field_error"
-                        className="m-0 text-right"
                     >
                         {t(locale, "employees.form.work-area-required")}
-                    </FormHelperText>
+                    </FieldMessageText>
                 ) : null}
             >
                 <WorkAreaMultiSelect
