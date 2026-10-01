@@ -14,6 +14,7 @@ import {
     ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
 import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
+import { isoDateInKorea } from "domain/utils/business-days";
 import {
     HolidayChange,
     ReviewCategory,
@@ -111,12 +112,18 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
 
     async findReviewCandidates(branchId: string, date: string): Promise<ReviewCandidateClient[]> {
         const day = toDbDate(date);
+        // A client whose stored end date is already past is finished: a change dated inside its
+        // old period must not file an item (one click would move a finished client's end date).
+        // Not an event-date rule: a past-dated change can still move the end of an ongoing period.
+        const today = toDbDate(isoDateInKorea());
         const rows = await this.prisma.client.findMany({
             where: {
                 branchId,
                 duration: { not: null },
                 startDate: { lte: day },
                 AND: [
+                    // Top-level, so it also bounds the open-item branch below.
+                    { endDate: { gte: today } },
                     {
                         // In the period, or its open item's shown new end is still ahead of the date.
                         OR: [
@@ -285,6 +292,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             endDate: row.endDate === null ? null : fromDbDate(row.endDate),
             duration: row.duration,
             terminated: row.serviceStatus === SERVICE_STATUS.TERMINATED,
+            finished: row.endDate !== null && row.endDate < toDbDate(isoDateInKorea()),
             facts: caseFacts(row.serviceRecordCase),
         };
     }
@@ -340,6 +348,25 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 if (openByClient.get(draft.clientId) !== assumedOpenItemIds[draft.clientId]) {
                     return { status: "items_changed" };
                 }
+            }
+
+            // `storedEnd` was read before this transaction too. A client whose end date moved since
+            // (a save, an auto-extend) was classified against a stale one: retry later. This re-read
+            // is not a lock on the client rows, so a save that lands after it is not excluded here;
+            // that residual race is covered by the resolve path, which refuses to fix an item whose
+            // stored end no longer matches the client's (`stillMatchesStoredEnd`).
+            const currentEnds = await tx.client.findMany({
+                where: {
+                    id: { in: drafts.map((draft) => draft.clientId) },
+                    branchId: { in: [...new Set(drafts.map((draft) => draft.branchId))] },
+                },
+                select: { id: true, endDate: true },
+            });
+            const endByClient = new Map(
+                currentEnds.map((row) => [row.id, row.endDate === null ? null : fromDbDate(row.endDate)]),
+            );
+            for (const draft of drafts) {
+                if (endByClient.get(draft.clientId) !== draft.storedEnd) return { status: "items_changed" };
             }
 
             for (const draft of drafts) {

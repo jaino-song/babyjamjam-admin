@@ -16,8 +16,9 @@ import { HolidayChange } from "domain/utils/holiday-review";
 
 /**
  * Why an item was not resolved. Plain strings: ITEM_NOT_FOUND, ITEM_NOT_OPEN, ITEM_RISK,
- * CLIENT_CHANGED, ALREADY_MATCHES, NO_LONGER_SAFE, RECALCULATED_CHANGED, UPDATE_FAILED, or a problem code
- * surfaced from `ClientService.update` (e.g. SERVICE_RECORD_FINALIZED).
+ * CLIENT_CHANGED, CLIENT_FINISHED (the client's stored end date is already past; the item is
+ * closed obsolete), ALREADY_MATCHES, NO_LONGER_SAFE, RECALCULATED_CHANGED, UPDATE_FAILED, or a
+ * problem code surfaced from `ClientService.update` (e.g. SERVICE_RECORD_FINALIZED).
  */
 export type ReviewSkipCode = string;
 
@@ -188,6 +189,15 @@ export class HolidayReviewResolveService {
             if (item.category === "risk") return skip("ITEM_RISK");
 
             const snapshot = await this.repository.findFixSnapshot(branchId, item.clientId);
+            // An item filed before the finished-client rule (or one whose period ended since) must
+            // not stay open forever, nor move a finished client's end date.
+            if (snapshot?.finished) {
+                await this.repository.closeOpenItem(branchId, eventId, item.id, {
+                    status: "obsolete",
+                    resolvedBy: null,
+                });
+                return skip("CLIENT_FINISHED");
+            }
             if (!this.stillMatchesStoredEnd(snapshot, item)) {
                 await this.repository.closeOpenItem(branchId, eventId, item.id, {
                     status: "obsolete",

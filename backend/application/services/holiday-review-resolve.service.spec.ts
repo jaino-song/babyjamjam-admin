@@ -45,6 +45,7 @@ const snapshot = (overrides: Partial<ReviewFixSnapshot> = {}): ReviewFixSnapshot
     endDate: "2026-11-13",
     duration: 10,
     terminated: false,
+    finished: false,
     facts: { caseStatus: null, days: [] },
     ...overrides,
 });
@@ -367,6 +368,23 @@ describe("HolidayReviewResolveService", () => {
                 });
                 expect(s.repository.closeOpenItem).not.toHaveBeenCalled();
             });
+        });
+
+        it("CLIENT_FINISHED: closes an item of a finished client as obsolete and never moves its end date", async () => {
+            const open = item();
+            // The stored end still matches the item; only the period is over.
+            const s = makeService({ items: [open], snapshots: { 7: snapshot({ finished: true }) } });
+
+            await expect(resolveFix(s, [open.id])).resolves.toEqual({
+                fixed: 0,
+                kept: 0,
+                skipped: [{ itemId: open.id, code: "CLIENT_FINISHED" }],
+            });
+            expect(s.repository.closeOpenItem).toHaveBeenCalledWith(BRANCH, EVENT_ID, open.id, {
+                status: "obsolete",
+                resolvedBy: null,
+            });
+            expect(s.clientService.update).not.toHaveBeenCalled();
         });
 
         it("ALREADY_MATCHES: obsoletes the item when the fresh calendar gives the stored end", async () => {

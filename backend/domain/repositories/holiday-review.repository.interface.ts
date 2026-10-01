@@ -119,6 +119,8 @@ export interface ReviewFixSnapshot {
     endDate: string | null;
     duration: number | null;
     terminated: boolean;
+    /** The stored end date is before today (Asia/Seoul): the service period is over. */
+    finished: boolean;
     facts: ReviewClientFacts;
 }
 
@@ -142,9 +144,10 @@ export interface IHolidayReviewRepository {
 
     /**
      * Clients of the branch with `start_date <= date` and a duration, skipping terminated
-     * services, with the facts the classification needs, whose service period contains
-     * `date` (`date <= end_date`) or who hold an open item whose `recalculated_end >= date`
-     * (a later holiday between the stored and the shown new end must refresh that item).
+     * services and finished ones (stored `end_date` before today, Asia/Seoul), with the facts
+     * the classification needs, whose service period contains `date` (`date <= end_date`) or
+     * who hold an open item whose `recalculated_end >= date` (a later holiday between the
+     * stored and the shown new end must refresh that item).
      */
     findReviewCandidates(branchId: string, date: string): Promise<ReviewCandidateClient[]>;
 

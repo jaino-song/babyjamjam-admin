@@ -615,7 +615,9 @@ export class ServiceRecordEntryService {
                         },
                     });
                 }
-                await this.lifecycleService.ensureForClient(schedule.clientId, tx);
+                // Hand over the calendar this auto-extend already holds: without it ensureForClient
+                // loads its own, on a second pooled connection while these locks are held.
+                await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
                 await this.tokenService.extendExpiryForCase(
                     record.id,
                     getServiceRecordTokenExpiresAt(newEndDate),
