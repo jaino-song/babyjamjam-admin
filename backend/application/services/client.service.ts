@@ -1740,6 +1740,14 @@ export class ClientService {
         breastPump?: boolean;
         eDocId?: string | null;
         areaId?: string | null;
+        /**
+         * Optimistic guard for callers that compute a change from a snapshot
+         * (the holiday review fix). When supplied, the locked client row's end
+         * date (`YYYY-MM-DD`, or null) must still equal it; otherwise the write
+         * is rejected with 409 SERVICE_RECORD_WRITE_TARGET_CHANGED. Not a field
+         * to update.
+         */
+        expectedEndDate?: string | null;
     }): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
@@ -1761,7 +1769,9 @@ export class ClientService {
             }
         }
 
-        const hasRequestedUpdate = Object.values(params).some((value) => value !== undefined);
+        const hasRequestedUpdate = Object.entries(params).some(
+            ([field, value]) => field !== "expectedEndDate" && value !== undefined,
+        );
         if (!hasRequestedUpdate) {
             const existingPhone = normalizePhone(existingClient.phone);
             if (existingPhone) {
@@ -1918,6 +1928,12 @@ export class ClientService {
             // retaining the preflight entity here keeps those doubles focused
             // on the client repository seam.
             const currentClient = lockedClient ?? existingClient;
+            if (
+                params.expectedEndDate !== undefined
+                && (currentClient.endDate?.toISOString().slice(0, 10) ?? null) !== params.expectedEndDate
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
             const lockedMergedServicePeriod = mergeAndValidateClientServicePeriod(currentClient, {
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,

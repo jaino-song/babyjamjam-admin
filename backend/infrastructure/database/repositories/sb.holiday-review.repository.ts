@@ -7,9 +7,20 @@ import {
     HolidayChangeEventRecord,
     IHolidayReviewRepository,
     ReviewCandidateClient,
+    ReviewEventSummary,
+    ReviewFixSnapshot,
+    ReviewItemFilters,
+    ReviewItemRecord,
 } from "domain/repositories/holiday-review.repository.interface";
 import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
-import { HolidayChange, decideReviewItemAction } from "domain/utils/holiday-review";
+import {
+    HolidayChange,
+    ReviewCategory,
+    ReviewClientFacts,
+    ReviewReason,
+    ReviewStatus,
+    decideReviewItemAction,
+} from "domain/utils/holiday-review";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 export const HOLIDAY_REVIEW_LOCK_KEY = "holiday-review-process";
@@ -20,13 +31,63 @@ const UNPROCESSED_EVENT_LIMIT = 1_000;
 const toDbDate = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
 const fromDbDate = (date: Date): string => date.toISOString().slice(0, 10);
 
+const caseFacts = (
+    serviceRecordCase: { status: string; days: Array<{ serviceDate: Date; locked: boolean }> } | null,
+): ReviewClientFacts => ({
+    caseStatus: serviceRecordCase?.status ?? null,
+    days: (serviceRecordCase?.days ?? []).map((d) => ({ date: fromDbDate(d.serviceDate), locked: d.locked })),
+});
+
+const toEventRecord = (row: {
+    id: string;
+    branchId: string | null;
+    date: Date;
+    change: string;
+    name: string | null;
+    source: string;
+    createdAt: Date;
+}): HolidayChangeEventRecord => ({
+    id: row.id,
+    branchId: row.branchId,
+    date: fromDbDate(row.date),
+    change: row.change as HolidayChange,
+    name: row.name,
+    source: row.source,
+    createdAt: row.createdAt,
+});
+
+const toItemRecord = (row: {
+    id: string;
+    clientId: number;
+    storedEnd: Date;
+    recalculatedEnd: Date;
+    category: string;
+    reason: string | null;
+    status: string;
+    client: { name: string };
+}): ReviewItemRecord => ({
+    id: row.id,
+    clientId: row.clientId,
+    clientName: row.client.name,
+    storedEnd: fromDbDate(row.storedEnd),
+    recalculatedEnd: fromDbDate(row.recalculatedEnd),
+    category: row.category as ReviewCategory,
+    reason: row.reason as ReviewReason,
+    status: row.status as ReviewStatus,
+});
+
 /**
- * Processing-side reads and writes of the holiday-change review pipeline.
+ * Reads and writes of the holiday-change review pipeline.
  *
- * This runs from the scheduler, which has no tenant store, so the tenant
+ * Processing runs from the scheduler, which has no tenant store, so the tenant
  * extension bypasses itself (cron case) and no `runSystemScope` is needed.
- * Public events (`branch_id NULL`) are therefore readable here; every item
+ * Public events (`branch_id NULL`) are therefore readable there; every item
  * write still carries the CLIENT's branch id.
+ *
+ * The HTTP-path methods run under the request's tenant store. That extension
+ * only checks (aggregates and writes must pin `branchId` in the top-level
+ * `where`; row reads are scanned for foreign branch ids), so each of those
+ * queries puts `branchId` in its top-level `where` itself.
  */
 @Injectable()
 export class SbHolidayReviewRepository implements IHolidayReviewRepository {
@@ -38,15 +99,7 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             orderBy: [{ createdAt: "asc" }, { id: "asc" }],
             take: UNPROCESSED_EVENT_LIMIT,
         });
-        return rows.map((row) => ({
-            id: row.id,
-            branchId: row.branchId,
-            date: fromDbDate(row.date),
-            change: row.change as HolidayChange,
-            name: row.name,
-            source: row.source,
-            createdAt: row.createdAt,
-        }));
+        return rows.map(toEventRecord);
     }
 
     async listBranchOverrides(branchId: string): Promise<Array<{ date: string; kind: "add" | "exclude" }>> {
@@ -95,16 +148,129 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
                 startDate: fromDbDate(row.startDate),
                 endDate: fromDbDate(row.endDate),
                 duration: row.duration,
-                facts: {
-                    caseStatus: row.serviceRecordCase?.status ?? null,
-                    days: (row.serviceRecordCase?.days ?? []).map((d) => ({
-                        date: fromDbDate(d.serviceDate),
-                        locked: d.locked,
-                    })),
-                },
+                facts: caseFacts(row.serviceRecordCase),
             });
         }
         return candidates;
+    }
+
+    async listOpenEventSummaries(branchId: string): Promise<ReviewEventSummary[]> {
+        const groups = await this.prisma.end_date_review_item.groupBy({
+            by: ["changeEventId", "category"],
+            where: { branchId, status: "open" },
+            _count: { _all: true },
+        });
+        if (groups.length === 0) return [];
+
+        const counts = new Map<string, { safeOpen: number; riskOpen: number }>();
+        for (const group of groups) {
+            const entry = counts.get(group.changeEventId) ?? { safeOpen: 0, riskOpen: 0 };
+            if (group.category === "safe") entry.safeOpen += group._count._all;
+            else entry.riskOpen += group._count._all;
+            counts.set(group.changeEventId, entry);
+        }
+
+        // Events only by the ids this branch has open items for, and only public or this branch's own.
+        const events = await this.prisma.holiday_change_event.findMany({
+            where: { id: { in: [...counts.keys()] }, OR: [{ branchId: null }, { branchId }] },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        });
+        return events.map((event) => ({
+            ...toEventRecord(event),
+            ...(counts.get(event.id) ?? { safeOpen: 0, riskOpen: 0 }),
+        }));
+    }
+
+    async findEventRecord(branchId: string, eventId: string): Promise<HolidayChangeEventRecord | null> {
+        const row = await this.prisma.holiday_change_event.findFirst({
+            where: { id: eventId, OR: [{ branchId: null }, { branchId }] },
+        });
+        return row === null ? null : toEventRecord(row);
+    }
+
+    async branchHasEventItems(branchId: string, eventId: string): Promise<boolean> {
+        const row = await this.prisma.end_date_review_item.findFirst({
+            where: { branchId, changeEventId: eventId },
+            select: { id: true },
+        });
+        return row !== null;
+    }
+
+    async listEventItems(branchId: string, eventId: string, filters: ReviewItemFilters): Promise<ReviewItemRecord[]> {
+        const rows = await this.prisma.end_date_review_item.findMany({
+            where: {
+                branchId,
+                changeEventId: eventId,
+                ...(filters.category ? { category: filters.category } : {}),
+                ...(filters.status ? { status: filters.status } : {}),
+                ...(filters.q ? { client: { name: { contains: filters.q, mode: "insensitive" } } } : {}),
+            },
+            include: { client: { select: { name: true } } },
+            orderBy: [{ client: { name: "asc" } }, { id: "asc" }],
+        });
+        return rows.map(toItemRecord);
+    }
+
+    async findEventItemsByIds(branchId: string, eventId: string, itemIds: string[]): Promise<ReviewItemRecord[]> {
+        if (itemIds.length === 0) return [];
+        const rows = await this.prisma.end_date_review_item.findMany({
+            where: { branchId, changeEventId: eventId, id: { in: itemIds } },
+            include: { client: { select: { name: true } } },
+        });
+        return rows.map(toItemRecord);
+    }
+
+    async closeOpenItem(
+        branchId: string,
+        eventId: string,
+        itemId: string,
+        outcome: { status: "fixed" | "kept" | "obsolete"; resolvedBy: string | null },
+    ): Promise<boolean> {
+        const result = await this.prisma.end_date_review_item.updateMany({
+            where: { id: itemId, branchId, changeEventId: eventId, status: "open" },
+            data: { status: outcome.status, resolvedBy: outcome.resolvedBy, resolvedAt: new Date() },
+        });
+        return result.count > 0;
+    }
+
+    async reclassifyOpenItem(
+        branchId: string,
+        eventId: string,
+        itemId: string,
+        update: { category: ReviewCategory; reason: ReviewReason; recalculatedEnd: string },
+    ): Promise<boolean> {
+        const result = await this.prisma.end_date_review_item.updateMany({
+            where: { id: itemId, branchId, changeEventId: eventId, status: "open" },
+            data: {
+                category: update.category,
+                reason: update.reason,
+                recalculatedEnd: toDbDate(update.recalculatedEnd),
+            },
+        });
+        return result.count > 0;
+    }
+
+    async findFixSnapshot(branchId: string, clientId: number): Promise<ReviewFixSnapshot | null> {
+        const row = await this.prisma.client.findFirst({
+            where: { id: clientId, branchId },
+            select: {
+                startDate: true,
+                endDate: true,
+                duration: true,
+                serviceStatus: true,
+                serviceRecordCase: {
+                    select: { status: true, days: { select: { serviceDate: true, locked: true } } },
+                },
+            },
+        });
+        if (!row) return null;
+        return {
+            startDate: row.startDate === null ? null : fromDbDate(row.startDate),
+            endDate: row.endDate === null ? null : fromDbDate(row.endDate),
+            duration: row.duration,
+            terminated: row.serviceStatus === SERVICE_STATUS.TERMINATED,
+            facts: caseFacts(row.serviceRecordCase),
+        };
     }
 
     async applyEventResult(input: ApplyReviewEventInput): Promise<ApplyReviewEventResult> {

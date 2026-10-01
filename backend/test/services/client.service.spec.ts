@@ -1780,6 +1780,75 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
             });
 
+            describe("expectedEndDate guard", () => {
+                it("rejects with SERVICE_RECORD_WRITE_TARGET_CHANGED when the end date moved since the snapshot", async () => {
+                    const existingClient = createClientEntity(); // endDate 2024-06-01
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-05-31",
+                    })).rejects.toMatchObject({
+                        status: 409,
+                        response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+                    });
+
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
+                });
+
+                it("rejects when the client has no end date but one was expected", async () => {
+                    const existingClient = createClientEntity();
+                    existingClient.endDate = null;
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+
+                it("writes normally when the end date still matches, without persisting the guard", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    });
+
+                    const { data } = prismaService.client.updateMany.mock.calls[0][0];
+                    expect(data.endDate).toEqual(new Date("2024-05-30"));
+                    expect(data).not.toHaveProperty("expectedEndDate");
+                });
+
+                it("treats a guard on its own as no update", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, { expectedEndDate: "2000-01-01" }))
+                        .resolves.toBe(existingClient);
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
+                });
+
+                it("checks the end date of the row read after locking, not the stale preflight copy", async () => {
+                    const staleClient = createClientEntity(); // endDate 2024-06-01
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        endDate: new Date("2024-06-05T00:00:00.000Z"),
+                    });
+
+                    await expect(service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+            });
+
             it("should update client without creating new schedule", async () => {
                 // Arrange
                 const existingClient = createClientEntity();

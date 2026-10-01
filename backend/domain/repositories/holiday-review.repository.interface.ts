@@ -1,4 +1,10 @@
-import type { HolidayChange, ReviewCategory, ReviewClientFacts, ReviewReason } from "domain/utils/holiday-review";
+import type {
+    HolidayChange,
+    ReviewCategory,
+    ReviewClientFacts,
+    ReviewReason,
+    ReviewStatus,
+} from "domain/utils/holiday-review";
 
 export const HOLIDAY_REVIEW_REPOSITORY = "HOLIDAY_REVIEW_REPOSITORY";
 
@@ -57,6 +63,48 @@ export type ApplyReviewEventResult =
     /** An event appeared after the drafts were computed; the event stays unprocessed for the next run. */
     | { status: "events_changed" };
 
+/** An event that still has open items in one branch, with that branch's open counts. */
+export interface ReviewEventSummary extends HolidayChangeEventRecord {
+    safeOpen: number;
+    riskOpen: number;
+}
+
+export interface ReviewItemRecord {
+    id: string;
+    clientId: number;
+    clientName: string;
+    /** `YYYY-MM-DD` */
+    storedEnd: string;
+    /** `YYYY-MM-DD` */
+    recalculatedEnd: string;
+    category: ReviewCategory;
+    reason: ReviewReason;
+    status: ReviewStatus;
+}
+
+export interface ReviewItemFilters {
+    category?: ReviewCategory;
+    status?: ReviewStatus;
+    /** Case-insensitive substring of the client's name. */
+    q?: string;
+}
+
+/** What the fix path needs to know about a client right before changing its end date. */
+export interface ReviewFixSnapshot {
+    /** `YYYY-MM-DD` or null. */
+    startDate: string | null;
+    endDate: string | null;
+    duration: number | null;
+    terminated: boolean;
+    facts: ReviewClientFacts;
+}
+
+/**
+ * The HTTP-path methods below always carry the caller's `branchId` in the top-level
+ * `where` of every `end_date_review_item` read and write (the tenant extension only
+ * checks, it never injects), and read events only as public (`branch_id NULL`) or
+ * the caller's own.
+ */
 export interface IHolidayReviewRepository {
     /** Every event with `processed_at IS NULL`, ordered by `(created_at, id)`. */
     listUnprocessedEvents(): Promise<HolidayChangeEventRecord[]>;
@@ -77,4 +125,42 @@ export interface IHolidayReviewRepository {
      * `processed_at`. Throws on failure, which rolls the transaction back.
      */
     applyEventResult(input: ApplyReviewEventInput): Promise<ApplyReviewEventResult>;
+
+    /** Events with at least one OPEN item in the branch, newest first, with the branch's open counts. */
+    listOpenEventSummaries(branchId: string): Promise<ReviewEventSummary[]>;
+
+    /** One event, only when it is public or the branch's own (never by bare id). */
+    findEventRecord(branchId: string, eventId: string): Promise<HolidayChangeEventRecord | null>;
+
+    /** Whether the branch has any item (of any status) for the event. */
+    branchHasEventItems(branchId: string, eventId: string): Promise<boolean>;
+
+    /** The branch's items of one event, sorted by client name then id. */
+    listEventItems(branchId: string, eventId: string, filters: ReviewItemFilters): Promise<ReviewItemRecord[]>;
+
+    /** The listed ids that belong to this event in this branch (unknown ids are simply absent). */
+    findEventItemsByIds(branchId: string, eventId: string, itemIds: string[]): Promise<ReviewItemRecord[]>;
+
+    /**
+     * Moves one OPEN item to a final status. Returns false when it was no longer open
+     * (or not in this branch/event), so a concurrent resolve is reported, not overwritten.
+     * `resolvedBy` is the acting user for fixed/kept and null for a system decision (obsolete).
+     */
+    closeOpenItem(
+        branchId: string,
+        eventId: string,
+        itemId: string,
+        outcome: { status: "fixed" | "kept" | "obsolete"; resolvedBy: string | null },
+    ): Promise<boolean>;
+
+    /** Re-files an OPEN item (it stays open) after the fix path found fresher facts. */
+    reclassifyOpenItem(
+        branchId: string,
+        eventId: string,
+        itemId: string,
+        update: { category: ReviewCategory; reason: ReviewReason; recalculatedEnd: string },
+    ): Promise<boolean>;
+
+    /** The client's current dates and classification facts, or null when it is gone from this branch. */
+    findFixSnapshot(branchId: string, clientId: number): Promise<ReviewFixSnapshot | null>;
 }
