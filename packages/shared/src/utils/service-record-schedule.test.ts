@@ -59,6 +59,7 @@ describe("shiftServiceRecordScheduleSuffix", () => {
 
     it("changes only the selected day when no suffix move was approved", () => {
         const result = moveServiceRecordSessionDate(vector, 1, "2026-09-04", false);
+        expect(result.deltaBusinessDays).toBe(-1);
         expect(result.entries.map((row) => row.serviceDate)).toEqual(["2026-09-04", ...vector.slice(1).map((row) => row.serviceDate)]);
     });
 
@@ -147,6 +148,15 @@ describe("calendar parameter", () => {
         const shifted = shiftServiceRecordScheduleSuffix(vector, 3, "2028-01-07", calendar);
         expect(shifted.deltaBusinessDays).toBe(1);
         expect(shifted.entries.map((row) => row.serviceDate)).toEqual(["2028-01-03", "2028-01-04", "2028-01-07"]);
+    });
+
+    it("honours the custom calendar when moving with shiftFollowing (the production default)", () => {
+        expect(() => moveServiceRecordSessionDate(vector, 3, "2028-01-07", true)).toThrow(UnsupportedKoreanHolidayYearError);
+        const moved = moveServiceRecordSessionDate(vector, 3, "2028-01-07", true, calendar);
+        expect(moved.deltaBusinessDays).toBe(1);
+        expect(moved.entries.map((row) => row.serviceDate)).toEqual(["2028-01-03", "2028-01-04", "2028-01-07"]);
+        // 2028-01-05 is a holiday on the custom calendar, so it is rejected as a target.
+        expect(() => moveServiceRecordSessionDate(vector, 3, "2028-01-05", true, calendar)).toThrow();
     });
 
     it("computes expected session dates with the custom calendar", () => {

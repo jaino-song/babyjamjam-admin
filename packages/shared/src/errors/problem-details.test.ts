@@ -430,6 +430,33 @@ describe("catalog coverage", () => {
         expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
     });
 
+    const HOLIDAY_STATUS_400_CODES: Array<[ProblemCode, string]> = [
+        ["HOLIDAY_NAME_REQUIRED", "holiday-name-required"],
+        ["HOLIDAY_NOT_WEEKDAY", "holiday-not-weekday"],
+    ];
+
+    it.each(HOLIDAY_STATUS_400_CODES)("registers %s as status 400 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(400);
+        expect(entry.statuses).toEqual([400]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
+    const HOLIDAY_STATUS_409_CODES: Array<[ProblemCode, string]> = [
+        ["HOLIDAY_DATE_IN_PAST", "holiday-date-in-past"],
+        ["HOLIDAY_YEAR_UNSUPPORTED", "holiday-year-unsupported"],
+        ["HOLIDAY_ALREADY_PUBLIC", "holiday-already-public"],
+        ["HOLIDAY_NOT_PUBLIC", "holiday-not-public"],
+        ["HOLIDAY_OVERRIDE_EXISTS", "holiday-override-exists"],
+    ];
+
+    it.each(HOLIDAY_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
+        const entry = PROBLEM_CATALOG[code];
+        expect(entry.status).toBe(409);
+        expect(entry.statuses).toEqual([409]);
+        expect(entry.type).toBe(`https://github.com/jaino-song/babyjamjam-admin/blob/main/docs/error-management.md#${anchor}`);
+    });
+
     const EFORMSIGN_TOMBSTONE_STATUS_410_CODES: Array<[ProblemCode, string]> = [
         ["EFORMSIGN_CREDENTIALS_SERVER_ONLY", "eformsign-credentials-server-only"],
         ["EFORMSIGN_PROVIDER_OPERATION_SERVER_ONLY", "eformsign-provider-operation-server-only"],
