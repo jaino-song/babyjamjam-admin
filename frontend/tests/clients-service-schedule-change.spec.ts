@@ -23,6 +23,8 @@ async function enableE2EAuth(page: Page) {
 
 test("changes the next service session from the client dropdown", async ({ page }) => {
     await enableE2EAuth(page);
+    // The page clamps the allowed date to "not before today"; pin today so the fixture dates stay meaningful.
+    await page.clock.setFixedTime(new Date("2026-07-16T09:00:00+09:00"));
     let appliedBody: unknown = null;
 
     await page.route("**/api/**", async (route: Route) => {
@@ -118,6 +120,30 @@ test("changes the next service session from the client dropdown", async ({ page 
                 body: JSON.stringify({ status: "approved" }),
             });
         }
+        if (pathname === "/api/voucher-price-infos/years") {
+            return route.fulfill({ status: 200, contentType: "application/json", body: "[2026]" });
+        }
+        if (pathname === "/api/clients/list-summary") {
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    total: 1,
+                    byTab: {},
+                    dueDate: { thisMonth: 0, nextMonth: 0 },
+                    serviceEnd: { count: 0, from: "2026-07-01", to: "2026-07-31" },
+                }),
+            });
+        }
+        // The client form renders alongside the detail panel and maps these lists.
+        if (
+            pathname === "/api/out-of-pocket-price-infos"
+            || pathname === "/api/area-templates/available-areas"
+            || pathname === "/api/consultation-inquiries"
+            || pathname === "/api/notifications"
+        ) {
+            return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+        }
         if (pathname === "/api/eformsign-docs/client") {
             return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
         }
@@ -139,11 +165,21 @@ test("changes the next service session from the client dropdown", async ({ page 
     await page.getByRole("button", { name: "고객 작업 메뉴 열기" }).click();
     await page.getByText("서비스 일정 변경", { exact: true }).click();
 
-    const modal = page.locator('[data-component="clients-detail-service-schedule-change-modal"]');
-    const dateInput = modal.getByLabel("변경할 서비스 제공일");
+    const modal = page.locator('[data-component="desktop_clients-detail_service-schedule-change-modal"]');
+    const dateInput = modal.getByLabel("3회차 서비스 제공 날짜");
+    const dateMessage = modal.locator('[data-component="desktop_clients-detail_service-schedule-change-modal_date-message"]');
     await expect(modal).toBeVisible();
-    await expect(dateInput).toHaveAttribute("min", "2026-07-20");
+    // The date is typed as YYYY-MM-DD (auto-hyphenated text input), not picked with a native date control.
+    await expect(dateInput).toHaveAttribute("maxlength", "10");
     await expect(dateInput).toHaveValue("2026-07-20");
+    // Nothing is flagged on open; the unchanged date just keeps the confirm button off.
+    await expect(dateMessage).toHaveCount(0);
+    await expect(modal.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+
+    // A date before the allowed minimum is reported in the label-row slot.
+    await dateInput.fill("2026-07-19");
+    await expect(dateMessage).toHaveText("2026-07-20 이후로 입력해 주세요");
+    await expect(dateInput).toHaveAttribute("aria-invalid", "true");
     await expect(modal.getByRole("button", { name: "일정 변경" })).toBeDisabled();
 
     await dateInput.fill("2026-07-23");

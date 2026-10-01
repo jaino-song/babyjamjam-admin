@@ -9,6 +9,7 @@ import {
   KeyRound,
   type LucideProps,
   Palette,
+  Send,
   Shield,
   Sun,
   Moon,
@@ -16,6 +17,8 @@ import {
 } from "lucide-react";
 import { CallIngestTokenBranchRequired } from "@/components/app/call-ingest-tokens/CallIngestTokenBranchRequired";
 import { CallIngestTokenSection } from "@/components/app/call-ingest-tokens/CallIngestTokenSection";
+import { SendNotificationBranchRequired } from "@/components/app/notifications/SendNotificationBranchRequired";
+import { SendNotificationSection } from "@/components/app/notifications/SendNotificationSection";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { SectionNav } from "@/components/app/v3";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -73,6 +76,7 @@ const BASE_NAV_SECTIONS = [
 
 /** Branch-management sections, appended when the active branch role permits them. */
 const BRANCH_MANAGER_NAV_SECTIONS = [
+  { id: "send-notification", label: "알림 보내기", icon: Send },
   { id: "call-ingest-tokens", label: "통화 수집 토큰", icon: KeyRound },
 ] as const;
 
@@ -82,7 +86,8 @@ type SectionId =
   | "theme"
   | "security"
   | "pricing"
-  | "call-ingest-tokens";
+  | "call-ingest-tokens"
+  | "send-notification";
 
 const THEME_OPTIONS = [
   { id: "light", label: "라이트", icon: Sun, description: "밝은 테마" },
@@ -430,6 +435,17 @@ export default function SettingsPage() {
               </div>
             </ContentPaper>
           </section>
+          )}
+
+          {activeSection === "send-notification" && canManageBranchSettings && (
+            branchId ? (
+              // key={branchId} forces a remount on branch switch so this
+              // section's draft state (title/body/recipient) never leaks
+              // across branches.
+              <SendNotificationSection key={branchId} branchId={branchId} />
+            ) : (
+              <SendNotificationBranchRequired />
+            )
           )}
 
           {activeSection === "call-ingest-tokens" && canManageBranchSettings && (

@@ -8,6 +8,7 @@ import {
   withEformsignReauth,
 } from "./eformsign";
 import { messageDeliveryApi } from "./message-delivery";
+import { isNotificationSendTimeout, notificationSendApi } from "./notification-send";
 import { settingsApi } from "./settings";
 
 jest.mock("@/lib/api/client", () => ({ api: {} }));
@@ -19,8 +20,10 @@ describe("services/api compatibility entry point", () => {
       callIngestTokenApi,
       consultationInquiriesApi,
       eformsignApi,
+      isNotificationSendTimeout,
       messageDeliveryApi,
       normalizeDocumentListResponse,
+      notificationSendApi,
       settingsApi,
       withEformsignReauth,
     };

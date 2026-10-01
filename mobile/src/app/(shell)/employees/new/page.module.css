@@ -222,6 +222,54 @@
   text-transform: uppercase;
 }
 
+/* One label line tall (1lh of the label's own type), so the field's message
+   slot can never grow the row and shift the input below. */
+.fieldHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 1lh;
+  margin-bottom: 6px;
+  font-size: 0.7rem;
+  line-height: 1.3;
+}
+
+.fieldHeader .formLabel {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+/* The field's single message slot: top-right of the label row, one line, cut
+   with an ellipsis rather than wrapped. */
+.formSlot {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.slot_muted {
+  color: hsl(var(--v3-text-muted));
+}
+
+.slot_ok {
+  color: hsl(var(--v3-green));
+}
+
+.slot_err {
+  color: hsl(var(--v3-burgundy));
+}
+
+.slot_pending {
+  color: hsl(var(--v3-primary));
+}
+
 .required {
   margin-left: 2px;
   color: hsl(var(--v3-burgundy));
@@ -264,15 +312,6 @@
   font-weight: 600;
 }
 
-.err {
-  color: hsl(var(--v3-burgundy));
-  font-weight: 600;
-}
-
-.pending {
-  color: hsl(var(--v3-primary));
-}
-
 .cardTitle {
   margin: 0 0 12px;
   color: hsl(var(--v3-text-muted));
@@ -280,6 +319,27 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* A card title with the field's message slot at its top right (same one-line
+   row as .fieldHeader, carrying .cardTitle's type). */
+.cardTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 1lh;
+  margin: 0 0 12px;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.cardTitleText {
+  flex-shrink: 0;
 }
 
 .gradeRow {

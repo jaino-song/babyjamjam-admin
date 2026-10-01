@@ -37,6 +37,7 @@ function createService(client: ClientEntity) {
     const prisma = {
         employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
         schedule_change_request: { findMany: jest.fn().mockResolvedValue([]) },
+        service_record_case: { findMany: jest.fn().mockResolvedValue([]) },
         eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
         client: { update: jest.fn(), updateMany: jest.fn() },
     };

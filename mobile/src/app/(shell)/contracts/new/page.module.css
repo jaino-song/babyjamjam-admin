@@ -223,14 +223,9 @@
   gap: 10px;
 }
 
-.formLabel {
-  display: block;
-  margin: 0;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+.formCardTitleMessage {
+  margin-left: auto;
+  min-width: 0;
 }
 
 .requiredMark {
@@ -267,32 +262,17 @@
   opacity: 0.55;
 }
 
-.formHelper {
-  margin: 0;
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.66rem;
-}
-
-.helper_ok {
-  color: hsl(var(--v3-green));
-  font-weight: 600;
-}
-
-.helper_err {
-  color: hsl(var(--v3-burgundy));
-  font-weight: 600;
-}
-
-.helper_pending {
-  color: hsl(var(--v3-primary));
-}
-
-.helper_muted {
-  color: hsl(var(--v3-text-muted));
-}
-
 .selectWrap {
   position: relative;
+}
+
+/* 저장된 고객의 값을 빈 선택 항목 문구로 보여줄 때 선택된 값처럼 보이지 않도록 흐리게 해요. */
+.storedPlaceholderSelect {
+  color: hsl(var(--v3-text-muted));
+}
+
+.storedPlaceholderSelect option {
+  color: hsl(var(--v3-dark));
 }
 
 .selectWrap .formInput {
@@ -520,4 +500,45 @@
   width: 100%;
   border: 0;
   background: white;
+}
+
+.clientDiffList {
+  display: grid;
+  gap: 8px;
+  max-height: 40vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.clientDiffRow {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 8px;
+}
+
+.clientDiffLabel {
+  color: hsl(var(--v3-text-muted));
+  font-weight: 700;
+}
+
+.clientDiffValue {
+  overflow-wrap: anywhere;
+}
+
+.clientDiffOld {
+  color: hsl(var(--v3-text-muted));
+}
+
+.clientDiffNew {
+  color: hsl(var(--v3-dark));
+  font-weight: 700;
+}
+
+.clientDiffNote {
+  margin: 0;
+  color: hsl(var(--v3-text-muted));
+  font-size: 0.75rem;
 }

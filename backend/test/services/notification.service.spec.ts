@@ -6,12 +6,12 @@ import { UserEntity } from "domain/entities/user.entity";
 describe("NotificationService", () => {
     const branchId = "branch-1";
     const branchName = "인천점";
-    const createUser = (id: string): UserEntity =>
+    const createUser = (id: string, name: string | null = `사용자 ${id}`): UserEntity =>
         UserEntity.reconstitute(
             id,
             null,
             `${id}@example.com`,
-            `사용자 ${id}`,
+            name,
             null,
             "user",
             new Date("2026-05-01T00:00:00.000Z"),
@@ -140,6 +140,41 @@ describe("NotificationService", () => {
 
         expect(sendNotificationUsecase.execute).not.toHaveBeenCalled();
         expect(emailPort.send).not.toHaveBeenCalled();
+    });
+
+    describe("listRecipients", () => {
+        it("should de-duplicate by id, sort by Korean name order, and return only id/name", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
+                createUser("user-1", "나영희"),
+                createUser("user-2", "김철수"),
+                createUser("user-1", "나영희"),
+            ]);
+
+            await expect(service.listRecipients(branchId)).resolves.toEqual([
+                { id: "user-2", name: "김철수" },
+                { id: "user-1", name: "나영희" },
+            ]);
+            expect(userRepository.findNotificationRecipientsByBranchId).toHaveBeenCalledWith(branchId);
+        });
+
+        it("should fall back to a placeholder name when the user has none", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
+                createUser("user-1", null),
+            ]);
+
+            await expect(service.listRecipients(branchId)).resolves.toEqual([
+                { id: "user-1", name: "이름 없음" },
+            ]);
+        });
+
+        it("should never include email, phone, or role in the returned shape", async () => {
+            userRepository.findNotificationRecipientsByBranchId.mockResolvedValue([
+                createUser("user-1", "김철수"),
+            ]);
+
+            const [recipient] = await service.listRecipients(branchId);
+            expect(Object.keys(recipient!).sort()).toEqual(["id", "name"]);
+        });
     });
 
     it("should broadcast only to active recipients resolved from the selected branch", async () => {

@@ -96,6 +96,12 @@ class ProbeController {
         });
     }
 
+    @Post("period-finalized")
+    periodFinalized() {
+        // validatePeriodChange 이전 응답 모양: 코드만 있는 본문도 카탈로그가 채워야 해요.
+        throw new ConflictException({ code: "SERVICE_RECORD_FINALIZED" });
+    }
+
     @Post("spoofed-members")
     spoofedMembers() {
         // 경계가 소유한 멤버는 던진 본문으로 바꿀 수 없어야 해요.
@@ -185,6 +191,19 @@ describe("problem contract over HTTP", () => {
             code: "REQUEST_CONFLICT",
             blockingReasons: [{ code: "UNSUPPORTED_SESSION_COUNT", message: "회차 수를 확인할 수 없습니다." }],
         });
+    });
+
+    it("turns a bare SERVICE_RECORD_FINALIZED conflict into the catalog problem instead of a generic 409", async () => {
+        const response = await request(app.getHttpServer()).post("/problem-probe/period-finalized").expect(409);
+        expect(response.headers["content-type"]).toContain("application/problem+json");
+        expect(response.body).toMatchObject({
+            code: "SERVICE_RECORD_FINALIZED",
+            status: 409,
+            type: PROBLEM_CATALOG.SERVICE_RECORD_FINALIZED.type,
+            title: PROBLEM_CATALOG.SERVICE_RECORD_FINALIZED.title["ko-KR"],
+            detail: PROBLEM_CATALOG.SERVICE_RECORD_FINALIZED.detail["ko-KR"],
+        });
+        expect(response.body.detail).toBe("서비스 기록이 이미 확정되어 시작일·종료일·서비스 기간을 바꿀 수 없어요. 저장된 기간 그대로 진행해 주세요.");
     });
 
     it("keeps the schedule sessionIndex extra on a schedule-validation rejection", async () => {

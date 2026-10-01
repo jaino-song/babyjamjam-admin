@@ -1,5 +1,6 @@
 "use client";
 import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
 import {
     normalizeApiError,
     resolveProblemPresentation,
@@ -25,6 +26,12 @@ import {
     employeeQueryKeys,
 } from "@/hooks/useEmployees";
 import { useEmployeePhoneDuplicateCheck } from "@/hooks/useEmployeePhoneDuplicateCheck";
+import { useFieldInputStates } from "@/hooks/useFieldInputStates";
+import {
+    resolveElevenDigitPhoneMessage,
+    toFieldMessageView,
+    type FieldMessageView,
+} from "@/lib/forms/field-message-text";
 import { useEmployeeDialogStore } from "@/stores/employee-dialog-store";
 import {
     Dialog,
@@ -39,6 +46,7 @@ import {
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { FieldMessageText } from "@/components/app/ui/field-message";
 import {
     APP_FORM_CONTROL_CLASS_NAME,
     FormField,
@@ -124,6 +132,20 @@ const PANEL_FIELDS_CLASS_NAME = "grid w-full grid-cols-1 gap-[calc(16px*var(--gl
 const EMPLOYEE_FORM_DIALOG_ERROR_ID_PREFIX = "desktop_employees_form-dialog_error";
 
 type EmployeeFormField = "name" | "phone";
+
+/** Text inputs that show their validation message in the label-row slot. */
+type EmployeeInputField = "name" | "phone" | "birthday";
+
+/** Listed in form order: the first one with a problem receives focus on submit. */
+const EMPLOYEE_INPUT_FIELDS: readonly EmployeeInputField[] = ["name", "phone", "birthday"];
+
+/** DOM ids by surface; the panel prefixes its inputs, the dialog uses bare names. */
+const EMPLOYEE_FOCUS_ELEMENT_IDS: Record<EmployeeInputField | "workArea", { dialog: string; panel: string }> = {
+    name: { dialog: "name", panel: "employee-panel-name" },
+    phone: { dialog: "phone", panel: "employee-panel-phone" },
+    birthday: { dialog: "birthday", panel: "employee-panel-birthday" },
+    workArea: { dialog: "employee-form-work-area", panel: "employee-panel-work-area" },
+};
 
 interface EmployeeFormErrorState {
     message: string;
@@ -372,11 +394,6 @@ const getPhoneDuplicateCheckFailedMessage = (locale: "ko" | "en"): string =>
         ? "문제가 발생했어요. 새로고침 해주세요."
         : "Something went wrong. Please refresh and try again.";
 
-const getPhoneDuplicateCheckPendingMessage = (locale: "ko" | "en"): string =>
-    locale === "ko"
-        ? "연락처 중복 확인 중입니다. 잠시만 기다려주세요."
-        : "Checking for duplicate phone number. Please wait.";
-
 const getPhoneAvailableMessage = (locale: "ko" | "en"): string =>
     locale === "ko" ? "등록 가능한 번호입니다." : "This phone number is available.";
 
@@ -429,10 +446,9 @@ function EmployeeFormContent({
     const locale = useLocale();
     const queryClient = useQueryClient();
     const [formData, setFormData] = useState<FormData>(initialFormData);
-    const [touched, setTouched] = useState({
-        phone: false,
-        workArea: false,
-    });
+    const [touched, setTouched] = useState({ workArea: false });
+    const fields = useFieldInputStates<EmployeeInputField>();
+    const resetFieldStates = fields.reset;
     const [error, setError] = useState<EmployeeFormErrorState | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const formDataBaselineRef = useRef<FormData>(initialFormData);
@@ -470,11 +486,11 @@ function EmployeeFormContent({
         ? isUsingOriginalPhone || isPhoneCheckReady
             ? getPhoneAvailableMessage(locale)
             : isCheckingPhoneDuplicate
-                ? getPhoneDuplicateCheckPendingMessage(locale)
+                ? t(locale, "form.validation.phone-checking")
                 : hasPhoneDuplicateCheckFailed
                     ? getPhoneDuplicateCheckFailedMessage(locale)
                     : lastCheckedPhoneDigits !== phoneDigits
-                        ? getPhoneDuplicateCheckPendingMessage(locale)
+                        ? t(locale, "form.validation.phone-checking")
                         : isPhoneDuplicate
                             ? t(locale, "employees.form.error-phone-duplicate")
                             : null
@@ -485,7 +501,9 @@ function EmployeeFormContent({
         (hasPhoneDuplicateCheckFailed ||
             (lastCheckedPhoneDigits === phoneDigits && isPhoneDuplicate));
     const isWorkAreaValid = formData.workArea.length > 0;
-    const isFormValid = !!formData.name.trim() && isPhoneValid && isWorkAreaValid;
+    // A field problem never disables submit: pressing it reveals the message on
+    // every problem field. Only work in flight or an unfinished phone check does.
+    const isSubmitBlocked = isPhoneFormatValid && !isPhoneCheckReady;
     const requiredFieldProgressText = `필수 항목 4개 중 ${
         [
             Boolean(formData.name.trim()),
@@ -523,14 +541,15 @@ function EmployeeFormContent({
             }
 
             setFormData(nextFormData);
-            setTouched({ phone: false, workArea: false });
+            setTouched({ workArea: false });
+            resetFieldStates();
             setError(null);
         });
 
         return () => {
             cancelled = true;
         };
-    }, [employee, open, prefillName]);
+    }, [employee, open, prefillName, resetFieldStates]);
 
     useEffect(() => {
         if (surface !== "panel" || !open || !onDirtyChange) return;
@@ -540,6 +559,71 @@ function EmployeeFormContent({
 
     const handleChange = <K extends keyof FormData>(field: K, value: FormData[K]) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
+    };
+
+    const handleInputChange = (field: EmployeeInputField, value: string) => {
+        fields.onChange(field, formData[field], value);
+        handleChange(field, value);
+    };
+
+    /**
+     * The one message a text input shows in its label-row slot. `settled`
+     * evaluates only the input's own rules as if the user already left the
+     * field and pressed submit; duplicate-check status is not one of them.
+     */
+    const resolveInputMessage = (field: EmployeeInputField, settled = false): FieldMessageView | null => {
+        // Whitespace alone does not count as a value for the name.
+        const baseState = fields.stateOf(field, field === "name" ? formData.name.trim() : formData[field]);
+        const state = settled ? { ...baseState, focused: false } : baseState;
+        const opts = { required: field !== "birthday", submitted: settled || fields.submitted };
+
+        if (field === "name") {
+            return toFieldMessageView(locale, resolveFieldMessage("text", state, opts), t(locale, "employees.form.name"));
+        }
+        if (field === "phone") {
+            const formatMessage = toFieldMessageView(
+                locale,
+                resolveElevenDigitPhoneMessage(state, opts),
+                t(locale, "employees.form.phone"),
+            );
+            if (formatMessage) return formatMessage;
+            if (settled || !phoneInlineMessage) return null;
+            return {
+                tone: hasPhoneStatusError ? "error" : isPhoneCheckReady ? "ok" : "hint",
+                text: phoneInlineMessage,
+            };
+        }
+        const dateMessage = toFieldMessageView(locale, resolveFieldMessage("date", state, opts), t(locale, "clients.form.birthday"));
+        if (dateMessage) return dateMessage;
+        return formData.birthday.length === 10 && !isValidBirthdayIsoDate(formData.birthday)
+            ? { tone: "error", text: t(locale, "form.validation.birthday-future") }
+            : null;
+    };
+
+    const inputMessages = Object.fromEntries(
+        EMPLOYEE_INPUT_FIELDS.map((field) => [field, resolveInputMessage(field)]),
+    ) as Record<EmployeeInputField, FieldMessageView | null>;
+
+    const inputMessageId = (field: EmployeeInputField) => `employees-form-${surface}-${field}-helper`;
+
+    /** The label-row slot content for a field, or null while it has nothing to say. */
+    const renderInputMessage = (field: EmployeeInputField, dataComponent: string) => {
+        const message = inputMessages[field];
+        return message ? (
+            <FieldMessageText id={inputMessageId(field)} data-component={dataComponent} tone={message.tone}>
+                {message.text}
+            </FieldMessageText>
+        ) : null;
+    };
+
+    /** Error state, a11y wiring and focus tracking shared by every inline-validated input. */
+    const getInputProps = (field: EmployeeInputField, serverErrorIds: readonly string[] = []) => {
+        const message = inputMessages[field];
+        return {
+            error: message?.tone === "error" || serverErrorIds.length > 0,
+            "aria-describedby": combineAriaDescribedBy(message ? inputMessageId(field) : undefined, ...serverErrorIds),
+            ...fields.focusProps(field, formData[field]),
+        };
     };
 
     const setMutationError = (cause: unknown) => {
@@ -565,16 +649,18 @@ function EmployeeFormContent({
     };
 
     const handleSubmit = async () => {
-        setTouched({ phone: true, workArea: true });
+        fields.setSubmitted(true);
+        setTouched({ workArea: true });
         setError(null);
-        if (!formData.name.trim() || !isPhoneValid || !isWorkAreaValid) {
-            return;
-        }
 
-        if (formData.birthday && !isValidBirthdayIsoDate(formData.birthday)) {
-            setError({ message: t(locale, "clients.form.error-birthday-required"), fieldErrors: [] });
+        const firstProblemField = EMPLOYEE_INPUT_FIELDS.find(
+            (field) => resolveInputMessage(field, true)?.tone === "error",
+        ) ?? (isWorkAreaValid ? undefined : "workArea");
+        if (firstProblemField) {
+            focusFormField(firstProblemField);
             return;
         }
+        if (!isPhoneValid) return;
 
         setIsSubmitting(true);
         try {
@@ -634,7 +720,8 @@ function EmployeeFormContent({
 
         formDataBaselineRef.current = initialFormData;
         setFormData(initialFormData);
-        setTouched({ phone: false, workArea: false });
+        setTouched({ workArea: false });
+        resetFieldStates();
         setError(null);
         onDirtyChange?.(false);
         onClose();
@@ -656,7 +743,7 @@ function EmployeeFormContent({
                 variant="positive"
                 size="sm"
                 onClick={handleSubmit}
-                disabled={isLoading || !isFormValid}
+                disabled={isLoading || isSubmitBlocked}
                 data-component="desktop_employees_form-dialog_submit"
                 className="w-full sm:flex-1"
             >
@@ -691,7 +778,7 @@ function EmployeeFormContent({
                     variant="positive"
                     size="sm"
                     onClick={handleSubmit}
-                    disabled={isLoading || !isFormValid}
+                    disabled={isLoading || isSubmitBlocked}
                     data-component="desktop_employees_form-panel_submit"
                     className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
@@ -720,10 +807,8 @@ function EmployeeFormContent({
         .map((entry) => entry.id);
     const problemPresentation = resolveProblemPresentation(locale);
 
-    const focusFormField = (field: EmployeeFormField) => {
-        document.getElementById(
-            surface === "panel" ? `employee-panel-${field}` : field,
-        )?.focus();
+    const focusFormField = (field: EmployeeInputField | "workArea") => {
+        document.getElementById(EMPLOYEE_FOCUS_ELEMENT_IDS[field][surface])?.focus();
     };
 
     const feedback = error ? (
@@ -795,14 +880,14 @@ function EmployeeFormContent({
                         htmlFor="name"
                         label={t(locale, "employees.form.name")}
                         required
+                        labelAccessory={renderInputMessage("name", "desktop_employees_form-dialog_section-basic_grid_field-name_helper")}
                     >
                         <FormTextInput
                             id="name"
                             value={formData.name}
-                            onChange={(e) => handleChange("name", e.target.value)}
+                            onChange={(e) => handleInputChange("name", e.target.value)}
                             placeholder="홍길동"
-                            error={nameErrorIds.length > 0}
-                            aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
+                            {...getInputProps("name", nameErrorIds)}
                         />
                     </FormField>
 
@@ -811,17 +896,7 @@ function EmployeeFormContent({
                         htmlFor="phone"
                         label={t(locale, "employees.form.phone")}
                         required
-                        labelAccessory={phoneInlineMessage ? (
-                            <FormHelperText
-                                id="employees-form-dialog-phone-helper"
-                                data-component="desktop_employees_form-dialog_section-basic_grid_field-phone_helper"
-                                tone={hasPhoneStatusError ? "error" : "default"}
-                                className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
-                                aria-live="polite"
-                            >
-                                {phoneInlineMessage}
-                            </FormHelperText>
-                        ) : null}
+                        labelAccessory={renderInputMessage("phone", "desktop_employees_form-dialog_section-basic_grid_field-phone_helper")}
                     >
                         <FormTextInput
                             id="phone"
@@ -829,44 +904,26 @@ function EmployeeFormContent({
                             inputMode="numeric"
                             placeholder="010-1234-5678"
                             value={formatKoreanPhoneNumber(formData.phone)}
-                            onChange={(e) => handleChange("phone", normalizeKoreanPhoneDigits(e.target.value))}
-                            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                            onChange={(e) => handleInputChange("phone", normalizeKoreanPhoneDigits(e.target.value))}
                             maxLength={20}
-                            error={(touched.phone && !isPhoneFormatValid)
-                                || hasPhoneStatusError
-                                || phoneErrorIds.length > 0}
-                            aria-describedby={combineAriaDescribedBy(
-                                phoneInlineMessage
-                                    ? "employees-form-dialog-phone-helper"
-                                    : touched.phone && !isPhoneFormatValid
-                                        ? "employees-form-dialog-field-phone-error"
-                                        : undefined,
-                                ...phoneErrorIds,
-                            )}
+                            {...getInputProps("phone", phoneErrorIds)}
                         />
-                        {touched.phone && !isPhoneFormatValid && (
-                            <FormHelperText
-                                id="employees-form-dialog-field-phone-error"
-                                tone="error"
-                                data-component="desktop_employees_form-dialog_section-basic_grid_field-phone_error"
-                            >
-                                {t(locale, "employees.form.phone-required")}
-                            </FormHelperText>
-                        )}
                     </FormField>
 
                     <FormField
                         data-component="desktop_employees_form-dialog_section-basic_grid_field-birthday"
                         htmlFor="birthday"
-                        label="생년월일 (YYYY-MM-DD)"
+                        label={t(locale, "clients.form.birthday")}
+                        labelAccessory={renderInputMessage("birthday", "desktop_employees_form-dialog_section-basic_grid_field-birthday_helper")}
                     >
                         <FormTextInput
                             id="birthday"
                             value={formData.birthday}
-                            onChange={(e) => handleChange("birthday", formatBirthdayInput(e.target.value))}
-                            placeholder="YYYY-MM-DD"
+                            onChange={(e) => handleInputChange("birthday", formatBirthdayInput(e.target.value))}
+                            placeholder="1958-03-03"
                             maxLength={10}
                             inputMode="numeric"
+                            {...getInputProps("birthday")}
                         />
                     </FormField>
                 </FormGrid>
@@ -918,7 +975,7 @@ function EmployeeFormContent({
                             id="employee-form-work-area"
                             value={formData.workArea}
                             onChange={(value) => handleChange("workArea", value)}
-                            onTouched={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                            onTouched={() => setTouched({ workArea: true })}
                             invalid={touched.workArea && !isWorkAreaValid}
                             errorId={touched.workArea && !isWorkAreaValid ? "employee-form-work-area-error" : undefined}
                             dataComponentPrefix="employees-form-dialog-field-work-area"
@@ -964,15 +1021,15 @@ function EmployeeFormContent({
                         <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
+                labelAccessory={renderInputMessage("name", "desktop_employees_form-panel_name-field_helper")}
             >
                 <FormTextInput
                     id="employee-panel-name"
                     value={formData.name}
-                    onChange={(event) => handleChange("name", event.target.value)}
+                    onChange={(event) => handleInputChange("name", event.target.value)}
                     placeholder="홍길동"
                     data-component="desktop_employees_form-panel_name-field_input"
-                    error={nameErrorIds.length > 0}
-                    aria-describedby={combineAriaDescribedBy(...nameErrorIds)}
+                    {...getInputProps("name", nameErrorIds)}
                 />
             </FormField>
 
@@ -985,64 +1042,36 @@ function EmployeeFormContent({
                         <span className="ml-1 text-v3-burgundy">*</span>
                     </>
                 }
-                labelAccessory={phoneInlineMessage ? (
-                    <FormHelperText
-                        id="employees-form-panel-phone-helper"
-                        data-component="desktop_employees_form-panel_phone-field_helper"
-                        tone={hasPhoneStatusError ? "error" : "default"}
-                        className={cn("m-0 text-right", isPhoneCheckReady && "text-v3-green")}
-                        aria-live="polite"
-                    >
-                        {phoneInlineMessage}
-                    </FormHelperText>
-                ) : null}
+                labelAccessory={renderInputMessage("phone", "desktop_employees_form-panel_phone-field_helper")}
             >
-            <FormTextInput
-                id="employee-panel-phone"
-                type="tel"
-                inputMode="numeric"
-                value={formatKoreanPhoneNumber(formData.phone)}
-                onChange={(event) => handleChange("phone", normalizeKoreanPhoneDigits(event.target.value))}
-                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-                maxLength={20}
-                placeholder="010-1234-5678"
-                error={(touched.phone && !isPhoneFormatValid)
-                    || hasPhoneStatusError
-                    || phoneErrorIds.length > 0}
-                aria-describedby={combineAriaDescribedBy(
-                    phoneInlineMessage
-                        ? "employees-form-panel-phone-helper"
-                        : touched.phone && !isPhoneFormatValid
-                            ? "employees-form-panel-phone-error"
-                            : undefined,
-                    ...phoneErrorIds,
-                )}
-                data-component="desktop_employees_form-panel_phone-field_input"
-            />
-                {touched.phone && !isPhoneFormatValid && (
-                    <FormHelperText
-                        id="employees-form-panel-phone-error"
-                        tone="error"
-                        data-component="desktop_employees_form-panel_phone-field_error"
-                    >
-                        {t(locale, "employees.form.phone-required")}
-                    </FormHelperText>
-                )}
+                <FormTextInput
+                    id="employee-panel-phone"
+                    type="tel"
+                    inputMode="numeric"
+                    value={formatKoreanPhoneNumber(formData.phone)}
+                    onChange={(event) => handleInputChange("phone", normalizeKoreanPhoneDigits(event.target.value))}
+                    maxLength={20}
+                    placeholder="010-1234-5678"
+                    data-component="desktop_employees_form-panel_phone-field_input"
+                    {...getInputProps("phone", phoneErrorIds)}
+                />
             </FormField>
 
             <FormField
                 data-component="desktop_employees_form-panel_birthday-field"
                 htmlFor="employee-panel-birthday"
-                label="생년월일 (YYYY-MM-DD)"
+                label={t(locale, "clients.form.birthday")}
+                labelAccessory={renderInputMessage("birthday", "desktop_employees_form-panel_birthday-field_helper")}
             >
                 <FormTextInput
                     id="employee-panel-birthday"
                     value={formData.birthday}
-                    onChange={(event) => handleChange("birthday", formatBirthdayInput(event.target.value))}
-                    placeholder="YYYY-MM-DD"
+                    onChange={(event) => handleInputChange("birthday", formatBirthdayInput(event.target.value))}
+                    placeholder="1958-03-03"
                     inputMode="numeric"
                     maxLength={10}
                     data-component="desktop_employees_form-panel_birthday-field_input"
+                    {...getInputProps("birthday")}
                 />
             </FormField>
 
@@ -1091,7 +1120,7 @@ function EmployeeFormContent({
                     id="employee-panel-work-area"
                     value={formData.workArea}
                     onChange={(value) => handleChange("workArea", value)}
-                    onTouched={() => setTouched((prev) => ({ ...prev, workArea: true }))}
+                    onTouched={() => setTouched({ workArea: true })}
                     invalid={touched.workArea && !isWorkAreaValid}
                     errorId={touched.workArea && !isWorkAreaValid ? "employee-panel-work-area-error" : undefined}
                     dataComponentPrefix="employees-form-panel-work-area"

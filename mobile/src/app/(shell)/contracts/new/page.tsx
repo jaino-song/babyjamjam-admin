@@ -1,12 +1,14 @@
 "use client";
-import { formatBirthdayInput, isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import { isRealIsoDate, resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
 import {
   normalizeApiError,
   type ProblemOutcome,
 } from "@babyjamjam/shared";
 
 
-import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, X } from "lucide-react";
 import dayjs from "dayjs";
@@ -30,11 +32,7 @@ import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete"
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { isoToYymmdd, normalizeIsoDate, todayIsoDate, yymmddToIso } from "@/lib/contracts/date-input";
-import {
-  getContractDateValidation,
-  getContractDateValues,
-} from "@/lib/contracts/contract-date-validation";
+import { normalizeIsoDate, toIsoDate, todayIsoDate } from "@/lib/contracts/date-input";
 import { calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
@@ -51,6 +49,11 @@ import {
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { ContractFieldLabelMessage, type FieldLabelMessage } from "@/components/app/contracts/contract-field-label-message";
+import {
+  ContractFormField,
+  type ContractFormFieldMessage,
+} from "@/components/app/contracts/contract-form-field";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -67,6 +70,40 @@ import {
   isValidIframeSuccessResponse,
   type ContractSubmissionAlert,
 } from "./page.helpers";
+import {
+  CLIENT_DIFF_PERIOD_LOCKED_NOTE,
+  CLIENT_PERIOD_DIFF_KEYS,
+  REGISTERED_VALUE_DIFF_HINT,
+  buildClientDiffSnapshotFromClient,
+  buildClientDiffSnapshotFromForm,
+  diffClientSnapshots,
+  getRegisteredDiffKeys,
+  getVoucherTypeLabel,
+  serializeClientDiffSnapshot,
+  type ClientDiffDecision,
+  type ClientDiffKey,
+  type ClientDiffPrompt,
+  type ClientDiffSnapshot,
+  type LoadedClientBaseline,
+} from "./client-diff";
+import {
+  BIRTHDAY_PLACEHOLDER,
+  END_DATE_AUTO_CALC_INFO,
+  END_DATE_PLACEHOLDER,
+  PAYMENT_DATE_PLACEHOLDER,
+  PHONE_PLACEHOLDER,
+  START_DATE_PLACEHOLDER,
+  focusContractField,
+  getBirthdayMessageText,
+  getBirthdayProblem,
+  getContractDateProblem,
+  getContractDateValues,
+  getFieldMessageText,
+  getPhoneProblem,
+  resolveBirthdayMessage,
+  useFieldInteractions,
+  type ContractFieldKey,
+} from "./field-messages";
 import { readHeadlessOutcome } from "../contract-operation-guard";
 import styles from "./page.module.css";
 
@@ -96,60 +133,33 @@ const WIZARD_STEPS = [
   { title: "계약 정보", desc: "서비스 기간과 본인부담금 수령 날짜를 입력해주세요." },
 ] as const;
 const SUCCESS_REDIRECT_DELAY_MS = 3_000;
-const CONTRACT_DATE_ERROR_ID = "contracts-new-review-date-error";
 const CONTRACT_START_DATE_INPUT_ID = "contracts-new-review-start-date";
 const CONTRACT_END_DATE_INPUT_ID = "contracts-new-review-end-date";
 const CONTRACT_PAYMENT_DATE_INPUT_ID = "contracts-new-review-payment-date";
+const CONTRACT_DATE_ERROR_TEST_ID = "contract-creation-date-range-error";
+const PHONE_INPUT_SELECTOR = "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input\"]";
+const BIRTHDAY_INPUT_SELECTOR = "[data-component=\"mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input\"]";
+const CONTRACT_DATE_INPUT_SELECTORS = {
+  startDate: `#${CONTRACT_START_DATE_INPUT_ID}`,
+  endDate: `#${CONTRACT_END_DATE_INPUT_ID}`,
+  paymentDate: `#${CONTRACT_PAYMENT_DATE_INPUT_ID}`,
+} as const;
+const NO_REGISTERED_DIFF_KEYS: ReadonlySet<ClientDiffKey> = new Set();
+const CLIENT_PERIOD_DTO_KEYS: ReadonlySet<string> = new Set(["duration", "startDate", "endDate"]);
+
+function getRegisteredDiffHintId(key: ClientDiffKey): string {
+  return `contracts-new-registered-diff-hint-${key}`;
+}
 const AREA_TEMPLATE_DISPLAY_LABELS: Record<string, string> = {
   Namdonggu: "남동구",
   Seogu: "서구",
 };
-
-type HelperTone = "muted" | "ok" | "err" | "pending";
 
 function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | null): string {
   const mappedLabel = AREA_TEMPLATE_DISPLAY_LABELS[areaId];
   if (mappedLabel) return mappedLabel;
 
   return templateName?.replace(/\s*계약서.*$/, "").trim() || areaId;
-}
-
-function Field({
-  dataComponent,
-  label,
-  htmlFor,
-  required,
-  children,
-  helper,
-  helperTone = "muted",
-}: {
-  dataComponent: string;
-  label: ReactNode;
-  htmlFor?: string;
-  required?: boolean;
-  children: ReactNode;
-  helper?: ReactNode;
-  helperTone?: HelperTone;
-}) {
-  return (
-    <div className={styles.formRow} data-component={dataComponent}>
-      <label className={styles.formLabel} htmlFor={htmlFor} data-component={`${dataComponent}_label`}>
-        {label}
-        {required ? (
-          <span className={styles.requiredMark} data-component={`${dataComponent}_required`}>*</span>
-        ) : null}
-      </label>
-      {children}
-      {helper ? (
-        <div
-          className={cn(styles.formHelper, styles[`helper_${helperTone}`])}
-          data-component={`${dataComponent}_helper`}
-        >
-          {helper}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 const formatPhoneNumber = formatKoreanPhoneNumber;
@@ -221,7 +231,7 @@ export default function ContractCreationPage() {
   const {
     clientId, isManualEntry, name, phone, birthday, address, dueDate, area,
     employeeId, employeeName, employeePhone,
-    showEmployee2, employee2Id, employee2Phone,
+    showEmployee2, employee2Id, employee2Name, employee2Phone,
     voucherType, voucherDuration, voucherYear,
     fullPrice, grant, actualPrice,
     startDate, endDate, paymentDate,
@@ -263,6 +273,26 @@ export default function ContractCreationPage() {
     confirmationResolverRef.current = null;
     setConfirmationMessage(null);
   };
+  // 기존 고객을 골랐고 계약서 입력값이 저장된 고객 정보와 다르면, 제출 전에 고객 정보도 수정할지 물어봐요.
+  const clientDiffResolverRef = useRef<((decision: ClientDiffDecision) => void) | null>(null);
+  const [clientDiffPrompt, setClientDiffPrompt] = useState<ClientDiffPrompt | null>(null);
+  const requestClientDiffDecision = (prompt: ClientDiffPrompt): Promise<ClientDiffDecision> => {
+    setClientDiffPrompt(prompt);
+    return new Promise((resolve) => {
+      clientDiffResolverRef.current = resolve;
+    });
+  };
+  const resolveClientDiffDecision = (decision: ClientDiffDecision) => {
+    clientDiffResolverRef.current?.(decision);
+    clientDiffResolverRef.current = null;
+    setClientDiffPrompt(null);
+  };
+  // 선택된 기존 고객의 저장값이에요. 고객 정보를 함께 수정하면 수정된 값으로 갱신해요.
+  const loadedClientBaselineRef = useRef<LoadedClientBaseline | null>(null);
+  // 위 ref와 같은 저장값을 렌더링에서 쓰기 위한 복사본이에요. 필드별 "등록된 정보와 달라요." 힌트와 placeholder가 읽어요.
+  const [registeredBaseline, setRegisteredBaseline] = useState<LoadedClientBaseline | null>(null);
+  // "계약서에만 반영"을 고른 입력값이에요. 같은 입력으로 다시 제출하면 다시 묻지 않아요.
+  const contractOnlyChoiceRef = useRef<{ clientId: number; formKey: string } | null>(null);
   const [creationProgress, setCreationProgress] = useState<HeadlessProgressState>(INITIAL_HEADLESS_PROGRESS);
   const [progressErrorHint, setProgressErrorHint] = useState<string | null>(null);
   const progressSourceRef = useRef<EventSource | null>(null);
@@ -273,7 +303,7 @@ export default function ContractCreationPage() {
   const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
 
-  // Local YYMMDD drafts so partial input doesn't trash the ISO store value
+  // Local YYYY-MM-DD drafts so partial input doesn't trash the ISO store value
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
   const [paymentDateInput, setPaymentDateInput] = useState("");
@@ -283,7 +313,10 @@ export default function ContractCreationPage() {
   const fallbackPaymentDate = normalizedPaymentDate || defaultPaymentDate;
   const shouldUseFallbackPaymentDate =
     isContractInfoStep && paymentDateInput.length === 0 && !paymentDateInputTouchedRef.current;
-  const effectivePaymentDateInput = shouldUseFallbackPaymentDate ? isoToYymmdd(fallbackPaymentDate) : paymentDateInput;
+  const effectivePaymentDateInput = shouldUseFallbackPaymentDate ? fallbackPaymentDate : paymentDateInput;
+  // 필드 메시지는 화면 상호작용(포커스·떠남·입력 이력)과 단계별 "다음/생성" 시도 여부로 결정돼요.
+  const fieldInteractions = useFieldInteractions();
+  const [submittedSteps, setSubmittedSteps] = useState<ReadonlySet<number>>(() => new Set());
   const contractDateValues = getContractDateValues({
     startDateInput,
     endDateInput,
@@ -305,13 +338,14 @@ export default function ContractCreationPage() {
     hasAppliedPaymentStepDefaultRef.current = true;
     if (!normalizedPaymentDate) setPaymentDate(defaultPaymentDate);
   }, [defaultPaymentDate, isContractInfoStep, normalizedPaymentDate, setPaymentDate]);
-  useEffect(() => { setStartDateInput(isoToYymmdd(startDate)); }, [startDate]);
-  useEffect(() => { setEndDateInput(isoToYymmdd(endDate)); }, [endDate]);
+  // 저장소에는 예전 6자리(YYMMDD) 값이 들어올 수 있어 toIsoDate로 읽어요. 직접 입력한 값은 항상 YYYY-MM-DD예요.
+  useEffect(() => { setStartDateInput(toIsoDate(startDate)); }, [startDate]);
+  useEffect(() => { setEndDateInput(toIsoDate(endDate)); }, [endDate]);
   useEffect(() => {
     // Keep an invalid or partial visible draft intact while the canonical
     // payment date is updated by the step default or another store change.
     if (paymentDateInputTouchedRef.current) return;
-    setPaymentDateInput(isoToYymmdd(paymentDate));
+    setPaymentDateInput(toIsoDate(paymentDate));
   }, [paymentDate]);
   useEffect(() => {
     setArea("");
@@ -331,11 +365,10 @@ export default function ContractCreationPage() {
     isPaymentDate = false,
   ) => {
     if (isPaymentDate) paymentDateInputTouchedRef.current = true;
-    const v = raw.replace(/\D/g, "").slice(0, 6);
+    const v = formatIsoDateInput(raw);
     setLocal(v);
-    if (v.length === 6) {
-      const isoDate = yymmddToIso(v);
-      if (isoDate) setStore(isoDate);
+    if (isRealIsoDate(v)) {
+      setStore(v);
     } else if (v.length === 0) {
       setStore("");
     }
@@ -539,10 +572,47 @@ export default function ContractCreationPage() {
     progressSourceRef.current?.close();
   }, []);
 
+  const formatAreaLabel = (areaId: string): string => getAreaTemplateDisplayLabel(
+    areaId,
+    areaTemplates?.find((template) => template.areaId === areaId)?.templateName,
+  );
+
+  const setLoadedClientBaseline = (baseline: LoadedClientBaseline | null) => {
+    loadedClientBaselineRef.current = baseline;
+    setRegisteredBaseline(baseline);
+  };
+
+  const buildLoadedBaseline = (client: Client): LoadedClientBaseline => ({
+    id: client.id,
+    snapshot: buildClientDiffSnapshotFromClient(
+      { ...client, birthday: normalizeBirthdayInput(clientBirthdayValue(client)) },
+      formatAreaLabel,
+    ),
+    periodLocked: client.serviceRecordPeriodLocked === true,
+  });
+
+  // 고객 상세의 "계약서 생성"처럼 스토어에 clientId가 미리 채워진 채로 들어오면 고객 선택 핸들러를 거치지 않아요.
+  // 스토어 값은 이미 폼 값으로 가공돼 있으니, 저장값은 같은 /clients 목록의 고객 레코드에서 직접 읽어요.
+  // 목록에 아직 없으면 기다리고, 끝내 없으면 기존 동작(비교 없이 저장) 그대로예요. 이번 제출에서 등록·재사용한 고객은 제외해요.
+  useEffect(() => {
+    if (clientId === null || !allClients) return;
+    if (loadedClientBaselineRef.current?.id === clientId) return;
+    if (persistedClientIdRef.current === clientId) return;
+    const storedClient = allClients.find((candidate) => candidate.id === clientId);
+    if (!storedClient) return;
+    loadedClientBaselineRef.current = buildLoadedBaseline(storedClient);
+    setRegisteredBaseline(loadedClientBaselineRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 고객이 바뀌거나 목록이 도착했을 때만 저장값을 만들어요.
+  }, [allClients, clientId]);
+
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
+    contractOnlyChoiceRef.current = null;
+    setLoadedClientBaseline(selectedClientId !== null && client
+      ? { ...buildLoadedBaseline(client), id: selectedClientId }
+      : null);
     setClientId(selectedClientId);
     selectedClientRef.current = client;
     setEmployeeSelection(null, "", "");
@@ -608,6 +678,7 @@ export default function ContractCreationPage() {
     const willClearSelectedClient = hasSelectedClientSnapshot && !matchesSelectedClient;
     if (willClearSelectedClient) {
       setClientId(null);
+      setLoadedClientBaseline(null);
       selectedClientRef.current = null;
       setArea("");
     } else if (isNameChanging && clientId === null && area) {
@@ -620,7 +691,9 @@ export default function ContractCreationPage() {
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
+    contractOnlyChoiceRef.current = null;
     setClientId(null);
+    setLoadedClientBaseline(null);
     selectedClientRef.current = null;
     setName(query.trim() || name);
     setArea("");
@@ -674,28 +747,144 @@ export default function ContractCreationPage() {
   };
 
 
+  const phoneProblem = getPhoneProblem(phone);
+  const birthdayProblem = getBirthdayProblem(birthday, isValidBirthdayIsoDate);
   const isStep1Valid = Boolean(
-    !clientsDataUnavailable && (!birthday || isValidBirthdayIsoDate(birthday)) &&
-    (clientId !== null || (isManualEntry && name.trim() && phone.trim())) && area
+    !clientsDataUnavailable && !birthdayProblem && !phoneProblem &&
+    (clientId !== null || (isManualEntry && name.trim())) && area
   );
   const isEmployee1Valid = employeeId !== null;
   const isEmployee2Valid = !showEmployee2 || employee2Id !== null;
   const isStep2Valid = isEmployee1Valid && isEmployee2Valid;
   const isStep3Valid = Boolean(voucherType && voucherDuration && fullPrice && grant && actualPrice);
-  const contractDateValidation = getContractDateValidation({
+  const contractDateProblem = getContractDateProblem({
     startDateInput,
     endDateInput,
     paymentDateInput: effectivePaymentDateInput,
   });
-  const isStep4Valid = contractDateValidation === null;
+  const isStep4Valid = contractDateProblem === null;
   const isCurrentStepValid = [isStep1Valid, isStep2Valid, isStep3Valid, isStep4Valid][activeStep] ?? true;
+
+  const buildFormDiffSnapshot = (): ClientDiffSnapshot => buildClientDiffSnapshotFromForm({
+    phone,
+    birthday,
+    address,
+    areaId: area,
+    primaryEmployeeId: employeeId,
+    primaryEmployeeName: employeeName,
+    secondaryEmployeeId: showEmployee2 ? employee2Id : null,
+    secondaryEmployeeName: employee2Name,
+    type: voucherType,
+    duration: voucherDuration,
+    fullPrice,
+    grant,
+    actualPrice,
+    startDate: effectiveStartDate,
+    endDate: effectiveEndDate,
+  }, formatAreaLabel);
+
+  // 기존 고객을 골라 저장값이 있을 때만 필드별 힌트와 저장값 placeholder를 보여줘요. 새 고객·자동 등록 고객·고객 미선택이면 없어요.
+  const registeredSnapshot = clientId !== null && registeredBaseline?.id === clientId
+    ? registeredBaseline.snapshot
+    : null;
+  const registeredDiffKeys = registeredSnapshot
+    ? getRegisteredDiffKeys(registeredSnapshot, buildFormDiffSnapshot())
+    : NO_REGISTERED_DIFF_KEYS;
+  // 등록값 다름 힌트(초록)예요. 필드 메시지 슬롯 안에서 오류·형식 힌트보다 뒤에 와요.
+  const getRegisteredHint = (key: ClientDiffKey | null): FieldLabelMessage | null => {
+    if (key === null || !registeredDiffKeys.has(key)) return null;
+    return { slot: "registered-value-diff-hint", id: getRegisteredDiffHintId(key), text: REGISTERED_VALUE_DIFF_HINT };
+  };
+  // 필드 하나가 라벨 줄에 보여줄 메시지예요. 검증 오류·형식 힌트(primary) > 등록값 다름 힌트 중 하나만 보여줘요.
+  const getLabelMessage = (
+    key: ClientDiffKey | null,
+    primary?: ContractFormFieldMessage | null,
+  ): ContractFormFieldMessage | null => primary ?? getRegisteredHint(key);
+  // 저장값이 있으면 입력칸을 비워도 저장값이 보이도록 placeholder로 써요. 없으면 기본 placeholder를 그대로 둬요.
+  const registeredPlaceholder = (
+    key: ClientDiffKey,
+    fallback: string,
+    format: (value: string) => string = (value) => value,
+  ): string => {
+    const stored = registeredSnapshot?.[key].value;
+    return stored ? format(stored) : fallback;
+  };
+
+  const isStepSubmitted = (step: number): boolean => submittedSteps.has(step);
+  const revealStepMessages = (step: number) => {
+    setSubmittedSteps((current) => (current.has(step) ? current : new Set(current).add(step)));
+  };
+  const buildFieldMessage = (
+    key: ContractFieldKey,
+    message: ReturnType<typeof resolveFieldMessage>,
+    text?: string,
+  ): ContractFormFieldMessage | null => {
+    if (!message) return null;
+    const isError = message.tone === "error";
+    const isContractDate = key === "startDate" || key === "endDate" || key === "paymentDate";
+    return {
+      slot: isError ? "field-error-message" : "field-hint-message",
+      id: `contracts-new-${key}-message`,
+      text: text ?? getFieldMessageText(key, message),
+      ...(isError && isContractDate ? { testId: CONTRACT_DATE_ERROR_TEST_ID } : {}),
+    };
+  };
+
+  const phoneFieldMessage = buildFieldMessage("phone", resolveFieldMessage(
+    "phone",
+    fieldInteractions.getState("phone", phone),
+    { required: true, submitted: isStepSubmitted(0) },
+  ));
+  const birthdayResolved = resolveBirthdayMessage(
+    fieldInteractions.getState("birthday", birthday),
+    isStepSubmitted(0),
+    isValidBirthdayIsoDate,
+  );
+  const birthdayFieldMessage = buildFieldMessage(
+    "birthday",
+    birthdayResolved,
+    birthdayResolved ? getBirthdayMessageText(birthdayResolved) : undefined,
+  );
+  // 시작일은 1단계(선택)와 4단계(필수)에 같은 값으로 나와요.
+  const startDateFieldMessage = buildFieldMessage("startDate", resolveFieldMessage(
+    "date",
+    fieldInteractions.getState("startDate", startDateInput),
+    { required: isContractInfoStep, submitted: isStepSubmitted(activeStep) },
+  ));
+  const endDateFieldMessage = buildFieldMessage("endDate", resolveFieldMessage(
+    "date",
+    fieldInteractions.getState("endDate", endDateInput),
+    { required: true, submitted: isStepSubmitted(activeStep), dateRange: { notBefore: startDateInput } },
+  ));
+  const paymentDateFieldMessage = buildFieldMessage("paymentDate", resolveFieldMessage(
+    "date",
+    fieldInteractions.getState("paymentDate", effectivePaymentDateInput),
+    { required: true, submitted: isStepSubmitted(activeStep) },
+  ));
+  const primaryEmployeeMessage = getRegisteredHint("primaryEmployeeId");
+  const secondaryEmployeeMessage = getRegisteredHint("secondaryEmployeeId");
+  const startDateMessage = getLabelMessage("startDate", startDateFieldMessage);
+  const endDateMessage = getLabelMessage("endDate", endDateFieldMessage)
+    ?? { slot: "field-info-message" as const, id: "contracts-new-endDate-info", text: END_DATE_AUTO_CALC_INFO };
+  const paymentDateMessage = getLabelMessage(null, paymentDateFieldMessage);
+
+  // 다음/생성을 눌렀는데 막혀 있으면 첫 문제 필드로 이동해요. 이 화면이 직접 메시지를 그리는 필드(연락처·생년월일·계약 날짜)만 대상이에요.
+  const getFirstProblemSelector = (step: number): string | null => {
+    if (step === 0) {
+      if (phoneProblem) return PHONE_INPUT_SELECTOR;
+      if (birthdayProblem) return BIRTHDAY_INPUT_SELECTOR;
+    }
+    if (step === WIZARD_STEPS.length - 1 && contractDateProblem) {
+      return CONTRACT_DATE_INPUT_SELECTORS[contractDateProblem.field];
+    }
+    return null;
+  };
 
   const getStepValidationMessage = (step: number): string | null => {
     if (step === 0 && clientsDataUnavailable) return "고객 목록을 불러온 뒤 다시 시도해 주세요";
     if (step === 0 && !isStep1Valid) return "고객 정보와 계약서를 선택해 주세요";
     if (step === 1 && !isStep2Valid) return "등록된 제공인력을 목록에서 선택해 주세요";
     if (step === 2 && !isStep3Valid) return "바우처 유형/기간과 금액 정보를 입력해 주세요";
-    if (step === 3 && contractDateValidation) return contractDateValidation.message;
     if (step === 3 && !isStep4Valid) return "계약 시작일, 종료일, 본인부담금 수령 날짜를 입력해 주세요";
     return null;
   };
@@ -706,6 +895,9 @@ export default function ContractCreationPage() {
       return;
     }
     if (!isCurrentStepValid) {
+      revealStepMessages(activeStep);
+      const selector = getFirstProblemSelector(activeStep);
+      if (selector && focusContractField(selector)) return;
       const msg = getStepValidationMessage(activeStep);
       if (msg) showErrorToast(msg);
       return;
@@ -809,14 +1001,16 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
-    if (contractDateValidation) {
+    if (contractDateProblem) {
       setActiveStep(WIZARD_STEPS.length - 1);
-      showErrorToast(contractDateValidation.message);
+      revealStepMessages(WIZARD_STEPS.length - 1);
+      window.setTimeout(() => focusContractField(CONTRACT_DATE_INPUT_SELECTORS[contractDateProblem.field]), 0);
       return;
     }
-    if (birthday && !isValidBirthdayIsoDate(birthday)) {
+    if (birthdayProblem) {
       setActiveStep(0);
-      showErrorToast("생년월일을 YYYY-MM-DD 형식으로 입력해 주세요");
+      revealStepMessages(0);
+      window.setTimeout(() => focusContractField(BIRTHDAY_INPUT_SELECTOR), 0);
       return;
     }
     // React state updates are asynchronous; this ref closes the same-tick
@@ -862,6 +1056,43 @@ export default function ContractCreationPage() {
         areaId: area || null,
       };
       const clientPersistenceSnapshot = JSON.stringify(clientData);
+
+      // 기존 고객을 골랐고 입력값이 저장된 고객 정보와 다르면 어떻게 반영할지 먼저 물어봐요.
+      // 자동 등록·새로 만든 고객은 이 확인을 거치지 않아요.
+      const loadedBaseline = clientId !== null && loadedClientBaselineRef.current?.id === clientId
+        ? loadedClientBaselineRef.current
+        : null;
+      const omitPeriodFields = loadedBaseline?.periodLocked === true;
+      let clientUpdateMode: "full" | "assignment-only" | "skip" = "full";
+      let formDiffSnapshot: ClientDiffSnapshot | null = null;
+      if (loadedBaseline && clientId !== null) {
+        const formSnapshot = buildFormDiffSnapshot();
+        formDiffSnapshot = formSnapshot;
+        const diffRows = diffClientSnapshots(loadedBaseline.snapshot, formSnapshot);
+        const formKey = serializeClientDiffSnapshot(formSnapshot);
+        const previousChoice = contractOnlyChoiceRef.current;
+        let decision: ClientDiffDecision = "update-client";
+        if (diffRows.length === 0) {
+          clientUpdateMode = "skip";
+        } else if (previousChoice?.clientId === clientId && previousChoice.formKey === formKey) {
+          decision = "contract-only";
+        } else {
+          decision = await requestClientDiffDecision({
+            rows: diffRows,
+            showPeriodLockedNote: omitPeriodFields && diffRows.some((row) => CLIENT_PERIOD_DIFF_KEYS.has(row.key)),
+          });
+          if (decision === "cancel") return;
+        }
+        if (decision === "contract-only") {
+          contractOnlyChoiceRef.current = { clientId, formKey };
+          // 저장된 고객에 주 담당 인력이 없으면 배정만은 저장해요.
+          clientUpdateMode = loadedBaseline.snapshot.primaryEmployeeId.value === null
+            && assignment.primaryEmployeeId !== null
+            ? "assignment-only"
+            : "skip";
+        }
+      }
+
       if (!reusePersistedClient && !finalClientId && isManualEntry) {
         const autoRegistrationPayload = {
           ...clientData,
@@ -906,18 +1137,39 @@ export default function ContractCreationPage() {
         showErrorToast("고객 정보를 먼저 선택하거나 등록해 주세요.");
         return;
       }
-      const shouldUpdatePersistedClient = reusePersistedClient
-        ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
-        : clientId !== null || storedClientByIdentity || storedClientByPhone;
+      const shouldUpdatePersistedClient = clientUpdateMode === "skip"
+        ? false
+        : reusePersistedClient
+          ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
+          : clientId !== null || storedClientByIdentity || storedClientByPhone;
       if (shouldUpdatePersistedClient) {
         try {
           await updateClientMutation.mutateAsync({
             id: finalClientId,
-            dto: clientData,
+            dto: clientUpdateMode === "assignment-only"
+              ? { ...assignment }
+              // 서비스 기록이 확정된 고객은 계약 기간을 계약서에만 반영해요. 키를 빼면 저장된 값이 그대로 남아요.
+              : omitPeriodFields
+                ? Object.fromEntries(
+                  Object.entries(clientData).filter(([key]) => !CLIENT_PERIOD_DTO_KEYS.has(key)),
+                ) as Partial<typeof clientData>
+                : clientData,
           });
         } catch (error) {
           showSubmissionFailure(error, "UNKNOWN");
           return;
+        }
+        // 저장된 값이 바뀌었으니 다음 비교는 방금 저장한 값을 기준으로 해요.
+        if (loadedBaseline && formDiffSnapshot) {
+          const persistedSnapshot: ClientDiffSnapshot = { ...loadedBaseline.snapshot };
+          for (const key of Object.keys(persistedSnapshot) as ClientDiffKey[]) {
+            const isAssignmentKey = key === "primaryEmployeeId" || key === "secondaryEmployeeId";
+            if (clientUpdateMode === "assignment-only" && !isAssignmentKey) continue;
+            if (omitPeriodFields && CLIENT_PERIOD_DIFF_KEYS.has(key)) continue;
+            persistedSnapshot[key] = formDiffSnapshot[key];
+          }
+          loadedBaseline.snapshot = persistedSnapshot;
+          setRegisteredBaseline({ ...loadedBaseline, snapshot: persistedSnapshot });
         }
       }
       if (!reusePersistedClient || shouldUpdatePersistedClient) {
@@ -1166,7 +1418,7 @@ export default function ContractCreationPage() {
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
   const isBusy = isSubmitting || isNavigationPending;
-  const isPrimaryDisabled = isBusy || Boolean(submissionLock) || !isCurrentStepValid;
+  const isPrimaryDisabled = isBusy || Boolean(submissionLock);
 
   return (
     <>
@@ -1295,7 +1547,7 @@ export default function ContractCreationPage() {
                       이용자 정보
                       <span className={styles.optionalBadge}>기존 고객 또는 직접 입력</span>
                     </div>
-                    <Field dataComponent="mobile_contracts-new_client_name-field" label="이름" required>
+                    <ContractFormField dataComponent="mobile_contracts-new_client_name-field" label="이름" required>
                       <ClientAutocomplete
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_autocomplete"
                         inputId="contract-create-client-name"
@@ -1309,64 +1561,109 @@ export default function ContractCreationPage() {
                         manualEntryDescription="입력한 이름으로 새 계약을 작성합니다"
                         onManualEntry={handleClientManualEntry}
                       />
-                    </Field>
-                    <Field dataComponent="mobile_contracts-new_client_phone-field" label="연락처" required>
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_client_phone-field"
+                      label="연락처"
+                      required
+                      message={getLabelMessage("phone", phoneFieldMessage)}
+                    >
                       <input
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_phone-input"
                         className={styles.formInput}
                         value={phone}
-                        onChange={(e) => setPhone(formatPhoneNumber(e.target.value))}
+                        onChange={(e) => {
+                          const nextPhone = formatPhoneNumber(e.target.value);
+                          fieldInteractions.onChange("phone", phone, nextPhone);
+                          setPhone(nextPhone);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("phone")}
+                        onBlur={(e) => fieldInteractions.onBlur("phone", e.currentTarget.value)}
                         type="tel"
                         inputMode="numeric"
                         maxLength={20}
-                        placeholder="010-1234-5678"
+                        placeholder={registeredPlaceholder("phone", PHONE_PLACEHOLDER, formatPhoneNumber)}
+                        aria-invalid={phoneFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={getLabelMessage("phone", phoneFieldMessage)?.id}
                       />
-                    </Field>
-                    <div className={styles.formGrid2}>
-                      <Field dataComponent="mobile_contracts-new_client_birthday-field" label="생년월일">
-                        <input
-                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input"
-                          className={styles.formInput}
-                          value={birthday}
-                          onChange={(e) => setBirthday(formatBirthdayInput(e.target.value))}
-                          inputMode="numeric"
-                          maxLength={10}
-                          placeholder="YYYY-MM-DD"
-                        />
-                      </Field>
-                      <Field dataComponent="mobile_contracts-new_client_start-date-field" label="서비스 시작일">
-                        <input
-                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_start-date-input"
-                          className={styles.formInput}
-                          value={startDateInput}
-                          onChange={(e) => handleDateInputChange(setStartDateInput, setStartDate, e.target.value)}
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="YYMMDD"
-                        />
-                      </Field>
-                    </div>
-                    <Field dataComponent="mobile_contracts-new_client_address-field" label="주소">
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_client_birthday-field"
+                      label="생년월일"
+                      message={getLabelMessage("birthday", birthdayFieldMessage)}
+                    >
+                      <input
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_birthday-input"
+                        className={styles.formInput}
+                        value={birthday}
+                        onChange={(e) => {
+                          const nextBirthday = formatIsoDateInput(e.target.value);
+                          fieldInteractions.onChange("birthday", birthday, nextBirthday);
+                          setBirthday(nextBirthday);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("birthday")}
+                        onBlur={(e) => fieldInteractions.onBlur("birthday", e.currentTarget.value)}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder={registeredPlaceholder("birthday", BIRTHDAY_PLACEHOLDER)}
+                        aria-invalid={birthdayFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={getLabelMessage("birthday", birthdayFieldMessage)?.id}
+                      />
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_client_start-date-field"
+                      label="서비스 시작일"
+                      message={startDateMessage}
+                    >
+                      <input
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_start-date-input"
+                        className={styles.formInput}
+                        value={startDateInput}
+                        onChange={(e) => {
+                          fieldInteractions.onChange("startDate", startDateInput, formatIsoDateInput(e.target.value));
+                          handleDateInputChange(setStartDateInput, setStartDate, e.target.value);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("startDate")}
+                        onBlur={(e) => fieldInteractions.onBlur("startDate", e.currentTarget.value)}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder={registeredPlaceholder("startDate", START_DATE_PLACEHOLDER)}
+                        aria-invalid={startDateFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={startDateMessage?.id}
+                      />
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_client_address-field"
+                      label="주소"
+                      message={getLabelMessage("address")}
+                    >
                       <input
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_card_address-input"
                         className={styles.formInput}
                         value={address}
                         onChange={(e) => setAddress(e.target.value)}
-                        placeholder="서울시 강남구..."
+                        placeholder={registeredPlaceholder("address", "서울시 강남구...")}
+                        aria-describedby={getLabelMessage("address")?.id}
                       />
-                    </Field>
+                    </ContractFormField>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_area-card">
-                    <Field dataComponent="mobile_contracts-new_client_area-field" label="계약서 유형" required>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_client_area-field"
+                      label="계약서 유형"
+                      required
+                      message={getLabelMessage("areaId")}
+                    >
                       <div className={styles.selectWrap}>
                         <select
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_area-card_area-select"
-                          className={styles.formInput}
+                          className={cn(styles.formInput, !area && registeredSnapshot?.areaId.value && styles.storedPlaceholderSelect)}
                           value={area}
                           onChange={(e) => setArea(e.target.value)}
+                          aria-describedby={getLabelMessage("areaId")?.id}
                         >
-                          <option value="">선택하세요</option>
+                          <option value="">{registeredPlaceholder("areaId", "선택하세요", formatAreaLabel)}</option>
                           {(areaTemplates ?? []).map((tpl) => (
                             <option key={tpl.areaId} value={tpl.areaId}>
                               {getAreaTemplateDisplayLabel(tpl.areaId, tpl.templateName)}
@@ -1374,7 +1671,7 @@ export default function ContractCreationPage() {
                           ))}
                         </select>
                       </div>
-                    </Field>
+                    </ContractFormField>
                   </div>
                 </>
               ) : null}
@@ -1384,6 +1681,11 @@ export default function ContractCreationPage() {
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card">
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-card-title">
                       제공인력 1<span className={styles.requiredMark}>*</span>
+                      {primaryEmployeeMessage ? (
+                        <span className={styles.formCardTitleMessage}>
+                          <ContractFieldLabelMessage dataComponent="mobile_contracts-new_employee_primary" message={primaryEmployeeMessage} />
+                        </span>
+                      ) : null}
                     </div>
                     <div className={styles.formRow} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-autocomplete-field">
                       <EmployeeAutocomplete
@@ -1392,9 +1694,10 @@ export default function ContractCreationPage() {
                         onChange={handleEmployeeSelect}
                         label=""
                         excludeIds={employee2Id != null ? [employee2Id] : []}
+                        placeholder={registeredSnapshot?.primaryEmployeeId.display ?? undefined}
                       />
                     </div>
-                    <Field dataComponent="mobile_contracts-new_employee_primary-phone-field" label="연락처" required>
+                    <ContractFormField dataComponent="mobile_contracts-new_employee_primary-phone-field" label="연락처" required>
                       <input
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_primary-card_primary-phone-input"
                         className={styles.formInput}
@@ -1405,7 +1708,7 @@ export default function ContractCreationPage() {
                         placeholder="010-1234-5678"
                         readOnly
                       />
-                    </Field>
+                    </ContractFormField>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card">
@@ -1434,6 +1737,11 @@ export default function ContractCreationPage() {
                         <div className={styles.dashedDivider} />
                         <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-card-title">
                           제공인력 2<span className={styles.requiredMark}>*</span>
+                          {secondaryEmployeeMessage ? (
+                            <span className={styles.formCardTitleMessage}>
+                              <ContractFieldLabelMessage dataComponent="mobile_contracts-new_employee_secondary" message={secondaryEmployeeMessage} />
+                            </span>
+                          ) : null}
                         </div>
                         <div className={styles.formRow} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-autocomplete-field">
                           <EmployeeAutocomplete
@@ -1442,9 +1750,10 @@ export default function ContractCreationPage() {
                             onChange={handleEmployee2Select}
                             label=""
                             excludeIds={employeeId != null ? [employeeId] : []}
+                            placeholder={registeredSnapshot?.secondaryEmployeeId.display ?? undefined}
                           />
                         </div>
-                        <Field dataComponent="mobile_contracts-new_employee_secondary-phone-field" label="연락처" required>
+                        <ContractFormField dataComponent="mobile_contracts-new_employee_secondary-phone-field" label="연락처" required>
                           <input
                             data-component="mobile_contracts-new_screen_root_page_root_form-scroll_secondary-card_secondary-phone-input"
                             className={styles.formInput}
@@ -1455,7 +1764,7 @@ export default function ContractCreationPage() {
                             placeholder="010-1234-5678"
                             readOnly
                           />
-                        </Field>
+                        </ContractFormField>
                       </>
                     ) : null}
                   </div>
@@ -1469,7 +1778,7 @@ export default function ContractCreationPage() {
                       바우처 선택
                     </div>
                     <div className={styles.formGrid2}>
-                      <Field dataComponent="mobile_contracts-new_voucher_year-field" label="연도" required>
+                      <ContractFormField dataComponent="mobile_contracts-new_voucher_year-field" label="연도" required>
                         <div className={styles.selectWrap}>
                           <select
                             data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_year-select"
@@ -1483,16 +1792,22 @@ export default function ContractCreationPage() {
                             ))}
                           </select>
                         </div>
-                      </Field>
-                      <Field dataComponent="mobile_contracts-new_voucher_type-field" label="바우처 유형" required>
+                      </ContractFormField>
+                      <ContractFormField
+                        dataComponent="mobile_contracts-new_voucher_type-field"
+                        label="바우처 유형"
+                        required
+                        message={getLabelMessage("type")}
+                      >
                         <div className={styles.selectWrap}>
                           <select
                             data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_type-select"
-                            className={styles.formInput}
+                            className={cn(styles.formInput, !voucherType && registeredSnapshot?.type.value && styles.storedPlaceholderSelect)}
                             value={voucherType}
                             onChange={(e) => handleVoucherTypeChange(e.target.value)}
+                            aria-describedby={getLabelMessage("type")?.id}
                           >
-                            <option value="">선택하세요</option>
+                            <option value="">{registeredPlaceholder("type", "선택하세요", getVoucherTypeLabel)}</option>
                             {Object.entries(voucherOptions.voucherOptions).map(([groupName, types]) => (
                               <optgroup key={groupName} label={groupName}>
                                 {Object.entries(types).map(([typeValue, typeData]) => (
@@ -1504,24 +1819,30 @@ export default function ContractCreationPage() {
                             ))}
                           </select>
                         </div>
-                      </Field>
+                      </ContractFormField>
                     </div>
-                    <Field dataComponent="mobile_contracts-new_voucher_duration-field" label="기간" required>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_voucher_duration-field"
+                      label="기간"
+                      required
+                      message={getLabelMessage("duration")}
+                    >
                       <div className={cn(styles.selectWrap, isPriceLoading ? styles.loadingSelect : !voucherType && styles.disabledSelect)}>
                         <select
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_selection-card_duration-select"
-                          className={styles.formInput}
+                          className={cn(styles.formInput, !voucherDuration && registeredSnapshot?.duration.value && styles.storedPlaceholderSelect)}
                           value={voucherDuration}
                           onChange={(e) => handleDurationChange(e.target.value)}
                           disabled={!voucherType || isPriceLoading}
+                          aria-describedby={getLabelMessage("duration")?.id}
                         >
-                          <option value="">선택하세요</option>
+                          <option value="">{registeredPlaceholder("duration", "선택하세요", (duration) => `${duration}일`)}</option>
                           {availableDurations.map((d) => (
                             <option key={d} value={d}>{d}일</option>
                           ))}
                         </select>
                       </div>
-                    </Field>
+                    </ContractFormField>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card">
@@ -1531,7 +1852,12 @@ export default function ContractCreationPage() {
                         <span className={styles.autoBadge}>자동입력</span>
                       ) : null}
                     </div>
-                    <Field dataComponent="mobile_contracts-new_voucher_full-price-field" label="총 서비스 금액" required>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_voucher_full-price-field"
+                      label="총 서비스 금액"
+                      required
+                      message={getLabelMessage("fullPrice")}
+                    >
                       <div className={styles.priceInput}>
                         <input
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_full-price-input"
@@ -1539,12 +1865,18 @@ export default function ContractCreationPage() {
                           value={formatPrice(fullPrice)}
                           onChange={(e) => handlePriceChange("fullPrice", parsePrice(e.target.value))}
                           inputMode="numeric"
-                          placeholder="0"
+                          placeholder={registeredPlaceholder("fullPrice", "0", formatPrice)}
+                          aria-describedby={getLabelMessage("fullPrice")?.id}
                         />
                         <span>원</span>
                       </div>
-                    </Field>
-                    <Field dataComponent="mobile_contracts-new_voucher_grant-field" label="정부지원금" required>
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_voucher_grant-field"
+                      label="정부지원금"
+                      required
+                      message={getLabelMessage("grant")}
+                    >
                       <div className={styles.priceInput}>
                         <input
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_grant-input"
@@ -1552,12 +1884,18 @@ export default function ContractCreationPage() {
                           value={formatPrice(grant)}
                           onChange={(e) => handlePriceChange("grant", parsePrice(e.target.value))}
                           inputMode="numeric"
-                          placeholder="0"
+                          placeholder={registeredPlaceholder("grant", "0", formatPrice)}
+                          aria-describedby={getLabelMessage("grant")?.id}
                         />
                         <span>원</span>
                       </div>
-                    </Field>
-                    <Field dataComponent="mobile_contracts-new_voucher_actual-price-field" label="본인부담금" required>
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_voucher_actual-price-field"
+                      label="본인부담금"
+                      required
+                      message={getLabelMessage("actualPrice")}
+                    >
                       <div className={styles.priceInput}>
                         <input
                           data-component="mobile_contracts-new_screen_root_page_root_form-scroll_price-card_actual-price-input"
@@ -1565,11 +1903,12 @@ export default function ContractCreationPage() {
                           value={formatPrice(actualPrice)}
                           onChange={(e) => handlePriceChange("actualPrice", parsePrice(e.target.value))}
                           inputMode="numeric"
-                          placeholder="0"
+                          placeholder={registeredPlaceholder("actualPrice", "0", formatPrice)}
+                          aria-describedby={getLabelMessage("actualPrice")?.id}
                         />
                         <span>원</span>
                       </div>
-                    </Field>
+                    </ContractFormField>
                   </div>
                 </>
               ) : null}
@@ -1580,88 +1919,88 @@ export default function ContractCreationPage() {
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_period-card-title">
                       서비스 기간
                     </div>
-                    <div className={styles.formGrid2}>
-                      <Field
-                        dataComponent="mobile_contracts-new_review_start-date-field"
-                        label="시작일"
-                        htmlFor={CONTRACT_START_DATE_INPUT_ID}
-                        required
-                      >
-                        <input
-                          id={CONTRACT_START_DATE_INPUT_ID}
-                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_start-date-input"
-                          className={styles.formInput}
-                          value={startDateInput}
-                          onChange={(e) => handleDateInputChange(setStartDateInput, setStartDate, e.target.value)}
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="YYMMDD"
-                          aria-invalid={contractDateValidation?.field === "startDate" ? "true" : undefined}
-                          aria-describedby={contractDateValidation?.field === "startDate" ? CONTRACT_DATE_ERROR_ID : undefined}
-                        />
-                      </Field>
-                      <Field
-                        dataComponent="mobile_contracts-new_review_end-date-field"
-                        label="종료일"
-                        htmlFor={CONTRACT_END_DATE_INPUT_ID}
-                        required
-                      >
-                        <input
-                          id={CONTRACT_END_DATE_INPUT_ID}
-                          data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_end-date-input"
-                          className={styles.formInput}
-                          value={endDateInput}
-                          onChange={(e) => handleDateInputChange(setEndDateInput, setEndDate, e.target.value)}
-                          inputMode="numeric"
-                          maxLength={6}
-                          placeholder="YYMMDD"
-                          aria-invalid={contractDateValidation?.field === "endDate" ? "true" : undefined}
-                          aria-describedby={contractDateValidation?.field === "endDate" ? CONTRACT_DATE_ERROR_ID : undefined}
-                        />
-                      </Field>
-                    </div>
-                    <div className={styles.formHelper}>
-                      시작일 + 바우처 기간으로 종료일이 자동 계산됩니다 (주말·공휴일 제외).
-                    </div>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_review_start-date-field"
+                      label="시작일"
+                      htmlFor={CONTRACT_START_DATE_INPUT_ID}
+                      required
+                      message={startDateMessage}
+                    >
+                      <input
+                        id={CONTRACT_START_DATE_INPUT_ID}
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_start-date-input"
+                        className={styles.formInput}
+                        value={startDateInput}
+                        onChange={(e) => {
+                          fieldInteractions.onChange("startDate", startDateInput, formatIsoDateInput(e.target.value));
+                          handleDateInputChange(setStartDateInput, setStartDate, e.target.value);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("startDate")}
+                        onBlur={(e) => fieldInteractions.onBlur("startDate", e.currentTarget.value)}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder={registeredPlaceholder("startDate", START_DATE_PLACEHOLDER)}
+                        aria-invalid={startDateFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={startDateMessage?.id}
+                      />
+                    </ContractFormField>
+                    <ContractFormField
+                      dataComponent="mobile_contracts-new_review_end-date-field"
+                      label="종료일"
+                      htmlFor={CONTRACT_END_DATE_INPUT_ID}
+                      required
+                      message={endDateMessage}
+                    >
+                      <input
+                        id={CONTRACT_END_DATE_INPUT_ID}
+                        data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_end-date-input"
+                        className={styles.formInput}
+                        value={endDateInput}
+                        onChange={(e) => {
+                          fieldInteractions.onChange("endDate", endDateInput, formatIsoDateInput(e.target.value));
+                          handleDateInputChange(setEndDateInput, setEndDate, e.target.value);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("endDate")}
+                        onBlur={(e) => fieldInteractions.onBlur("endDate", e.currentTarget.value)}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder={registeredPlaceholder("endDate", END_DATE_PLACEHOLDER)}
+                        aria-invalid={endDateFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={endDateMessage?.id}
+                      />
+                    </ContractFormField>
                   </div>
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card">
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-card-title">
                       결제 정보
                     </div>
-                    <Field
+                    <ContractFormField
                       dataComponent="mobile_contracts-new_review_payment-date-field"
                       label="본인부담금 수령 날짜"
                       htmlFor={CONTRACT_PAYMENT_DATE_INPUT_ID}
                       required
+                      message={paymentDateMessage}
                     >
                       <input
                         id={CONTRACT_PAYMENT_DATE_INPUT_ID}
                         data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_payment-date-input"
                         className={styles.formInput}
                         value={effectivePaymentDateInput}
-                        onChange={(e) => handleDateInputChange(setPaymentDateInput, setPaymentDate, e.target.value, true)}
+                        onChange={(e) => {
+                          fieldInteractions.onChange("paymentDate", effectivePaymentDateInput, formatIsoDateInput(e.target.value));
+                          handleDateInputChange(setPaymentDateInput, setPaymentDate, e.target.value, true);
+                        }}
+                        onFocus={() => fieldInteractions.onFocus("paymentDate")}
+                        onBlur={(e) => fieldInteractions.onBlur("paymentDate", e.currentTarget.value)}
                         inputMode="numeric"
-                        maxLength={6}
-                        placeholder="YYMMDD"
-                        aria-invalid={contractDateValidation?.field === "paymentDate" ? "true" : undefined}
-                        aria-describedby={contractDateValidation?.field === "paymentDate" ? CONTRACT_DATE_ERROR_ID : undefined}
+                        maxLength={10}
+                        placeholder={PAYMENT_DATE_PLACEHOLDER}
+                        aria-invalid={paymentDateFieldMessage?.slot === "field-error-message" ? "true" : undefined}
+                        aria-describedby={paymentDateMessage?.id}
                       />
-                    </Field>
+                    </ContractFormField>
                   </div>
-
-                  {contractDateValidation ? (
-                    <div
-                      id={CONTRACT_DATE_ERROR_ID}
-                      role="alert"
-                      aria-live="polite"
-                      className={cn(styles.formHelper, styles.helper_err)}
-                      data-component="mobile_contracts-new_screen_root_page_root_form-scroll_payment-card_date-error"
-                      data-testid="contract-creation-date-range-error"
-                    >
-                      {contractDateValidation.message}
-                    </div>
-                  ) : null}
 
                   <div className={styles.formCard} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card">
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_summary-card_summary-card-title">
@@ -1749,6 +2088,50 @@ export default function ContractCreationPage() {
         onCancel={() => resolveConfirmation(false)}
         onConfirm={() => resolveConfirmation(true)}
       />
+
+      <MobileTwoButtonModal
+        data-component="mobile_contracts-new_confirmation_client-diff-modal"
+        open={clientDiffPrompt !== null}
+        title="고객 정보와 다른 내용이 있어요"
+        description="계약서에 입력한 내용이 저장된 고객 정보와 달라요. 고객 정보도 함께 수정할까요?"
+        cancelLabel="계약서에만 반영"
+        confirmLabel="고객 정보도 수정"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        onOpenChange={(open) => {
+          if (!open) resolveClientDiffDecision("cancel");
+        }}
+        onCancel={() => resolveClientDiffDecision("contract-only")}
+        onConfirm={() => resolveClientDiffDecision("update-client")}
+      >
+        <ul
+          className={styles.clientDiffList}
+          data-component="mobile_contracts-new_confirmation_client-diff-modal_list"
+        >
+          {clientDiffPrompt?.rows.map((row) => (
+            <li
+              key={row.key}
+              className={styles.clientDiffRow}
+              data-component="mobile_contracts-new_confirmation_client-diff-modal_row"
+            >
+              <span className={styles.clientDiffLabel}>{row.label}</span>
+              <span className={styles.clientDiffValue}>
+                <del className={styles.clientDiffOld}>{row.oldDisplay}</del>
+                {" → "}
+                <strong className={styles.clientDiffNew}>{row.newDisplay}</strong>
+              </span>
+            </li>
+          ))}
+        </ul>
+        {clientDiffPrompt?.showPeriodLockedNote ? (
+          <p
+            className={styles.clientDiffNote}
+            data-component="mobile_contracts-new_confirmation_client-diff-modal_period-locked-note"
+          >
+            {CLIENT_DIFF_PERIOD_LOCKED_NOTE}
+          </p>
+        ) : null}
+      </MobileTwoButtonModal>
 
       <MobileTwoButtonModal
         data-component="mobile_contracts-new_confirmation_existing-contract-modal"

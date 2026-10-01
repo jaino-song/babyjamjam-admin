@@ -20,6 +20,8 @@ export interface TitleTextInputMoleculeProps
   labelRowClassName?: string;
   labelClassName?: string;
   labelTrailing?: React.ReactNode;
+  /** Merged into the trailing slot's classes, e.g. to let a long message wrap instead of staying on one line. */
+  labelTrailingClassName?: string;
   dataComponent?: string;
   inputDataComponent?: string;
   labelRowDataComponent?: string;
@@ -47,6 +49,7 @@ export const TitleTextInputMolecule = React.forwardRef<
       labelRowClassName,
       labelClassName,
       labelTrailing,
+      labelTrailingClassName,
       variant = "v3",
       className,
       dataComponent = "desktop_v3_title-text-input-molecule",
@@ -76,7 +79,7 @@ export const TitleTextInputMolecule = React.forwardRef<
           <Label
             htmlFor={fieldId}
             className={cn(
-              "text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
+              "shrink-0 whitespace-nowrap text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted",
               labelClassName,
             )}
           >
@@ -86,7 +89,7 @@ export const TitleTextInputMolecule = React.forwardRef<
           {labelTrailing ? (
             <div
               data-component={labelTrailingDataComponent}
-              className="flex min-h-[0.6875rem] shrink-0 items-center"
+              className={cn("flex min-h-[0.6875rem] shrink-0 items-center", labelTrailingClassName)}
             >
               {labelTrailing}
             </div>
