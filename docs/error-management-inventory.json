@@ -76661,6 +76661,513 @@
       "review_task": "dev-sync-bjj319",
       "spec_mapping_status": "pending-dev-sync",
       "spec_mapping_note": "Files first matched by the raw_http_exception pattern at the dev-sync merge state; admission recorded here, mapping pending conversion."
+    },
+    {
+      "id": "owner-75c5fb58e742",
+      "path": "backend/application/services/holiday-override.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a codeOnlyProblemBody with a registered catalog code. holidayProblem() builds HttpException(codeOnlyProblemBody(code), PROBLEM_CATALOG[code].status) so status always equals the catalog status: HOLIDAY_NAME_REQUIRED 400, HOLIDAY_NOT_WEEKDAY 400, HOLIDAY_DATE_IN_PAST 409, HOLIDAY_YEAR_UNSUPPORTED 409, HOLIDAY_ALREADY_PUBLIC 409, HOLIDAY_NOT_PUBLIC 409, HOLIDAY_OVERRIDE_EXISTS 409 (also mapped from HolidayOverrideConflictError); deleteOverride throws NotFoundException(RESOURCE_NOT_FOUND) 404 for a missing or concurrently removed override. No raw-shaped 500 statement.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 35,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 36,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 70,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 72,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 82,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 83,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 87,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 88,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 98,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 113,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 114,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 115,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 126,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 127,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 130,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CAT-02",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "HOLIDAY_NAME_REQUIRED",
+        "HOLIDAY_NOT_WEEKDAY",
+        "HOLIDAY_DATE_IN_PAST",
+        "HOLIDAY_YEAR_UNSUPPORTED",
+        "HOLIDAY_ALREADY_PUBLIC",
+        "HOLIDAY_NOT_PUBLIC",
+        "HOLIDAY_OVERRIDE_EXISTS",
+        "RESOURCE_NOT_FOUND"
+      ],
+      "outcome_evidence": "All guards run before or inside the override transaction and reject without a committed write (NOT_APPLIED); the revision cache is invalidated in finally so a rejection after a commit cannot serve a stale calendar.",
+      "consumer_paths": [
+        "HTTP holiday.controller (POST/DELETE branches/:branchId/holidays/overrides)",
+        "frontend BFF branches/[branchId]/holidays/overrides routes"
+      ],
+      "test_evidence": [
+        "backend/application/services/holiday-override.service.spec.ts",
+        "backend/interface/controllers/holiday.controller.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "holiday override guards; catalog codes only, status derived from PROBLEM_CATALOG"
+    },
+    {
+      "id": "owner-c0cb4a7aa48e",
+      "path": "backend/application/services/holiday-review-resolve.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. On-contract: the only throws are NotFoundException(codeOnlyProblemBody(RESOURCE_NOT_FOUND)) 404 at assertEventVisible (L156) and prepareFix (L184); the HttpException reference at L296 is a read-only instanceof check on ClientService.update failures (reads SERVICE_RECORD_WRITE_TARGET_CHANGED via problemCodeOf), not a throw. Per-item failures never become a request error: they are returned as skipped[] item codes (ITEM_NOT_FOUND, ITEM_NOT_OPEN, ITEM_RISK, UPDATE_FAILED, ...) in a 200 body, which are batch-result codes, not problem-contract codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 61,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 143,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 156,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 184,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 214,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 219,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 295,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 296,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 320,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-ASYNC-01",
+        "EM-STATE-01",
+        "EM-SEC-02"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND"
+      ],
+      "outcome_evidence": "Event visibility and calendar load fail the request before any item is changed (NOT_APPLIED); once items run, a failing item is isolated into skipped[] so a partial batch is reported as fixed/kept counts plus skipped items, never as total failure.",
+      "consumer_paths": [
+        "HTTP holiday-review.controller",
+        "frontend BFF branches/[branchId]/holidays/review-events routes"
+      ],
+      "test_evidence": [
+        "backend/application/services/holiday-review-resolve.service.spec.ts",
+        "backend/test/integration/holiday-review.controller.integration.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "tenant-scoped review use case; request-level 404 plus per-item skip codes for partial success"
+    },
+    {
+      "id": "owner-32a0da5617ed",
+      "path": "backend/application/services/holiday-sync.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. On-contract: the single throw is HttpException(codeOnlyProblemBody(REQUEST_RATE_LIMITED), 429) in syncManually (L59), matching the catalog status for REQUEST_RATE_LIMITED, enforcing one manual attempt per 5 minutes per process. The scheduled run and per-year sync never throw to a caller (per-year failures are returned as results).",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 42,
+          "kinds": [
+            "job_boundary"
+          ]
+        },
+        {
+          "line": 49,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 59,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 101,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-RETRY-01",
+        "EM-RETRY-06"
+      ],
+      "public_codes": [
+        "REQUEST_RATE_LIMITED"
+      ],
+      "outcome_evidence": "Cooldown rejection happens before any KASI fetch or write (NOT_APPLIED); the catalog detail tells the user to wait and check status.",
+      "consumer_paths": [
+        "HTTP holiday-sync.controller (POST branches/:branchId/holidays/sync)",
+        "frontend BFF branches/[branchId]/holidays/sync route"
+      ],
+      "test_evidence": [
+        "backend/application/services/holiday-sync.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "manual sync cooldown; scheduled path is non-throwing"
+    },
+    {
+      "id": "owner-454028145a8d",
+      "path": "backend/interface/controllers/holiday-review.controller.ts",
+      "root": "backend/interface/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. On-contract: assertEventId throws NotFoundException(codeOnlyProblemBody(RESOURCE_NOT_FOUND)) 404 for a malformed event id (L76), and assertOwnBranch throws ForbiddenException(codeOnlyProblemBody(ACCESS_DENIED)) 403 when the path branch differs from the tenant branch (L81). Other failures come from the guards and the service.",
+      "seams": [
+        {
+          "line": 4,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 7,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 35,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 42,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 58,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 76,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 81,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "ACCESS_DENIED"
+      ],
+      "outcome_evidence": "Pre-service rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /branches/:branchId/holidays/review-events",
+        "frontend BFF branches/[branchId]/holidays/review-events routes"
+      ],
+      "test_evidence": [
+        "backend/interface/controllers/holiday-review.controller.spec.ts",
+        "backend/test/integration/holiday-review.controller.integration.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "own-branch and id-shape guards; malformed id answers like a missing event"
+    },
+    {
+      "id": "owner-fffe9cda9eb1",
+      "path": "backend/interface/controllers/holiday-sync.controller.ts",
+      "root": "backend/interface/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. On-contract: the single throw is ForbiddenException(codeOnlyProblemBody(ACCESS_DENIED)) 403 when the path branch differs from the tenant branch (L25); the 429 comes from HolidaySyncService.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 20,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 25,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "ACCESS_DENIED"
+      ],
+      "outcome_evidence": "Pre-service rejection; no sync has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP POST /branches/:branchId/holidays/sync",
+        "frontend BFF branches/[branchId]/holidays/sync route"
+      ],
+      "test_evidence": [
+        "backend/interface/controllers/holiday-sync.controller.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "own-branch guard before the manual sync"
+    },
+    {
+      "id": "owner-51c2a0dc8918",
+      "path": "backend/interface/controllers/holiday.controller.ts",
+      "root": "backend/interface/",
+      "classification": "migrated",
+      "reason": "Missed by the 1.1 scan window (holiday-api-sync feature, merged to dev via 4299cbc65); discovered unclassified by the raw-error intake gate. On-contract: deleteOverride throws NotFoundException(codeOnlyProblemBody(RESOURCE_NOT_FOUND)) 404 for a malformed override id (L59), and assertOwnBranch throws ForbiddenException(codeOnlyProblemBody(ACCESS_DENIED)) 403 when the path branch differs from the tenant branch (L66). Override-rule 400/409 codes come from HolidayOverrideService.",
+      "seams": [
+        {
+          "line": 5,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 7,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 34,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 43,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 54,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 59,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 66,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "holiday-api-sync",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "ACCESS_DENIED"
+      ],
+      "outcome_evidence": "Pre-service rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /branches/:branchId/holidays and /holidays/overrides",
+        "frontend BFF branches/[branchId]/holidays routes",
+        "mobile BFF branches/[branchId]/holidays route"
+      ],
+      "test_evidence": [
+        "backend/interface/controllers/holiday.controller.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "holiday-sync-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "own-branch and id-shape guards for the holiday calendar and override endpoints"
     }
   ]
 }
