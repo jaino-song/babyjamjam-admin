@@ -102,6 +102,13 @@ const BRANCH_CALENDAR_REFETCHED = createKrBusinessDayCalendar([...getKoreanHolid
   supportedYears: [2026],
 });
 
+// A calendar that has not been synced for 2028 yet: any calculation reaching it throws.
+const UNSUPPORTED_2028_CALENDAR = createKrBusinessDayCalendar(getKoreanHolidays(2027), {
+  version: "kr-db-unsupported-2028",
+  supportedYears: [2026, 2027],
+});
+const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.";
+
 function calendarResult(overrides: Partial<UseBusinessDayCalendarResult>): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? KR_BUILTIN_CALENDAR;
   return {
@@ -248,5 +255,45 @@ describe("mobile client wizard on the branch holiday calendar", () => {
 
     const lastCall = mockedCalendarHook.mock.calls.at(-1)?.[0];
     expect(lastCall?.extraYears).toEqual(expect.arrayContaining([2024, 2025]));
+  });
+
+  it("clears the stale end date, shows the notice and blocks saving for a year the calendar does not support", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    renderCreate();
+    act(() => {
+      useClientWizardStore.setState({ startDate: "2027-11-01", endDate: "2027-11-19" });
+    });
+
+    // 15 business days from 2027-12-15 reach 2028.
+    fireEvent.change(screen.getByDisplayValue("2027-11-01"), { target: { value: "2027-12-15" } });
+
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe(""));
+    expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "등록" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    expect(mockCreateClient).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByDisplayValue("2027-12-15"), { target: { value: "2027-11-01" } });
+
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe("2027-11-19"));
+    expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "등록" })).toBeEnabled();
+  });
+
+  it("drops the unsupported-year notice once the user types an end date", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    renderCreate();
+    act(() => {
+      useClientWizardStore.setState({ startDate: "2027-11-01", endDate: "2027-11-19" });
+    });
+    fireEvent.change(screen.getByDisplayValue("2027-11-01"), { target: { value: "2027-12-15" } });
+    await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+
+    fireEvent.change(screen.getByPlaceholderText("2026-12-19"), { target: { value: "2028-01-12" } });
+
+    expect(useClientWizardStore.getState().endDate).toBe("2028-01-12");
+    expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "등록" })).toBeEnabled();
   });
 });

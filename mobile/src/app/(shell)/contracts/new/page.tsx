@@ -275,6 +275,9 @@ export default function ContractCreationPage() {
   const calendarRef = useRef(calendar);
   calendarRef.current = calendar;
   const endDateCalcSkippedRef = useRef(false);
+  // The auto calculation reached a year the branch calendar does not cover. The end date is
+  // cleared (never left stale), a notice is shown and submitting is blocked until it is resolved.
+  const [endDateUnsupported, setEndDateUnsupported] = useState(false);
   const endDateCalcInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } =
@@ -584,11 +587,13 @@ export default function ContractCreationPage() {
     if (!inputsChanged && !endDateCalcSkippedRef.current) return;
     if (!startDate || !voucherDuration) {
       endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
       return;
     }
     const n = parseInt(voucherDuration, 10);
     if (!Number.isFinite(n) || n <= 0) {
       endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
       return;
     }
     if (!calendarReady) {
@@ -598,9 +603,13 @@ export default function ContractCreationPage() {
     endDateCalcSkippedRef.current = false;
     try {
       const endIso = calendarRef.current.calcEndDateBusinessDays(startDate, n);
+      setEndDateUnsupported(false);
       if (endIso) setEndDate(endIso);
     } catch {
-      // A year the branch calendar does not cover: leave the end date to the user.
+      // A year the branch calendar does not cover: clear the end date instead of keeping the
+      // previous one, and leave it to the user (the server validates a typed date).
+      setEndDate("");
+      setEndDateUnsupported(true);
     }
   }, [calendarReady, startDate, voucherDuration, setEndDate]);
 
@@ -691,7 +700,10 @@ export default function ContractCreationPage() {
         setStartDate(startNorm);
         setPaymentDate(defaultPaymentDate);
       }
-      if (client.endDate) setEndDate(normalizeIsoDate(client.endDate));
+      if (client.endDate) {
+        setEndDate(normalizeIsoDate(client.endDate));
+        setEndDateUnsupported(false);
+      }
       if (client.primaryEmployee && employees) {
         const primaryEmp = employees.find((e) => e.id === client.primaryEmployee?.id);
         if (primaryEmp) {
@@ -1058,7 +1070,7 @@ export default function ContractCreationPage() {
 
   const handleSubmit = async () => {
     // The saved end date depends on the branch calendar.
-    if (!calendarReady) return;
+    if (!calendarReady || endDateUnsupported) return;
     if (contractDateProblem) {
       setActiveStep(WIZARD_STEPS.length - 1);
       revealStepMessages(WIZARD_STEPS.length - 1);
@@ -1476,7 +1488,7 @@ export default function ContractCreationPage() {
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
   const isBusy = isSubmitting || isNavigationPending;
-  const isPrimaryDisabled = isBusy || Boolean(submissionLock) || (isLastStep && !calendarReady);
+  const isPrimaryDisabled = isBusy || Boolean(submissionLock) || (isLastStep && (!calendarReady || endDateUnsupported));
 
   return (
     <>
@@ -1978,7 +1990,7 @@ export default function ContractCreationPage() {
                       서비스 기간
                     </div>
                     <CalendarLoadNotice
-                      error={calendarError}
+                      error={calendarError ?? (endDateUnsupported ? "unsupported-year" : null)}
                       onRetry={retryCalendar}
                       loading={!calendarReady && !calendarError}
                       dataComponent="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_calendar-notice"
@@ -2023,6 +2035,7 @@ export default function ContractCreationPage() {
                         onChange={(e) => {
                           // A manual end date wins over a calculation that was waiting for the calendar.
                           endDateCalcSkippedRef.current = false;
+                          setEndDateUnsupported(false);
                           fieldInteractions.onChange("endDate", endDateInput, formatIsoDateInput(e.target.value));
                           handleDateInputChange(setEndDateInput, setEndDate, e.target.value);
                         }}

@@ -392,26 +392,28 @@ function getClientCalendarYears(startDate: string, endDate: string): number[] {
     return [...years];
 }
 
-// 시작일과 서비스 기간으로 종료일을 다시 계산한 폼 값이에요. 달력이 지원하지 않는 연도면 종료일을 그대로 둬요.
-function withAutoEndDate(prev: ClientFormData, calendar: KrBusinessDayCalendar): ClientFormData {
-    const duration = prev.duration;
-    const startDate = prev.startDate ?? "";
+// 시작일과 서비스 기간으로 자동 계산한 종료일이에요. 달력이 지원하지 않는 연도에 닿으면 종료일을 비우고 unsupported로 알려요.
+function resolveAutoEndDate(
+    duration: number | null | undefined,
+    startDate: string,
+    calendar: KrBusinessDayCalendar,
+): { endDate: string; unsupported: boolean } {
+    if (!duration || !isRealIsoDate(startDate)) return { endDate: "", unsupported: false };
 
-    if (!duration || !isRealIsoDate(startDate)) {
-        return prev.endDate ? { ...prev, endDate: "" } : prev;
-    }
-
-    let computedEndDate: string;
     try {
-        computedEndDate = normalizeDateForDisplayState(calendar.calcEndDateBusinessDays(startDate, duration));
+        return {
+            endDate: normalizeDateForDisplayState(calendar.calcEndDateBusinessDays(startDate, duration)),
+            unsupported: false,
+        };
     } catch {
-        return prev;
+        return { endDate: "", unsupported: true };
     }
+}
 
-    return prev.endDate === computedEndDate ? prev : {
-        ...prev,
-        endDate: computedEndDate,
-    };
+// 시작일과 서비스 기간으로 종료일을 다시 계산한 폼 값이에요.
+function withAutoEndDate(prev: ClientFormData, calendar: KrBusinessDayCalendar): ClientFormData {
+    const { endDate } = resolveAutoEndDate(prev.duration, prev.startDate ?? "", calendar);
+    return (prev.endDate ?? "") === endDate ? prev : { ...prev, endDate };
 }
 
 function ClientFormContent({
@@ -737,9 +739,16 @@ function ClientFormContent({
     const businessDayCalendarRef = useRef(businessDayCalendar);
     businessDayCalendarRef.current = businessDayCalendar;
 
+    // 자동 계산이 달력이 지원하지 않는 연도에 닿아 종료일을 비웠는지. 안내를 보여 주고 저장을 막아요.
+    const [isEndDateUnsupported, setIsEndDateUnsupported] = useState(false);
+    const autoEndDateInputsRef = useRef({ duration: formData.duration, startDate: formData.startDate ?? "" });
+    autoEndDateInputsRef.current = { duration: formData.duration, startDate: formData.startDate ?? "" };
+
     const recalculateEndDate = useCallback(() => {
         const calendar = businessDayCalendarRef.current;
+        const { duration, startDate } = autoEndDateInputsRef.current;
         queueMicrotask(() => {
+            setIsEndDateUnsupported(resolveAutoEndDate(duration, startDate, calendar).unsupported);
             setFormData(prev => withAutoEndDate(prev, calendar));
         });
     }, []);
@@ -898,6 +907,7 @@ function ClientFormContent({
             queueMicrotask(() => {
                 formDataBaselineRef.current = nextFormData;
                 setFormData(nextFormData);
+                setIsEndDateUnsupported(false);
                 setInitializedEditClientId(client?.id ?? null);
                 setHasUserEditedSinceOpen(false);
                 setPricesManuallyEdited(nextPricesManuallyEdited);
@@ -930,6 +940,7 @@ function ClientFormContent({
         ) as Partial<ClientFormData>;
         skipNextEndDateRecalculationRef.current = true;
         queueMicrotask(() => {
+            setIsEndDateUnsupported(false);
             setFormData((current) => {
                 const nextFormData = {
                     ...current,
@@ -968,7 +979,10 @@ function ClientFormContent({
     const inputValueOf = (field: ClientInputField): string => String(formData[field] ?? "");
 
     const handleInputChange = (field: ClientInputField, value: string) => {
-        if (field === "endDate") pendingAutoEndDateRef.current = false;
+        if (field === "endDate") {
+            pendingAutoEndDateRef.current = false;
+            setIsEndDateUnsupported(false);
+        }
         fields.onChange(field, inputValueOf(field), value);
         handleChange(field, value);
     };
@@ -1146,7 +1160,8 @@ function ClientFormContent({
     };
 
     // 서비스 기간 검증은 지점 달력으로 하므로 달력이 준비되기 전에는 저장하지 않아요. (빈 갱신만 보내는 옛 고객 수정은 달력을 쓰지 않아요.)
-    const isCalendarBlockingSubmit = !isCalendarReady && !isLegacyNoopEdit;
+    // 종료일을 계산하지 못한 채(지원하지 않는 연도)로도 저장하지 않아요. 직접 입력하거나 기간을 바꾸면 풀려요.
+    const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
     const handleSubmit = async (confirmedPeriod?: string) => {
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit) return;
@@ -1322,11 +1337,11 @@ function ClientFormContent({
         || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
     // 달력은 마지막 단계의 저장 버튼만 막아요. 다음 단계로 가는 것은 달력과 무관해요.
     const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit;
-    const calendarLoadNotice = isCalendarReady ? null : (
+    const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported ? null : (
         <CalendarLoadNotice
-            error={calendarError}
+            error={calendarError ?? (isEndDateUnsupported ? "unsupported-year" : null)}
             onRetry={retryCalendar}
-            loading={!calendarError}
+            loading={!isCalendarReady && !calendarError}
             dataComponent={`${base}_calendar-load-notice`}
         />
     );

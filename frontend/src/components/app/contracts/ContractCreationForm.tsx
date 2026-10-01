@@ -759,6 +759,8 @@ export const ContractCreationForm = ({
   } = useBusinessDayCalendar({ extraYears: getContractCalendarYears(startDate, endDate) });
   // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요.
   const pendingAutoEndDateRef = useRef(false);
+  // 자동 계산이 달력이 지원하지 않는 연도에 닿아 종료일을 계산하지 못했는지. 이전 종료일을 남기지 않고 비운 채 안내해요.
+  const [isEndDateUnsupported, setIsEndDateUnsupported] = useState(false);
 
   // Sync display inputs when external date state changes (e.g., client autofill).
   useEffect(() => { setDueDateInput(toIsoDateOnly(dueDate)); }, [dueDate]);
@@ -802,15 +804,21 @@ export const ContractCreationForm = ({
     try {
       const computed = businessDayCalendar.calcEndDateBusinessDays(startDate, n);
       if (computed) setEndDate(computed);
+      setIsEndDateUnsupported(false);
     } catch {
-      // 달력이 지원하지 않는 연도면 종료일을 건드리지 않고 직접 입력하게 둬요.
+      // 달력이 지원하지 않는 연도면 이전 종료일이 남지 않게 비우고, 직접 입력하거나 기간을 바꾸도록 안내해요.
+      setEndDate("");
+      setIsEndDateUnsupported(true);
     }
   }, [businessDayCalendar, startDate, voucherDuration, setEndDate]);
   const applyAutoEndDateRef = useRef(applyAutoEndDate);
   applyAutoEndDateRef.current = applyAutoEndDate;
 
   useEffect(() => {
-    if (!startDate || !voucherDuration) return;
+    if (!startDate || !voucherDuration) {
+      setIsEndDateUnsupported(false);
+      return;
+    }
     if (!isCalendarReady) {
       pendingAutoEndDateRef.current = true;
       return;
@@ -990,6 +998,7 @@ export const ContractCreationForm = ({
       const clientEndDate = toIsoDateOnly(client.endDate ?? "");
       if (clientEndDate) {
         setEndDate(clientEndDate);
+        setIsEndDateUnsupported(false);
       }
 
       if (client.primaryEmployee && employees) {
@@ -1909,7 +1918,7 @@ export const ContractCreationForm = ({
   };
 
   const handleWizardComplete = () => {
-    if (!isCalendarReady) return;
+    if (!isCalendarReady || isEndDateUnsupported) return;
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (problemTarget) {
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
@@ -2397,6 +2406,7 @@ export const ContractCreationForm = ({
                   const formatted = formatIsoDateInput(e.target.value);
                   fields.onChange("endDate", endDateInput, formatted);
                   pendingAutoEndDateRef.current = false;
+                  setIsEndDateUnsupported(false);
                   setEndDateInput(formatted);
                   if (formatted.length === 10) setEndDate(formatted);
                   else if (formatted.length === 0) setEndDate("");
@@ -2436,7 +2446,7 @@ export const ContractCreationForm = ({
             </div>
           </div>
           <CalendarLoadNotice
-            error={calendarError}
+            error={calendarError ?? (isEndDateUnsupported ? "unsupported-year" : null)}
             onRetry={retryCalendar}
             loading={!isCalendarReady && !calendarError}
             dataComponent="desktop_contracts_creation_form_calendar-load-notice"
@@ -2561,7 +2571,7 @@ export const ContractCreationForm = ({
             size="sm"
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady}
+            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady || isEndDateUnsupported}
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}

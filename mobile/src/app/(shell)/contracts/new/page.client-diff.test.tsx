@@ -850,4 +850,52 @@ describe("mobile contract form - branch holiday calendar", () => {
     const lastCall = mockedCalendarHook.mock.calls.at(-1)?.[0];
     expect(lastCall?.extraYears).toEqual(expect.arrayContaining([2026, 2027]));
   });
+
+  describe("a period that reaches a year the calendar does not support", () => {
+    const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.";
+    // 2028 has not been synced for the branch yet: any calculation reaching it throws.
+    const UNSUPPORTED_2028_CALENDAR = createKrBusinessDayCalendar(
+      [...getKoreanHolidays(2026), ...getKoreanHolidays(2027)],
+      { version: "kr-db-unsupported-2028", supportedYears: [2026, 2027] },
+    );
+    const startDateInput = () => input("period-card_start-date-input");
+
+    beforeEach(() => {
+      mockedCalendarHook.mockReturnValue(calendarResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    });
+
+    it("clears the stale end date, shows the notice and blocks submit, then recovers on a supported start date", async () => {
+      await renderOnPeriodStep();
+      await waitFor(() => expect(endDateInput()).toHaveValue(STORED_END));
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+
+      // 5 business days from 2027-12-30 reach 2028.
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+
+      await waitFor(() => expect(endDateInput()).toHaveValue(""));
+      expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "계약서 생성" })).toBeDisabled();
+      submit();
+      expect(mockDispatchHeadless).not.toHaveBeenCalled();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+
+      fireEvent.change(startDateInput(), { target: { value: STORED_START } });
+
+      await waitFor(() => expect(endDateInput()).toHaveValue(STORED_END));
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+    });
+
+    it("drops the notice once the user types an end date", async () => {
+      await renderOnPeriodStep();
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+      await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+
+      fireEvent.change(endDateInput(), { target: { value: "2028-01-07" } });
+
+      expect(endDateInput()).toHaveValue("2028-01-07");
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    });
+  });
 });
