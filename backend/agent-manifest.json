@@ -202,7 +202,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "ad476bc80619d43873b8ccd64bfc5639c8e320bb6ef41adb2dd423bd2dd8b82e"
+      "sourceDigest": "6b23e4995e4b80667b682971f18c2a3cd69fa6ae8981c5d636b9a899e04d52d1"
     },
     {
       "name": "clients.get",
@@ -257,7 +257,7 @@
       "approvalPolicy": "structured",
       "idempotencyPolicy": "action-id",
       "sourceFile": "application/usecases/client/client-write-agent-capabilities.provider.ts",
-      "sourceDigest": "ad476bc80619d43873b8ccd64bfc5639c8e320bb6ef41adb2dd423bd2dd8b82e"
+      "sourceDigest": "6b23e4995e4b80667b682971f18c2a3cd69fa6ae8981c5d636b9a899e04d52d1"
     },
     {
       "name": "consultations.list",
@@ -367,7 +367,7 @@
       "flagKey": "agent.capability.contracts.recent",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "807c551a41d0c5ec344a713ccccf394540284c7b67273d7f7226337de91d7052"
+      "sourceDigest": "19d7c38c30b3e16177bdcad96a57dbd273507c0ecfb269ff5ee5a8ce6e691913"
     },
     {
       "name": "contracts.status",
@@ -385,7 +385,7 @@
       "flagKey": "agent.capability.contracts.status",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "807c551a41d0c5ec344a713ccccf394540284c7b67273d7f7226337de91d7052"
+      "sourceDigest": "19d7c38c30b3e16177bdcad96a57dbd273507c0ecfb269ff5ee5a8ce6e691913"
     },
     {
       "name": "dashboard.summary",
