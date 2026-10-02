@@ -1654,6 +1654,101 @@ describe("NewMessagePage", () => {
       });
       expect(screen.queryByText("이미 추가된 수신자입니다.")).not.toBeInTheDocument();
     });
+
+    describe("recipient picked from the client dropdown", () => {
+      const secondClient: Client = { ...mockClients[0]!, id: 8, name: "김하나", phone: "01011112222" };
+      const topAlerts = () => document.querySelectorAll('[data-component$="card_body_error"], [role="alert"]');
+
+      async function pickFromDropdown(name: string) {
+        const nameInput = screen.getByLabelText(/산모님 성함/);
+        fireEvent.focus(nameInput);
+        fireEvent.change(nameInput, { target: { value: name } });
+        // The chip row repeats the name of an already-added client; the dropdown row is the other match.
+        const row = await waitFor(() => {
+          const match = screen
+            .getAllByText(name)
+            .find((element) => !element.closest('[data-component$="recipient_row_chips"]'));
+          expect(match).toBeDefined();
+          return match!;
+        });
+        fireEvent.click(row);
+      }
+
+      async function renderWithTemplate() {
+        mockUseAllClients.mockReturnValue({ data: [mockClients[0], secondClient], isLoading: false });
+        renderPage();
+        await openTemplateSelect();
+        fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
+      }
+
+      it("reports an already-added client in the receiver slot only, then clears on the next valid pick", async () => {
+        await renderWithTemplate();
+        await pickFromDropdown("박서연");
+        expect(await screen.findByRole("button", { name: "박서연 수신자 제거" })).toBeInTheDocument();
+        expect(receiverSlot()).toBeEmptyDOMElement();
+
+        await pickFromDropdown("박서연");
+
+        await waitFor(() => {
+          expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요");
+        });
+        expect(screen.getAllByRole("button", { name: "박서연 수신자 제거" })).toHaveLength(1);
+        expect(screen.queryByText(/이미 추가된 수신자(입니다|예요)/, { selector: "[role='alert'] *, [role='alert']" })).not.toBeInTheDocument();
+        expect(topAlerts()).toHaveLength(0);
+
+        await pickFromDropdown("김하나");
+
+        expect(await screen.findByRole("button", { name: "김하나 수신자 제거" })).toBeInTheDocument();
+        expect(receiverSlot()).not.toHaveTextContent("이미 추가된 수신자예요");
+      });
+
+      it("clears the duplicate message when the duplicate recipient is removed", async () => {
+        await renderWithTemplate();
+        await pickFromDropdown("박서연");
+        await pickFromDropdown("박서연");
+        await waitFor(() => expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요"));
+
+        fireEvent.click(screen.getByRole("button", { name: "박서연 수신자 제거" }));
+
+        expect(receiverSlot()).not.toHaveTextContent("이미 추가된 수신자예요");
+      });
+
+      it("clears the duplicate message when the client search text changes", async () => {
+        await renderWithTemplate();
+        await pickFromDropdown("박서연");
+        await pickFromDropdown("박서연");
+        await waitFor(() => expect(receiverSlot()).toHaveTextContent("이미 추가된 수신자예요"));
+
+        fireEvent.change(screen.getByLabelText(/산모님 성함/), { target: { value: "김" } });
+
+        expect(receiverSlot()).not.toHaveTextContent("이미 추가된 수신자예요");
+      });
+
+      it("reports the recipient limit in the slot only when a client is picked at 50 recipients", async () => {
+        await renderWithTemplate();
+        await addManualRecipient(
+          Array.from({ length: 50 }, (_, index) => `010-0000-${String(index + 1).padStart(4, "0")}`).join(","),
+        );
+
+        await pickFromDropdown("박서연");
+
+        await waitFor(() => expect(receiverSlot()).toHaveTextContent("수신자는 최대 50명까지예요"));
+        expect(screen.queryByRole("button", { name: "박서연 수신자 제거" })).not.toBeInTheDocument();
+        expect(topAlerts()).toHaveLength(0);
+      });
+
+      it("reports a client without a phone number in the slot only", async () => {
+        mockUseAllClients.mockReturnValue({ data: [{ ...secondClient, phone: "" }], isLoading: false });
+        renderPage();
+        await openTemplateSelect();
+        fireEvent.click(screen.getByRole("option", { name: "서비스 안내" }));
+
+        await pickFromDropdown("김하나");
+
+        await waitFor(() => expect(receiverSlot()).toHaveTextContent("연락처가 없는 고객이에요"));
+        expect(topAlerts()).toHaveLength(0);
+      });
+    });
   });
 
   describe("body and variable slots", () => {
