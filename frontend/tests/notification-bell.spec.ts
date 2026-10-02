@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const MOCK_NOTIFICATIONS = [
   {
@@ -32,7 +32,7 @@ const MOCK_NOTIFICATIONS = [
 
 const INITIAL_UNREAD_COUNT = 2;
 
-const ensureNotificationBell = async (page) => {
+const ensureNotificationBell = async (page: Page) => {
   const bell = page.locator('[data-testid="notification-bell"]');
   await expect(bell).toBeVisible({ timeout: 15000 });
   return bell;

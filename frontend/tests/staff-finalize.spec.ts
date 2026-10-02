@@ -279,7 +279,8 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     await reviewItem.click();
 
     const previewTrigger = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_preview-trigger"]');
-    await expect(previewTrigger).toHaveRole("button", { name: "문서 보기" });
+    await expect(previewTrigger).toHaveRole("button");
+    await expect(previewTrigger).toHaveAccessibleName("문서 보기");
     await previewTrigger.click();
 
     const previewDialog = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_dialogs_document-preview"]');

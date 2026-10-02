@@ -2,6 +2,12 @@ export type ScreenshotRoute = {
   slug: string;
   path: string;
   auth: "public" | "authenticated";
+  /**
+   * How long to wait before the screenshot. Defaults to "networkidle". Pages that keep a
+   * long-lived connection open (the contracts list holds an SSE stream for eformsign webhooks)
+   * never go network-idle, so they settle on "load" plus a short pause instead.
+   */
+  settle?: "networkidle" | "load";
 };
 
 export const frontendScreenshotRoutes: ScreenshotRoute[] = [
@@ -19,7 +25,7 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "clients", path: "/clients", auth: "authenticated" },
   { slug: "clients-filtered", path: "/clients/filtered", auth: "authenticated" },
   { slug: "clients-new", path: "/clients/new", auth: "authenticated" },
-  { slug: "contracts", path: "/contracts", auth: "authenticated" },
+  { slug: "contracts", path: "/contracts", auth: "authenticated", settle: "load" },
   { slug: "contracts-creation", path: "/contracts/creation", auth: "authenticated" },
   { slug: "dashboard", path: "/dashboard", auth: "authenticated" },
   { slug: "employees", path: "/employees", auth: "authenticated" },

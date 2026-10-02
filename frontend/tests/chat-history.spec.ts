@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const MOCK_CHAT_MESSAGES = [
     { role: 'user', content: '안녕하세요', timestamp: '2026-01-19T10:00:00.000Z' },
@@ -15,7 +15,7 @@ const MOCK_AUTH_RESPONSE = {
     role: 'admin',
 };
 
-const setupAuthMocks = async (page) => {
+const setupAuthMocks = async (page: Page) => {
     await page.addInitScript(() => {
         (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
     });
