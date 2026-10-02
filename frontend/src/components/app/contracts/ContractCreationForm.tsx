@@ -1232,7 +1232,14 @@ export const ContractCreationForm = ({
       // genuinely fresh attempt clears it.
       if (mode !== "manual") setUnverifiedDispatchNotice(null);
       setIsDialogOpen(false);
-      setCreationProgress(INITIAL_CREATION_PROGRESS);
+      // A manual run is the same creation session re-entering after the automatic run
+      // failed, so progress must never drop to "no session" in between: that would
+      // end the session (and the page's 전자문서 생성 step) while the editor opens.
+      setCreationProgress(
+        mode === "manual"
+          ? { step: "client-started", completed: false, failed: false }
+          : INITIAL_CREATION_PROGRESS,
+      );
 
       let autoRegisteredClientId: number | null = null;
       let keepSubmittingUntilDialogCloses = false;

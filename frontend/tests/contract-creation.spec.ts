@@ -643,14 +643,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
   });
 
-  // APP BUG (reported, not fixed here): when the automatic run falls back to the eformsign iframe,
-  // `handleContractCreation` resets the creation progress to INITIAL (ContractCreationForm.tsx:1230)
-  // and only sets it again after awaiting the client update / generate-document calls, so
-  // `hasCreationSession` (ContractCreationForm.tsx:870) flips to false in between, which calls
-  // `onSessionStateChange(false)` (ContractCreationForm.tsx:875) and the contracts page resets the
-  // wizard to step 1 (contracts/page.tsx:651-655). The 전자문서 생성 stepper, the "발송 완료" state
-  // and the 새 전자문서 발송 button are therefore gone once the iframe dialog is open.
-  test.fixme("keeps the 전자문서 생성 step visible while the iframe fallback is open and after success", async ({ page }) => {
+  test("keeps the 전자문서 생성 step visible while the iframe fallback is open and after success", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page);
     await page.route("**/api/clients/1", async (route) =>
@@ -677,6 +670,10 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await expect(page.locator("#eformsign_iframe")).toBeVisible();
     await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
+    // The SDK is opened a beat after the dialog, so wait for it before driving its callback.
+    await expect.poll(async () => {
+      return page.evaluate(() => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
+    }).toBeGreaterThan(0);
 
     await page.evaluate((documentId) => {
       const calls = (window as unknown as {
@@ -787,11 +784,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
   });
 
-  // APP BUG (reported, not fixed here): the page keeps the creation form mounted while a session is
-  // running (`hasContractCreationSession`), but `handleStartContractCreation` in
-  // contracts/page.tsx:618-622 always calls `setContractCreationActiveStep(0)`, so clicking
-  // 전자문서 발송 again lands on step 1 instead of the running 전자문서 생성 step.
-  test.fixme("returns to the in-progress creation detail instead of starting a new send session", async ({ page }) => {
+  test("returns to the in-progress creation detail instead of starting a new send session", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page, {
       documentList: {
@@ -963,12 +956,7 @@ test.describe("Contract creation iframe + success flow", () => {
     expect(sdkCallCount).toBe(0);
   });
 
-  // APP BUG (reported, not fixed here): same root cause as the fixme above. A failed manual/fallback
-  // run ends with `setActiveStep(CONTRACT_INFO_STEP_INDEX)` (ContractCreationForm.tsx:1763), but the
-  // `onSessionStateChange(false)` fired while the progress was reset sends the contracts page's
-  // `setContractCreationActiveStep(0)` (contracts/page.tsx:651-655). Whichever lands last wins, so
-  // the wizard ends on step 1 about one run in eight instead of the 계약 정보 step.
-  test.fixme("iframe fallback failure returns to the contract info step", async ({ page }) => {
+  test("iframe fallback failure returns to the contract info step", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page);
     await page.route("**/api/generate-document", (route) =>
