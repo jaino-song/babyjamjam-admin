@@ -86,8 +86,14 @@ function makeStorageState() {
   };
 }
 
+const LIVE_SKIP_REASON =
+  "Needs a dev backend with the hard-coded dev user/branch below and a live LLM provider. Set RUN_CHAT_LIVE_E2E=1 to run.";
+
 test.describe("Chat live stream smoke", () => {
-  test.use({ storageState: makeStorageState() });
+  // Resolve the signed storage state only when the live run is requested: it reads
+  // JWT_SECRET (or ../backend/.env) and would otherwise throw while the file is collected.
+  test.skip(process.env.RUN_CHAT_LIVE_E2E !== "1", LIVE_SKIP_REASON);
+  test.use({ storageState: process.env.RUN_CHAT_LIVE_E2E === "1" ? makeStorageState() : undefined });
 
   test.beforeEach(async ({ page }) => {
     // Keep the live test deterministic: don't render persisted wizard markers from backend history.
@@ -133,7 +139,7 @@ test.describe("Chat live stream smoke", () => {
     await input.press("Enter");
 
     // Assistant content should stream and include employee/caregiver phrasing + a count.
-    const assistantMessages = page.locator('[data-component="chat-message-assistant"]');
+    const assistantMessages = page.locator('[data-component="desktop_chat_page_message-assistant"]');
     await expect(assistantMessages.last()).toContainText(/제공인력|관리사|직원/, { timeout: 15000 });
     await expect(assistantMessages.last()).toContainText(/\d+\s*명/, { timeout: 15000 });
 
@@ -144,6 +150,33 @@ test.describe("Chat live stream smoke", () => {
 
     const ttfbMs = Date.now() - start;
     console.log(`[chat-live] time-to-first-response-ms=${ttfbMs}`);
+  });
+});
+
+// This case never reaches the LLM, so it runs with the suite's regular signed-in session.
+test.describe("Chat quick actions", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      try {
+        localStorage.removeItem("ai_chat_session_id");
+      } catch {
+        // ignore
+      }
+    });
+
+    await page.route("**/api/ai/chat/history**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          messages: [],
+          total: 0,
+          hasMore: false,
+          sessionId: null,
+          isSessionActive: false,
+        }),
+      });
+    });
   });
 
   test("quick action chip opens wizard without calling SSE", async ({ page }) => {
@@ -161,7 +194,7 @@ test.describe("Chat live stream smoke", () => {
     await expect(page.getByText("AI 어시스턴트")).toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: "산모 등록" }).click();
-    await expect(page.locator('[data-component="chat-wizard-registration"]').first()).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('[data-component="desktop_chat_page_wizard-registration"]').first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByLabel("이름")).toBeVisible({ timeout: 5000 });
 
     expect(sseCalled).toBe(0);

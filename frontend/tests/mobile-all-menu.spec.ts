@@ -3,30 +3,30 @@ import { test, expect } from "@playwright/test";
 test.describe("Mobile nav: center chat + /all menu", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("dashboard hides chat bar on mobile; bottom nav has center chat and /all", async ({ page }) => {
+  test("bottom nav has center chat and /all on mobile", async ({ page }) => {
     await page.goto("/dashboard");
 
-    // ChatWidget bar should not be visible on mobile dashboard.
-    await expect(page.locator('[data-component="chat-widget"]')).toBeHidden();
-
-    const nav = page.locator('[data-component="mobile-bottom-nav"]');
+    const nav = page.locator('[data-component="desktop_chrome_mobile-bottom-nav"]');
     await expect(nav).toBeVisible();
 
     // Center chat button.
-    await expect(page.locator('[data-component="mobile-bottom-nav-chat"]')).toBeVisible();
+    const chatLink = nav.getByRole("link", { name: "어시스턴트" });
+    await expect(chatLink).toBeVisible();
+    await expect(chatLink).toHaveAttribute("href", "/chat");
 
     // "전체" button should exist.
-    await expect(page.locator('[data-component="mobile-bottom-nav-all"]')).toBeVisible();
+    const allLink = nav.getByRole("link", { name: "전체" });
+    await expect(allLink).toBeVisible();
 
     // Navigate to /all.
-    await page.click('[data-component="mobile-bottom-nav-all"]');
+    await allLink.click();
     await expect(page).toHaveURL(/\/all$/);
-    await expect(page.locator('[data-component="all-menu-profile"]')).toBeVisible();
-    await expect(page.locator('[data-component="all-menu-shortcuts"]')).toBeVisible();
-    await expect(page.locator('[data-component="all-menu-nav"]')).toBeVisible();
+    await expect(page.locator('[data-component="desktop_all_menu_profile"]')).toBeVisible();
+    await expect(page.locator('[data-component="desktop_v3_shortcut-grid"]')).toBeVisible();
+    await expect(page.locator('[data-component="desktop_all_menu_content_nav"]')).toBeVisible();
 
     // Navigate to /chat via center button.
-    await page.click('[data-component="mobile-bottom-nav-chat"]');
+    await nav.getByRole("link", { name: "어시스턴트" }).click();
     await expect(page).toHaveURL(/\/chat$/);
   });
 });

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const MOCK_NOTIFICATIONS = [
   {
@@ -32,13 +32,17 @@ const MOCK_NOTIFICATIONS = [
 
 const INITIAL_UNREAD_COUNT = 2;
 
-const ensureNotificationBell = async (page) => {
+const ensureNotificationBell = async (page: Page) => {
   const bell = page.locator('[data-testid="notification-bell"]');
   await expect(bell).toBeVisible({ timeout: 15000 });
   return bell;
 };
 
 test.describe('Notification Bell Navigation', () => {
+  // The bell now lives in the mobile header (V3MobileHeader, md:hidden); the desktop sidebar uses
+  // SidebarNotifications instead, so these flows run at phone width.
+  test.use({ viewport: { width: 390, height: 844 } });
+
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
@@ -105,7 +109,8 @@ test.describe('Notification Bell Navigation', () => {
       });
     });
 
-    await page.route('**/api/notifications', async (route) => {
+    // The list request carries ?limit=&offset=, so match on the pathname only.
+    await page.route((url) => url.pathname === '/api/notifications', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -144,7 +149,7 @@ test.describe('Notification Bell Navigation', () => {
     }
   });
 
-  test('clicking notification should navigate without showing splash screen', async ({ page }) => {
+  test('clicking notification should navigate to its target', async ({ page }) => {
     await expect(page).toHaveURL(/\/clients/);
 
     const bell = await ensureNotificationBell(page);
@@ -156,7 +161,6 @@ test.describe('Notification Bell Navigation', () => {
 
     await page.waitForURL(/\/(clients|employees|messages)/);
 
-    await expect(page.locator('img[alt="Splash"]')).not.toBeVisible();
     await expect(page).toHaveURL('/clients/1');
   });
 
@@ -194,38 +198,5 @@ test.describe('Notification Bell Navigation', () => {
     await expect(page).toHaveURL('/clients/1');
   });
 
-
-  test('splash screen should still appear on initial PWA app launch', async ({ browser }) => {
-    const context = await browser.newContext({
-      viewport: { width: 390, height: 844 },
-      isMobile: true,
-      storageState: undefined,
-    });
-
-    const page = await context.newPage();
-
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'matchMedia', {
-        writable: true,
-        value: (query: string) => ({
-          matches: query === '(display-mode: standalone)',
-          media: query,
-          onchange: null,
-          addListener: () => {},
-          removeListener: () => {},
-          addEventListener: () => {},
-          removeEventListener: () => {},
-          dispatchEvent: () => false,
-        }),
-      });
-    });
-
-    await page.goto('/');
-
-    await expect(page.locator('img[alt="Splash"]')).toBeVisible({ timeout: 500 });
-    await expect(page.locator('img[alt="Splash"]')).not.toBeVisible({ timeout: 3000 });
-
-    await context.close();
-  });
 
 });

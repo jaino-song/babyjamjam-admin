@@ -194,7 +194,7 @@ const FormTextInput = React.forwardRef<HTMLInputElement, FormTextInputProps>(
       data-source-component={FORM_TEXT_INPUT_SOURCE_COMPONENT}
       className={cn(
         APP_FORM_CONTROL_CLASS_NAME,
-        "placeholder:text-muted-foreground",
+        "placeholder:text-muted-foreground/45 placeholder:font-normal",
         error && "border-burgundy focus-visible:border-burgundy",
         className,
       )}
@@ -325,7 +325,7 @@ function FormNativeSelect({
         data-component={selectDataComponent ?? sub("select")}
         className={cn(
           "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-dark outline-none focus:border-primary focus:ring-[3px] focus:ring-inset focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
-          value === "" && "text-text-muted",
+          value === "" && "text-text-muted/45 font-normal",
           className,
         )}
         value={value}

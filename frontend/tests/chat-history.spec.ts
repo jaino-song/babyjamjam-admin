@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 const MOCK_CHAT_MESSAGES = [
     { role: 'user', content: '안녕하세요', timestamp: '2026-01-19T10:00:00.000Z' },
@@ -15,7 +15,7 @@ const MOCK_AUTH_RESPONSE = {
     role: 'admin',
 };
 
-const setupAuthMocks = async (page) => {
+const setupAuthMocks = async (page: Page) => {
     await page.addInitScript(() => {
         (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
     });
@@ -85,14 +85,9 @@ test.describe('Chat History Persistence', () => {
     });
 
     test('should load chat history when modal opens', async ({ page }) => {
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
@@ -115,26 +110,17 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await expect(chatInput).toBeVisible({ timeout: 10000 });
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('고객 검색, 직원 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
     test('should send message and receive response', async ({ page }) => {
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
         const chatPageInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
@@ -147,21 +133,21 @@ test.describe('Chat History Persistence', () => {
         await expect(page.getByText('테스트 응답입니다.')).toBeVisible({ timeout: 10000 });
     });
 
-    test('should close and reopen modal with history preserved', async ({ page }) => {
+    test('should close and reopen the chat with history preserved', async ({ page }) => {
+        // Start from the dashboard so "back" has somewhere to return to.
         await page.goto('/dashboard');
         await page.waitForLoadState('networkidle');
 
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
+        await page.waitForLoadState('networkidle');
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
         await page.getByTestId('chat-back').click();
         await page.waitForURL('**/dashboard', { timeout: 15000 });
 
-        await chatInput.click();
-        await page.waitForURL('**/chat', { timeout: 10000 });
+        await page.goto('/chat');
+        await page.waitForLoadState('networkidle');
 
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
@@ -188,14 +174,13 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        await page.goto('/dashboard');
-        await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        // Do not wait for network idle: the history request is held open on purpose.
+        await page.goto('/chat');
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+
+        // While the history request is pending the stored conversation is not shown yet.
+        await expect(page.getByText('안녕하세요')).toHaveCount(0);
 
         resolveHistory!();
 
@@ -203,13 +188,9 @@ test.describe('Chat History Persistence', () => {
     });
 
     test('should clear session when delete button is clicked', async ({ page }) => {
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
         await page.getByTestId('chat-clear').click();
@@ -232,13 +213,9 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
     });
 
@@ -251,13 +228,9 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        await page.goto('/dashboard');
+        // The dashboard chat widget was removed; the chat is its own /chat page.
+        await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-
-        const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-        await chatInput.click();
-
-        await page.waitForURL('**/chat', { timeout: 10000 });
         await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
     });
 });

@@ -929,8 +929,8 @@
         "827:10-827:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "2074:27-2079:28|rawUiElement",
-        "2344:23-2349:24|rawUiElement"
+        "2081:27-2086:28|rawUiElement",
+        "2351:23-2356:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {
