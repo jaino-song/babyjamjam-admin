@@ -1,26 +1,6 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 import { KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
-
-async function enableE2EAuth(page: Page) {
-    const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
-    const tokenPayload = Buffer.from(JSON.stringify({
-        exp: 4_102_444_800,
-        sub: "e2e-user",
-        sid: "e2e-session",
-        type: "access",
-        branchId: "branch-1",
-        role: "admin",
-    })).toString("base64url");
-    const authToken = `eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${tokenPayload}.e2e`;
-    await page.context().addCookies([
-        { name: "auth_token", value: authToken, url: baseURL, sameSite: "Lax" },
-        { name: "e2e_auth", value: "1", url: baseURL, sameSite: "Lax" },
-    ]);
-    await page.addInitScript(() => {
-        (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
-        sessionStorage.clear();
-    });
-}
+import { enableE2EAuth, fulfillShellDefaults } from "./helpers/e2e-shell";
 
 test("changes the next service session from the client dropdown", async ({ page }) => {
     await enableE2EAuth(page);
@@ -30,6 +10,8 @@ test("changes the next service session from the client dropdown", async ({ page 
 
     await page.route("**/api/**", async (route: Route) => {
         const pathname = new URL(route.request().url()).pathname;
+
+        if (pathname !== "/api/clients/list-summary" && !pathname.includes("/holidays") && await fulfillShellDefaults(route)) return;
 
         if (pathname === "/api/auth/me") {
             return route.fulfill({
@@ -182,8 +164,9 @@ test("changes the next service session from the client dropdown", async ({ page 
     // The date is typed as YYYY-MM-DD (auto-hyphenated text input), not picked with a native date control.
     await expect(dateInput).toHaveAttribute("maxlength", "10");
     await expect(dateInput).toHaveValue("2026-07-20");
-    // Nothing is flagged on open; the unchanged date just keeps the confirm button off.
-    await expect(dateMessage).toHaveCount(0);
+    // On open the slot only carries guidance (no error); the unchanged date keeps the confirm button off.
+    await expect(dateMessage).toHaveText("출산일 이후 날짜로 선택해 주세요");
+    await expect(dateInput).not.toHaveAttribute("aria-invalid", "true");
     await expect(modal.getByRole("button", { name: "일정 변경" })).toBeDisabled();
 
     // A date before the allowed minimum is reported in the label-row slot.

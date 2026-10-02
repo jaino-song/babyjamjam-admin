@@ -1,490 +1,311 @@
-import { test, expect, type Page } from '@playwright/test';
-import { KOREAN_HOLIDAY_CALENDAR } from '@babyjamjam/shared/utils/business-days';
-
-// The client form waits for the branch holiday calendar before it computes or
-// saves dates. Serve the built-in list for whichever year is requested.
-async function installHolidayCalendarRoute(page: Page) {
-    await page.route('**/api/branches/*/holidays*', (route) => {
-        const year = Number(new URL(route.request().url()).searchParams.get('year'));
-        const dates = KOREAN_HOLIDAY_CALENDAR[year] ?? [];
-        return route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-                year,
-                revision: 'e2e-builtin',
-                supported: dates.length > 0,
-                synced: false,
-                lastSyncedAt: null,
-                holidays: dates.map((date) => ({ date, name: '공휴일', source: 'builtin', excluded: false, overrideId: null })),
-                inactiveOverrides: [],
-            }),
-        });
-    });
-}
+import { test, expect } from '@playwright/test';
+import {
+    clientFormPanel,
+    E2E_EMPLOYEES,
+    E2E_VOUCHER_PRICE,
+    E2E_VOUCHER_TYPE,
+    fillRequiredClientFields,
+    goToNextStep,
+    openClientForm,
+} from './helpers/client-form';
 
 /**
- * ClientFormDialog E2E Tests
+ * Client creation form E2E tests.
  *
- * Comprehensive tests for client creation and editing functionality:
- * - Form field validation
- * - Voucher type/duration select boxes
- * - Price auto-fill from API
- * - Toggle switches (voucherClient, careCenter, breastPump)
- * - Employee selection
- * - Date field handling
+ * "고객 추가" opens a four-step panel on /clients:
+ *   1. 이용자 정보  2. 제공인력 정보  3. 바우처 정보  4. 계약 정보
+ * Field problems are shown in each field's label-row slot (`data-slot="field-error-message"`),
+ * not in a top alert. All lookups (prices, areas, employees, holidays) are mocked in
+ * ./helpers/client-form so the specs do not depend on seeded data.
  */
 
 test.describe('Client Creation Flow', () => {
-    test.beforeEach(async ({ page }) => {
-        await installHolidayCalendarRoute(page);
-        await page.goto('/clients');
-        await page.waitForLoadState('networkidle');
-    });
-
     // ============================================
-    // Dialog Open/Close Tests
+    // Panel Open/Close
     // ============================================
-    test.describe('Dialog Opening', () => {
-        test('should open ClientFormDialog when clicking add button', async ({ page }) => {
-            // Find and click the add button
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
+    test.describe('Panel Opening', () => {
+        test('opens the new-client form panel with the four steps', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Verify dialog opens
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            await expect(dialog).toBeVisible();
+            await expect(panel.getByText('고객의 기본 정보와 서비스 조건을 단계별로 입력합니다.')).toBeVisible();
+            for (const step of ['이용자 정보', '제공인력 정보', '바우처 정보', '계약 정보']) {
+                await expect(panel.getByText(step, { exact: true })).toBeVisible();
+            }
 
-            // Verify it's in create mode (check title if visible)
-            await expect(dialog).toContainText(/신규|추가|등록|create/i);
+            // Step 1 shows the identity fields.
+            for (const label of ['이름*', '생년월일*', '연락처*', '주소*']) {
+                await expect(panel.getByLabel(label)).toBeVisible();
+            }
         });
 
-        test('should close dialog when clicking cancel button', async ({ page }) => {
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+        test('closes the panel when clicking cancel', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Click cancel
-            const cancelButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /취소|cancel/i });
-            await cancelButton.click();
+            await panel.getByRole('button', { name: '취소' }).click();
 
-            // Dialog should be closed
-            await expect(page.locator('[data-testid="client-form-dialog"]')).not.toBeVisible();
+            await expect(panel.getByRole('heading', { name: '새 고객 등록' })).toHaveCount(0);
         });
     });
 
     // ============================================
-    // Form Validation Tests
+    // Form Validation
     // ============================================
     test.describe('Form Validation', () => {
-        test.beforeEach(async ({ page }) => {
-            // Open dialog before each validation test
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+        test('shows a label-row error for every missing required field and stays on step 1', async ({ page }) => {
+            const panel = await openClientForm(page);
+
+            await goToNextStep(panel);
+
+            const fieldErrors = panel.locator('[data-slot="field-error-message"]');
+            await expect(fieldErrors.first()).toBeVisible();
+            // 이름, 생년월일, 연락처, 주소 are required.
+            await expect(fieldErrors).toHaveCount(4);
+
+            // Still on step 1: the identity inputs are on screen, the employee step is not.
+            await expect(panel.getByLabel('이름*')).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toHaveCount(0);
         });
 
-        test('should show error when submitting empty form', async ({ page }) => {
-            // Click submit without filling any fields
-            const submitButton = page.locator('[data-testid="client-form-dialog"]').getByRole('button', { name: /등록|생성|create|저장|save/i });
-            await submitButton.click();
+        test('keeps the remaining required fields flagged after filling only the name', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Field problems are shown in each field's label-row slot (top-right), not in a top alert
-            const fieldErrors = page.locator('[data-testid="client-form-dialog"]').locator('[data-slot="field-error-message"]');
-            await expect(fieldErrors.first()).toBeVisible({ timeout: 3000 });
+            await panel.getByLabel('이름*').fill('테스트 산모');
+            await goToNextStep(panel);
+
+            const fieldErrors = panel.locator('[data-slot="field-error-message"]');
+            await expect(fieldErrors).toHaveCount(3);
+            await expect(panel.getByLabel('이름*')).toHaveValue('테스트 산모');
+            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toHaveCount(0);
         });
 
-        test('should validate required fields one by one', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('shows the phone format hint when the number is incomplete', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Fill name only and try to submit
-            const nameInput = dialog.locator('input').first();
-            await nameInput.fill('테스트 산모');
+            await panel.getByLabel('연락처*').fill('0101234');
+            await goToNextStep(panel);
 
-            const submitButton = dialog.getByRole('button', { name: /등록|생성|create/i });
-            await submitButton.click();
-
-            // Should still show a field error (other fields missing)
-            const fieldErrors = dialog.locator('[data-slot="field-error-message"]');
-            await expect(fieldErrors.first()).toBeVisible({ timeout: 3000 });
+            await expect(panel.locator('[data-slot="field-error-message"]', { hasText: '010-1234-5678로 입력해 주세요' })).toBeVisible();
         });
     });
 
     // ============================================
-    // Basic Info Section Tests
+    // Step 1: Basic Info
     // ============================================
-    test.describe('Basic Info Section', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
+    test.describe('Basic Info Step', () => {
+        test('accepts name input', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-        test('should accept name input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const nameInput = dialog.locator('input').first();
-
+            const nameInput = panel.getByLabel('이름*');
             await nameInput.fill('홍길동');
             await expect(nameInput).toHaveValue('홍길동');
         });
 
-        test('should format birthday as YYYY-MM-DD', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('formats birthday as YYYY-MM-DD', async ({ page }) => {
+            const panel = await openClientForm(page);
 
             // Birthday is typed as digits; hyphens are inserted automatically.
-            const birthdayInput = dialog.locator('input[placeholder="1958-03-03"]');
-
+            const birthdayInput = panel.getByLabel('생년월일*');
             await birthdayInput.fill('19900515');
             await expect(birthdayInput).toHaveValue('1990-05-15');
 
-            // Should not accept more than 10 characters (YYYY-MM-DD)
+            // Extra digits are not accepted beyond YYYY-MM-DD.
             await birthdayInput.fill('199005151234');
             const value = await birthdayInput.inputValue();
             expect(value.length).toBeLessThanOrEqual(10);
         });
 
-        test('should format phone number as XXX-XXXX-XXXX', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('formats the phone number as XXX-XXXX-XXXX', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Find phone input (look for placeholder pattern)
-            const phoneInput = dialog.locator('input[placeholder*="010"], input').nth(2);
-
-            // Type raw digits
+            const phoneInput = panel.getByLabel('연락처*');
             await phoneInput.fill('01012345678');
 
-            // Should be formatted
-            const formattedValue = await phoneInput.inputValue();
-            expect(formattedValue).toMatch(/\d{3}-\d{4}-\d{4}|01012345678/);
+            await expect(phoneInput).toHaveValue('010-1234-5678');
         });
 
-        test('should accept address input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('accepts address input', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Find address input
-            const inputs = dialog.locator('input[type="text"]');
-            const addressInput = inputs.nth(3);
-
+            const addressInput = panel.getByLabel('주소*');
             await addressInput.fill('인천광역시 연수구 테스트동 123');
+
             await expect(addressInput).toHaveValue('인천광역시 연수구 테스트동 123');
         });
-    });
 
-    // ============================================
-    // Voucher Type/Duration Select Box Tests
-    // ============================================
-    test.describe('Voucher Type and Duration Select Boxes', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+        test('offers the branch areas in the area select', async ({ page }) => {
+            const panel = await openClientForm(page);
+
+            const area = panel.getByRole('combobox', { name: '관할 지역' });
+            await expect(area.getByRole('option', { name: '인천' })).toHaveCount(1);
+            await area.selectOption({ label: '인천' });
+            await expect(area).toHaveValue('area-incheon');
         });
 
-        test('should display voucher type select with grouped options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('advances to the employee step once the required fields are filled and goes back', async ({ page }) => {
+            const panel = await openClientForm(page);
 
-            // Find the voucher type select (first dropdown in service section)
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
+            await fillRequiredClientFields(panel);
+            await goToNextStep(panel);
 
-            // Click to open
-            await voucherTypeSelect.click();
+            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
 
-            // Should show grouped options
-            const listbox = page.locator('[role="listbox"]');
-            await expect(listbox).toBeVisible({ timeout: 3000 });
-
-            // Should have group headers (disabled menu items)
-            const groupHeaders = listbox.locator('[role="option"][aria-disabled="true"]');
-            const headerCount = await groupHeaders.count();
-            expect(headerCount).toBeGreaterThan(0);
-        });
-
-        test('should enable duration select after selecting voucher type', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Duration select should be disabled initially
-            const selects = dialog.locator('.MuiFormControl-root').filter({ has: page.locator('.MuiSelect-select') });
-
-            // Click on voucher type select
-            const voucherTypeSelect = selects.first().locator('.MuiSelect-select');
-            await voucherTypeSelect.click();
-
-            // Select a type (e.g., A가-1형)
-            const option = page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first();
-            await option.click();
-
-            // Wait for API to load duration options
-            await page.waitForTimeout(500);
-
-            // Duration select should now be clickable
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-
-            // Should show duration options
-            const durationListbox = page.locator('[role="listbox"]');
-            await expect(durationListbox).toBeVisible({ timeout: 3000 });
-        });
-
-        test('should show loading indicator while fetching durations', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Click on voucher type select
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-
-            // Select a type
-            const option = page.locator('[role="option"]').filter({ hasText: /A|B|C/ }).first();
-            await option.click();
-
-            // May briefly show loading indicator (timing-dependent)
-            // This is more of a smoke test
+            await panel.getByRole('button', { name: '이전' }).click();
+            // Earlier answers are kept.
+            await expect(panel.getByLabel('이름*')).toHaveValue('테스트 산모');
+            await expect(panel.getByLabel('연락처*')).toHaveValue('010-1234-5678');
         });
     });
 
     // ============================================
-    // Price Auto-fill Tests
-    // ============================================
-    test.describe('Price Auto-fill', () => {
-        test('should auto-fill prices when type and duration selected', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
-
-            // Select voucher type
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            const typeOption = page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first();
-            await typeOption.click();
-
-            // Wait for duration options to load
-            await page.waitForTimeout(1000);
-
-            // Select duration
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-
-            const durationListbox = page.locator('[role="listbox"]');
-            await expect(durationListbox).toBeVisible({ timeout: 5000 });
-
-            const durationOption = page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first();
-            await durationOption.click();
-
-            // Wait for price auto-fill
-            await page.waitForTimeout(500);
-
-            // Price fields should have values (check if not empty)
-            // Note: The actual price inputs may be text fields without specific markers
-        });
-
-        test('should show "Auto-filled" chip when prices are auto-filled', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Open dialog
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
-
-            // Select voucher type and duration
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-            await page.waitForTimeout(1000);
-
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-            await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-            await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-            // Wait for auto-fill
-            await page.waitForTimeout(500);
-
-            // Should show auto-filled indicator chip
-            // The chip may or may not appear depending on locale
-        });
-
-        test('should hide auto-fill chip when user manually edits price', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Open dialog and select type/duration to trigger auto-fill
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(dialog).toBeVisible();
-
-            const voucherTypeSelect = dialog.locator('.MuiSelect-select').first();
-            await voucherTypeSelect.click();
-            await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-            await page.waitForTimeout(1000);
-
-            const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-            await durationSelect.click();
-            await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-            await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-            await page.waitForTimeout(500);
-
-            // Manually edit a price field (find price inputs in the pricing section)
-            // Price inputs are typically labeled with "원" (won) suffix
-            const priceInputs = dialog.locator('input[type="text"]');
-            const priceInputCount = await priceInputs.count();
-            if (priceInputCount > 4) {
-                // Price inputs are usually after the first few text fields (name, birthday, phone, address)
-                await priceInputs.nth(4).fill('1000000');
-            }
-        });
-    });
-
-    // ============================================
-    // Toggle Switches (Flags) Tests
-    // ============================================
-    test.describe('Toggle Switches', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should have voucherClient toggle defaulted to ON', async () => {
-            // Find the switch for voucherClient
-            // Should be checked by default (based on form default value)
-            // Note: The exact state depends on the default value in the form
-        });
-
-        test('should toggle careCenter switch', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find care center switch (typically labeled with Korean text)
-            const switches = dialog.locator('.MuiSwitch-root');
-
-            // Toggle the second switch (careCenter)
-            const careCenterSwitch = switches.nth(1);
-            await careCenterSwitch.click();
-
-            // The switch should change state (visual check)
-        });
-
-        test('should toggle breastPump switch', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find breast pump switch (typically the third toggle)
-            const switches = dialog.locator('.MuiSwitch-root');
-
-            // Toggle the third switch
-            const breastPumpSwitch = switches.nth(2);
-            await breastPumpSwitch.click();
-        });
-    });
-
-    // ============================================
-    // Date Fields Tests
-    // ============================================
-    test.describe('Date Fields', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should accept start date input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Dates are typed as YYYY-MM-DD in auto-hyphenated text inputs
-            const startDateInput = dialog.locator('input[placeholder="2026-12-01"]');
-            await startDateInput.fill('20250201');
-
-            await expect(startDateInput).toHaveValue('2025-02-01');
-        });
-
-        test('should accept end date input', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            const endDateInput = dialog.locator('input[placeholder="2026-12-19"]');
-            await endDateInput.fill('20250331');
-
-            await expect(endDateInput).toHaveValue('2025-03-31');
-        });
-    });
-
-    // ============================================
-    // Contract/Service Status Tests
-    // ============================================
-    test.describe('Service Status Select', () => {
-        test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
-        });
-
-        test('should display service status options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-
-            // Find the service status select (usually labeled as 계약 상태 or similar)
-            // It's typically in the contract section
-            const statusSelect = dialog.locator('.MuiSelect-select').filter({ hasText: /대기|진행|완료|Waiting|Active/i }).first();
-
-            if (await statusSelect.count() > 0) {
-                await statusSelect.click();
-
-                const listbox = page.locator('[role="listbox"]');
-                await expect(listbox).toBeVisible({ timeout: 3000 });
-
-                // Should have status options
-                await expect(listbox.locator('[role="option"]')).toHaveCount(5);
-            }
-        });
-    });
-
-    // ============================================
-    // Employee Selection Integration Tests
+    // Step 2: Employee Selection
     // ============================================
     test.describe('Employee Selection', () => {
         test.beforeEach(async ({ page }) => {
-            const addButton = page.locator('[data-testid="add-client-button"]');
-            await addButton.click();
-            await expect(page.locator('[data-testid="client-form-dialog"]')).toBeVisible();
+            const panel = await openClientForm(page);
+            await fillRequiredClientFields(panel);
+            await goToNextStep(panel);
+            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
         });
 
-        test('should have primary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const employeeAutocomplete = dialog.locator('[data-testid="employee-autocomplete"]').first();
+        test('has primary and secondary employee pickers', async ({ page }) => {
+            const panel = clientFormPanel(page);
 
-            await expect(employeeAutocomplete).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '주 담당 인력', exact: true })).toBeVisible();
+            await expect(panel.getByRole('combobox', { name: '보조 담당 인력', exact: true })).toBeVisible();
+            await expect(panel.locator('[data-testid="employee-autocomplete"]')).toHaveCount(2);
         });
 
-        test('should have secondary employee autocomplete', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
-            const employeeAutocompletes = dialog.locator('[data-testid="employee-autocomplete"]');
+        test('excludes the selected primary employee from the secondary options', async ({ page }) => {
+            const primary = page.getByRole('combobox', { name: '주 담당 인력', exact: true });
+            await primary.click();
+            await page.getByRole('combobox', { name: '주 담당 인력 검색' }).fill('김');
+            await page.getByRole('option', { name: /김제공/ }).click();
+            await expect(primary).toContainText('김제공');
 
-            // Should have 2 autocompletes (primary and secondary)
-            await expect(employeeAutocompletes).toHaveCount(2);
+            const secondary = page.getByRole('combobox', { name: '보조 담당 인력', exact: true });
+            await secondary.click();
+            await page.getByRole('combobox', { name: '보조 담당 인력 검색' }).fill('김');
+
+            // 김보조 still matches, 김제공 (already the primary) does not.
+            await expect(page.getByRole('option', { name: /김보조/ })).toBeVisible();
+            await expect(page.getByRole('option', { name: /김제공/ })).toHaveCount(0);
+        });
+    });
+
+    // ============================================
+    // Step 3: Voucher / Pricing
+    // ============================================
+    test.describe('Voucher Step', () => {
+        test.beforeEach(async ({ page }) => {
+            const panel = await openClientForm(page);
+            await fillRequiredClientFields(panel);
+            await goToNextStep(panel);
+            await goToNextStep(panel);
+            await expect(panel.getByRole('tablist', { name: '고객 유형' })).toBeVisible();
         });
 
-        test('should exclude selected primary employee from secondary options', async ({ page }) => {
-            const dialog = page.locator('[data-testid="client-form-dialog"]');
+        test('defaults to a self-pay client with out-of-pocket durations', async ({ page }) => {
+            await expect(page.getByRole('tab', { name: '자부담 고객' })).toHaveAttribute('aria-selected', 'true');
+            await expect(page.getByRole('tab', { name: '바우처 고객' })).toHaveAttribute('aria-selected', 'false');
 
-            // Focus on primary employee autocomplete
-            const primaryAutocomplete = dialog.locator('[data-testid="employee-autocomplete"] input').first();
-            await primaryAutocomplete.click();
+            const duration = page.getByRole('combobox', { name: '서비스 기간' });
+            await expect(duration.getByRole('option', { name: '1주 (5일)' })).toHaveCount(1);
+            await expect(duration.getByRole('option', { name: '2주 (10일)' })).toHaveCount(1);
 
-            // Wait for dropdown
-            await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
+            await duration.selectOption({ label: '2주 (10일)' });
+            await expect(page.getByLabel('총 서비스 금액')).toHaveValue('1,620,000');
+        });
 
-            // Type to search
-            await primaryAutocomplete.fill('김');
-            await page.waitForTimeout(300);
+        test('keeps the duration locked until a voucher type is chosen, then auto-fills the prices', async ({ page }) => {
+            await page.getByRole('tab', { name: '바우처 고객' }).click();
 
-            // Select first option if available
-            const firstOption = page.locator('[role="option"]').first();
-            if (await firstOption.count() > 0 && !(await firstOption.getAttribute('aria-disabled'))) {
-                await firstOption.click();
+            const type = page.getByRole('combobox', { name: '바우처 유형' });
+            const duration = page.getByRole('combobox', { name: '서비스 기간' });
+            await expect(type).toBeVisible();
+            // Voucher types are grouped (예: 단태아 첫째아).
+            await expect(type.locator('optgroup').first()).toBeAttached();
+            await expect(duration).toBeDisabled();
+
+            await type.selectOption({ label: E2E_VOUCHER_TYPE });
+            await expect(duration).toBeEnabled();
+            // Voucher durations come from the price table for the chosen type.
+            await expect(duration.getByRole('option', { name: '10일' })).toHaveCount(1);
+            await duration.selectOption({ label: '10일' });
+
+            // Prices come from the voucher price table for that type and duration.
+            await expect(page.getByLabel('총 서비스 금액')).toHaveValue('1,000,000');
+            await expect(page.getByLabel('정부지원금')).toHaveValue('700,000');
+            await expect(page.getByLabel('본인부담금')).toHaveValue('300,000');
+        });
+
+        test('lets the user override an auto-filled price', async ({ page }) => {
+            await page.getByRole('tab', { name: '바우처 고객' }).click();
+            await page.getByRole('combobox', { name: '바우처 유형' }).selectOption({ label: E2E_VOUCHER_TYPE });
+            await page.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
+
+            const fullPrice = page.getByLabel('총 서비스 금액');
+            await expect(fullPrice).toHaveValue('1,000,000');
+            await fullPrice.fill('1200000');
+
+            await expect(fullPrice).toHaveValue('1,200,000');
+        });
+    });
+
+    // ============================================
+    // Step 4: Contract Info
+    // ============================================
+    test.describe('Contract Step', () => {
+        test.beforeEach(async ({ page }) => {
+            const panel = await openClientForm(page);
+            await fillRequiredClientFields(panel);
+            for (let step = 0; step < 3; step += 1) {
+                await goToNextStep(panel);
             }
+            await expect(panel.getByRole('combobox', { name: '계약 상태' })).toBeVisible();
+        });
 
-            // Now the secondary autocomplete should exclude the selected employee
-            // This would require checking the filtered options
+        test('formats the start and end dates as YYYY-MM-DD', async ({ page }) => {
+            const startDate = page.getByLabel('시작일');
+            await startDate.fill('20261201');
+            await expect(startDate).toHaveValue('2026-12-01');
+
+            const endDate = page.getByLabel('종료일');
+            await endDate.fill('20261219');
+            await expect(endDate).toHaveValue('2026-12-19');
+        });
+
+        test('offers every service status', async ({ page }) => {
+            const status = page.getByRole('combobox', { name: '계약 상태' });
+
+            await expect(status.getByRole('option')).toHaveText([
+                '계약 상태',
+                '예약 전',
+                '대기',
+                '교체 요청',
+                '진행중',
+                '완료',
+                '중단',
+            ]);
+            await expect(status).toHaveValue('pre_booking');
+        });
+
+        test('toggles the optional service flags', async ({ page }) => {
+            const careCenter = page.getByRole('switch', { name: '산후조리원' });
+            const breastPump = page.getByRole('switch', { name: '유축기 대여' });
+            const automation = page.getByRole('switch', { name: '메시지 자동 전송' });
+
+            await expect(careCenter).not.toBeChecked();
+            await expect(breastPump).not.toBeChecked();
+            // Message automation is on by default for a new client.
+            await expect(automation).toBeChecked();
+
+            await careCenter.click();
+            await breastPump.click();
+            await automation.click();
+
+            await expect(careCenter).toBeChecked();
+            await expect(breastPump).toBeChecked();
+            await expect(automation).not.toBeChecked();
         });
     });
 });
@@ -493,57 +314,60 @@ test.describe('Client Creation Flow', () => {
 // Complete Client Creation Flow Test
 // ============================================
 test.describe('Complete Client Creation Flow', () => {
-    test('should create client with all required fields', async ({ page }) => {
-        await installHolidayCalendarRoute(page);
-        await page.goto('/clients');
-        await page.waitForLoadState('networkidle');
+    test('creates a client with the filled-in values', async ({ page }) => {
+        let createdBody: Record<string, unknown> | null = null;
+        await page.route('**/api/clients', async (route) => {
+            if (route.request().method() !== 'POST') {
+                await route.fallback();
+                return;
+            }
+            createdBody = route.request().postDataJSON() as Record<string, unknown>;
+            await route.fulfill({
+                status: 201,
+                contentType: 'application/json',
+                body: JSON.stringify({ id: 901, ...createdBody }),
+            });
+        });
 
-        // Open dialog
-        const addButton = page.locator('[data-testid="add-client-button"]');
-        await addButton.click();
+        const panel = await openClientForm(page);
+        await fillRequiredClientFields(panel);
+        await goToNextStep(panel);
 
-        const dialog = page.locator('[data-testid="client-form-dialog"]');
-        await expect(dialog).toBeVisible();
+        // Step 2: primary employee
+        await panel.getByRole('combobox', { name: '주 담당 인력', exact: true }).click();
+        await page.getByRole('combobox', { name: '주 담당 인력 검색' }).fill('김제공');
+        await page.getByRole('option', { name: /김제공/ }).click();
+        await goToNextStep(panel);
 
-        // Fill basic info
-        const inputs = dialog.locator('input[type="text"]');
-        await inputs.first().fill('테스트 산모'); // name
-        await inputs.nth(1).fill('19900515'); // birthday (typed as digits, formatted to YYYY-MM-DD)
-        await inputs.nth(2).fill('01012345678'); // phone
-        await inputs.nth(3).fill('인천시 연수구'); // address
+        // Step 3: voucher client with type + duration
+        await panel.getByRole('tab', { name: '바우처 고객' }).click();
+        await panel.getByRole('combobox', { name: '바우처 유형' }).selectOption({ label: E2E_VOUCHER_TYPE });
+        await panel.getByRole('combobox', { name: '서비스 기간' }).selectOption({ label: '10일' });
+        await goToNextStep(panel);
 
-        // Select primary employee (type and select)
-        const primaryEmployeeInput = dialog.locator('[data-testid="employee-autocomplete"] input').first();
-        await primaryEmployeeInput.click();
-        await expect(page.locator('[data-testid="employee-autocomplete-dropdown"]')).toBeVisible({ timeout: 5000 });
-        await primaryEmployeeInput.fill('김');
-        await page.waitForTimeout(500);
+        // Step 4: service dates (10 business days, Mon 2026-12-07 .. Fri 2026-12-18)
+        await panel.getByLabel('시작일').fill('20261207');
+        await panel.getByLabel('종료일').fill('20261218');
+        await panel.getByRole('button', { name: '생성' }).click();
 
-        // Try to select first matching employee
-        const employeeOption = page.locator('[role="option"]:not([aria-disabled="true"])').first();
-        if (await employeeOption.count() > 0) {
-            await employeeOption.click();
-        }
+        await expect.poll(() => createdBody).not.toBeNull();
+        expect(createdBody).toMatchObject({
+            name: '테스트 산모',
+            birthday: '1990-05-15',
+            phone: '010-1234-5678',
+            address: '인천광역시 연수구 테스트동 123',
+            primaryEmployeeId: E2E_EMPLOYEES[0].id,
+            type: E2E_VOUCHER_TYPE,
+            duration: 10,
+            fullPrice: E2E_VOUCHER_PRICE.fullPrice,
+            grant: E2E_VOUCHER_PRICE.grant,
+            actualPrice: E2E_VOUCHER_PRICE.actualPrice,
+            voucherClient: true,
+            startDate: '2026-12-07',
+            endDate: '2026-12-18',
+        });
 
-        // Select voucher type
-        const voucherSelect = dialog.locator('.MuiSelect-select').first();
-        await voucherSelect.click();
-        await page.locator('[role="option"]').filter({ hasText: 'A가-1형' }).first().click();
-
-        // Wait for duration options
-        await page.waitForTimeout(1000);
-
-        // Select duration
-        const durationSelect = dialog.locator('.MuiSelect-select').nth(1);
-        await durationSelect.click();
-        await expect(page.locator('[role="listbox"]')).toBeVisible({ timeout: 5000 });
-        await page.locator('[role="option"]').filter({ hasText: /\d+일/ }).first().click();
-
-        // Fill dates
-        await dialog.locator('input[placeholder="2026-12-01"]').fill('20250201');
-        await dialog.locator('input[placeholder="2026-12-19"]').fill('20250331');
-
-        // Note: Actual submission would create data, so we skip in E2E test
-        // If needed, add: await submitButton.click();
+        // The panel closes after a successful save.
+        await expect(panel.getByRole('heading', { name: '새 고객 등록' })).toHaveCount(0);
     });
 });
