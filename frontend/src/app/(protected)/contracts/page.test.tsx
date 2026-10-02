@@ -258,6 +258,28 @@ function receiptDetailDocumentFixture(): EformsignDocument {
   } as unknown as EformsignDocument;
 }
 
+function serviceRecordReviewNeededFixture(): EformsignDocument {
+  // 060 + 제공기관 검토 step (no contract end date) resolves to "검토 필요",
+  // which routes ContractDetail into the review-action header branch.
+  return {
+    ...receiptDetailDocumentFixture(),
+    template: { id: "template-2", name: "산모·신생아 건강관리 서비스 제공기록지" },
+    document_name: "김고객 제공기록지",
+    current_status: {
+      status_type: "060",
+      status_doc_type: "",
+      status_doc_detail: "",
+      step_type: "06",
+      step_index: "3",
+      step_name: "제공기관 검토",
+      step_recipients: [{ recipient_type: "01" }],
+      step_group: 0,
+      expired_date: 0,
+      _expired: false,
+    },
+  } as unknown as EformsignDocument;
+}
+
 async function renderContractDetailAndOpenPreview() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const doc = receiptDetailDocumentFixture();
@@ -425,6 +447,32 @@ describe("ContractDetail manual receipt-send interaction", () => {
     fireEvent.click(await screen.findByRole("button", { name: "문서 보기" }));
     await screen.findByTestId("pdf-document");
 
+    expect(screen.queryByRole("button", { name: "영수증 문자 발송" })).toBeNull();
+  });
+
+  // The 제공기록지 review-needed surface reuses the 계약서 preview trigger: 문서 보기
+  // opens the shared preview modal (the service-record document itself), whose 확인
+  // action continues into the same 검토 완료 confirm flow; the receipt-send button
+  // stays withheld on that surface.
+  it("previews the 제공기록지 document from the reused preview trigger while review is needed", async () => {
+    jest.spyOn(eformsignApi, "getDocument").mockResolvedValue(serviceRecordReviewNeededFixture() as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const doc = serviceRecordReviewNeededFixture();
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractDetail data-component="desktop_contracts_detail" document={doc} reviewAction="preview" />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("button", { name: "문서 보기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "검토하기" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "문서 보기" }));
+    await screen.findByTestId("pdf-document");
+
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    expect(await screen.findByText("제공기록지를 검토 완료 처리합니다.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "영수증 문자 발송" })).toBeNull();
   });
 

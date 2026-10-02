@@ -2058,25 +2058,20 @@ export function ContractDetail({
               aria-label="계약 작업 불러오는 중"
             />
           ) : isReviewNeeded ? (
-            <div
-              className={
-                reviewAction === "finalize"
-                  ? "grid grid-cols-1 gap-[calc(12px*var(--glint-ui-scale,1))] sm:grid-cols-2 [&>button]:!w-full"
-                  : undefined
-              }
-            >
-              {reviewAction === "finalize" && (
-                <Button
-                  variant="positive-outline"
-                  size="sm"
-                  data-component={`${dataComponent}_header_preview-trigger`}
-                  className="w-full"
-                  onClick={() => setIsPreviewOpen(true)}
-                >
-                  <Eye className="h-4 w-4" />
-                  문서 보기
-                </Button>
-              )}
+            // Both review surfaces reuse this trigger: 계약서 (finalize) previews the
+            // contract, 제공기록지 (preview) previews the service-record document — the
+            // shared modal carries that surface's 확인 review-confirm action below.
+            <div className="grid grid-cols-1 gap-[calc(12px*var(--glint-ui-scale,1))] sm:grid-cols-2 [&>button]:!w-full">
+              <Button
+                variant="positive-outline"
+                size="sm"
+                data-component={`${dataComponent}_header_preview-trigger`}
+                className="w-full"
+                onClick={() => setIsPreviewOpen(true)}
+              >
+                <Eye className="h-4 w-4" />
+                문서 보기
+              </Button>
               <ContractReviewActionButton
                 data-component={`${dataComponent}_header_review-trigger`}
                 action={reviewAction}
