@@ -38,7 +38,7 @@ describe("ServiceScheduleChangeModal", () => {
         render(<ServiceScheduleChangeModal {...defaultProps} />);
 
         const input = screen.getByLabelText("3회차 서비스 제공 날짜");
-        expect(slotOf(input)).toHaveTextContent("현재 날짜 이후만 가능해요");
+        expect(slotOf(input)).toHaveTextContent("출산일 이후만 가능해요");
         expect(slotOf(input)).toHaveAttribute("aria-live", "polite");
         expect(input).not.toHaveAttribute("aria-invalid", "true");
     });
@@ -50,10 +50,10 @@ describe("ServiceScheduleChangeModal", () => {
         fireEvent.focus(input);
         fireEvent.blur(input);
         expect(slotOf(input)).toHaveTextContent("YYYY-MM-DD로 입력해 주세요");
-        expect(slotOf(input)).not.toHaveTextContent("현재 날짜 이후만 가능해요");
+        expect(slotOf(input)).not.toHaveTextContent("출산일 이후만 가능해요");
 
         rerender(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2099-01-01" />);
-        expect(slotOf(screen.getByLabelText("3회차 서비스 제공 날짜"))).toHaveTextContent("현재 날짜 이후만 가능해요");
+        expect(slotOf(screen.getByLabelText("3회차 서비스 제공 날짜"))).toHaveTextContent("출산일 이후만 가능해요");
     });
 
     it("hints while the date is incomplete and errors once the field is left", () => {
@@ -69,13 +69,13 @@ describe("ServiceScheduleChangeModal", () => {
         expect(input).toHaveAttribute("aria-invalid", "true");
     });
 
-    it("says so in the slot when the typed date is not after the current service date", () => {
+    it("says so in the slot when the typed date is before the earliest allowed date", () => {
         render(<ServiceScheduleChangeModal {...defaultProps} selectedDate="2026-07-19" />);
         const input = screen.getByLabelText("3회차 서비스 제공 날짜");
 
         fireEvent.blur(input);
 
-        expect(slotOf(input)).toHaveTextContent("현재 날짜 이후로 입력해 주세요");
+        expect(slotOf(input)).toHaveTextContent("2026-07-20 이후로 입력해 주세요");
         expect(input).toHaveAttribute("aria-invalid", "true");
     });
 
@@ -94,7 +94,7 @@ describe("ServiceScheduleChangeModal", () => {
 
         const input = screen.getByLabelText("3회차 서비스 제공 날짜");
         expect(onSubmit).not.toHaveBeenCalled();
-        expect(slotOf(input)).toHaveTextContent("현재 날짜 이후로 입력해 주세요");
+        expect(slotOf(input)).toHaveTextContent("현재 예정일과 다른 날짜를 입력해 주세요");
         expect(input).toHaveFocus();
     });
 
@@ -129,6 +129,24 @@ describe("ServiceScheduleChangeModal", () => {
             <ServiceScheduleChangeModal
                 {...defaultProps}
                 selectedDate="2026-07-21"
+                onSubmit={onSubmit}
+            />,
+        );
+
+        await user.click(screen.getByRole("button", { name: "일정 변경" }));
+
+        expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("submits a date earlier than the current service date when it is not before the birth date", async () => {
+        const user = userEvent.setup();
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                {...defaultProps}
+                currentDate="2026-10-05"
+                minimumDate="2026-09-20"
+                selectedDate="2026-09-28"
                 onSubmit={onSubmit}
             />,
         );

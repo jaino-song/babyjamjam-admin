@@ -15,7 +15,7 @@ interface ServiceScheduleChangeModalProps {
     open: boolean;
     sessionIndex: number;
     currentDate: string;
-    minimumDate: string;
+    minimumDate: string | null;
     selectedDate: string;
     isPending: boolean;
     onDateChange: (date: string) => void;
@@ -26,7 +26,7 @@ interface ServiceScheduleChangeModalProps {
 const DATE_INPUT_ID = "service-schedule-change-date";
 const DATE_MESSAGE_ID = `${DATE_INPUT_ID}-message`;
 /** Static guidance for the date field; it sits in the label-row slot until an error or hint replaces it. */
-const DATE_GUIDANCE = "현재 날짜 이후로 선택해 주세요";
+const DATE_GUIDANCE = "출산일 이후 날짜로 선택해 주세요";
 
 export function ServiceScheduleChangeModal({
     open,
@@ -45,8 +45,8 @@ export function ServiceScheduleChangeModal({
 
     // Partial input ("2026-1") sorts unpredictably against full dates, so only a real date counts.
     const isRealDate = isRealIsoDate(selectedDate);
-    const isPostponed = isRealDate && selectedDate > currentDate;
-    const isBeforeMinimum = isRealDate && isRealIsoDate(minimumDate) && selectedDate < minimumDate;
+    const isChanged = isRealDate && selectedDate !== currentDate;
+    const isBeforeMinimum = isRealDate && minimumDate !== null && isRealIsoDate(minimumDate) && selectedDate < minimumDate;
 
     const formatMessage = toFieldMessageView(
         locale,
@@ -55,7 +55,7 @@ export function ServiceScheduleChangeModal({
     );
     const message: FieldMessageView | null = withGuidance(
         isBeforeMinimum
-            ? { tone: "error", text: t(locale, "form.validation.date-not-before").replace("{date}", minimumDate) }
+            ? { tone: "error", text: t(locale, "form.validation.date-not-before").replace("{date}", minimumDate ?? "") }
             : formatMessage,
         DATE_GUIDANCE,
     );
@@ -73,14 +73,14 @@ export function ServiceScheduleChangeModal({
                 <>
                     <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
                     <br />
-                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다.</span>
+                    <span>선택한 회차부터 이후 일정을 함께 옮깁니다.</span>
                 </>
             }
             isDescriptionVisuallyHidden={false}
             size="detail"
             approvalLabel="일정 변경"
             pendingLabel="변경 중..."
-            approvalDisabled={!isPostponed || isBeforeMinimum}
+            approvalDisabled={!isChanged || isBeforeMinimum}
             isPending={isPending}
             onApprove={onSubmit}
         >

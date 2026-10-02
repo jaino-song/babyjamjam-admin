@@ -373,7 +373,8 @@ export interface ResetServiceRecordLinkResponse {
 export interface ServiceScheduleChangePreviewResponse {
     sessionIndex: number;
     fromDate: string;
-    minimumDate: string;
+    /** Earliest selectable date (the client's birth date); null when no birth date is recorded. */
+    minimumDate: string | null;
 }
 export interface ApplyServiceScheduleChangeRequest {
     toDate: string;

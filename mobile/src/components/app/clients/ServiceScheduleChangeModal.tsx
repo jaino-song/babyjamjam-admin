@@ -17,8 +17,8 @@ import {
 } from "@/lib/validations/field-message";
 
 const DATE_INPUT_ID = "service-schedule-change-date";
-const TOO_EARLY_MESSAGE = "현재 날짜 이후로 입력해 주세요";
-const DATE_GUIDANCE: SlotMessage = { text: "현재 날짜 이후만 가능해요", tone: "muted" };
+const UNCHANGED_MESSAGE = "현재 예정일과 다른 날짜를 입력해 주세요";
+const DATE_GUIDANCE: SlotMessage = { text: "출산일 이후만 가능해요", tone: "muted" };
 
 const DATE_SPEC: FieldSpec = { kind: "date", label: "서비스 제공 날짜", required: true };
 
@@ -27,7 +27,7 @@ interface ServiceScheduleChangeModalProps {
     open: boolean;
     sessionIndex: number;
     currentDate: string;
-    minimumDate: string;
+    minimumDate: string | null;
     selectedDate: string;
     isPending: boolean;
     onDateChange: (date: string) => void;
@@ -55,23 +55,24 @@ export function ServiceScheduleChangeModal({
         locale,
     });
 
-    const isPostponed = isRealIsoDate(selectedDate)
-        && selectedDate >= minimumDate
-        && selectedDate > currentDate;
+    const isRealDate = isRealIsoDate(selectedDate);
+    const isBeforeMinimum = isRealDate && minimumDate !== null && selectedDate < minimumDate;
+    const isValidChange = isRealDate && !isBeforeMinimum && selectedDate !== currentDate;
 
-    // A prefilled date that is too early is only called out once the user has touched the field.
-    const tooEarlyMessage: SlotMessage | null =
-        (edited || fieldMessages.submitted) && isRealIsoDate(selectedDate) && !isPostponed
-            ? { text: TOO_EARLY_MESSAGE, tone: "err" }
+    // An unchanged prefilled date is only called out once the user has touched the field.
+    const rangeMessage: SlotMessage | null = isBeforeMinimum
+        ? { text: `${minimumDate} 이후로 입력해 주세요`, tone: "err" }
+        : (edited || fieldMessages.submitted) && isRealDate && !isValidChange
+            ? { text: UNCHANGED_MESSAGE, tone: "err" }
             : null;
     // Always-on guidance comes last: any error or format hint replaces it, and it returns once they clear.
-    const slot = pickSlotMessage(fieldMessages.slot("date"), tooEarlyMessage, DATE_GUIDANCE);
+    const slot = pickSlotMessage(fieldMessages.slot("date"), rangeMessage, DATE_GUIDANCE);
     const hasError = slot?.tone === "err";
     const dateBind = fieldMessages.bind("date");
 
     const handleApprove = () => {
         fieldMessages.markSubmitted();
-        if (!isPostponed) {
+        if (!isValidChange) {
             focusFirstInvalidField([DATE_INPUT_ID]);
             return;
         }
@@ -87,7 +88,7 @@ export function ServiceScheduleChangeModal({
                 <>
                     <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
                     <br />
-                    <span>선택한 회차부터 이후 일정을 뒤로 미룹니다.</span>
+                    <span>선택한 회차부터 이후 일정을 함께 옮깁니다.</span>
                 </>
             }
             isDescriptionVisuallyHidden={false}
