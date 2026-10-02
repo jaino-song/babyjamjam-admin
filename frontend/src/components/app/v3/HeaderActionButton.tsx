@@ -4,8 +4,11 @@ import React from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
+// Padding lives in the base so every state (idle, hover, active/primary fill)
+// keeps the same box — per-state px overrides made the button jump when toggled
+// and left the hover pill hugging the content.
 const baseStyles =
-  "flex items-center gap-[calc(4px*var(--glint-ui-scale,1))] rounded-xl py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold transition-colors";
+  "flex items-center gap-[calc(4px*var(--glint-ui-scale,1))] rounded-xl px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold transition-colors";
 
 const variantStyles = {
   primary: "text-primary hover:bg-primary-light",
