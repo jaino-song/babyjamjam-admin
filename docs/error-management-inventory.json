@@ -13798,14 +13798,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/app/clients/ClientNewForm.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 16,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/app/clients/ClientServiceRecordsTab.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
@@ -15926,23 +15918,7 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/auth/inline-field-error.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/auth/oauth-buttons.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/auth/password-requirements.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -59199,127 +59175,6 @@
       "spec_mapping_note": "Migrated: normalizeApiError, fieldErrors mapped to inputs, requestId, UNKNOWN hint"
     },
     {
-      "id": "owner-b161eb4dac7a",
-      "path": "frontend/src/components/app/clients/ClientNewForm.tsx",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1f (002e86782, audit SHIP 61fb, merge pending): client error policy — code-based comparisons, authored Korean outcomes (no raw upstream internals), mutation failures surfaced; jest 307/1812, tsc 0, eslint 0e; +2 adjacent-file deviations.",
-      "seams": [
-        {
-          "line": 214,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 256,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 263,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 267,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 272,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 276,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 280,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 296,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 302,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 329,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 330,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 366,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 405,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 434,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 589,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 652,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-FE-04",
-        "EM-CHANGE-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "no active importer"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Legacy getUserErrorMessage/getErrorMessage raw-string paths; orphan, no active importer"
-    },
-    {
       "id": "owner-3b7e62dcc9c4",
       "path": "frontend/src/components/app/clients/ClientServiceRecordsTab.tsx",
       "root": "frontend/src/",
@@ -63224,7 +63079,6 @@
       "consumer_paths": [
         "frontend/src/components/app/employees/EmployeeFormDialog.tsx",
         "frontend/src/components/app/clients/ClientFormDialog.tsx",
-        "frontend/src/components/app/clients/ClientNewForm.tsx",
         "frontend/src/app/(protected)/clients/new/page.tsx",
         "frontend/src/components/app/contracts/ContractAutomationsManager.tsx"
       ],

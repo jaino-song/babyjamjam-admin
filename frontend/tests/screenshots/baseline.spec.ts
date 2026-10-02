@@ -24,7 +24,12 @@ for (const [viewportName, viewportSize] of Object.entries(viewports)) {
     for (const route of authenticatedRoutes) {
       base(`capture ${route.slug}`, async ({ page }) => {
         await page.goto(route.path);
-        await page.waitForLoadState("networkidle", { timeout: 15000 });
+        if (route.settle === "load") {
+          await page.waitForLoadState("load");
+          await page.waitForTimeout(1500);
+        } else {
+          await page.waitForLoadState("networkidle", { timeout: 15000 });
+        }
 
         await page.screenshot({
           path: `tests/screenshots/baseline/${viewportName}/authenticated-${route.slug}.png`,

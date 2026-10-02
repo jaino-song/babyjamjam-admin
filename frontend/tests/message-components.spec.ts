@@ -1,19 +1,7 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { enableE2EAuth, fulfillShellDefaults } from "./helpers/e2e-shell";
 
-async function enableE2EAuth(page: Page) {
-  const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
-  await page.context().addCookies([{
-    name: "e2e_auth",
-    value: "1",
-    url: baseURL,
-    sameSite: "Lax",
-  }]);
-  await page.addInitScript(() => {
-    (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
-  });
-}
-
-async function mockMessageReads(page: Page) {
+async function mockMessageReads(page: Page, { approved }: { approved: boolean }) {
   await page.route("**/api/**", async (route: Route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === "/api/auth/me") {
@@ -33,11 +21,11 @@ async function mockMessageReads(page: Page) {
       return route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({
-          approvalStatus: "not_requested",
-          isApproved: false,
-          canRequest: true,
-        }),
+        body: JSON.stringify(
+          approved
+            ? { approvalStatus: "approved", isApproved: true, canRequest: false }
+            : { approvalStatus: "not_requested", isApproved: false, canRequest: true },
+        ),
       });
     }
     if (pathname === "/api/message-trigger-jobs/upcoming") {
@@ -176,28 +164,40 @@ async function mockMessageReads(page: Page) {
     ) {
       return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     }
+    if (await fulfillShellDefaults(route)) return;
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 }
 
-test.describe("Message read-only status surfaces", () => {
+test.describe("Message history (예정 + 지난 발송)", () => {
   test.beforeEach(async ({ page }) => {
     await enableE2EAuth(page);
-    await mockMessageReads(page);
   });
 
-  test("shows waiting and processing jobs before sender approval", async ({ page }) => {
+  test("keeps 발송 기록 locked until the branch is approved to send", async ({ page }) => {
+    await mockMessageReads(page, { approved: false });
     await page.goto("/messages");
-    await page.getByRole("button", { name: "발송 예정" }).click();
 
-    await expect(page.getByText("대기 고객")).toBeVisible();
-    await expect(page.getByText("처리 고객")).toBeVisible();
-    await expect(page.getByText("발송 대기", { exact: true })).toBeVisible();
-    await expect(page.getByText("발송 중", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "발송 기록" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "발송 예정" })).toHaveCount(0);
+    await expect(page.getByText("메시지 발송 승인 후에 설정 가능합니다.")).toBeVisible();
+  });
+
+  test("shows waiting and processing jobs once the branch is approved", async ({ page }) => {
+    await mockMessageReads(page, { approved: true });
+    await page.goto("/messages");
+    await page.getByRole("button", { name: "발송 기록" }).click();
+
+    // The first row is auto-selected, so its name also shows in the detail panel; assert on list rows.
+    await expect(page.getByRole("button", { name: /대기 고객/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /처리 고객/ })).toBeVisible();
+    await expect(page.getByText("발송 대기", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("발송 중", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("메시지 전송 권한이 필요합니다.")).not.toBeVisible();
   });
 
-  test("shows failed and canceled jobs in history before sender approval", async ({ page }) => {
+  test("shows failed and canceled jobs in the same history once the branch is approved", async ({ page }) => {
+    await mockMessageReads(page, { approved: true });
     await page.goto("/messages");
     await page.getByRole("button", { name: "발송 기록" }).click();
 
