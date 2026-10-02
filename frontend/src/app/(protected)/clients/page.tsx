@@ -895,7 +895,7 @@ export default function ClientsPage() {
                             data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_header_add"
                             className={
                                 shouldShowClientFormPanel
-                                    ? "max-w-full shrink-0 whitespace-nowrap bg-primary px-[calc(10px*var(--glint-ui-scale,1))] text-white hover:bg-primary"
+                                    ? "max-w-full shrink-0 whitespace-nowrap bg-primary text-white hover:bg-primary"
                                     : undefined
                             }
                         />

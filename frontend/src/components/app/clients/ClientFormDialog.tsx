@@ -1640,7 +1640,7 @@ function ClientFormContent({
                     <FormTextInput
                         ref={addressInputRef}
                         id="address"
-                        placeholder="예: 인천광역시 서구"
+                        placeholder="인천광역시 서구"
                         value={formData.address ?? ""}
                         onChange={(e) => handleInputChange("address", e.target.value)}
                         {...getInputFieldProps("address")}
@@ -2072,7 +2072,7 @@ function ClientFormContent({
                 <FormTextInput
                     ref={addressInputRef}
                     id="address"
-                    placeholder="예: 인천광역시 서구"
+                    placeholder="인천광역시 서구"
                     value={formData.address ?? ""}
                     onChange={(event) => handleInputChange("address", event.target.value)}
                     {...getInputFieldProps("address")}
