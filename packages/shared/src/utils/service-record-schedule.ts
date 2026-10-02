@@ -228,14 +228,29 @@ export function shiftServiceRecordScheduleSuffix(
         );
     }
 
-    const shifted = vector.map((entry) => {
-        if (entry.sessionIndex < sessionIndex) return cloneEntry(entry);
-        if (entry.sessionIndex === sessionIndex && isException) return { ...entry, serviceDate: newDate };
-        return {
-            ...entry,
-            serviceDate: calendar.shiftBusinessDays(entry.serviceDate, deltaBusinessDays),
-        };
-    });
+    const shifted: ServiceRecordPlannedSession[] = [];
+    for (const entry of vector) {
+        if (entry.sessionIndex < sessionIndex) {
+            shifted.push(cloneEntry(entry));
+            continue;
+        }
+        if (entry.sessionIndex === sessionIndex && isException) {
+            shifted.push({ ...entry, serviceDate: newDate });
+            continue;
+        }
+        // An earlier approved weekend/holiday exception carried by this shift
+        // returns to business-day scheduling: it shifts from the business day it
+        // stood for and never lands on or before the session before it.
+        const base = calendar.isBusinessDay(entry.serviceDate)
+            ? entry.serviceDate
+            : previousBusinessDay(entry.serviceDate, calendar);
+        let serviceDate = calendar.shiftBusinessDays(base, deltaBusinessDays);
+        const previous = shifted[shifted.length - 1];
+        if (entry.sessionIndex > sessionIndex && previous && serviceDate <= previous.serviceDate) {
+            serviceDate = calendar.nextBusinessDay(previous.serviceDate);
+        }
+        shifted.push({ ...entry, serviceDate });
+    }
     return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length, calendar) };
 }
 

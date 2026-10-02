@@ -4,7 +4,7 @@ import {
     shiftServiceRecordScheduleSuffix,
     validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
-import { createKrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "./business-days";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR, UnsupportedKoreanHolidayYearError } from "./business-days";
 
 describe("getExpectedSessionDateFromRecords", () => {
     it("falls back to the N-th business day from start when no records exist", () => {
@@ -74,6 +74,27 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         expect(result.entries[5]!.originalDate).toBe("2026-09-14");
         // The stored vector, exception included, reads back as valid.
         expect(() => validateServiceRecordScheduleVector(result.entries)).not.toThrow();
+    });
+
+    it.each([
+        [5, "2026-09-14"],
+        [4, "2026-09-11"],
+        [2, "2026-09-09"],
+    ])("shifts session %i to %s across an earlier approved weekend exception", (sessionIndex, newDate) => {
+        const withException = shiftServiceRecordScheduleSuffix(vector, 6, "2026-09-13", undefined, { allowNonBusinessDay: true }).entries;
+
+        const result = shiftServiceRecordScheduleSuffix(withException, sessionIndex, newDate);
+
+        const dates = result.entries.map((entry) => entry.serviceDate);
+        expect(dates[sessionIndex - 1]).toBe(newDate);
+        // Carried along, the exception returns to business days and keeps the order.
+        for (const date of dates.slice(sessionIndex - 1)) expect(KR_BUILTIN_CALENDAR.isBusinessDay(date)).toBe(true);
+        for (let i = 1; i < dates.length; i += 1) expect(dates[i]! > dates[i - 1]!).toBe(true);
+    });
+
+    it("still rejects a target that lands on the session before it", () => {
+        const withException = shiftServiceRecordScheduleSuffix(vector, 6, "2026-09-13", undefined, { allowNonBusinessDay: true }).entries;
+        expect(() => shiftServiceRecordScheduleSuffix(withException, 5, "2026-09-10")).toThrow();
     });
 
     it("changes only the selected day when no suffix move was approved", () => {

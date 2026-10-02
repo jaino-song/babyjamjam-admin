@@ -851,6 +851,19 @@ export class EformsignController {
             if (!client.eDocId || client.eDocId === documentId) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
+            // Only this client's own contract can be superseded, never another
+            // client's document or a service-record snapshot.
+            const document = await this.prisma.eformsign_doc.findUnique({
+                where: { documentId },
+                select: { clientId: true, documentKind: true },
+            });
+            if (
+                !document
+                || document.documentKind === "service_record_snapshot"
+                || (document.clientId !== null && document.clientId !== body.clientId)
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
             const terminalDocumentIds = await this.documentMirrorService
                 .findTerminalDocumentIds([documentId]);
             if (terminalDocumentIds.length > 0) {
@@ -865,7 +878,11 @@ export class EformsignController {
             );
             if (!successfulDeletedDocumentIds(result).includes(documentId)) {
                 // eformsign refused (most likely signed in the meantime): keep the record.
-                await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
+                // Only a definitive refusal releases the purge intent; an ambiguous
+                // outcome keeps it so reconciliation can finish the job.
+                if (failedDeletedDocumentIds(result, [documentId]).includes(documentId)) {
+                    await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
+                }
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             await this.documentMirrorService.purgeDocuments([documentId]);

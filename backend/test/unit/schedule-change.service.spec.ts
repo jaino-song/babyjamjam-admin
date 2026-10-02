@@ -63,6 +63,7 @@ const createMockTokenService = () => ({
 const createMockLifecycleService = () => ({
     ensureForSchedule: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
     ensureForClient: jest.fn().mockResolvedValue({ id: "case-1", formVersion: 1 }),
+    recompute: jest.fn().mockResolvedValue(undefined),
 });
 
 const createMockTriggerService = () => ({
@@ -879,6 +880,8 @@ describe("ScheduleChangeService", () => {
                     where: { id: "case-1" },
                     data: { requiredSessionCount: 10 },
                 });
+                // Status must be derived from the restored N, not the capped one.
+                expect(lifecycleService.recompute).toHaveBeenCalledWith("case-1", txPrismaService, expect.anything());
             });
 
             it("returns the client's start date after the change", async () => {

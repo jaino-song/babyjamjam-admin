@@ -641,6 +641,9 @@ export class ScheduleChangeService {
                         where: { id: syncedRecord.id },
                         data: { requiredSessionCount: record.requiredSessionCount },
                     });
+                    // The sync derived status and completedAt from the capped N;
+                    // derive them again from the restored one.
+                    await this.lifecycleService?.recompute(syncedRecord.id, tx, calendar);
                 }
                 await this.tokenService.extendExpiryForCase(
                     syncedRecord?.id ?? record.id,
