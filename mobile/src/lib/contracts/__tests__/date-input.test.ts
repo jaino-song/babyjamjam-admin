@@ -1,5 +1,5 @@
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import {
-  formatIsoDateInput,
   isStrictIsoDate,
   isoToYymmdd,
   normalizeIsoDate,
@@ -68,7 +68,8 @@ describe("contract date input helpers", () => {
     });
   });
 
-  describe("formatIsoDateInput", () => {
+  // Shared owns the formatter and has no test of its own; keep the contract pinned here.
+  describe("formatIsoDateInput (shared)", () => {
     it("inserts the dashes as the digits arrive", () => {
       expect(formatIsoDateInput("2026")).toBe("2026");
       expect(formatIsoDateInput("202612")).toBe("2026-12");
