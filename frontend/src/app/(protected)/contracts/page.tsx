@@ -617,9 +617,13 @@ export default function ContractsPage() {
 
   const handleStartContractCreation = useCallback(() => {
     setSelectedDocId(null);
-    setContractCreationActiveStep(0);
+    // A creation still in progress is resumed where it is; only a genuinely new
+    // contract starts at the first step.
+    if (!hasContractCreationSession) {
+      setContractCreationActiveStep(0);
+    }
     setIsCreating(true);
-  }, []);
+  }, [hasContractCreationSession]);
 
   useEffect(() => {
     if (searchParams.get("create") !== "1") return;
@@ -649,10 +653,10 @@ export default function ContractsPage() {
   }, []);
 
   const handleContractCreationSessionChange = useCallback((hasSession: boolean) => {
+    // The session ending does not move the wizard: a failed run lands on 계약 정보
+    // via the form's own step change, and real ends (cancel, new send, close) reset
+    // the step themselves.
     setHasContractCreationSession(hasSession);
-    if (!hasSession) {
-      setContractCreationActiveStep(0);
-    }
   }, []);
 
   const handleDeleteRequest = (documentId: string) => {
@@ -835,6 +839,10 @@ export default function ContractsPage() {
               />
           </ListPanel>
 
+          {/* SplitLayout regroups its children into a fragment only when there are more than two,
+              which moves the creation form (and unmounts its session) the moment a document is
+              selected. One stable detail group keeps the form mounted while it is hidden. */}
+          <>
           {(isCreating || hasContractCreationSession) && (
             <div
               data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"
@@ -896,6 +904,7 @@ export default function ContractsPage() {
           ) : !isCreating && !hasContractCreationSession ? (
             <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
           ) : null}
+          </>
         </SplitLayout>
             </section>
           ) : null}
