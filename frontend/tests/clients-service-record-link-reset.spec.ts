@@ -1,37 +1,7 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+import { clientsListSummary, enableE2EAuth, fulfillShellDefaults } from "./helpers/e2e-shell";
 
 const SERVICE_RECORD_URL = "https://mobile.test/service-record/efl_reset";
-
-async function enableE2EAuth(page: Page) {
-    const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
-    const tokenPayload = Buffer.from(JSON.stringify({
-        exp: 4_102_444_800,
-        sub: "e2e-user",
-        sid: "e2e-session",
-        type: "access",
-        branchId: "branch-1",
-        role: "admin",
-    })).toString("base64url");
-    const authToken = `eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.${tokenPayload}.e2e`;
-    await page.context().addCookies([
-        {
-            name: "auth_token",
-            value: authToken,
-            url: baseURL,
-            sameSite: "Lax",
-        },
-        {
-            name: "e2e_auth",
-            value: "1",
-            url: baseURL,
-            sameSite: "Lax",
-        },
-    ]);
-    await page.addInitScript(() => {
-        (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
-        sessionStorage.clear();
-    });
-}
 
 test("resets the service-record link without resending a message and shows the URL", async ({ page }) => {
     await enableE2EAuth(page);
@@ -46,6 +16,11 @@ test("resets the service-record link without resending a message and shows the U
 
     await page.route("**/api/**", async (route: Route) => {
         const pathname = new URL(route.request().url()).pathname;
+
+        if (pathname === "/api/clients/list-summary") {
+            return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(clientsListSummary(1)) });
+        }
+        if (await fulfillShellDefaults(route)) return;
 
         if (pathname === "/api/auth/me") {
             return route.fulfill({
@@ -168,10 +143,10 @@ test("resets the service-record link without resending a message and shows the U
     await page.getByText("제공기록지 링크 재설정", { exact: true }).click();
 
     const approval = page.locator('[data-component="desktop_clients_modals_reset-service-record-link-approval"]');
-    await expect(approval).toContainText("메시지는 발송되지 않습니다.");
+    await expect(approval).toContainText("메시지는 발송되지 않아요.");
     await approval.getByRole("button", { name: "링크 재설정" }).click();
 
-    const result = page.locator('[data-component="clients-detail-reset-service-record-link-result"]');
+    const result = page.getByRole("dialog", { name: "제공기록지 링크가 재설정되었습니다" });
     await expect(result).toBeVisible();
     await expect(result.getByRole("textbox", { name: "제공기록지 링크" })).toHaveValue(SERVICE_RECORD_URL);
     expect(resetRequestCount).toBe(1);
