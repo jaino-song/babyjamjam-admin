@@ -842,7 +842,9 @@ describe("EformsignController (Integration)", () => {
             expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
         });
 
-        it("keeps the record and the purge intent when the refusal is ambiguous", async () => {
+        it("keeps the record and releases the purge intent on any refusal", async () => {
+            // e.g. the customer signed it after the local mirror last synced: a kept
+            // intent would let the nightly sync purge the signed contract.
             eformsignService.cancelDocuments.mockResolvedValue({
                 result: { success_result: [], fail_result: [{ document_id: "old-doc" }] },
             });
@@ -851,6 +853,32 @@ describe("EformsignController (Integration)", () => {
 
             expect(response.status).toBe(409);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
+                expect.objectContaining({ documentId: "old-doc" }),
+            ]);
+        });
+
+        it("releases the purge intent when the cancel call fails outright", async () => {
+            eformsignService.cancelDocuments.mockRejectedValue(new Error("socket exploded"));
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
+                expect.objectContaining({ documentId: "old-doc" }),
+            ]);
+        });
+
+        it("keeps the purge intent when eformsign cancelled but the local purge failed", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+            documentMirrorService.purgeDocuments.mockRejectedValue(new Error("db down"));
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
             expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 

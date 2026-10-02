@@ -833,6 +833,7 @@ export class EformsignController {
         @Body() body: SupersedeDocumentRequestDto,
     ) {
         let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
+        let vendorCancelled = false;
         try {
             const branchId = tenant.branchId ?? "";
             const allowedDocuments = await this.filterDocumentsByBranch(
@@ -877,26 +878,20 @@ export class EformsignController {
                 ({ accessToken }) => this.eformsignService.cancelDocuments(accessToken, [documentId]),
             );
             if (!successfulDeletedDocumentIds(result).includes(documentId)) {
-                // eformsign refused (most likely signed in the meantime): keep the record.
-                // Only a definitive refusal releases the purge intent; an ambiguous
-                // outcome keeps it so reconciliation can finish the job.
-                if (failedDeletedDocumentIds(result, [documentId]).includes(documentId)) {
-                    await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
-                }
+                // eformsign refused (most likely signed in the meantime): keep the record
+                // and release the purge intent, whatever the refusal code. A kept intent
+                // would let the nightly sync purge a contract that turned out signed.
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
+            vendorCancelled = true;
             await this.documentMirrorService.purgeDocuments([documentId]);
             await this.documentMirrorService.clearPermanentPurgeRequest([]);
             return { documentId, superseded: true };
         } catch (error) {
-            const apiError = error instanceof EformsignApiError ? error : null;
-            if (
-                apiError !== null
-                && apiError.status >= 400
-                && apiError.status < 500
-                && !isEformsignDocumentAbsentError(error)
-                && ![408, 429].includes(apiError.status)
-            ) {
+            // Unlike a delete, a supersede never leaves an intent for reconciliation to
+            // finish: only a cancellation eformsign confirmed may lead to a purge. Once
+            // it confirmed, the intent stays so a failed local purge is still completed.
+            if (!vendorCancelled && permanentPurgeRequests.length > 0) {
                 await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
             }
             if (error instanceof HttpException) throw error;
