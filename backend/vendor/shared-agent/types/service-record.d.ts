@@ -373,11 +373,16 @@ export interface ResetServiceRecordLinkResponse {
 export interface ServiceScheduleChangePreviewResponse {
     sessionIndex: number;
     fromDate: string;
-    /** Earliest selectable date (the client's birth date); null when no birth date is recorded. */
+    /**
+     * Earliest selectable date: the later of the client's birth date and the day
+     * after the previous session. Null for session 1 with no birth date recorded.
+     */
     minimumDate: string | null;
 }
 export interface ApplyServiceScheduleChangeRequest {
     toDate: string;
+    /** The admin confirmed moving the session onto a weekend or holiday. */
+    allowNonBusinessDay?: boolean;
 }
 export interface ApplyServiceScheduleChangeResponse {
     id: string;
@@ -389,6 +394,8 @@ export interface ApplyServiceScheduleChangeResponse {
     oldEndDate: string;
     newEndDate: string;
     status: "approved";
+    /** The client's service start date after the change. */
+    startDate: string | null;
 }
 export interface PrepareServiceRecordLinkRequest {
     recipientPhone?: string;

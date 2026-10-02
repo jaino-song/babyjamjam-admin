@@ -172,6 +172,8 @@ describe("EformsignController (Integration)", () => {
                     provide: PrismaService,
                     useValue: {
                         branch: { findUnique: jest.fn() },
+                        client: { findFirst: jest.fn() },
+                        eformsign_doc: { findUnique: jest.fn() },
                     },
                 },
                 {
@@ -789,6 +791,133 @@ describe("EformsignController (Integration)", () => {
                 code: "VALIDATION_FAILED",
                 errors: [expect.objectContaining({ pointer: "/document_ids", location: "body" })],
             }),
+        });
+    });
+
+    describe("superseding a re-issued contract", () => {
+        let clientFindFirst: jest.Mock;
+        let docFindUnique: jest.Mock;
+        const supersede = () => request(app.getHttpServer())
+            .post("/api/documents/old-doc/supersede")
+            .send({ clientId: 7 });
+
+        beforeEach(() => {
+            clientFindFirst = (app.get(PrismaService) as unknown as { client: { findFirst: jest.Mock } }).client.findFirst;
+            clientFindFirst.mockReset();
+            clientFindFirst.mockResolvedValue({ eDocId: "new-doc" });
+            docFindUnique = (app.get(PrismaService) as unknown as { eformsign_doc: { findUnique: jest.Mock } }).eformsign_doc.findUnique;
+            docFindUnique.mockReset();
+            docFindUnique.mockResolvedValue({ clientId: 7, documentKind: "contract" });
+            eformsignDocService.findAll.mockResolvedValue([{ documentId: "old-doc" }] as never);
+        });
+
+        it("cancels and purges the replaced contract once the replacement is linked", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(201);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledWith("server-access-token", ["old-doc"]);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+        });
+
+        it("never touches a signed contract", async () => {
+            documentMirrorService.findTerminalDocumentIds.mockResolvedValue(["old-doc"]);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+        });
+
+        it("refuses while the client still points at the old contract", async () => {
+            clientFindFirst.mockResolvedValue({ eDocId: "old-doc" });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+
+        it("keeps the record and releases the purge intent on any refusal", async () => {
+            // e.g. the customer signed it after the local mirror last synced: a kept
+            // intent would let the nightly sync purge the signed contract.
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: [], fail_result: [{ document_id: "old-doc" }] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
+                expect.objectContaining({ documentId: "old-doc" }),
+            ]);
+        });
+
+        it("releases the purge intent when the cancel call fails outright", async () => {
+            eformsignService.cancelDocuments.mockRejectedValue(new Error("socket exploded"));
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
+                expect.objectContaining({ documentId: "old-doc" }),
+            ]);
+        });
+
+        it("keeps the purge intent when eformsign cancelled but the local purge failed", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+            documentMirrorService.purgeDocuments.mockRejectedValue(new Error("db down"));
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("releases the purge intent when eformsign definitively refuses", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: {
+                    success_result: [],
+                    fail_result: [{ document_id: "old-doc", code: "4000164", message: "not authorized" }],
+                },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
+                expect.objectContaining({ documentId: "old-doc" }),
+            ]);
+        });
+
+        it.each([
+            ["another client's document", { clientId: 99, documentKind: "contract" }],
+            ["a service-record snapshot", { clientId: 7, documentKind: "service_record_snapshot" }],
+        ])("refuses to supersede %s", async (_label, document) => {
+            docFindUnique.mockResolvedValue(document);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+
+        it("refuses a contract outside the caller's branch", async () => {
+            eformsignDocService.findAll.mockResolvedValue([] as never);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(403);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
         });
     });
 

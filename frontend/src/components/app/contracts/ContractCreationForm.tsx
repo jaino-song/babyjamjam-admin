@@ -1100,12 +1100,12 @@ export const ContractCreationForm = ({
     // Only when the contract just sent is for the re-issued client.
     if (!initialClient || clientId !== initialClient.id) return;
     supersededRef.current = true;
-    eformsignApi.deleteDocument(supersedeDocumentId)
+    eformsignApi.supersedeDocument(supersedeDocumentId, clientId)
       .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
       .catch(() => {
         toast({
           variant: "destructive",
-          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 직접 삭제해 주세요",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
         });
       });
   }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, queryClient, toast]);
@@ -1202,7 +1202,12 @@ export const ContractCreationForm = ({
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
-      const shouldEnqueueDocumentJob = mode !== "manual" && isFeatureEnabled("eformsignDocumentJobs");
+      // A re-issue must cancel the contract it replaces once this one is sent, which
+      // only the synchronous paths observe (they open the success modal), so a
+      // re-issue never goes to the background job queue.
+      const shouldEnqueueDocumentJob = mode !== "manual"
+        && !supersedeDocumentId
+        && isFeatureEnabled("eformsignDocumentJobs");
       const shouldAttemptHeadless = !shouldEnqueueDocumentJob
         && mode !== "manual"
         && isFeatureEnabled("headlessDispatch");

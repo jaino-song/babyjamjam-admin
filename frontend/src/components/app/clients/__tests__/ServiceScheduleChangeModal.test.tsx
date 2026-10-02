@@ -3,6 +3,8 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { ServiceScheduleChangeModal } from "../ServiceScheduleChangeModal";
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 describe("ServiceScheduleChangeModal", () => {
     it("shows the next service date as the minimum and initial date", () => {
         render(
@@ -55,6 +57,31 @@ describe("ServiceScheduleChangeModal", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
         expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit).toHaveBeenCalledWith(false);
+    });
+
+    it("asks before moving a session onto a weekend and submits only once confirmed", () => {
+        const onSubmit = jest.fn();
+        render(
+            <ServiceScheduleChangeModal
+                open
+                sessionIndex={3}
+                currentDate="2026-07-20"
+                minimumDate="2026-07-17"
+                selectedDate="2026-07-19"
+                isPending={false}
+                onDateChange={jest.fn()}
+                onClose={jest.fn()}
+                onSubmit={onSubmit}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(screen.getByText("주말·공휴일이에요")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+        expect(onSubmit).toHaveBeenCalledWith(true);
     });
 
     it("submits a date earlier than the current service date but not before the birth date", () => {

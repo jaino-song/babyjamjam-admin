@@ -530,21 +530,19 @@ export default function ClientsPage() {
         }
     };
 
-    const handleApplyServiceScheduleChange = async () => {
+    const handleApplyServiceScheduleChange = async (allowNonBusinessDay: boolean) => {
         if (!scheduleChangeTarget) return;
 
         setIsApplyingScheduleChange(true);
         try {
             const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
                 toDate: selectedScheduleChangeDate,
+                ...(allowNonBusinessDay ? { allowNonBusinessDay: true } : {}),
             });
-            // Moving the first session (or any session before the start) moves the service start.
+            // The server decides whether the move also moved the service start.
             const withNewPeriod = (currentClient: Client): Client => ({
                 ...currentClient,
-                ...(changed.data.sessionIndex === 1
-                    || (currentClient.startDate && changed.data.toDate < currentClient.startDate.slice(0, 10))
-                    ? { startDate: changed.data.toDate }
-                    : {}),
+                ...(changed.data.startDate ? { startDate: changed.data.startDate } : {}),
                 endDate: changed.data.newEndDate,
                 pendingScheduleChange: null,
             });
@@ -1260,7 +1258,7 @@ export default function ClientsPage() {
                         setScheduleChangeTarget(null);
                         setSelectedScheduleChangeDate("");
                     }}
-                    onSubmit={() => void handleApplyServiceScheduleChange()}
+                    onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
                 />
             ) : null}
 

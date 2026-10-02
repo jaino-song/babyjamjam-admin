@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -14,6 +14,7 @@ import { parseInteger } from "interface/parse-integer";
 import { parseBooleanQuery } from "interface/parse-boolean";
 import {
     DeleteDocumentsRequestDto,
+    SupersedeDocumentRequestDto,
     ReRequestOutsiderDocumentRequestDto,
 } from "interface/dto/eformsign.dto";
 import {
@@ -815,6 +816,85 @@ export class EformsignController {
             if (error instanceof HttpException) {
                 throw error;
             }
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
+        }
+    }
+
+    /**
+     * Cancel a contract that a re-issue replaced. Unlike a delete, this never
+     * touches a signed or otherwise finished contract, and it refuses until the
+     * replacement is the client's linked contract, so the client is never left
+     * pointing at nothing. Only a contract eformsign actually cancelled is purged.
+     */
+    @Post("documents/:documentId/supersede")
+    async supersedeDocument(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Param("documentId") documentId: string,
+        @Body() body: SupersedeDocumentRequestDto,
+    ) {
+        let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
+        let vendorCancelled = false;
+        try {
+            const branchId = tenant.branchId ?? "";
+            const allowedDocuments = await this.filterDocumentsByBranch(
+                branchId,
+                [{ id: documentId }],
+                { includePermanentPurgePending: true },
+            );
+            if (allowedDocuments.length !== 1) {
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+            }
+            const client = await this.prisma.client.findFirst({
+                where: { id: body.clientId, branchId },
+                select: { eDocId: true },
+            });
+            if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            if (!client.eDocId || client.eDocId === documentId) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            // Only this client's own contract can be superseded, never another
+            // client's document or a service-record snapshot.
+            const document = await this.prisma.eformsign_doc.findUnique({
+                where: { documentId },
+                select: { clientId: true, documentKind: true },
+            });
+            if (
+                !document
+                || document.documentKind === "service_record_snapshot"
+                || (document.clientId !== null && document.clientId !== body.clientId)
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            const terminalDocumentIds = await this.documentMirrorService
+                .findTerminalDocumentIds([documentId]);
+            if (terminalDocumentIds.length > 0) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
+            permanentPurgeRequests = await this.documentMirrorService.requestPermanentPurge([documentId]);
+            const result = await this.credentialBoundary.withCredentials(
+                tenant,
+                "document.cancel",
+                ({ accessToken }) => this.eformsignService.cancelDocuments(accessToken, [documentId]),
+            );
+            if (!successfulDeletedDocumentIds(result).includes(documentId)) {
+                // eformsign refused (most likely signed in the meantime): keep the record
+                // and release the purge intent, whatever the refusal code. A kept intent
+                // would let the nightly sync purge a contract that turned out signed.
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            vendorCancelled = true;
+            await this.documentMirrorService.purgeDocuments([documentId]);
+            await this.documentMirrorService.clearPermanentPurgeRequest([]);
+            return { documentId, superseded: true };
+        } catch (error) {
+            // Unlike a delete, a supersede never leaves an intent for reconciliation to
+            // finish: only a cancellation eformsign confirmed may lead to a purge. Once
+            // it confirmed, the intent stays so a failed local purge is still completed.
+            if (!vendorCancelled && permanentPurgeRequests.length > 0) {
+                await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
+            }
+            if (error instanceof HttpException) throw error;
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
