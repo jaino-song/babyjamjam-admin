@@ -6,6 +6,7 @@ import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 
 jest.mock("@/hooks/useBusinessDayCalendar");
+jest.mock("@/hooks/useIssueContract", () => ({ useIssueContract: () => jest.fn() }));
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }), redirect: jest.fn() }));
 jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));

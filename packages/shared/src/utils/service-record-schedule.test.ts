@@ -57,6 +57,25 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         provenanceVersion: "case-7",
     }));
 
+    it("rejects a weekend target unless the exception was approved", () => {
+        expect(() => shiftServiceRecordScheduleSuffix(vector, 6, "2026-09-13")).toThrow(
+            expect.objectContaining({ code: "NON_BUSINESS_DATE" }),
+        );
+    });
+
+    it("moves Monday's session to the approved Sunday and pulls every later session one business day earlier", () => {
+        const result = shiftServiceRecordScheduleSuffix(vector, 6, "2026-09-13", undefined, { allowNonBusinessDay: true });
+
+        expect(result.deltaBusinessDays).toBe(-1);
+        expect(result.entries.map((entry) => entry.serviceDate).slice(4)).toEqual([
+            "2026-09-11", "2026-09-13", "2026-09-14", "2026-09-15", "2026-09-16",
+            "2026-09-17", "2026-09-18", "2026-09-21", "2026-09-22",
+        ]);
+        expect(result.entries[5]!.originalDate).toBe("2026-09-14");
+        // The stored vector, exception included, reads back as valid.
+        expect(() => validateServiceRecordScheduleVector(result.entries)).not.toThrow();
+    });
+
     it("changes only the selected day when no suffix move was approved", () => {
         const result = moveServiceRecordSessionDate(vector, 1, "2026-09-04", false);
         expect(result.deltaBusinessDays).toBe(-1);

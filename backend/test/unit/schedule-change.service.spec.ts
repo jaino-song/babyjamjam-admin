@@ -463,7 +463,7 @@ describe("ScheduleChangeService", () => {
             await expect(service.previewAdminChange(BRANCH_ID, SCHEDULE_ID)).resolves.toEqual({
                 sessionIndex: 3,
                 fromDate: "2026-07-20",
-                minimumDate: null,
+                minimumDate: "2026-07-17",
             });
             expect(prismaService.employee_schedule.findFirst).toHaveBeenCalledWith({
                 where: { id: SCHEDULE_ID, branchId: BRANCH_ID },
@@ -532,6 +532,7 @@ describe("ScheduleChangeService", () => {
                 "case-1",
                 new Date("2026-08-10T11:00:00.000Z"),
                 txPrismaService,
+                { onlyRaise: true },
             );
             expect(txPrismaService.schedule_change_request.create).toHaveBeenCalledWith({
                 data: expect.objectContaining({
@@ -799,6 +800,93 @@ describe("ScheduleChangeService", () => {
             expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
                 where: { id: SCHEDULE_ID },
                 data: expect.objectContaining({ startDate: toDbDate("2026-07-06") }),
+            });
+        });
+
+        describe("weekend/holiday exception and session order", () => {
+            const arrange = (overrides: { requiredSessionCount?: number } = {}) => {
+                txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                    endDate: toDbDate("2026-07-29"),
+                }));
+                txPrismaService.service_record_case.findFirst.mockResolvedValue({
+                    id: "case-1",
+                    formVersion: 1,
+                    ...overrides,
+                });
+                txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+                txPrismaService.service_record_day.findMany
+                    .mockResolvedValueOnce([
+                        createDay(1, "2026-07-15", true),
+                        createDay(2, "2026-07-16", true),
+                        createDay(3, "2026-07-20", false),
+                        createDay(4, "2026-07-21", false),
+                    ])
+                    .mockResolvedValueOnce([createDay(4, "2026-07-21", false)]);
+                txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                    status: "approved",
+                    sessionIndex: 3,
+                    fromDate: toDbDate("2026-07-20"),
+                    toDate: toDbDate("2026-07-19"),
+                    newEndDate: toDbDate("2026-07-28"),
+                }));
+            };
+
+            it("rejects a weekend date that was not confirmed", async () => {
+                await expectBadRequestCode(
+                    () => service.applyAdminChange(SCHEDULE_ID, "2026-07-19", tenant),
+                    "INVALID_SCHEDULE_DATE",
+                );
+                expect(prismaService.$transaction).not.toHaveBeenCalled();
+            });
+
+            it("moves Monday's session to a confirmed Sunday and pulls later sessions one business day earlier", async () => {
+                arrange();
+
+                await service.applyAdminChange(SCHEDULE_ID, "2026-07-19", tenant, { allowNonBusinessDay: true });
+
+                expect(txPrismaService.service_record_day.upsert).toHaveBeenCalledWith(
+                    expect.objectContaining({ update: { serviceDate: toDbDate("2026-07-19") } }),
+                );
+                // Session 4 moves from Tuesday 07-21 to Monday 07-20.
+                expect(txPrismaService.service_record_day.update).toHaveBeenCalledWith({
+                    where: { id: "day-4" },
+                    data: { serviceDate: toDbDate("2026-07-20") },
+                });
+                // Ten sessions: 3 on Sunday, 4..10 on the seven business days from Monday 07-20.
+                expect(txPrismaService.client.update).toHaveBeenCalledWith({
+                    where: { id: CLIENT_ID },
+                    data: { endDate: toDbDate("2026-07-28") },
+                });
+            });
+
+            it("rejects a date on or before the previous session even when confirmed", async () => {
+                arrange();
+
+                await expectBadRequestCode(
+                    () => service.applyAdminChange(SCHEDULE_ID, "2026-07-16", tenant, { allowNonBusinessDay: true }),
+                    "INVALID_SCHEDULE_DATE",
+                );
+                expect(txPrismaService.service_record_day.upsert).not.toHaveBeenCalled();
+            });
+
+            it("keeps the case's session count when the lifecycle sync re-caps it", async () => {
+                arrange({ requiredSessionCount: 10 });
+                lifecycleService.ensureForClient.mockResolvedValueOnce({ id: "case-1", formVersion: 1, requiredSessionCount: 8 });
+
+                await service.applyAdminChange(SCHEDULE_ID, "2026-07-19", tenant, { allowNonBusinessDay: true });
+
+                expect(txPrismaService.service_record_case.update).toHaveBeenCalledWith({
+                    where: { id: "case-1" },
+                    data: { requiredSessionCount: 10 },
+                });
+            });
+
+            it("returns the client's start date after the change", async () => {
+                arrange();
+
+                await expect(
+                    service.applyAdminChange(SCHEDULE_ID, "2026-07-19", tenant, { allowNonBusinessDay: true }),
+                ).resolves.toMatchObject({ startDate: null });
             });
         });
 

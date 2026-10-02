@@ -274,17 +274,25 @@ export default function ContractCreationPage() {
   } = useFormStore();
 
   // Re-issue: the replaced unsigned contract is cancelled only after the new one was
-  // sent, and only when the contract just sent belongs to the same client.
-  const supersedePreviousContract = (sentClientId: number | null | undefined) => {
-    if (!supersede || sentClientId !== supersede.clientId) return;
-    const { documentId } = supersede;
+  // sent, and only when the contract just sent belongs to the same client. The target
+  // is taken out of the store on entry so it never outlives this visit.
+  const [supersedeTarget, setSupersedeTarget] = useState(supersede);
+  useEffect(() => {
     clearSupersede();
-    eformsignApi.deleteDocument(documentId)
+  }, [clearSupersede]);
+  useEffect(() => {
+    if (supersedeTarget && clientId !== supersedeTarget.clientId) setSupersedeTarget(null);
+  }, [clientId, supersedeTarget]);
+  const supersedePreviousContract = (sentClientId: number | null | undefined) => {
+    if (!supersedeTarget || sentClientId !== supersedeTarget.clientId) return;
+    const { documentId, clientId: supersedeClientId } = supersedeTarget;
+    setSupersedeTarget(null);
+    eformsignApi.supersedeDocument(documentId, supersedeClientId)
       .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
       .catch(() => {
         toast({
           variant: "destructive",
-          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 직접 삭제해 주세요",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
         });
       });
   };
@@ -306,7 +314,10 @@ export default function ContractCreationPage() {
   const [endDateUnsupported, setEndDateUnsupported] = useState(false);
   const endDateCalcInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
   // The (startDate, duration) a picked client's stored end date was filled with; no recalculation while they stay the same.
-  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
+  // A client prefilled from another screen arrives with its stored end date, which is kept too.
+  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(
+    clientId !== null && endDate && startDate && voucherDuration ? { startDate, voucherDuration } : null,
+  );
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } =
     useVoucherPriceInfos(voucherType || "", voucherYear || 0);

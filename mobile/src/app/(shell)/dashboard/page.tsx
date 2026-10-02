@@ -41,6 +41,7 @@ import type {
 } from "@/components/app/mobile-redesign/mockup-data";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { useIssueContract } from "@/hooks/useIssueContract";
 import { compactDashboardBadges, type DashboardStatusBadge } from "./dashboard-badges";
 import {
   dueForContractRequired,
@@ -252,7 +253,7 @@ export default function DashboardPage() {
     setFormDialogOpen(true);
   }, []);
   const handleMessage = useCallback((c: Client) => router.push(`/messages/new?clientId=${c.id}`), [router]);
-  const handleIssueContract = useCallback(() => router.push("/contracts/new"), [router]);
+  const handleIssueContract = useIssueContract();
   const handleDeleteRequest = useCallback((id: number) => setDeleteTargetClientId(id), []);
   const handleDeleteConfirm = async () => {
     if (deleteTargetClientId == null) return;

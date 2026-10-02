@@ -9,6 +9,7 @@ import type { Client } from "@/lib/client/types";
 import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 
 jest.mock("@/hooks/useBusinessDayCalendar");
+jest.mock("@/hooks/useIssueContract", () => ({ useIssueContract: () => jest.fn() }));
 
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }), redirect: jest.fn() }));
 jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ServiceRecordScheduleValidationError = void 0;
+exports.previousBusinessDay = previousBusinessDay;
 exports.validateServiceRecordScheduleVector = validateServiceRecordScheduleVector;
 exports.shiftServiceRecordScheduleSuffix = shiftServiceRecordScheduleSuffix;
 exports.moveServiceRecordSessionDate = moveServiceRecordSessionDate;
@@ -36,6 +37,14 @@ function assertBusinessDate(value, sessionIndex, calendar) {
         throw new ServiceRecordScheduleValidationError("NON_BUSINESS_DATE", `Session ${sessionIndex ?? "?"} must use a Korean business day`, sessionIndex);
     }
 }
+/** The latest business day strictly before `iso`. */
+function previousBusinessDay(iso, calendar) {
+    const date = new Date(`${iso}T00:00:00.000Z`);
+    do {
+        date.setUTCDate(date.getUTCDate() - 1);
+    } while (!calendar.isBusinessDay(date.toISOString().slice(0, 10)));
+    return date.toISOString().slice(0, 10);
+}
 function cloneEntry(entry) {
     return { ...entry };
 }
@@ -65,7 +74,9 @@ function validateServiceRecordScheduleVector(entries, requiredSessionCount, cale
             throw new ServiceRecordScheduleValidationError("DUPLICATE_SESSION_INDEX", `Session ${entry.sessionIndex} appears more than once`, entry.sessionIndex);
         }
         indices.add(entry.sessionIndex);
-        assertBusinessDate(entry.serviceDate, entry.sessionIndex, calendar);
+        // A current date may be an admin-approved weekend or holiday exception
+        // (see shiftServiceRecordScheduleSuffix); the original projection never is.
+        assertDateOnly(entry.serviceDate, entry.sessionIndex, calendar);
         assertBusinessDate(entry.originalDate, entry.sessionIndex, calendar);
         if (dates.has(entry.serviceDate)) {
             throw new ServiceRecordScheduleValidationError("DUPLICATE_SERVICE_DATE", `Session ${entry.sessionIndex} duplicates a service date`, entry.sessionIndex);
@@ -99,20 +110,28 @@ function validateServiceRecordScheduleVector(entries, requiredSessionCount, cale
  * day delta. Each original date is retained and each current date is shifted
  * independently, preserving intentionally irregular gaps in the vector.
  */
-function shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate, calendar = business_days_1.KR_BUILTIN_CALENDAR) {
+function shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate, calendar = business_days_1.KR_BUILTIN_CALENDAR, options = {}) {
     const vector = validateServiceRecordScheduleVector(entries, undefined, calendar);
     if (!Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > vector.length) {
         throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", `Session ${sessionIndex} is outside the contracted range 1..${vector.length}`, sessionIndex);
     }
-    assertBusinessDate(newDate, sessionIndex, calendar);
+    const isException = Boolean(options.allowNonBusinessDay) && !calendar.isBusinessDay(newDate);
+    if (isException)
+        assertDateOnly(newDate, sessionIndex, calendar);
+    else
+        assertBusinessDate(newDate, sessionIndex, calendar);
     const currentDate = vector[sessionIndex - 1].serviceDate;
-    const deltaBusinessDays = calendar.diffBusinessDays(newDate, currentDate);
+    // A weekend/holiday exception counts as the business day before it, so the
+    // sessions after it are pulled to the next business days (Mon→Sun pulls Tue→Mon).
+    const deltaBusinessDays = calendar.diffBusinessDays(isException ? previousBusinessDay(newDate, calendar) : newDate, currentDate);
     if (deltaBusinessDays === null) {
         throw new ServiceRecordScheduleValidationError("INVALID_DATE", `Unable to calculate a business-day shift for session ${sessionIndex}`, sessionIndex);
     }
     const shifted = vector.map((entry) => {
         if (entry.sessionIndex < sessionIndex)
             return cloneEntry(entry);
+        if (entry.sessionIndex === sessionIndex && isException)
+            return { ...entry, serviceDate: newDate };
         return {
             ...entry,
             serviceDate: calendar.shiftBusinessDays(entry.serviceDate, deltaBusinessDays),

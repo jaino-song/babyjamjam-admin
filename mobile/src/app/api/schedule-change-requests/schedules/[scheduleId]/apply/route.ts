@@ -39,7 +39,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
         const response = await serverAPIClient.post(
             `/schedule-change-requests/schedules/${scheduleId}/apply`,
-            { toDate },
+            {
+                toDate,
+                // Only an explicit confirmation of a weekend or holiday date is forwarded.
+                ...(body && typeof body === "object" && (body as { allowNonBusinessDay?: unknown }).allowNonBusinessDay === true
+                    ? { allowNonBusinessDay: true }
+                    : {}),
+            },
             { headers: getAuthHeaders(token) },
         );
         return withNoStore(backendJsonResponse(response));

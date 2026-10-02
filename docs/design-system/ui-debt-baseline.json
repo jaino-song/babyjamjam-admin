@@ -161,14 +161,14 @@
         "145:10-145:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1005:79-1005:163|visualTailwindInPage",
-        "1098:69-1098:94|visualTailwindInPage",
-        "896:39-900:30|visualTailwindInPage",
-        "958:193-958:350|visualTailwindInPage",
-        "959:78-959:180|visualTailwindInPage",
-        "962:78-962:169|visualTailwindInPage",
-        "963:78-963:208|visualTailwindInPage",
-        "965:74-965:177|visualTailwindInPage"
+        "1003:79-1003:163|visualTailwindInPage",
+        "1096:69-1096:94|visualTailwindInPage",
+        "894:39-898:30|visualTailwindInPage",
+        "956:193-956:350|visualTailwindInPage",
+        "957:78-957:180|visualTailwindInPage",
+        "960:78-960:169|visualTailwindInPage",
+        "961:78-961:208|visualTailwindInPage",
+        "963:74-963:177|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
@@ -838,27 +838,27 @@
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "1566:13-1572:14|rawUiElement",
-        "1576:13-1582:14|rawUiElement",
-        "1705:23-1722:25|rawUiElement",
-        "1729:23-1745:25|rawUiElement",
-        "1752:23-1767:25|rawUiElement",
-        "1774:23-1781:25|rawUiElement",
-        "1793:25-1802:26|rawUiElement",
-        "1838:23-1847:25|rawUiElement",
-        "1894:27-1903:29|rawUiElement",
-        "1920:27-1925:28|rawUiElement",
-        "1940:27-1946:28|rawUiElement",
-        "1968:25-1975:26|rawUiElement",
-        "1999:25-2007:27|rawUiElement",
-        "2018:25-2026:27|rawUiElement",
-        "2037:25-2045:27|rawUiElement",
-        "2072:23-2088:25|rawUiElement",
-        "2097:23-2116:25|rawUiElement",
-        "2131:23-2147:25|rawUiElement",
-        "2190:15-2196:16|rawUiElement",
-        "2199:15-2205:16|rawUiElement",
-        "2306:13-2312:14|rawUiElement"
+        "1577:13-1583:14|rawUiElement",
+        "1587:13-1593:14|rawUiElement",
+        "1716:23-1733:25|rawUiElement",
+        "1740:23-1756:25|rawUiElement",
+        "1763:23-1778:25|rawUiElement",
+        "1785:23-1792:25|rawUiElement",
+        "1804:25-1813:26|rawUiElement",
+        "1849:23-1858:25|rawUiElement",
+        "1905:27-1914:29|rawUiElement",
+        "1931:27-1936:28|rawUiElement",
+        "1951:27-1957:28|rawUiElement",
+        "1979:25-1986:26|rawUiElement",
+        "2010:25-2018:27|rawUiElement",
+        "2029:25-2037:27|rawUiElement",
+        "2048:25-2056:27|rawUiElement",
+        "2083:23-2099:25|rawUiElement",
+        "2108:23-2127:25|rawUiElement",
+        "2142:23-2158:25|rawUiElement",
+        "2201:15-2207:16|rawUiElement",
+        "2210:15-2216:16|rawUiElement",
+        "2317:13-2323:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/contracts/page.tsx": {

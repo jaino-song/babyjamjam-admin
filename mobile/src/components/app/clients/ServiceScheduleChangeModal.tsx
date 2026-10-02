@@ -7,6 +7,7 @@ import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { Input } from "@/components/ui/input";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useLocale } from "@/providers/LocaleProvider";
 import {
@@ -32,7 +33,8 @@ interface ServiceScheduleChangeModalProps {
     isPending: boolean;
     onDateChange: (date: string) => void;
     onClose: () => void;
-    onSubmit: () => void;
+    /** `allowNonBusinessDay` is true once the admin confirmed a weekend or holiday date. */
+    onSubmit: (allowNonBusinessDay: boolean) => void;
 }
 
 export function ServiceScheduleChangeModal({
@@ -49,6 +51,11 @@ export function ServiceScheduleChangeModal({
 }: ServiceScheduleChangeModalProps) {
     const locale = useLocale();
     const [edited, setEdited] = useState(false);
+    const selectedYear = isRealIsoDate(selectedDate) ? [Number(selectedDate.slice(0, 4))] : [];
+    const { calendar } = useBusinessDayCalendar({ extraYears: selectedYear });
+    // Weekends and holidays are blocked by default; an admin may still pick one
+    // for a special case after confirming it in a second step.
+    const [isConfirmingNonBusinessDay, setIsConfirmingNonBusinessDay] = useState(false);
     const fieldMessages = useFieldMessages<"date">({
         values: { date: selectedDate },
         specs: { date: DATE_SPEC },
@@ -76,64 +83,94 @@ export function ServiceScheduleChangeModal({
             focusFirstInvalidField([DATE_INPUT_ID]);
             return;
         }
-        onSubmit();
+        if (!calendar.isBusinessDay(selectedDate)) {
+            setIsConfirmingNonBusinessDay(true);
+            return;
+        }
+        onSubmit(false);
     };
 
     return (
-        <ApprovalTwoButtonModal
-            open={open}
-            data-component={dataComponent}
-            title="서비스 일정 변경"
-            description={
-                <>
-                    <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
-                    <br />
-                    <span>선택한 회차부터 이후 일정을 함께 옮깁니다.</span>
-                </>
-            }
-            isDescriptionVisuallyHidden={false}
-            size="detail"
-            cancelLabel="취소"
-            approvalLabel="일정 변경"
-            pendingLabel="변경 중..."
-            isPending={isPending}
-            onOpenChange={(nextOpen) => {
-                if (!nextOpen && !isPending) onClose();
-            }}
-            onApprove={handleApprove}
-        >
-            <div className="space-y-2 pt-5" data-component={`${dataComponent}_date-field`}>
-                <FieldLabelRow
-                    data-component={`${dataComponent}_date-field`}
-                    htmlFor={DATE_INPUT_ID}
-                    label={`${sessionIndex}회차 서비스 제공 날짜`}
-                    message={slot}
-                />
-                <Input
-                    id={DATE_INPUT_ID}
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="off"
-                    spellCheck={false}
-                    maxLength={10}
-                    placeholder="2026-12-01"
-                    value={selectedDate}
-                    disabled={isPending}
-                    className="h-12 rounded-2xl bg-white px-4 text-base"
-                    error={hasError}
-                    aria-invalid={hasError ? true : undefined}
-                    aria-describedby={fieldMessageId(DATE_INPUT_ID)}
-                    onFocus={dateBind.onFocus}
-                    onBlur={() => {
-                        setEdited(true);
-                        dateBind.onBlur();
-                    }}
-                    onChange={(event) => {
-                        setEdited(true);
-                        onDateChange(formatIsoDateInput(event.target.value));
-                    }}
-                />
-            </div>
-        </ApprovalTwoButtonModal>
+        <>
+            <ApprovalTwoButtonModal
+                open={open}
+                data-component={dataComponent}
+                title="서비스 일정 변경"
+                description={
+                    <>
+                        <span>{sessionIndex}회차 서비스 제공 날짜를 조정합니다.</span>
+                        <br />
+                        <span>선택한 회차부터 이후 일정을 함께 옮깁니다.</span>
+                    </>
+                }
+                isDescriptionVisuallyHidden={false}
+                size="detail"
+                cancelLabel="취소"
+                approvalLabel="일정 변경"
+                pendingLabel="변경 중..."
+                isPending={isPending}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen && !isPending) onClose();
+                }}
+                onApprove={handleApprove}
+            >
+                <div className="space-y-2 pt-5" data-component={`${dataComponent}_date-field`}>
+                    <FieldLabelRow
+                        data-component={`${dataComponent}_date-field`}
+                        htmlFor={DATE_INPUT_ID}
+                        label={`${sessionIndex}회차 서비스 제공 날짜`}
+                        message={slot}
+                    />
+                    <Input
+                        id={DATE_INPUT_ID}
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        spellCheck={false}
+                        maxLength={10}
+                        placeholder="2026-12-01"
+                        value={selectedDate}
+                        disabled={isPending}
+                        className="h-12 rounded-2xl bg-white px-4 text-base"
+                        error={hasError}
+                        aria-invalid={hasError ? true : undefined}
+                        aria-describedby={fieldMessageId(DATE_INPUT_ID)}
+                        onFocus={dateBind.onFocus}
+                        onBlur={() => {
+                            setEdited(true);
+                            dateBind.onBlur();
+                        }}
+                        onChange={(event) => {
+                            setEdited(true);
+                            onDateChange(formatIsoDateInput(event.target.value));
+                        }}
+                    />
+                </div>
+            </ApprovalTwoButtonModal>
+            <ApprovalTwoButtonModal
+                open={open && isConfirmingNonBusinessDay}
+                data-component={`${dataComponent}_non-business-day-confirm`}
+                title="주말·공휴일이에요"
+                description={
+                    <>
+                        <span>{selectedDate}은 서비스를 제공하지 않는 날이에요.</span>
+                        <br />
+                        <span>그래도 이 날짜로 옮길까요? 이후 회차는 다음 영업일부터 이어져요.</span>
+                    </>
+                }
+                isDescriptionVisuallyHidden={false}
+                cancelLabel="다시 고르기"
+                approvalLabel="이 날짜로 옮기기"
+                pendingLabel="변경 중..."
+                isPending={isPending}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen && !isPending) setIsConfirmingNonBusinessDay(false);
+                }}
+                onApprove={() => {
+                    setIsConfirmingNonBusinessDay(false);
+                    onSubmit(true);
+                }}
+            />
+        </>
     );
 }

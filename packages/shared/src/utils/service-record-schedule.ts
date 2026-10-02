@@ -74,6 +74,15 @@ function assertBusinessDate(value: string, sessionIndex: number | null, calendar
     }
 }
 
+/** The latest business day strictly before `iso`. */
+export function previousBusinessDay(iso: string, calendar: KrBusinessDayCalendar): string {
+    const date = new Date(`${iso}T00:00:00.000Z`);
+    do {
+        date.setUTCDate(date.getUTCDate() - 1);
+    } while (!calendar.isBusinessDay(date.toISOString().slice(0, 10)));
+    return date.toISOString().slice(0, 10);
+}
+
 function cloneEntry(entry: ServiceRecordPlannedSession): ServiceRecordPlannedSession {
     return { ...entry };
 }
@@ -124,7 +133,9 @@ export function validateServiceRecordScheduleVector(
         }
         indices.add(entry.sessionIndex);
 
-        assertBusinessDate(entry.serviceDate, entry.sessionIndex, calendar);
+        // A current date may be an admin-approved weekend or holiday exception
+        // (see shiftServiceRecordScheduleSuffix); the original projection never is.
+        assertDateOnly(entry.serviceDate, entry.sessionIndex, calendar);
         assertBusinessDate(entry.originalDate, entry.sessionIndex, calendar);
         if (dates.has(entry.serviceDate)) {
             throw new ServiceRecordScheduleValidationError(
@@ -189,6 +200,7 @@ export function shiftServiceRecordScheduleSuffix(
     sessionIndex: number,
     newDate: string,
     calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    options: { allowNonBusinessDay?: boolean } = {},
 ): ServiceRecordScheduleShiftResult {
     const vector = validateServiceRecordScheduleVector(entries, undefined, calendar);
     if (!Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > vector.length) {
@@ -198,9 +210,16 @@ export function shiftServiceRecordScheduleSuffix(
             sessionIndex,
         );
     }
-    assertBusinessDate(newDate, sessionIndex, calendar);
+    const isException = Boolean(options.allowNonBusinessDay) && !calendar.isBusinessDay(newDate);
+    if (isException) assertDateOnly(newDate, sessionIndex, calendar);
+    else assertBusinessDate(newDate, sessionIndex, calendar);
     const currentDate = vector[sessionIndex - 1]!.serviceDate;
-    const deltaBusinessDays = calendar.diffBusinessDays(newDate, currentDate);
+    // A weekend/holiday exception counts as the business day before it, so the
+    // sessions after it are pulled to the next business days (Mon→Sun pulls Tue→Mon).
+    const deltaBusinessDays = calendar.diffBusinessDays(
+        isException ? previousBusinessDay(newDate, calendar) : newDate,
+        currentDate,
+    );
     if (deltaBusinessDays === null) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_DATE",
@@ -211,6 +230,7 @@ export function shiftServiceRecordScheduleSuffix(
 
     const shifted = vector.map((entry) => {
         if (entry.sessionIndex < sessionIndex) return cloneEntry(entry);
+        if (entry.sessionIndex === sessionIndex && isException) return { ...entry, serviceDate: newDate };
         return {
             ...entry,
             serviceDate: calendar.shiftBusinessDays(entry.serviceDate, deltaBusinessDays),

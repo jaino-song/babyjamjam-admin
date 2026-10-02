@@ -24,6 +24,8 @@ export declare class ServiceRecordScheduleValidationError extends Error {
     readonly sessionIndex: number | null;
     constructor(code: string, message: string, sessionIndex?: number | null);
 }
+/** The latest business day strictly before `iso`. */
+export declare function previousBusinessDay(iso: string, calendar: KrBusinessDayCalendar): string;
 /**
  * Validates a complete authoritative vector before it is persisted or shifted.
  * The function intentionally requires ownership and original-date provenance;
@@ -36,7 +38,9 @@ export declare function validateServiceRecordScheduleVector(entries: ReadonlyArr
  * day delta. Each original date is retained and each current date is shifted
  * independently, preserving intentionally irregular gaps in the vector.
  */
-export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleShiftResult;
+export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, calendar?: KrBusinessDayCalendar, options?: {
+    allowNonBusinessDay?: boolean;
+}): ServiceRecordScheduleShiftResult;
 /** A per-session correction moves later dates only with explicit approval. */
 export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, shiftFollowing: boolean, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleShiftResult;
 /**
