@@ -1870,6 +1870,99 @@ describe("ServiceRecordLifecycleService", () => {
             }));
         });
 
+        describe("calendar is read before the owning transaction opens", () => {
+            /**
+             * Wraps `ensurePrisma` in a root client whose `$transaction` runs the
+             * callback against the same tables and flags the window in which the
+             * transaction holds its pooled connection. The calendar service reads
+             * through the root client, so any forBranch call inside that window
+             * would need a second connection.
+             */
+            const transactional = (
+                clientEnd: string,
+                existing: ReturnType<typeof legacyCase> | null,
+            ) => {
+                const base = ensurePrisma(clientEnd, existing);
+                const state = { open: false, forBranchWhileOpen: [] as boolean[] };
+                const prisma = {
+                    ...base,
+                    employee_schedule: { findUnique: jest.fn().mockResolvedValue({ clientId: 1 }) },
+                    $transaction: jest.fn(async (callback: (tx: typeof base) => Promise<unknown>) => {
+                        state.open = true;
+                        try {
+                            return await callback({ ...base, employee_schedule: { findUnique: jest.fn().mockResolvedValue({ clientId: 1 }) } } as never);
+                        } finally {
+                            state.open = false;
+                        }
+                    }),
+                };
+                const holidayCalendar = branchHolidayCalendar("2026-09-14");
+                (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => {
+                    state.forBranchWhileOpen.push(state.open);
+                    return createKrBusinessDayCalendar(
+                        [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), "2026-09-14"],
+                        { version: "kr-db-test", supportedYears: Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number) },
+                    );
+                });
+                const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, holidayCalendar);
+                jest.spyOn(service, "recompute").mockResolvedValue({ id: "case-1" } as never);
+                return { prisma, holidayCalendar, service, state };
+            };
+
+            it("ensureForClient resolves the calendar ahead of its own transaction and persists the same N", async () => {
+                // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
+                const { prisma, holidayCalendar, service, state } = transactional("2026-09-18", legacyCase());
+
+                await service.ensureForClient(1);
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
+                expect(state.forBranchWhileOpen).toEqual([false]);
+                expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                    .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+                expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                    update: expect.objectContaining({ requiredSessionCount: 9 }),
+                }));
+            });
+
+            it("ensureForClient resolves the calendar ahead of the transaction for a brand-new case", async () => {
+                const { holidayCalendar, service, state } = transactional("2026-09-18", null);
+
+                await service.ensureForClient(1);
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect(state.forBranchWhileOpen).toEqual([false]);
+            });
+
+            it("ensureForSchedule resolves the calendar ahead of its own transaction", async () => {
+                const { prisma, holidayCalendar, service, state } = transactional("2026-09-18", legacyCase());
+
+                await service.ensureForSchedule(5);
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect(state.forBranchWhileOpen).toEqual([false]);
+                expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                    .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+            });
+
+            it("ensureForClient reads no calendar at all when the stored N is kept", async () => {
+                const { holidayCalendar, service } = transactional("2026-09-29", legacyCase());
+
+                await service.ensureForClient(1);
+
+                expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+            });
+
+            it("ensureForClient reuses a calendar handed in by the caller and reads no other", async () => {
+                const { holidayCalendar, service } = transactional("2026-09-18", legacyCase());
+                const handedIn = (await branchHolidayCalendar("2026-09-14").forBranch(rawQueryBranchId)) as never;
+
+                await service.ensureForClient(1, undefined, handedIn);
+
+                expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+            });
+        });
+
         it("syncEndDateFromCurrentContract derives the duration from the branch calendar", async () => {
             const transactionClient = {
                 service_record_case: { findUnique: jest.fn().mockResolvedValue(null) },
