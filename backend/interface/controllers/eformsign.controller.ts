@@ -799,18 +799,7 @@ export class EformsignController {
             }
             return { ...result, unresolved_document_ids: unresolvedDocumentIds };
         } catch (error) {
-            const apiError = error instanceof EformsignApiError ? error : null;
-            const isConfirmedDocumentAbsence = isEformsignDocumentAbsentError(error);
-            if (
-                apiError !== null
-                && apiError.status >= 400
-                && apiError.status < 500
-                // A confirmed absence may mean the document is already gone at the vendor,
-                // so there is nothing left to cancel. Retain the generation-fenced intent
-                // until reconciliation can purge the local detail and PDFs safely.
-                && !isConfirmedDocumentAbsence
-                && ![408, 429].includes(apiError.status)
-            ) {
+            if (isDefinitiveVendorRefusal(error)) {
                 await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
             }
             if (error instanceof HttpException) {
@@ -861,7 +850,10 @@ export class EformsignController {
             if (
                 !document
                 || document.documentKind === "service_record_snapshot"
-                || (document.clientId !== null && document.clientId !== body.clientId)
+                // Positive ownership only: an unowned (clientId null) legacy document is
+                // not this client's, so a caller must not be able to cancel and purge it
+                // just by knowing its id.
+                || document.clientId !== body.clientId
             ) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
@@ -888,10 +880,17 @@ export class EformsignController {
             await this.documentMirrorService.clearPermanentPurgeRequest([]);
             return { documentId, superseded: true };
         } catch (error) {
-            // Unlike a delete, a supersede never leaves an intent for reconciliation to
-            // finish: only a cancellation eformsign confirmed may lead to a purge. Once
-            // it confirmed, the intent stays so a failed local purge is still completed.
-            if (!vendorCancelled && permanentPurgeRequests.length > 0) {
+            // Once eformsign confirmed the cancellation the intent stays, so a failed local
+            // purge is still completed. Before that, release it only when the cancel was
+            // definitively refused or never sent (our own HttpException: a refusal in the
+            // result, or a credential/capability failure). A timeout, network error or 5xx
+            // is ambiguous (eformsign may have processed it), so, as in the permanent-delete
+            // path, the generation-fenced intent is kept for reconciliation to finish.
+            if (
+                !vendorCancelled
+                && permanentPurgeRequests.length > 0
+                && (error instanceof HttpException || isDefinitiveVendorRefusal(error))
+            ) {
                 await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
             }
             if (error instanceof HttpException) throw error;
@@ -1173,6 +1172,24 @@ export class EformsignController {
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
+}
+
+/**
+ * A vendor HTTP refusal that settles the outcome: 4xx other than a request timeout, rate
+ * limit or confirmed document absence. Everything else (timeouts, network errors, 5xx,
+ * absence) is ambiguous, and the generation-fenced purge intent must be kept for
+ * reconciliation, which can verify the vendor state before purging.
+ */
+function isDefinitiveVendorRefusal(error: unknown): boolean {
+    if (!(error instanceof EformsignApiError)) return false;
+    const { status } = error;
+    return status >= 400
+        && status < 500
+        // A confirmed absence may mean the document is already gone at the vendor,
+        // so there is nothing left to cancel. Retain the intent until reconciliation can
+        // purge the local detail and PDFs safely.
+        && !isEformsignDocumentAbsentError(error)
+        && ![408, 429].includes(status);
 }
 
 function successfulDeletedDocumentIds(result: unknown): string[] {
