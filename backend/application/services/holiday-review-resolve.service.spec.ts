@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 
 import {
     HolidayChangeEventRecord,
@@ -67,9 +68,16 @@ function makeService(world: World = {}) {
         branchHasEventItems: jest.fn(async () => world.hasItems ?? true),
         listEventItems: jest.fn(async () => items),
         findEventItemsByIds: jest.fn(async (_b: string, _e: string, ids: string[]) =>
-            items.filter((i) => ids.includes(i.id)),
+            items.filter((i) => ids.includes(i.id)).map((i) => ({ ...i })),
         ),
         closeOpenItem: jest.fn(async () => true),
+        claimOpenItemForFix: jest.fn(async (_b: string, _e: string, expected: ReviewItemRecord) => {
+            const current = items.find((i) => i.id === expected.id);
+            if (!current || current.status !== "open" || current.recalculatedEnd !== expected.recalculatedEnd
+                || current.category !== expected.category) return false;
+            current.status = "fixed";
+            return true;
+        }),
         reclassifyOpenItem: jest.fn(async () => true),
         findFixSnapshot: jest.fn(async (_b: string, clientId: number) =>
             world.snapshots && clientId in world.snapshots ? world.snapshots[clientId] : snapshot(),
@@ -83,13 +91,28 @@ function makeService(world: World = {}) {
         ),
     };
     const calendarService = { forBranch: jest.fn(async () => calendar) };
-    const clientService = { update: jest.fn(async () => ({})) };
+    const clientWrite = jest.fn(async () => ({}));
+    const clientService = {
+        update: jest.fn(async (
+            _b: string, _id: number, _params: unknown,
+            beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>,
+        ) => {
+            const statuses = items.map((i) => ({ item: i, status: i.status }));
+            try {
+                await beforeWrite?.({} as Prisma.TransactionClient);
+                return await clientWrite();
+            } catch (error) {
+                statuses.forEach(({ item: current, status }) => { current.status = status; });
+                throw error;
+            }
+        }),
+    };
     const service = new HolidayReviewResolveService(
         repository as never,
         calendarService as never,
         clientService as never,
     );
-    return { service, repository, calendar, calendarService, clientService };
+    return { service, repository, calendar, calendarService, clientService, clientWrite };
 }
 
 const resolveFix = (s: ReturnType<typeof makeService>, ids: string[]) =>
@@ -247,6 +270,103 @@ describe("HolidayReviewResolveService", () => {
     });
 
     describe("resolve: fix", () => {
+        it("rejects a concurrent fix when keep wins after the initial read, without touching the client", async () => {
+            const open = item();
+            const s = makeService({ items: [open] });
+            let resume!: () => void;
+            let read!: () => void;
+            const paused = new Promise<void>((resolve) => { resume = resolve; });
+            const reading = new Promise<void>((resolve) => { read = resolve; });
+            s.repository.findFixSnapshot.mockImplementationOnce(async () => {
+                read();
+                await paused;
+                return snapshot();
+            });
+            s.repository.closeOpenItem.mockImplementation(async () => {
+                if (open.status !== "open") return false;
+                open.status = "kept";
+                return true;
+            });
+
+            const fixing = resolveFix(s, [open.id]);
+            await reading;
+            expect(await resolveKeep(s, [open.id])).toEqual({ fixed: 0, kept: 1, skipped: [] });
+            resume();
+
+            expect(await fixing).toEqual({
+                fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "ITEM_NOT_OPEN" }],
+            });
+            expect(s.clientWrite).not.toHaveBeenCalled();
+        });
+
+        it("rejects an item superseded after the initial read, without touching the client", async () => {
+            const open = item();
+            const s = makeService({ items: [open] });
+            s.repository.findFixSnapshot.mockImplementationOnce(async () => {
+                open.status = "obsolete";
+                return snapshot();
+            });
+
+            expect(await resolveFix(s, [open.id])).toEqual({
+                fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "ITEM_NOT_OPEN" }],
+            });
+            expect(s.clientWrite).not.toHaveBeenCalled();
+        });
+
+        it("only fixes when fix claims first and a concurrent keep tries to close the item", async () => {
+            const open = item();
+            const s = makeService({ items: [open] });
+            let attempted!: () => void;
+            let resume!: () => void;
+            const waiting = new Promise<void>((resolve) => { attempted = resolve; });
+            const released = new Promise<void>((resolve) => { resume = resolve; });
+            s.repository.closeOpenItem.mockImplementation(async () => {
+                attempted();
+                await released;
+                return open.status === "open";
+            });
+            // Keep has read the open item, but its CAS runs after fix's claim.
+            const keeping = resolveKeep(s, [open.id]);
+            await waiting;
+            s.clientWrite.mockImplementationOnce(async () => {
+                resume();
+                expect(await keeping).toEqual({
+                    fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "ITEM_NOT_OPEN" }],
+                });
+                return {};
+            });
+
+            expect(await resolveFix(s, [open.id])).toEqual({ fixed: 1, kept: 0, skipped: [] });
+            expect(open.status).toBe("fixed");
+            expect(s.clientWrite).toHaveBeenCalledTimes(1);
+        });
+
+        it("rejects a calculation reclassified after the initial read", async () => {
+            const open = item();
+            const s = makeService({ items: [open] });
+            s.repository.findFixSnapshot.mockImplementationOnce(async () => {
+                open.category = "risk";
+                return snapshot();
+            });
+
+            expect(await resolveFix(s, [open.id])).toEqual({
+                fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "ITEM_NOT_OPEN" }],
+            });
+            expect(s.clientWrite).not.toHaveBeenCalled();
+        });
+
+        it("rolls back a successful claim on client write failure so the item can be retried", async () => {
+            const open = item();
+            const s = makeService({ items: [open] });
+            s.clientWrite.mockRejectedValueOnce(new ConflictException({ code: "SERVICE_RECORD_FINALIZED" }));
+
+            expect(await resolveFix(s, [open.id])).toEqual({
+                fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "SERVICE_RECORD_FINALIZED" }],
+            });
+            expect(open.status).toBe("open");
+            expect(await resolveFix(s, [open.id])).toEqual({ fixed: 1, kept: 0, skipped: [] });
+        });
+
         it("updates the client through ClientService with the recomputed date, guarded by the stored end", async () => {
             const open = item();
             const s = makeService({ items: [open], recalculated: "2026-11-16" });
@@ -257,11 +377,10 @@ describe("HolidayReviewResolveService", () => {
             expect(s.clientService.update).toHaveBeenCalledWith(BRANCH, 7, {
                 endDate: "2026-11-16",
                 expectedEndDate: "2026-11-13",
-            });
-            expect(s.repository.closeOpenItem).toHaveBeenCalledWith(BRANCH, EVENT_ID, open.id, {
-                status: "fixed",
-                resolvedBy: USER,
-            });
+            }, expect.any(Function));
+            expect(s.repository.claimOpenItemForFix).toHaveBeenCalledWith(BRANCH, EVENT_ID, { ...open, status: "open" }, USER, {});
+            expect(s.clientWrite).toHaveBeenCalledTimes(1);
+            expect(open.status).toBe("fixed");
         });
 
         it("recomputes from the client's own start and duration against a fresh branch calendar", async () => {
@@ -481,7 +600,7 @@ describe("HolidayReviewResolveService", () => {
                 expect(s.clientService.update).toHaveBeenCalledWith(BRANCH, 7, {
                     endDate: "2026-11-17",
                     expectedEndDate: "2026-11-13",
-                });
+                }, expect.any(Function));
             });
         });
 
@@ -526,12 +645,15 @@ describe("HolidayReviewResolveService", () => {
             });
         });
 
-        it("still counts the client as fixed when only the item write fails afterwards", async () => {
+        it("does not mutate the client when the item claim fails", async () => {
             const open = item();
             const s = makeService({ items: [open] });
-            s.repository.closeOpenItem.mockRejectedValue(new Error("db down"));
+            s.repository.claimOpenItemForFix.mockRejectedValue(new Error("db down"));
 
-            await expect(resolveFix(s, [open.id])).resolves.toEqual({ fixed: 1, kept: 0, skipped: [] });
+            await expect(resolveFix(s, [open.id])).resolves.toEqual({
+                fixed: 0, kept: 0, skipped: [{ itemId: open.id, code: "UPDATE_FAILED" }],
+            });
+            expect(s.clientWrite).not.toHaveBeenCalled();
         });
 
         it("skips as UPDATE_FAILED when the calendar cannot cover the client's years", async () => {

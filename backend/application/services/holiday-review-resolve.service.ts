@@ -1,4 +1,4 @@
-import { HttpException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { ConflictException, HttpException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 
 import { ClientService } from "application/services/client.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
@@ -276,9 +276,10 @@ export class HolidayReviewResolveService {
      * `expectedEndDate` makes the write fail with a 409 if the end date changed after
      * our snapshot, closing the window between the re-read above and the locked write.
      *
-     * The client update and the item write are not one transaction. If the item write
-     * fails after a successful update, the item stays open with stored != the client's
-     * end date, so the next resolve (CLIENT_CHANGED) or processor run obsoletes it.
+     * The item claim runs inside the client's write transaction, before its write locks.
+     * Commit publishes both the fixed item and the client change; failure rolls back
+     * the claim. Keep and reclassification wait on its row lock, while the processor
+     * shares its advisory lock, so none can supersede the calculation during the fix.
      */
     private async applyFix(
         branchId: string,
@@ -291,6 +292,9 @@ export class HolidayReviewResolveService {
             await this.clientService.update(branchId, item.clientId, {
                 endDate: recalculatedEnd,
                 expectedEndDate: item.storedEnd,
+            }, async (transaction) => {
+                const claimed = await this.repository.claimOpenItemForFix(branchId, eventId, item, userId, transaction);
+                if (!claimed) throw new ConflictException({ code: "ITEM_NOT_OPEN" });
             });
         } catch (error) {
             if (!(error instanceof HttpException)) {
@@ -315,15 +319,6 @@ export class HolidayReviewResolveService {
             return skip(code ?? "UPDATE_FAILED");
         }
 
-        try {
-            await this.repository.closeOpenItem(branchId, eventId, item.id, { status: "fixed", resolvedBy: userId });
-        } catch (error) {
-            // The end date is already fixed; see the note above on how the stale item heals.
-            this.logger.error(
-                `[Holiday Review] client ${item.clientId} fixed but item ${item.id} not closed: `
-                + `${error instanceof Error ? error.message : String(error)}`,
-            );
-        }
         return { done: "fixed" };
     }
 

@@ -1756,6 +1756,30 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and no employee change", () => {
+            it("runs the internal claim before client writes on the same transaction", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                const beforeWrite = jest.fn(async () => undefined);
+
+                await service.update(branchId, existingClient.id, { endDate: "2024-05-30" }, beforeWrite);
+
+                expect(beforeWrite).toHaveBeenCalledWith(prismaService);
+                expect(beforeWrite.mock.invocationCallOrder[0])
+                    .toBeLessThan(prismaService.client.updateMany.mock.invocationCallOrder[0] ?? 0);
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+            });
+
+            it("does not write client state when the internal claim rejects", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+                const beforeWrite = jest.fn(async () => { throw new ConflictException({ code: "ITEM_NOT_OPEN" }); });
+
+                await expect(service.update(branchId, 1, { endDate: "2024-05-30" }, beforeWrite))
+                    .rejects.toMatchObject({ response: { code: "ITEM_NOT_OPEN" } });
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
+            });
+
             it("revalidates a service-period change inside the owning transaction", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);

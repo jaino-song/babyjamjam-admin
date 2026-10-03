@@ -1752,7 +1752,7 @@ export class ClientService {
          * to update.
          */
         expectedEndDate?: string | null;
-    }): Promise<ClientEntity> {
+    }, beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>): Promise<ClientEntity> {
         // Keep invalid phone input from reaching lifecycle/provider work or a
         // transaction that could partially mutate schedule state.
         assertClientPhoneInput(params.phone);
@@ -1874,6 +1874,8 @@ export class ClientService {
         const ordinaryMutationId = randomUUID();
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
+            // Internal callers can claim their source decision atomically with this write.
+            await beforeWrite?.(transaction);
             // Always serialize client-owned service-record state before any
             // update write. The policy rereads historical schedules after the
             // client lock and locks their complete employee union, plus any
