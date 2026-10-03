@@ -5,6 +5,11 @@ Desktop `pnpm qa:fe` and mobile `pnpm qa:mobile -- --port <port>` bind to
 `LOCAL_AUTO_LOGIN_PASSWORD` in the git-ignored `frontend/.env.local`, opening `/`,
 `/login`, or a protected page without session cookies signs in through the existing
 backend password-login endpoint. Existing permissions and branch selection still apply.
+On an eligible local development GET navigation, a stale or invalid session is
+recovered without a second manual reload: an existing refresh token is tried
+first, then the configured local credentials are used only after refresh is
+rejected. A temporary refresh failure leaves the existing cookies in place and
+renders the normal login boundary.
 
 The QA launchers pass only the two server-only credentials and the loopback backend
 origin from `frontend/.env.local` into the selected app. This keeps one local source of
@@ -17,9 +22,12 @@ must never be set on deployments or given `NEXT_PUBLIC_` names. Do not expose th
 development server through a tunnel or reverse proxy.
 
 The backend must be running locally. Invalid credentials or an unavailable backend
-fall back to the regular login screen. Remove or blank either setting and restart
-the frontend to disable automatic login. Logging out clears the session; the next
-eligible navigation signs in again while these settings remain enabled.
+fall back to the regular login screen. A valid-looking access cookie is checked
+against `/auth/me` only on an eligible local `/login` GET; a backend 401 permits
+recovery, while transient, forbidden, or malformed responses do not switch
+accounts. Remove or blank either setting and restart the frontend to disable
+automatic login. Logging out clears the session; the next eligible navigation
+signs in again while these settings remain enabled.
 
 The QA launchers fail before starting when credentials are missing or the backend is
 not loopback HTTP. Do not use `next start` for automatic-login QA because production
