@@ -168,16 +168,34 @@ describe("useBusinessDayCalendar", () => {
         expect(mockGetYear).toHaveBeenLastCalledWith("branch-1", THIS_YEAR);
     });
 
-    it("treats a malformed payload as load-failed instead of throwing", async () => {
+    it("refetches every requested year after a malformed success and becomes ready", async () => {
+        const extraYear = THIS_YEAR - 2;
         mockGetYear.mockImplementation(async (_branchId: string, year: number) =>
             payload(year, year === THIS_YEAR ? [`${THIS_YEAR + 1}-03-03`] : []),
         );
 
-        const { result } = setup();
+        const { result, queryClient } = setup({ extraYears: [extraYear] });
 
         await waitFor(() => expect(result.current.error).toBe("load-failed"));
         expect(result.current.ready).toBe(false);
         expect(result.current.calendar).toBe(KR_BUILTIN_CALENDAR);
+        const queries = queryClient.getQueryCache().findAll({ queryKey: ["holidays"] });
+        expect(queries).toHaveLength(4);
+        expect(queries.every((query) => query.state.status === "success" && !query.isStale())).toBe(true);
+        const callsBeforeRetry = mockGetYear.mock.calls.length;
+
+        mockGetYear.mockImplementation(async (_branchId: string, year: number) => payload(year));
+        act(() => result.current.retry());
+
+        await waitFor(() => expect(mockGetYear).toHaveBeenCalledTimes(callsBeforeRetry + 4));
+        expect(mockGetYear.mock.calls.slice(callsBeforeRetry)).toEqual([
+            ["branch-1", extraYear],
+            ["branch-1", THIS_YEAR - 1],
+            ["branch-1", THIS_YEAR],
+            ["branch-1", THIS_YEAR + 1],
+        ]);
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        expect(result.current.error).toBeNull();
     });
 
     it("keeps the same calendar object when a refetch returns the same data", async () => {
