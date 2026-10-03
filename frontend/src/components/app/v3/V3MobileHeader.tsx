@@ -15,7 +15,7 @@ export function V3MobileHeader() {
         <div className="w-9 h-9 rounded-xl flex items-center justify-center overflow-hidden">
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={36} height={36} className="w-full h-full object-cover" />
         </div>
-        <span className="text-base font-bold text-primary">아가잼잼</span>
+        <span className="text-base font-bold text-v3-primary">아가잼잼</span>
       </div>
 
       <div data-component="desktop_chrome_mobile-header_notifications">

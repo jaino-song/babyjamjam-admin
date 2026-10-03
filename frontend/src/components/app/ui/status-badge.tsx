@@ -19,7 +19,7 @@ const statusBadgeVariants = cva(
         warning: STATUS_SURFACE.warning,
         danger: STATUS_SURFACE.danger,
         amber: "bg-amber-100 border-amber-200 text-amber-700",
-        outline: "bg-transparent border-border text-dark",
+        outline: "bg-transparent border-border text-v3-dark",
 
         // Existing semantic aliases
         pre_booking: STATUS_SURFACE.neutral,

@@ -27,7 +27,7 @@ export function TitleDescChildrenMolecule({
             <div>
                 <p
                     className={cn(
-                        "text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-primary",
+                        "text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-v3-primary",
                         titleClassName
                     )}
                 >
@@ -36,7 +36,7 @@ export function TitleDescChildrenMolecule({
                 {description ? (
                     <p
                         className={cn(
-                            "mt-1 text-[0.8rem] text-text-muted",
+                            "mt-1 text-[0.8rem] text-v3-text-muted",
                             descriptionClassName
                         )}
                     >

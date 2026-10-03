@@ -44,11 +44,11 @@ function subtitle(container: HTMLElement): Element | null {
 
 describe("ContractsListItem", () => {
   it.each([
-    ["pending", "서명 대기", "bg-surface", "text-text-muted"],
-    ["signed", "서명 완료", "bg-primary-light", "text-primary"],
-    ["review", "검토 필요", "bg-orange-light", "text-orange"],
-    ["completed", "계약 완료", "bg-green-light", "text-green"],
-    ["expired", "기간 만료", "bg-burgundy-light", "text-burgundy"],
+    ["pending", "서명 대기", "bg-v3-dim-white", "text-v3-text-muted"],
+    ["signed", "서명 완료", "bg-v3-primary-light", "text-v3-primary"],
+    ["review", "검토 필요", "bg-v3-orange-light", "text-v3-orange"],
+    ["completed", "계약 완료", "bg-v3-green-light", "text-v3-green"],
+    ["expired", "기간 만료", "bg-v3-burgundy-light", "text-v3-burgundy"],
   ] as const)(
     "matches the avatar tone to the %s status badge",
     (displayStatus, statusLabel, avatarBackgroundClass, avatarIconClass) => {
@@ -85,7 +85,7 @@ describe("ContractsListItem", () => {
       );
 
       expect(title(container)).toHaveTextContent("이름 없음");
-      expect(title(container)).toHaveClass("italic", "text-text-muted");
+      expect(title(container)).toHaveClass("italic", "text-v3-text-muted");
     },
   );
 
@@ -100,7 +100,7 @@ describe("ContractsListItem", () => {
     );
 
     expect(title(container)).toHaveTextContent("송진호");
-    expect(title(container)).not.toHaveClass("italic", "text-text-muted");
+    expect(title(container)).not.toHaveClass("italic", "text-v3-text-muted");
   });
 
   it("uses the supplied subtitle label instead of the stored document name", () => {

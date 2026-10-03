@@ -55,9 +55,9 @@ interface DetailPanelProps {
 }
 
 export const DETAIL_PANEL_FOOTER_CLASS_NAME =
-  "shrink-0 border-t border-border bg-white px-[calc(24px*var(--glint-ui-scale,1))] py-[calc(16px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]";
+  "shrink-0 border-t border-v3-border bg-white px-[calc(24px*var(--glint-ui-scale,1))] py-[calc(16px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))]";
 export const DETAIL_PANEL_FOOTER_PROGRESS_CLASS_NAME =
-  "min-w-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-text-muted";
+  "min-w-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted";
 export const DETAIL_PANEL_FOOTER_ACTIONS_CLASS_NAME =
   "ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--glint-ui-scale,1))]";
 
@@ -94,7 +94,7 @@ function DetailPanelTextSkeleton({
       aria-hidden="true"
       data-component={name}
       data-slot="skeleton"
-      className={cn("block animate-pulse rounded-md bg-surface", className)}
+      className={cn("block animate-pulse rounded-md bg-v3-dim-white", className)}
     />
   );
 }
@@ -208,7 +208,7 @@ export function DetailPanel({
             <button
               data-component={`${dataComponent}_header_back`}
               type="button"
-              className="mb-[calc(16px*var(--glint-ui-scale,1))] inline-flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] self-start text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-text-muted transition-colors hover:text-primary md:mb-[calc(24px*var(--glint-ui-scale,1))] md:text-[calc(12.8px*var(--glint-ui-scale,1))]"
+              className="mb-[calc(16px*var(--glint-ui-scale,1))] inline-flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] self-start text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted transition-colors hover:text-v3-primary md:mb-[calc(24px*var(--glint-ui-scale,1))] md:text-[calc(12.8px*var(--glint-ui-scale,1))]"
               onClick={resolvedBackAction.onClick}
             >
               <ChevronLeft className="h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))] md:h-[calc(20px*var(--glint-ui-scale,1))] md:w-[calc(20px*var(--glint-ui-scale,1))]" aria-hidden="true" />

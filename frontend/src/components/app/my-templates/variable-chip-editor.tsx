@@ -135,7 +135,7 @@ function VariableChipNodeView({ node, extension }: NodeViewProps) {
                 role="button"
                 tabIndex={-1}
                 onClick={() => options.onVariableClickRef.current?.(key)}
-                className="mx-0.5 inline-flex items-center rounded-full bg-primary-light px-2 py-0.5 text-xs font-semibold text-primary"
+                className="mx-0.5 inline-flex items-center rounded-full bg-v3-primary-light px-2 py-0.5 text-xs font-semibold text-v3-primary"
             >
                 {label}
             </span>
@@ -269,9 +269,9 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                         ...(ariaInvalid ? { "aria-invalid": "true" } : {}),
                         ...(dataComponent ? { "data-component": `${dataComponent}_control` } : {}),
                         class: cn(
-                            "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-dark shadow-none transition-all duration-200",
+                            "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
                             error && "border-destructive focus-visible:border-destructive focus-visible:ring-destructive",
-                            "focus-visible:border-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
+                            "focus-visible:border-v3-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
                         ),
                     },
                     // A real mouse click selects the atom node between mousedown and

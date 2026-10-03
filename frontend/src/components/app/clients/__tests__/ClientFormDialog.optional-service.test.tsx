@@ -86,7 +86,7 @@ describe("ClientFormPanel optional service information", () => {
     const voucherCustomerTab = screen.getByRole("tab", { name: "바우처 고객" });
     const selfPayCustomerTab = screen.getByRole("tab", { name: "자부담 고객" });
     expect(voucherCustomerTab).toHaveAttribute("aria-selected", "false");
-    expect(voucherCustomerTab).toHaveClass("text-text-muted");
+    expect(voucherCustomerTab).toHaveClass("text-v3-text-muted");
     expect(selfPayCustomerTab).toHaveAttribute("aria-selected", "true");
     const voucherCustomerToggle = container.querySelector('[data-component="desktop_clients_form-panel_voucher-client-field"]');
     const voucherCustomerTogglePositioner = voucherCustomerToggle?.parentElement;
@@ -102,7 +102,7 @@ describe("ClientFormPanel optional service information", () => {
     fireEvent.click(voucherCustomerTab);
     expect(voucherCustomerTab).toHaveAttribute("aria-selected", "true");
     expect(selfPayCustomerTab).toHaveAttribute("aria-selected", "false");
-    expect(selfPayCustomerTab).toHaveClass("text-text-muted");
+    expect(selfPayCustomerTab).toHaveClass("text-v3-text-muted");
     fireEvent.click(selfPayCustomerTab);
     expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "다음" }));

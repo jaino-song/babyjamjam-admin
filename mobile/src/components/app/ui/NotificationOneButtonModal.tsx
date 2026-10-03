@@ -47,7 +47,7 @@ export function NotificationOneButtonModal({
         <DialogPrimitive.Content
           data-component={dataComponent}
           data-source-component={SOURCE_COMPONENT}
-          className="fixed left-1/2 top-1/2 z-[251] flex aspect-[5/3] max-h-[80vh] w-[calc(100vw-2.5rem)] max-w-[300px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-[28px] border-0 bg-surface p-4 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
+          className="fixed left-1/2 top-1/2 z-[251] flex aspect-[5/3] max-h-[80vh] w-[calc(100vw-2.5rem)] max-w-[300px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-[28px] border-0 bg-v3-dim-white p-4 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
         >
           <div
             data-component={sub("header")}
@@ -55,14 +55,14 @@ export function NotificationOneButtonModal({
           >
             <DialogPrimitive.Title
               data-component={sub("title")}
-              className="text-[0.875rem] font-bold leading-5 text-dark"
+              className="text-[0.875rem] font-bold leading-5 text-v3-dark"
             >
               {title}
             </DialogPrimitive.Title>
             <DialogPrimitive.Description
               data-component={sub("description")}
               className={cn(
-                "text-[0.75rem] leading-5 text-text-muted",
+                "text-[0.75rem] leading-5 text-v3-text-muted",
                 isDescriptionVisuallyHidden && "sr-only",
               )}
             >

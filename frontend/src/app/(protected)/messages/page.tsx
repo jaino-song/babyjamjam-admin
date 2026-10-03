@@ -290,7 +290,7 @@ function getMessageHistoryListStatusMeta(status: MessageHistoryRecord["status"])
 
 function getMessageHistoryAvatarClassName(status: MessageHistoryRecord["status"]): string {
   if (status === "sent") {
-    return "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-green";
+    return "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green";
   }
   if (status === "pending") {
     return "border border-amber-200 bg-amber-50 text-amber-700";
@@ -577,7 +577,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
           headerActions={
             <span
               data-component="desktop_messages_sections_section-placeholder-list-badge"
-              className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary"
+              className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
             >
               {copy.items.length}개
             </span>
@@ -606,13 +606,13 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                     <AnimatedSlotListItemContent
                       dataComponent="desktop_messages_sections_section-placeholder-list-item"
                       icon={Icon}
-                      iconContainerClassName="text-primary"
+                      iconContainerClassName="text-v3-primary"
                       title={item.label}
                       subtitle={item.summary}
                       status={
                         <span
                           data-component="desktop_messages_sections_section-placeholder-list-item-badge"
-                          className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-primary"
+                          className="inline-flex shrink-0 items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
                         >
                           {item.badge}
                         </span>
@@ -628,7 +628,7 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
           avatar={
             <div
               data-component="desktop_messages_sections_section_split-layout_detail-panel_section-placeholder-detail-avatar"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Icon className="h-5 w-5" />
             </div>
@@ -644,8 +644,8 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                 title="연결 예정 콘텐츠"
                 titleVariant="eyebrow"
               >
-                <p className="text-sm font-semibold text-dark">{selectedPreview.detailTitle}</p>
-                <p className="text-[0.82rem] leading-6 text-text-muted">
+                <p className="text-sm font-semibold text-v3-dark">{selectedPreview.detailTitle}</p>
+                <p className="text-[0.82rem] leading-6 text-v3-text-muted">
                   {selectedPreview.detailDescription}
                 </p>
               </AppContentCard>
@@ -666,9 +666,9 @@ function MessageSectionPlaceholder({ sectionId }: { sectionId: PlaceholderSectio
                     >
                       <div
                         data-component="desktop_messages_sections_section-placeholder-detail-checklist_section-placeholder-detail-checklist-items_section-placeholder-detail-checklist-item_section-placeholder-detail-checklist-marker"
-                        className="h-2.5 w-2.5 rounded-full bg-primary"
+                        className="h-2.5 w-2.5 rounded-full bg-v3-primary"
                       />
-                      <p className="text-[0.78rem] text-dark">{item}</p>
+                      <p className="text-[0.78rem] text-v3-dark">{item}</p>
                     </div>
                   ))}
                 </div>
@@ -970,12 +970,12 @@ function MessageHistorySection() {
           isPanelLoading ? (
             <Skeleton
               data-component="desktop_messages_sections_history-list-count"
-              className="h-[22px] w-12 rounded-full bg-surface"
+              className="h-[22px] w-12 rounded-full bg-v3-dim-white"
             />
           ) : (
             <span
               data-component="desktop_messages_sections_history-list-count"
-              className="inline-flex items-center gap-1.5 rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary"
+              className="inline-flex items-center gap-1.5 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
             >
               {totalVisibleCount}건
             </span>
@@ -1021,7 +1021,7 @@ function MessageHistorySection() {
                       setDateMonth("");
                       setRelativeDateFilter("all");
                     }}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white text-text-muted transition-colors hover:bg-surface hover:text-dark"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
                   >
                     <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
@@ -1073,18 +1073,18 @@ function MessageHistorySection() {
               <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming">
                 <div
                   data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_label"
-                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-text-muted"
+                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
                 >
                   <span>{MESSAGE_RECORD_ZONE_LABELS.upcoming}</span>
                   {isPanelLoading ? (
                     <Skeleton
                       data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
-                      className="h-[18px] w-7 rounded-full bg-surface"
+                      className="h-[18px] w-7 rounded-full bg-v3-dim-white"
                     />
                   ) : (
                     <span
                       data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
-                      className="inline-flex items-center rounded-full bg-primary-light px-2 py-0.5 text-[0.66rem] font-semibold text-primary"
+                      className="inline-flex items-center rounded-full bg-v3-primary-light px-2 py-0.5 text-[0.66rem] font-semibold text-v3-primary"
                     >
                       {filteredUpcomingJobs.length}
                     </span>
@@ -1112,7 +1112,7 @@ function MessageHistorySection() {
                       <AnimatedSlotListItemContent
                         dataComponent="desktop_messages_sections_upcoming-list-item"
                         icon={Clock3}
-                        iconContainerClassName="text-primary"
+                        iconContainerClassName="text-v3-primary"
                         title={item.payload.recipientName || "-"}
                         subtitle={`${getHistoryTemplateLabel(item.templateKey)} · ${formatScheduledPreviewDate(item.scheduledFor)}`}
                         status={
@@ -1132,7 +1132,7 @@ function MessageHistorySection() {
                             </StatusBadge>
                             <span
                               data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_upcoming-list-item-badges_recipient"
-                              className="text-[0.64rem] font-medium text-text-muted"
+                              className="text-[0.64rem] font-medium text-v3-text-muted"
                             >
                               {getScheduledRecipientBadge(item.recipientType)}
                             </span>
@@ -1149,18 +1149,18 @@ function MessageHistorySection() {
               <div data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past">
                 <div
                   data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_label"
-                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-text-muted"
+                  className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
                 >
                   <span>{MESSAGE_RECORD_ZONE_LABELS.past}</span>
                   {isPanelLoading ? (
                     <Skeleton
                       data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
-                      className="h-[18px] w-7 rounded-full bg-surface"
+                      className="h-[18px] w-7 rounded-full bg-v3-dim-white"
                     />
                   ) : (
                     <span
                       data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
-                      className="inline-flex items-center rounded-full bg-surface px-2 py-0.5 text-[0.66rem] font-semibold text-text-muted"
+                      className="inline-flex items-center rounded-full bg-v3-dim-white px-2 py-0.5 text-[0.66rem] font-semibold text-v3-text-muted"
                     >
                       {filteredHistoryRecords.length}
                     </span>
@@ -1216,7 +1216,7 @@ function MessageHistorySection() {
                             </StatusBadge>
                             <span
                               data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_history-list-item-meta_date"
-                              className="whitespace-nowrap text-[0.68rem] text-text-muted"
+                              className="whitespace-nowrap text-[0.68rem] text-v3-text-muted"
                             >
                               {formatHistoryDate(record.sentAt)}
                             </span>
@@ -1237,7 +1237,7 @@ function MessageHistorySection() {
           avatar={
             <div
               data-component="desktop_messages_sections_split-layout_detail-panel_upcoming-detail-avatar"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary"
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
             >
               <Clock3 className="h-5 w-5" />
             </div>
@@ -1260,7 +1260,7 @@ function MessageHistorySection() {
             <div data-component="desktop_messages_sections_split-layout_detail-panel_upcoming-detail-trailing" className="flex items-center gap-2">
               <div
                 data-component="desktop_messages_sections_split-layout_detail-panel_upcoming-detail-trailing_scheduled-at"
-                className="inline-flex items-center gap-1 rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary"
+                className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
               >
                 <CalendarClock className="h-3.5 w-3.5" />
                 {formatScheduledPreviewDate(selectedJob.scheduledFor)}
@@ -1377,7 +1377,7 @@ function MessageHistorySection() {
                           <InfoRow
                             data-component="desktop_messages_sections_upcoming-detail-variable-empty"
                             label="변수"
-                            value={<span className="font-normal text-text-muted">변수 정보가 없습니다.</span>}
+                            value={<span className="font-normal text-v3-text-muted">변수 정보가 없습니다.</span>}
                           />
                         )}
                       </InfoCard>
@@ -1725,7 +1725,7 @@ export default function MessagesPage() {
       {selectedUserTemplate ? (
         <div
           data-component="desktop_messages_sections_template-detail-summary"
-          className="inline-flex items-center gap-1 rounded-full bg-primary-light px-3 py-1 text-[0.72rem] font-semibold text-primary"
+          className="inline-flex items-center gap-1 rounded-full bg-v3-primary-light px-3 py-1 text-[0.72rem] font-semibold text-v3-primary"
         >
           <FileText className="h-3.5 w-3.5" />
           {`${selectedUserTemplate.variables.length}개 변수`}
@@ -1961,12 +1961,12 @@ export default function MessagesPage() {
                               <>
                                 <div
                                   data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_template-skeleton-icon"
-                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-surface"
+                                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-v3-dim-white"
                                 >
                                   <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                                 </div>
                                 <div data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_template-skeleton-copy" className="min-w-0 flex-1">
-                                  <Skeleton className="h-4 w-32 bg-surface" />
+                                  <Skeleton className="h-4 w-32 bg-v3-dim-white" />
                                 </div>
                               </>
                             );
@@ -2006,7 +2006,7 @@ export default function MessagesPage() {
                     activeTemplateId ? (
                       <div
                         data-component="desktop_messages_sections_templates_split-layout_detail-panel_template-detail-avatar"
-                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary"
+                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
                       >
                         <SelectedTemplateIcon className="h-5 w-5" />
                       </div>
@@ -2021,8 +2021,8 @@ export default function MessagesPage() {
                         className={cn(
                           "inline-flex items-center rounded-full px-3 py-1 text-[0.68rem] font-semibold",
                           isBranchTemplate
-                            ? "bg-surface text-text-muted"
-                            : "bg-primary-light text-primary"
+                            ? "bg-v3-dim-white text-v3-text-muted"
+                            : "bg-v3-primary-light text-v3-primary"
                         )}
                       >
                         {isBranchTemplate ? "지점 템플릿" : "기본 템플릿"}

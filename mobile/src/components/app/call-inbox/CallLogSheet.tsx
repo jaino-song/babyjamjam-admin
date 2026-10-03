@@ -28,7 +28,7 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
   return (
     <MobileDetailPage name="call-inbox" data-component={LOG_BASE}>
       {isLoading || !record ? (
-        <div className="p-4 text-[0.82rem] text-text-muted" data-component={`${LOG_BASE}_loading`}>
+        <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${LOG_BASE}_loading`}>
           불러오는 중...
         </div>
       ) : (
@@ -42,16 +42,16 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
             badges={record.category ? [CATEGORY_BADGE[record.category]] : []}
           />
 
-          <div className="flex items-center justify-between px-1 text-[0.72rem] text-text-muted">
+          <div className="flex items-center justify-between px-1 text-[0.72rem] text-v3-text-muted">
             <span>
               {record.callerPhone ? `${formatPhoneNumber(record.callerPhone)} · ` : ""}
               {formatCallTime(record.recordedAt ?? record.createdAt)}
             </span>
-            <a href={record.driveUrl} target="_blank" rel="noreferrer" className="text-primary">
+            <a href={record.driveUrl} target="_blank" rel="noreferrer" className="text-v3-primary">
               ▶ 원본 듣기
             </a>
           </div>
-          <div className="px-1 text-[0.68rem] text-text-muted">{record.fileName}</div>
+          <div className="px-1 text-[0.68rem] text-v3-text-muted">{record.fileName}</div>
 
           {record.processingStatus === "FAILED" && (
             <div
@@ -66,14 +66,14 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
             <div className="flex flex-col gap-2 rounded-xl bg-gray-50 p-3" data-component={`${LOG_BASE}_detail_summary`}>
               {record.summary.key_content && (
                 <div>
-                  <div className="text-[0.7rem] font-bold text-text-muted">핵심 내용</div>
-                  <div className="text-[0.82rem] leading-relaxed text-text">{record.summary.key_content}</div>
+                  <div className="text-[0.7rem] font-bold text-v3-text-muted">핵심 내용</div>
+                  <div className="text-[0.82rem] leading-relaxed text-v3-text">{record.summary.key_content}</div>
                 </div>
               )}
               {record.summary.result_action && (
                 <div>
-                  <div className="text-[0.7rem] font-bold text-text-muted">결과 / 조치</div>
-                  <div className="text-[0.82rem] leading-relaxed text-text">{record.summary.result_action}</div>
+                  <div className="text-[0.7rem] font-bold text-v3-text-muted">결과 / 조치</div>
+                  <div className="text-[0.82rem] leading-relaxed text-v3-text">{record.summary.result_action}</div>
                 </div>
               )}
             </div>
@@ -90,7 +90,7 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
                 </a>
               )}
               {record.draft && (
-                <span className="rounded-md bg-gray-100 px-2 py-1 text-[0.7rem] text-text">
+                <span className="rounded-md bg-gray-100 px-2 py-1 text-[0.7rem] text-v3-text">
                   {DRAFT_STATUS_LABEL[record.draft.status] ?? record.draft.status}
                 </span>
               )}
@@ -98,7 +98,7 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
           )}
 
           <div className="flex flex-col gap-2">
-            <div className="text-[0.75rem] font-bold text-text-muted">통화 전문</div>
+            <div className="text-[0.75rem] font-bold text-v3-text-muted">통화 전문</div>
             <TranscriptView data-component={`${LOG_BASE}_detail_transcript`} transcript={record.transcript} />
           </div>
         </div>

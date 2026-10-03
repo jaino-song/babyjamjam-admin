@@ -173,8 +173,8 @@ export default function SettingsPage() {
           <section data-component="desktop_settings_sections_profile">
             <ContentPaper variant="v3">
               <div data-component="desktop_settings_sections_profile_profile-header" className="mb-4 flex items-center gap-3">
-                <div data-component="desktop_settings_sections_profile_profile-header_profile-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--primary))]/10">
-                  <UserKeyIcon size={20} className="text-[hsl(var(--primary))]" />
+                <div data-component="desktop_settings_sections_profile_profile-header_profile-icon" className="flex items-center justify-center w-10 h-10 rounded-xl bg-[hsl(var(--v3-primary))]/10">
+                  <UserKeyIcon size={20} className="text-[hsl(var(--v3-primary))]" />
                 </div>
                 <div data-component="desktop_settings_sections_profile_profile-header_profile-title-group">
                   <h2 className="text-lg font-bold text-foreground">계정</h2>
@@ -188,26 +188,26 @@ export default function SettingsPage() {
                   <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-summary-header" className="flex items-center gap-4">
                     <Avatar
                       data-component="desktop_settings_sections_profile-summary-avatar"
-                      className="h-16 w-16 rounded-full border border-[hsl(var(--border))]/60 bg-[hsl(var(--primary))]/10"
+                      className="h-16 w-16 rounded-full border border-[hsl(var(--v3-border))]/60 bg-[hsl(var(--v3-primary))]/10"
                     >
                       {!isProfileSummaryLoading ? (
                         <>
                           <AvatarImage src={user?.profileImage || ""} alt={user?.name || "사용자"} />
-                          <AvatarFallback className="bg-[hsl(var(--primary))]/10 text-[hsl(var(--primary))] text-lg font-bold">
+                          <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 text-[hsl(var(--v3-primary))] text-lg font-bold">
                             {accountInitials}
                           </AvatarFallback>
                         </>
                       ) : (
-                        <AvatarFallback className="bg-[hsl(var(--primary))]/10 p-0">
-                          <Skeleton className="h-full w-full rounded-full bg-[hsl(var(--primary))]/15" />
+                        <AvatarFallback className="bg-[hsl(var(--v3-primary))]/10 p-0">
+                          <Skeleton className="h-full w-full rounded-full bg-[hsl(var(--v3-primary))]/15" />
                         </AvatarFallback>
                       )}
                     </Avatar>
                     <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-summary-header_profile-summary-text">
                       {isProfileSummaryLoading ? (
                         <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-summary-header_profile-summary-text_profile-summary-loading" className="space-y-2 pt-1">
-                          <Skeleton className="h-4 w-20 bg-[hsl(var(--border))]/70" />
-                          <Skeleton className="h-3 w-12 bg-[hsl(var(--border))]/55" />
+                          <Skeleton className="h-4 w-20 bg-[hsl(var(--v3-border))]/70" />
+                          <Skeleton className="h-3 w-12 bg-[hsl(var(--v3-border))]/55" />
                         </div>
                       ) : (
                         <>
@@ -223,26 +223,26 @@ export default function SettingsPage() {
                   </div>
 
                   <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid" className="flex flex-col gap-4">
-                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-email-field" className="rounded-2xl border border-[hsl(var(--border))] bg-white px-4 py-3">
-                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--text-muted))]">이메일</p>
+                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-email-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">이메일</p>
                       {isProfileSummaryLoading ? (
-                        <Skeleton className="mt-2 h-4 w-[78%] bg-[hsl(var(--border))]/60" />
+                        <Skeleton className="mt-2 h-4 w-[78%] bg-[hsl(var(--v3-border))]/60" />
                       ) : (
                         <p className="mt-1 text-sm font-medium text-foreground break-all">{user?.email || "-"}</p>
                       )}
                     </div>
-                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-phone-field" className="rounded-2xl border border-[hsl(var(--border))] bg-white px-4 py-3">
-                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--text-muted))]">전화번호</p>
+                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-phone-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">전화번호</p>
                       {isProfileSummaryLoading ? (
-                        <Skeleton className="mt-2 h-4 w-28 bg-[hsl(var(--border))]/60" />
+                        <Skeleton className="mt-2 h-4 w-28 bg-[hsl(var(--v3-border))]/60" />
                       ) : (
                         <p className="mt-1 text-sm font-medium text-foreground">{user?.phone || "-"}</p>
                       )}
                     </div>
-                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-branch-field" className="rounded-2xl border border-[hsl(var(--border))] bg-white px-4 py-3">
-                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--text-muted))]">지점</p>
+                    <div data-component="desktop_settings_sections_profile_profile-summary-wrap_profile-summary_profile-readonly-grid_profile-branch-field" className="rounded-2xl border border-[hsl(var(--v3-border))] bg-white px-4 py-3">
+                      <p className="text-[0.72rem] font-semibold text-[hsl(var(--v3-text-muted))]">지점</p>
                       {isProfileSummaryLoading ? (
-                        <Skeleton className="mt-2 h-4 w-24 bg-[hsl(var(--border))]/60" />
+                        <Skeleton className="mt-2 h-4 w-24 bg-[hsl(var(--v3-border))]/60" />
                       ) : (
                         <p className="mt-1 text-sm font-medium text-foreground">{user?.branchName || "-"}</p>
                       )}
@@ -357,15 +357,15 @@ export default function SettingsPage() {
                       disabled={!isSelected}
                       className={`relative flex flex-col items-center gap-3 p-6 rounded-xl border-2 transition-all duration-200 ${
                         isSelected
-                          ? "border-[hsl(var(--primary))] bg-[hsl(var(--primary))]/5"
-                          : "border-[hsl(var(--border))] hover:border-[hsl(var(--primary))]/30"
+                          ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))]/5"
+                          : "border-[hsl(var(--v3-border))] hover:border-[hsl(var(--v3-primary))]/30"
                       } ${!isSelected ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
                       <div
                         data-component="desktop_settings_sections_theme_theme-options_theme-option-icon"
                         className={`w-12 h-12 rounded-full flex items-center justify-center ${
                           isSelected
-                            ? "bg-[hsl(var(--primary))]/10"
+                            ? "bg-[hsl(var(--v3-primary))]/10"
                             : "bg-muted/50"
                         }`}
                       >
@@ -373,7 +373,7 @@ export default function SettingsPage() {
                           size={24}
                           className={
                             isSelected
-                              ? "text-[hsl(var(--primary))]"
+                              ? "text-[hsl(var(--v3-primary))]"
                               : "text-muted-foreground"
                           }
                         />

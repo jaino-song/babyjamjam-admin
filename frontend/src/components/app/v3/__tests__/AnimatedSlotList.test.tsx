@@ -45,7 +45,7 @@ describe("AnimatedSlotList", () => {
     );
     expect(screen.getByRole("button", { name: "송규운" })).toHaveClass(
       "focus-visible:ring-2",
-      "focus-visible:ring-primary",
+      "focus-visible:ring-v3-primary",
     );
   });
 

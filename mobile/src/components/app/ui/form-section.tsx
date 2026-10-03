@@ -92,8 +92,8 @@ function FormNativeSelect({
       <select
         data-component={selectComponent}
         className={cn(
-          "box-border h-[44px] w-full appearance-none rounded-[12px] border-[1.5px] border-input bg-white px-[14px] py-0 pr-[38px] text-[0.9rem] leading-normal text-dark outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-[hsl(220_20%_97%)] disabled:opacity-55",
-          value === "" && "text-text-muted",
+          "box-border h-[44px] w-full appearance-none rounded-[12px] border-[1.5px] border-input bg-white px-[14px] py-0 pr-[38px] text-[0.9rem] leading-normal text-v3-dark outline-none focus:border-v3-primary disabled:cursor-not-allowed disabled:bg-[hsl(220_20%_97%)] disabled:opacity-55",
+          value === "" && "text-v3-text-muted",
           className,
         )}
         value={value}
@@ -124,7 +124,7 @@ function FormNativeSelect({
       {hideIcon ? null : (
         <ChevronDown
           data-component={iconComponent}
-          className="pointer-events-none absolute right-[14px] top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
+          className="pointer-events-none absolute right-[14px] top-1/2 h-4 w-4 -translate-y-1/2 text-v3-text-muted"
           aria-hidden="true"
           strokeWidth={2.2}
         />

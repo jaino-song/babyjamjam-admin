@@ -20,8 +20,8 @@ describe("Stepper", () => {
 
     expect(circles[1]).toHaveClass(
       "border-2",
-      "border-border",
-      "bg-surface",
+      "border-v3-border",
+      "bg-v3-dim-white",
     );
   });
 });

@@ -51,20 +51,20 @@ export function SettingsListCard({
           >
             <h2
               data-component={sub("header_title-row_title")}
-              className="text-[calc(1.05rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.4rem*var(--glint-ui-scale,1))] text-dark"
+              className="text-[calc(1.05rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.4rem*var(--glint-ui-scale,1))] text-v3-dark"
             >
               {title}
             </h2>
             <span
               data-component={sub("header_title-row_count")}
-              className="inline-flex items-center rounded-[calc(999px*var(--glint-ui-scale,1))] bg-primary-light px-[calc(8px*var(--glint-ui-scale,1))] py-[calc(3px*var(--glint-ui-scale,1))] text-[calc(0.66rem*var(--glint-ui-scale,1))] font-bold leading-none text-primary"
+              className="inline-flex items-center rounded-[calc(999px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(8px*var(--glint-ui-scale,1))] py-[calc(3px*var(--glint-ui-scale,1))] text-[calc(0.66rem*var(--glint-ui-scale,1))] font-bold leading-none text-v3-primary"
             >
               {count}개
             </span>
           </span>
           <span
             data-component={sub("header_subtitle")}
-            className="text-[calc(0.72rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-text-muted"
+            className="text-[calc(0.72rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-v3-text-muted"
           >
             {subtitle}
           </span>
@@ -73,7 +73,7 @@ export function SettingsListCard({
           <button
             data-component={sub("header_action")}
             type="button"
-            className="min-h-[calc(36px*var(--glint-ui-scale,1))] shrink-0 cursor-pointer rounded-[calc(10px*var(--glint-ui-scale,1))] bg-primary-light px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(0.68rem*var(--glint-ui-scale,1))] font-bold text-primary outline-none transition-colors active:bg-primary/15 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-primary/10"
+            className="min-h-[calc(36px*var(--glint-ui-scale,1))] shrink-0 cursor-pointer rounded-[calc(10px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(0.68rem*var(--glint-ui-scale,1))] font-bold text-v3-primary outline-none transition-colors active:bg-v3-primary/15 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10"
             onClick={onAction}
           >
             {actionLabel}
@@ -123,7 +123,7 @@ export function SettingsListItem({
     <>
       <span
         data-component={`${dataComponent}_icon`}
-        className="flex h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(13px*var(--glint-ui-scale,1))] bg-primary-light text-primary"
+        className="flex h-[calc(42px*var(--glint-ui-scale,1))] w-[calc(42px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(13px*var(--glint-ui-scale,1))] bg-v3-primary-light text-v3-primary"
         aria-hidden="true"
       >
         <Icon
@@ -137,13 +137,13 @@ export function SettingsListItem({
       >
         <span
           data-component={`${dataComponent}_copy_title`}
-          className="truncate text-[calc(0.82rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.1rem*var(--glint-ui-scale,1))] text-dark"
+          className="truncate text-[calc(0.82rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.1rem*var(--glint-ui-scale,1))] text-v3-dark"
         >
           {title}
         </span>
         <span
           data-component={`${dataComponent}_copy_subtitle`}
-          className="truncate text-[calc(0.68rem*var(--glint-ui-scale,1))] leading-[calc(0.95rem*var(--glint-ui-scale,1))] text-text-muted"
+          className="truncate text-[calc(0.68rem*var(--glint-ui-scale,1))] leading-[calc(0.95rem*var(--glint-ui-scale,1))] text-v3-text-muted"
         >
           {subtitle}
         </span>
@@ -161,7 +161,7 @@ export function SettingsListItem({
         {showChevron ? (
           <ChevronRight
             data-component={`${dataComponent}_trailing_chevron`}
-            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] text-text-muted"
+            className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] text-v3-text-muted"
             strokeWidth={2.25}
             aria-hidden="true"
           />
@@ -171,12 +171,12 @@ export function SettingsListItem({
   );
   const rowClassName = cn(
     SETTINGS_ROW_GEOMETRY_CLASS,
-    "text-left outline-none transition-colors focus-visible:border-primary/45 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-primary/10 disabled:cursor-default disabled:opacity-100",
-    onSelect && !isDisabled && "cursor-pointer active:bg-primary-light/65",
+    "text-left outline-none transition-colors focus-visible:border-v3-primary/45 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10 disabled:cursor-default disabled:opacity-100",
+    onSelect && !isDisabled && "cursor-pointer active:bg-v3-primary-light/65",
     isSelected
-      ? "border-primary/20 bg-primary-light/45"
+      ? "border-v3-primary/20 bg-v3-primary-light/45"
       : "border-transparent bg-transparent",
-    onSelect && !isSelected && !isDisabled && "hover:bg-primary-light/30",
+    onSelect && !isSelected && !isDisabled && "hover:bg-v3-primary-light/30",
   );
 
   return (

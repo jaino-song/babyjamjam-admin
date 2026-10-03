@@ -75,8 +75,8 @@ export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
         title="계약 종료일 자동 완료"
       />
       <div className="space-y-4 px-4 pb-8" data-component={`${EDITOR_BASE}_form`}>
-        {query.isError ? <p className="text-sm font-semibold text-burgundy" role="alert">{errorMessage(query.error, "read")}</p> : null}
-        {mutation.isError ? <p className="text-sm font-semibold text-burgundy" role="alert">{errorMessage(mutation.error, "mutation")}</p> : null}
+        {query.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(query.error, "read")}</p> : null}
+        {mutation.isError ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{errorMessage(mutation.error, "mutation")}</p> : null}
         {current ? (
           <>
             <FormSection title="자동화 설정" data-component={`${EDITOR_BASE}_settings`}>
@@ -107,7 +107,7 @@ export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
               />
             </FormSection>
             <InfoCard title="실행 조건" data-component={`${EDITOR_BASE}_conditions`}>
-              <div className="space-y-2 text-sm text-text-muted">
+              <div className="space-y-2 text-sm text-v3-text-muted">
                 <p>매일 17:00 (KST) 실행</p>
                 <p>대상: 제공기관 검토 단계(검토 필요) 산모 계약서</p>
                 <p>계약 종료일이 지난 문서만</p>

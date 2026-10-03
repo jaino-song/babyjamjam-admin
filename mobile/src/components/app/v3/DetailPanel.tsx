@@ -74,7 +74,7 @@ export function DetailPanel({
           <button
             data-component={sub("mobile-nav_back")}
             onClick={nav?.goToList}
-            className="flex items-center gap-1 text-[0.8rem] text-text-muted hover:text-primary transition-colors"
+            className="flex items-center gap-1 text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
