@@ -1,4 +1,4 @@
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, Logger } from "@nestjs/common";
 import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
@@ -1951,6 +1951,57 @@ describe("ServiceRecordLifecycleService", () => {
                 await service.ensureForClient(1);
 
                 expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+            });
+
+            it("ensureForClient warns, naming the call path, when a caller's transaction falls back to reading the calendar inside it", async () => {
+                const { prisma, holidayCalendar, service } = transactional("2026-09-18", legacyCase());
+                const warn = jest.spyOn((service as unknown as { logger: Logger }).logger, "warn")
+                    .mockImplementation(() => undefined);
+
+                await service.ensureForClient(1, prisma as never);
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect(warn).toHaveBeenCalledTimes(1);
+                expect(warn.mock.calls[0]![0]).toEqual(expect.stringContaining("[CALENDAR_READ_INSIDE_TRANSACTION]"));
+                expect(warn.mock.calls[0]![0]).toEqual(expect.stringContaining("clientId=1"));
+                expect(warn.mock.calls[0]![0]).toEqual(expect.stringContaining("callPath="));
+            });
+
+            it("ensureForClient does not warn when the caller handed the calendar in or none is needed", async () => {
+                const handedIn = (await branchHolidayCalendar("2026-09-14").forBranch(rawQueryBranchId)) as never;
+                const withCalendar = transactional("2026-09-18", legacyCase());
+                const warnWithCalendar = jest.spyOn(
+                    (withCalendar.service as unknown as { logger: Logger }).logger,
+                    "warn",
+                ).mockImplementation(() => undefined);
+                const keptCount = transactional("2026-09-29", legacyCase());
+                const warnKeptCount = jest.spyOn(
+                    (keptCount.service as unknown as { logger: Logger }).logger,
+                    "warn",
+                ).mockImplementation(() => undefined);
+
+                await withCalendar.service.ensureForClient(1, withCalendar.prisma as never, handedIn);
+                await keptCount.service.ensureForClient(1, keptCount.prisma as never);
+
+                expect(warnWithCalendar).not.toHaveBeenCalled();
+                expect(warnKeptCount).not.toHaveBeenCalled();
+            });
+
+            it("resolveCalendarBeforeTransaction judges the period the caller is about to write", async () => {
+                // The client row still has no start date, as it does before the due-date
+                // scheduler's transaction copies dueDate into it.
+                const { prisma, holidayCalendar, service } = transactional("2026-09-18", null);
+                prisma.client.findUnique.mockResolvedValue({
+                    id: 1, branchId: rawQueryBranchId, startDate: null,
+                    endDate: date("2026-09-18"), employeeSchedules: [],
+                });
+
+                await expect(service.resolveCalendarBeforeTransaction(1)).resolves.toBeUndefined();
+                expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+
+                await expect(service.resolveCalendarBeforeTransaction(1, { startDate: date("2026-09-07") }))
+                    .resolves.toBeDefined();
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(rawQueryBranchId, { fresh: true });
             });
 
             it("ensureForClient reuses a calendar handed in by the caller and reads no other", async () => {

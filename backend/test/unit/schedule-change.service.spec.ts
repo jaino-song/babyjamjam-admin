@@ -528,6 +528,7 @@ describe("ScheduleChangeService", () => {
             expect(lifecycleService.ensureForClient).toHaveBeenCalledWith(
                 CLIENT_ID,
                 txPrismaService,
+                expect.objectContaining({ addBusinessDays: expect.any(Function) }),
             );
             expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
                 "case-1",
@@ -1387,6 +1388,57 @@ describe("ScheduleChangeService", () => {
             );
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
             expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
+        it("applyAdminChange hands the calendar it read before the transaction to the lifecycle sync", async () => {
+            const branchCalendar = branchCalendarWith("2026-07-24");
+            (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => {
+                events.push("calendar");
+                return branchCalendar;
+            });
+            txPrismaService.employee_schedule.findFirst.mockResolvedValue(createSchedule({
+                endDate: toDbDate("2026-07-29"),
+            }));
+            txPrismaService.service_record_case.findFirst.mockResolvedValue({ id: "case-1", formVersion: 1 });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-07-15", true),
+                    createDay(2, "2026-07-16", true),
+                    createDay(3, "2026-07-20", false),
+                    createDay(4, "2026-07-21", false),
+                ])
+                .mockResolvedValueOnce([createDay(4, "2026-07-21", false)]);
+            txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({ status: "approved" }));
+
+            await service.applyAdminChange(SCHEDULE_ID, "2026-07-23", tenant);
+
+            expect(events.indexOf("calendar")).toBeLessThan(events.indexOf("transaction:start"));
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            expect(lifecycleService.ensureForClient).toHaveBeenCalledWith(CLIENT_ID, txPrismaService, branchCalendar);
+        });
+
+        it("approve hands the calendar it read before the transaction to the lifecycle sync", async () => {
+            const branchCalendar = branchCalendarWith("2026-07-24");
+            (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => {
+                events.push("calendar");
+                return branchCalendar;
+            });
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce(postponableDays())
+                .mockResolvedValueOnce([createDay(4, "2026-07-04", false)]);
+            txPrismaService.service_record_day.upsert.mockResolvedValue(createDay(3, "2026-07-06", false));
+            txPrismaService.service_record_day.update.mockResolvedValue(createDay(4, "2026-07-07", false));
+            txPrismaService.employee_schedule.update.mockResolvedValue(createSchedule());
+            txPrismaService.client.update.mockResolvedValue({ id: CLIENT_ID });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(createRequest({ status: "approved" }));
+
+            await service.approve("request-1", tenant);
+
+            expect(events.indexOf("calendar")).toBeLessThan(events.indexOf("transaction:start"));
+            expect(lifecycleService.ensureForClient).toHaveBeenCalledWith(CLIENT_ID, txPrismaService, branchCalendar);
         });
 
         it("applyAdminChange cascades later sessions over a branch holiday", async () => {
