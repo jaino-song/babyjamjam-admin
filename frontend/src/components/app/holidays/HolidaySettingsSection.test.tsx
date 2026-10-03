@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { holidaySettingsApi } from "@/services/holiday-settings";
 import type { BranchHolidayYear } from "@/services/holidays";
@@ -112,11 +112,27 @@ describe("HolidaySettingsSection", () => {
     renderSection();
     await screen.findByText("한글날");
 
-    fireEvent.click(screen.getByRole("tab", { name: "2027" }));
+    // Radix tabs activate on pointer-down (not click).
+    fireEvent.mouseDown(screen.getByRole("tab", { name: "2027" }));
 
     expect(await screen.findByText("신정")).toBeInTheDocument();
     expect(api.getYear).toHaveBeenCalledWith("branch-1", 2027);
     expect(screen.getByText("아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)")).toBeInTheDocument();
+  });
+
+  it("switches the year from the keyboard and exposes the selected tab accessibly", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+
+    const tab2026 = screen.getByRole("tab", { name: "2026" });
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-component", "desktop_settings_sections_holidays_toolbar_year-tabs");
+    act(() => tab2026.focus());
+    fireEvent.keyDown(tab2026, { key: "ArrowRight" });
+
+    expect(await screen.findByText("신정")).toBeInTheDocument();
+    expect(api.getYear).toHaveBeenCalledWith("branch-1", 2027);
+    expect(screen.getByRole("tab", { name: "2027" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "2026" })).toHaveAttribute("aria-selected", "false");
   });
 
   it("renders the source chip and the right action for each row", async () => {
