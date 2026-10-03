@@ -1,5 +1,5 @@
 import { Logger } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import { HolidayReviewResolveService } from "application/services/holiday-review-resolve.service";
 import { tenantIsolationExtension } from "infrastructure/database/tenant-isolation.extension";
@@ -36,6 +36,7 @@ const USER = "99999999-9999-4999-8999-999999999999";
 describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enforce)", () => {
     let raw: PrismaClient;
     let repository: SbHolidayReviewRepository;
+    let tenantPrisma: PrismaService;
     let branchA: string;
     let branchB: string;
     const eventIds: string[] = [];
@@ -58,7 +59,8 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
         branchA = (await raw.branch.create({ data: { name: "A", slug: `throwaway-hrh-a-${suffix}` } })).id;
         branchB = (await raw.branch.create({ data: { name: "B", slug: `throwaway-hrh-b-${suffix}` } })).id;
         const extended = new PrismaClient().$extends(tenantIsolationExtension());
-        repository = new SbHolidayReviewRepository(extended as unknown as PrismaService);
+        tenantPrisma = extended as unknown as PrismaService;
+        repository = new SbHolidayReviewRepository(tenantPrisma);
         // The fixtures are dated around Nov 2026 and the repository compares stored end dates with
         // "today" (Asia/Seoul): pin Date so the specs do not rot as the calendar moves on.
         pinToday("2026-10-01T03:00:00.000Z");
@@ -382,7 +384,17 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
 
             const calendar = { calcEndDateBusinessDays: () => "2026-11-16" };
             const clientService = {
-                update: jest.fn(async (_branch: string, clientId: number, params: { endDate: string }) => {
+                update: jest.fn(async (
+                    _branch: string,
+                    clientId: number,
+                    params: { endDate: string },
+                    beforeWrite?: (transaction: Prisma.TransactionClient) => Promise<void>,
+                ) => {
+                    // Like ClientService.update: the caller's claim runs in the write transaction
+                    // first, and a failed claim aborts before the end date is touched.
+                    await tenantPrisma.$transaction(async (transaction) => {
+                        await beforeWrite?.(transaction);
+                    });
                     await raw.client.update({ where: { id: clientId }, data: { endDate: d(params.endDate) } });
                 }),
             };
@@ -419,7 +431,7 @@ describeReal("holiday review HTTP-path repository (real PostgreSQL, tenant enfor
             expect(clientService.update).toHaveBeenCalledWith(branchA, fixable, {
                 endDate: "2026-11-16",
                 expectedEndDate: "2026-11-13",
-            });
+            }, expect.any(Function));
             const status = async (id: string) => (await raw.end_date_review_item.findUniqueOrThrow({ where: { id } }));
             expect(await status(itemFix.id)).toMatchObject({ status: "fixed", resolvedBy: USER });
             expect(await status(itemKeep.id)).toMatchObject({ status: "kept", resolvedBy: USER });
