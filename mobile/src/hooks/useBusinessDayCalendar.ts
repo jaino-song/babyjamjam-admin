@@ -25,7 +25,7 @@ export interface UseBusinessDayCalendarResult {
     /** True only when every requested year has loaded. SAVED computations must wait for this. */
     ready: boolean;
     error: BusinessDayCalendarError;
-    /** Refetches the years that failed to load. */
+    /** Refetches failed years, or all requested years when the calendar payload is invalid. */
     retry: () => void;
     /** `calendar.version` — a cheap dependency for memoised consumers. */
     version: string;
@@ -98,9 +98,9 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
 
     const retry = useCallback(() => {
         for (const result of resultsRef.current) {
-            if (result.isError) void result.refetch();
+            if (built.invalid || result.isError) void result.refetch();
         }
-    }, []);
+    }, [built.invalid]);
 
     const calendar = built.calendar ?? KR_BUILTIN_CALENDAR;
     let error: BusinessDayCalendarError = null;
