@@ -133,8 +133,8 @@ function getOpenToNextWorkBadge(openToNextWork: boolean) {
 
 function getEmployeeAvatarClassName(openToNextWork: boolean): string {
     return openToNextWork
-        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-green"
-        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-text-muted";
+        ? "border border-[hsl(137,34%,84%)] bg-[hsl(137,60%,94%)] text-v3-green"
+        : "border border-[hsl(220,20%,90%)] bg-[hsl(220,20%,97%)] text-v3-text-muted";
 }
 
 export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: string }) {
@@ -453,14 +453,14 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                                 if (slotLoading) {
                                     return (
                                         <>
-                                            <div data-component={`${dataComponent}_split-layout_list-panel_employees-list-item-avatar-skeleton`} className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-surface flex items-center justify-center">
+                                            <div data-component={`${dataComponent}_split-layout_list-panel_employees-list-item-avatar-skeleton`} className="w-11 h-11 rounded-[14px] shrink-0 shadow-md bg-v3-dim-white flex items-center justify-center">
                                                 <Skeleton className="w-5 h-5 rounded-md bg-white/70" />
                                             </div>
                                             <div data-component={`${dataComponent}_split-layout_list-panel_employees-list-item-info-skeleton`} className="flex-1 min-w-0">
-                                                <Skeleton className="h-4 w-24 mb-1.5 bg-surface" />
-                                                <Skeleton className="h-3 w-40 bg-surface" />
+                                                <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
+                                                <Skeleton className="h-3 w-40 bg-v3-dim-white" />
                                             </div>
-                                            <Skeleton className="h-6 w-14 rounded-full bg-surface shrink-0" />
+                                            <Skeleton className="h-6 w-14 rounded-full bg-v3-dim-white shrink-0" />
                                         </>
                                     );
                                 }
@@ -501,7 +501,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                                 avatar={
                                     <div
                                         data-component={`${dataComponent}_split-layout_detail-panel_create_employees-create-avatar`}
-                                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-primary-light text-primary"
+                                        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
                                     >
                                         <UserCheck className="h-5 w-5" />
                                     </div>

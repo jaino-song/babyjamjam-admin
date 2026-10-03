@@ -145,7 +145,7 @@ export const V3Sidebar = ({
       >
         {NAV_SECTIONS.map((section) => (
           <div key={section.title}>
-            <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-text-muted uppercase tracking-[0.15em]">
+            <h3 className="px-4 mb-2 text-[0.65rem] font-semibold text-v3-text-muted uppercase tracking-[0.15em]">
               {section.title}
             </h3>
             <ul className="space-y-1">
@@ -160,13 +160,13 @@ export const V3Sidebar = ({
                       className={`
                         relative group flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-colors overflow-hidden
                         ${active
-                          ? "bg-primary text-white shadow-md shadow-blue-500/20"
-                          : "text-text hover:bg-primary-light hover:text-primary"
+                          ? "bg-v3-primary text-white shadow-md shadow-blue-500/20"
+                          : "text-v3-text hover:bg-v3-primary-light hover:text-v3-primary"
                         }
                       `}
                     >
                       <item.icon 
-                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-primary"}`} 
+                        className={`w-5 h-5 shrink-0 transition-colors ${active ? "text-white" : "group-hover:text-v3-primary"}`} 
                         strokeWidth={2} 
                       />
                       <span className="text-[0.85rem] font-medium leading-none pt-0.5">
@@ -174,7 +174,7 @@ export const V3Sidebar = ({
                       </span>
                       
                       {item.badge && (
-                         <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-primary-light text-primary font-bold">
+                         <span className="ml-auto text-[0.65rem] px-2 py-0.5 rounded-full bg-v3-primary-light text-v3-primary font-bold">
                            {item.badge}
                          </span>
                       )}
@@ -188,15 +188,15 @@ export const V3Sidebar = ({
       </nav>
 
       <div className="p-4 mt-auto" data-component={sub("profile")} data-slot="sidebar-profile">
-        <div className="flex items-center gap-3 p-3 rounded-2xl bg-surface/50 border border-border/50 hover:bg-white hover:shadow-v3-hover transition-all cursor-pointer group">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center shadow-inner shrink-0 text-white font-bold text-sm">
+        <div className="flex items-center gap-3 p-3 rounded-2xl bg-v3-dim-white/50 border border-v3-border/50 hover:bg-white hover:shadow-v3-hover transition-all cursor-pointer group">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-v3-primary to-blue-600 flex items-center justify-center shadow-inner shrink-0 text-white font-bold text-sm">
             {initials}
           </div>
           <div className="flex flex-col min-w-0">
-            <span className="text-[0.85rem] font-semibold text-gray-900 truncate group-hover:text-primary transition-colors">
+            <span className="text-[0.85rem] font-semibold text-gray-900 truncate group-hover:text-v3-primary transition-colors">
               {user?.name || "GUEST"}
             </span>
-            <span className="text-[0.7rem] text-text-muted truncate">
+            <span className="text-[0.7rem] text-v3-text-muted truncate">
               {user?.role ? t(locale, `roles.${user.role}`) || t(locale, "roles.unknown") : t(locale, "roles.unknown")}
             </span>
           </div>

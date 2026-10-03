@@ -1228,7 +1228,7 @@ test.describe("Mobile contracts list rows", () => {
       hasText: "이용자에게 문서 전송에 실패했어요.",
     });
     await expect(failedStage).toBeVisible();
-    await expect(failedStage.locator(".bg-burgundy-light.text-burgundy")).toHaveCount(1);
+    await expect(failedStage.locator(".bg-v3-burgundy-light.text-v3-burgundy")).toHaveCount(1);
     await expect(timeline).not.toContainText("이용자에게 문서가 발송되었습니다.");
     await expect(timeline).not.toContainText("이용자 문서 열람 대기중입니다");
   });

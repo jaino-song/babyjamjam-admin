@@ -21,24 +21,24 @@ interface ContractsListItemProps {
 
 const CONTRACT_STATUS_AVATAR_CLASSES = {
   pending: {
-    container: "bg-surface",
-    icon: "text-text-muted",
+    container: "bg-v3-dim-white",
+    icon: "text-v3-text-muted",
   },
   signed: {
-    container: "bg-primary-light",
-    icon: "text-primary",
+    container: "bg-v3-primary-light",
+    icon: "text-v3-primary",
   },
   review: {
-    container: "bg-orange-light",
-    icon: "text-orange",
+    container: "bg-v3-orange-light",
+    icon: "text-v3-orange",
   },
   completed: {
-    container: "bg-green-light",
-    icon: "text-green",
+    container: "bg-v3-green-light",
+    icon: "text-v3-green",
   },
   expired: {
-    container: "bg-burgundy-light",
-    icon: "text-burgundy",
+    container: "bg-v3-burgundy-light",
+    icon: "text-v3-burgundy",
   },
 } as const satisfies Record<
   ReturnType<typeof contractStatusBadgeType>,
@@ -62,7 +62,7 @@ function ContractsListItemComponent({
       <>
         <div
           data-component={`${dataComponent}_skeleton-icon`}
-          className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-surface shadow-md"
+          className="flex h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[14px] bg-v3-dim-white shadow-md"
         >
           <Skeleton className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))] rounded-md bg-white/70" />
         </div>
@@ -70,11 +70,11 @@ function ContractsListItemComponent({
           data-component={`${dataComponent}_skeleton-content`}
           className="flex-1 min-w-0"
         >
-          <Skeleton className="mb-[calc(6px*var(--glint-ui-scale,1))] h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-surface" />
-          <Skeleton className="mb-[calc(8px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-surface" />
-          <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-surface" />
+          <Skeleton className="mb-[calc(6px*var(--glint-ui-scale,1))] h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(96px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="mb-[calc(8px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(160px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
+          <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(208px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
         </div>
-        <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-surface" />
+        <Skeleton className="h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(56px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-v3-dim-white" />
       </>
     );
   }
@@ -105,7 +105,7 @@ function ContractsListItemComponent({
       iconContainerClassName={avatarClasses.container}
       iconClassName={avatarClasses.icon}
       title={recipientName}
-      titleClassName={isRecipientNamePlaceholder ? "italic text-text-muted" : undefined}
+      titleClassName={isRecipientNamePlaceholder ? "italic text-v3-text-muted" : undefined}
       subtitle={subtitle ?? document.document_name}
       meta={
         <>

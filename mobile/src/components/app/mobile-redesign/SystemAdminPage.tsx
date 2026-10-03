@@ -232,7 +232,7 @@ function DetailContent({
       >
         <span
           data-component={`${dataComponent}_hero_icon`}
-          className="flex h-[calc(46px*var(--glint-ui-scale,1))] w-[calc(46px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(14px*var(--glint-ui-scale,1))] bg-primary-light text-primary"
+          className="flex h-[calc(46px*var(--glint-ui-scale,1))] w-[calc(46px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-primary-light text-v3-primary"
           aria-hidden="true"
         >
           <Icon
@@ -246,13 +246,13 @@ function DetailContent({
         >
           <h2
             data-component={`${dataComponent}_hero_copy_title`}
-            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-dark"
+            className="text-[calc(0.94rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1.25rem*var(--glint-ui-scale,1))] text-v3-dark"
           >
             {title}
           </h2>
           <p
             data-component={`${dataComponent}_hero_copy_description`}
-            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-text-muted"
+            className="text-[calc(0.7rem*var(--glint-ui-scale,1))] leading-[calc(1.05rem*var(--glint-ui-scale,1))] text-v3-text-muted"
           >
             {description}
           </p>
@@ -280,7 +280,7 @@ function FormField({
 }): ReactElement {
   return (
     <label data-component={`${id}_field`} className="flex flex-col gap-1.5">
-      <Label htmlFor={id} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">
+      <Label htmlFor={id} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
         {label}
       </Label>
       <Input
@@ -340,7 +340,7 @@ function BranchForm({
         <FormField id="system-admin-branch-email" label="이메일" value={form.email ?? ""} onChange={(value) => update("email", value)} placeholder="branch@example.com" type="email" />
       </div>
       <div data-component="mobile_system-admin_branch-form_owner-field" className="flex flex-col gap-1.5">
-        <Label htmlFor="system-admin-branch-owner" className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">지점장</Label>
+        <Label htmlFor="system-admin-branch-owner" className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">지점장</Label>
         <Select value={form.ownerId ?? "none"} onValueChange={(value) => update("ownerId", value === "none" ? null : value)}>
           <SelectTrigger id="system-admin-branch-owner" data-component="mobile_system-admin_branch-form_owner-select" className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]">
             <SelectValue placeholder="지점장 선택" />
@@ -351,10 +351,10 @@ function BranchForm({
           </SelectContent>
         </Select>
       </div>
-      <div className="flex items-center justify-between rounded-[calc(14px*var(--glint-ui-scale,1))] bg-surface px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]">
+      <div className="flex items-center justify-between rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-dim-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]">
         <span className="flex flex-col gap-0.5">
-          <Label htmlFor="system-admin-branch-active" className="text-[calc(0.75rem*var(--glint-ui-scale,1))] font-semibold text-dark">운영 중</Label>
-          <span className="text-[calc(0.66rem*var(--glint-ui-scale,1))] text-text-muted">비활성 지점은 운영 목록에서 숨겨집니다.</span>
+          <Label htmlFor="system-admin-branch-active" className="text-[calc(0.75rem*var(--glint-ui-scale,1))] font-semibold text-v3-dark">운영 중</Label>
+          <span className="text-[calc(0.66rem*var(--glint-ui-scale,1))] text-v3-text-muted">비활성 지점은 운영 목록에서 숨겨집니다.</span>
         </span>
         <Switch id="system-admin-branch-active" checked={form.isActive} onCheckedChange={(value) => update("isActive", value)} className="[--v3-ui-scale:var(--glint-ui-scale,1)]" />
       </div>
@@ -400,22 +400,22 @@ function AccountAssignmentForm({
   return (
     <div data-component="mobile_system-admin_account-assignment" className="flex flex-col gap-[calc(14px*var(--glint-ui-scale,1))]">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="mobile-system-admin-account-role" className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">역할</Label>
+        <Label htmlFor="mobile-system-admin-account-role" className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">역할</Label>
         <Select value={role} onValueChange={(value) => onRoleChange(value as EditableRole)}>
           <SelectTrigger id="mobile-system-admin-account-role" data-component="mobile_system-admin_account-assignment_role" className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue /></SelectTrigger>
           <SelectContent>{REGISTERABLE_ROLE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div className="flex flex-col gap-2">
-        <Label className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">소속 지점</Label>
-        <div className="flex flex-col gap-2 rounded-[calc(14px*var(--glint-ui-scale,1))] bg-surface p-[calc(12px*var(--glint-ui-scale,1))]">
+        <Label className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">소속 지점</Label>
+        <div className="flex flex-col gap-2 rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-dim-white p-[calc(12px*var(--glint-ui-scale,1))]">
           {branches.filter((branch) => branch.isActive).map((branch) => (
-            <label key={branch.id} className="flex items-center gap-2 text-[calc(0.74rem*var(--glint-ui-scale,1))] text-dark">
+            <label key={branch.id} className="flex items-center gap-2 text-[calc(0.74rem*var(--glint-ui-scale,1))] text-v3-dark">
               <Checkbox checked={selectedBranchIds.includes(branch.id)} onCheckedChange={(checked) => onBranchToggle(branch.id, checked === true)} data-component={`mobile_system-admin_account-assignment_branch-${branch.id}`} />
               <span className="min-w-0 flex-1 truncate">{branch.name}</span>
             </label>
           ))}
-          {branches.filter((branch) => branch.isActive).length === 0 ? <span className="text-[calc(0.7rem*var(--glint-ui-scale,1))] text-text-muted">활성 지점이 없습니다.</span> : null}
+          {branches.filter((branch) => branch.isActive).length === 0 ? <span className="text-[calc(0.7rem*var(--glint-ui-scale,1))] text-v3-text-muted">활성 지점이 없습니다.</span> : null}
         </div>
       </div>
       <Button type="button" variant="v3" size="lg" width="lg" disabled={isSaving || selectedBranchIds.length === 0} onClick={onSave} data-component="mobile_system-admin_account-assignment_save">
@@ -569,7 +569,7 @@ export function SystemAdminPage(): ReactElement {
         const status = approvalLabel(branch.messageSenderApproval.approvalStatus);
         return <SettingsListItem key={branch.id} data-component={`${LIST_BASE}_item-${branch.id}`} icon={Building2} title={branch.name} subtitle={`${locationLabel(branch)} · ${branch.isActive ? "운영 중" : "비활성"}`} isSelected={itemParam === branch.id} onSelect={() => openItem(branch.id)} control={<StatusControl data-component={`${LIST_BASE}_item-${branch.id}_status`} label={status.label} variant={status.variant} />} />;
       })}
-      {!branchesQuery.isLoading && filteredBranches.length === 0 ? <p data-component={`${LIST_BASE}_empty`} className="py-10 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] text-text-muted">{branchesQuery.isError ? "지점 정보를 불러오지 못했습니다." : "조건에 맞는 지점이 없습니다."}</p> : null}
+      {!branchesQuery.isLoading && filteredBranches.length === 0 ? <p data-component={`${LIST_BASE}_empty`} className="py-10 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] text-v3-text-muted">{branchesQuery.isError ? "지점 정보를 불러오지 못했습니다." : "조건에 맞는 지점이 없습니다."}</p> : null}
       {branchesQuery.isError ? <Button type="button" variant="outline" size="sm" onClick={() => void branchesQuery.refetch()} data-component={`${LIST_BASE}_retry`}>다시 시도</Button> : null}
     </SettingsListCard>
   ) : (
@@ -582,7 +582,7 @@ export function SystemAdminPage(): ReactElement {
         const status = accountStatus(user);
         return <SettingsListItem key={user.id} data-component={`${LIST_BASE}_item-${user.id}`} icon={user.role === "owner" ? ShieldCheck : UserCheck} title={user.name ?? user.email ?? "이름 미등록"} subtitle={`${roleLabel(user.approvalStatus === "pending" ? user.requestedRole : user.role)} · ${user.branches.map((branch) => branch.name).join(", ") || (user.role === "owner" ? "오너 전용" : "소속 없음")}`} isSelected={itemParam === user.id} onSelect={() => openItem(user.id)} control={<StatusControl data-component={`${LIST_BASE}_item-${user.id}_status`} label={status.label} variant={status.variant} />} />;
       })}
-      {!usersQuery.isLoading && filteredUsers.length === 0 ? <p data-component={`${LIST_BASE}_empty`} className="py-10 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] text-text-muted">{usersQuery.isError ? "계정 정보를 불러오지 못했습니다." : "조건에 맞는 계정이 없습니다."}</p> : null}
+      {!usersQuery.isLoading && filteredUsers.length === 0 ? <p data-component={`${LIST_BASE}_empty`} className="py-10 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] text-v3-text-muted">{usersQuery.isError ? "계정 정보를 불러오지 못했습니다." : "조건에 맞는 계정이 없습니다."}</p> : null}
       {usersQuery.isError ? <Button type="button" variant="outline" size="sm" onClick={() => void usersQuery.refetch()} data-component={`${LIST_BASE}_retry`}>다시 시도</Button> : null}
     </SettingsListCard>
   );
@@ -609,7 +609,7 @@ export function SystemAdminPage(): ReactElement {
     const approvedNonOwner = !isPending && isEditableRole(selectedUser.role);
     detail = <DetailContent data-component={`${DETAIL_BASE}_account-${selectedUser.id}`} icon={selectedUser.role === "owner" ? ShieldCheck : KeyRound} title={isPending ? "가입 승인 대기" : `${roleLabel(selectedUser.role)} 계정`} description={isPending ? "가입 신청 내용을 확인하고 권한과 지점을 지정하세요." : "계정의 권한과 소속 지점을 관리합니다."}>
       <PolicyInfoRows data-component={`${DETAIL_BASE}_account-${selectedUser.id}_info`} title="계정 정보" rows={[{ id: "name", label: "이름", value: selectedUser.name ?? "-" }, { id: "email", label: "이메일", value: selectedUser.email ?? "-" }, { id: "phone", label: "전화번호", value: selectedUser.phone ?? "-" }, { id: "role", label: isPending ? "요청 권한" : "역할", value: roleLabel(isPending ? selectedUser.requestedRole : selectedUser.role) }, { id: "auth", label: "인증 방식", value: selectedUser.authProvider || "-" }, { id: "joined", label: "가입일", value: dateLabel(selectedUser.createdAt) }]} />
-      {isPending ? <section data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval`} className="flex flex-col gap-3"><div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-role`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">승인 권한</Label><Select value={selectedRole} onValueChange={(value) => setPendingRoles((current) => ({ ...current, [selectedUser.id]: value as EditableRole }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-role`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_role`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue /></SelectTrigger><SelectContent>{REGISTERABLE_ROLE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-branch`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">소속 지점</Label><Select value={selectedBranchId} onValueChange={(value) => setPendingBranches((current) => ({ ...current, [selectedUser.id]: value }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-branch`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_branch`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue placeholder="지점 선택" /></SelectTrigger><SelectContent>{activeBranches.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></div>{selectedRole === "admin" ? <div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-owner-branch`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-text-muted">오너 지점 지정</Label><Select value={selectedOwnerBranchId} onValueChange={(value) => setPendingOwnerBranches((current) => ({ ...current, [selectedUser.id]: value }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-owner-branch`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_owner-branch`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue placeholder="오너 지점 선택" /></SelectTrigger><SelectContent>{branchOwnerFreeOptions.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></div> : null}<div className="grid grid-cols-2 gap-2"><Button type="button" variant="v3" size="md" width="lg" disabled={approveUserMutation.isPending || !selectedBranchId || (selectedRole === "admin" && !selectedOwnerBranchId)} onClick={() => approveUserMutation.mutate({ id: selectedUser.id, role: selectedRole, branchId: selectedBranchId, ...(selectedRole === "admin" ? { ownerBranchId: selectedOwnerBranchId } : {}) })} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approve`}>{approveUserMutation.isPending ? "처리 중…" : "가입 승인"}</Button><Button type="button" variant="outline" size="md" width="lg" disabled={rejectUserMutation.isPending} onClick={() => rejectUserMutation.mutate(selectedUser.id)} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_reject`}>반려</Button></div></section> : approvedNonOwner ? <AccountAssignmentForm branches={branches} role={currentRole} selectedBranchIds={currentBranchIds} isSaving={updateAccountMutation.isPending} onRoleChange={(role) => setAccountEditRoles((current) => ({ ...current, [selectedUser.id]: role }))} onBranchToggle={(branchId, checked) => setAccountEditBranches((current) => ({ ...current, [selectedUser.id]: checked ? [...(current[selectedUser.id] ?? currentBranchIds), branchId] : (current[selectedUser.id] ?? currentBranchIds).filter((id) => id !== branchId) }))} onSave={() => updateAccountMutation.mutate({ id: selectedUser.id, input: { role: currentRole, branchIds: currentBranchIds, expectedRole: selectedUser.role as EditableRole, expectedBranchIds: selectedUser.branches.map((branch) => branch.id) } })} /> : <div data-component={`${DETAIL_BASE}_account-${selectedUser.id}_owner-note`} className="rounded-[calc(18px*var(--glint-ui-scale,1))] bg-surface p-4 text-[calc(0.72rem*var(--glint-ui-scale,1))] leading-relaxed text-text-muted">오너 계정의 권한은 이 화면에서 변경할 수 없습니다.</div>}
+      {isPending ? <section data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval`} className="flex flex-col gap-3"><div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-role`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">승인 권한</Label><Select value={selectedRole} onValueChange={(value) => setPendingRoles((current) => ({ ...current, [selectedUser.id]: value as EditableRole }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-role`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_role`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue /></SelectTrigger><SelectContent>{REGISTERABLE_ROLE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select></div><div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-branch`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">소속 지점</Label><Select value={selectedBranchId} onValueChange={(value) => setPendingBranches((current) => ({ ...current, [selectedUser.id]: value }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-branch`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_branch`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue placeholder="지점 선택" /></SelectTrigger><SelectContent>{activeBranches.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></div>{selectedRole === "admin" ? <div className="flex flex-col gap-1.5"><Label htmlFor={`mobile-system-admin-${selectedUser.id}-approval-owner-branch`} className="text-[calc(0.7rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">오너 지점 지정</Label><Select value={selectedOwnerBranchId} onValueChange={(value) => setPendingOwnerBranches((current) => ({ ...current, [selectedUser.id]: value }))}><SelectTrigger id={`mobile-system-admin-${selectedUser.id}-approval-owner-branch`} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approval_owner-branch`} className="h-[44px] w-full rounded-[12px] border-[1.5px] border-input bg-white text-[0.9rem]"><SelectValue placeholder="오너 지점 선택" /></SelectTrigger><SelectContent>{branchOwnerFreeOptions.map((branch) => <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>)}</SelectContent></Select></div> : null}<div className="grid grid-cols-2 gap-2"><Button type="button" variant="v3" size="md" width="lg" disabled={approveUserMutation.isPending || !selectedBranchId || (selectedRole === "admin" && !selectedOwnerBranchId)} onClick={() => approveUserMutation.mutate({ id: selectedUser.id, role: selectedRole, branchId: selectedBranchId, ...(selectedRole === "admin" ? { ownerBranchId: selectedOwnerBranchId } : {}) })} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_approve`}>{approveUserMutation.isPending ? "처리 중…" : "가입 승인"}</Button><Button type="button" variant="outline" size="md" width="lg" disabled={rejectUserMutation.isPending} onClick={() => rejectUserMutation.mutate(selectedUser.id)} data-component={`${DETAIL_BASE}_account-${selectedUser.id}_reject`}>반려</Button></div></section> : approvedNonOwner ? <AccountAssignmentForm branches={branches} role={currentRole} selectedBranchIds={currentBranchIds} isSaving={updateAccountMutation.isPending} onRoleChange={(role) => setAccountEditRoles((current) => ({ ...current, [selectedUser.id]: role }))} onBranchToggle={(branchId, checked) => setAccountEditBranches((current) => ({ ...current, [selectedUser.id]: checked ? [...(current[selectedUser.id] ?? currentBranchIds), branchId] : (current[selectedUser.id] ?? currentBranchIds).filter((id) => id !== branchId) }))} onSave={() => updateAccountMutation.mutate({ id: selectedUser.id, input: { role: currentRole, branchIds: currentBranchIds, expectedRole: selectedUser.role as EditableRole, expectedBranchIds: selectedUser.branches.map((branch) => branch.id) } })} /> : <div data-component={`${DETAIL_BASE}_account-${selectedUser.id}_owner-note`} className="rounded-[calc(18px*var(--glint-ui-scale,1))] bg-v3-dim-white p-4 text-[calc(0.72rem*var(--glint-ui-scale,1))] leading-relaxed text-v3-text-muted">오너 계정의 권한은 이 화면에서 변경할 수 없습니다.</div>}
     </DetailContent>;
   }
 

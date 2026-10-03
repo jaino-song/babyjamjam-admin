@@ -35,7 +35,7 @@ export function ShortcutGrid({
   return (
     <section data-component={dataComponent} className={cn("space-y-3", className)}>
       {title !== null && (
-        <h2 className="px-1 text-lg font-extrabold tracking-tight text-dark">
+        <h2 className="px-1 text-lg font-extrabold tracking-tight text-v3-dark">
           {title}
         </h2>
       )}

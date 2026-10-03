@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { AppContentCard } from "@/components/ui/app-surface";
 
 export const APP_FORM_CONTROL_CLASS_NAME =
-  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-dark shadow-none outline-none transition-all focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
+  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
 
 const FORM_SECTION_SOURCE_COMPONENT = "FormSection";
 const FORM_GRID_SOURCE_COMPONENT = "FormGrid";
@@ -127,7 +127,7 @@ function FormField({
       {required ? (
         <span
           data-component={requiredDataComponent ?? sub("required")}
-          className="ml-0.5 text-burgundy"
+          className="ml-0.5 text-v3-burgundy"
         >
           *
         </span>
@@ -138,14 +138,14 @@ function FormField({
     <Label
       data-component={labelDataComponent ?? sub("label")}
       htmlFor={htmlFor}
-      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-text-muted")}
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </Label>
   ) : (
     <div
       data-component={labelDataComponent ?? sub("label")}
-      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-text-muted")}
+      className={cn(FORM_FIELD_LABEL_LINE_BOX_CLASS_NAME, "shrink-0 whitespace-nowrap font-semibold text-v3-text-muted")}
     >
       {labelContent}
     </div>
@@ -195,7 +195,7 @@ const FormTextInput = React.forwardRef<HTMLInputElement, FormTextInputProps>(
       className={cn(
         APP_FORM_CONTROL_CLASS_NAME,
         "placeholder:text-muted-foreground/45 placeholder:font-normal",
-        error && "border-burgundy focus-visible:border-burgundy",
+        error && "border-v3-burgundy focus-visible:border-v3-burgundy",
         className,
       )}
       aria-invalid={error || undefined}
@@ -235,7 +235,7 @@ const FormTextInputWithSuffix = React.forwardRef<HTMLInputElement, FormTextInput
       />
       <span
         data-component={suffixDataComponent ?? sub("suffix")}
-        className="pointer-events-none absolute right-[calc(14px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-text-muted"
+        className="pointer-events-none absolute right-[calc(14px*var(--v3-ui-scale,1))] top-1/2 -translate-y-1/2 text-[calc(12px*var(--v3-ui-scale,1))] font-semibold text-v3-text-muted"
       >
         {suffix}
       </span>
@@ -263,8 +263,8 @@ function FormHelperText({
       data-source-component={FORM_HELPER_TEXT_SOURCE_COMPONENT}
       className={cn(
         tone === "error"
-          ? "text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.35] text-burgundy"
-          : "-mt-0.5 m-0 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.45] text-text-muted",
+          ? "text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.35] text-v3-burgundy"
+          : "-mt-0.5 m-0 text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.45] text-v3-text-muted",
         className,
       )}
     />
@@ -324,8 +324,8 @@ function FormNativeSelect({
       <select
         data-component={selectDataComponent ?? sub("select")}
         className={cn(
-          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-dark outline-none focus:border-primary focus:ring-[3px] focus:ring-inset focus:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
-          value === "" && "text-text-muted/45 font-normal",
+          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-v3-dark outline-none focus:border-v3-primary focus:ring-[3px] focus:ring-inset focus:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
+          value === "" && "text-v3-text-muted/45 font-normal",
           className,
         )}
         value={value}
@@ -356,7 +356,7 @@ function FormNativeSelect({
       {hideIcon ? null : (
         <ChevronDown
           data-component={iconDataComponent ?? sub("icon")}
-          className="pointer-events-none absolute right-[calc(14px*var(--glint-ui-scale,1))] top-1/2 h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] -translate-y-1/2 text-text-muted"
+          className="pointer-events-none absolute right-[calc(14px*var(--glint-ui-scale,1))] top-1/2 h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(16px*var(--glint-ui-scale,1))] -translate-y-1/2 text-v3-text-muted"
           aria-hidden="true"
           strokeWidth={2.2}
         />
@@ -384,8 +384,8 @@ function FormChip({
       data-component={dataComponent}
       data-source-component={FORM_CHIP_SOURCE_COMPONENT}
       className={cn(
-        "min-h-[calc(34px*var(--glint-ui-scale,1))] rounded-full border-[1.5px] border-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none text-text-muted transition-colors disabled:cursor-not-allowed disabled:opacity-55",
-        selected && "border-primary/40 bg-primary-light text-primary",
+        "min-h-[calc(34px*var(--glint-ui-scale,1))] rounded-full border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none text-v3-text-muted transition-colors disabled:cursor-not-allowed disabled:opacity-55",
+        selected && "border-v3-primary/40 bg-v3-primary-light text-v3-primary",
         className,
       )}
       aria-pressed={selected}
@@ -437,7 +437,7 @@ function FormSwitchRow({
       data-component={dataComponent}
       data-source-component={FORM_SWITCH_ROW_SOURCE_COMPONENT}
       className={cn(
-        "flex min-h-[calc(54px*var(--glint-ui-scale,1))] items-center justify-between gap-[calc(14px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
+        "flex min-h-[calc(54px*var(--glint-ui-scale,1))] items-center justify-between gap-[calc(14px*var(--glint-ui-scale,1))] rounded-[14px] border-[1.5px] border-v3-border bg-white px-[calc(12px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]",
         size === "control" && "h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] border-[1.35px] py-0",
         className,
       )}
@@ -445,14 +445,14 @@ function FormSwitchRow({
       <div data-component={copyDataComponent ?? sub("copy")}>
         <strong
           data-component={titleDataComponent ?? sub("title")}
-          className="block text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.3] text-dark"
+          className="block text-[calc(12px*var(--glint-ui-scale,1))] font-bold leading-[1.3] text-v3-dark"
         >
           {title}
         </strong>
         {description ? (
           <span
             data-component={descriptionDataComponent ?? sub("description")}
-            className="mt-[calc(3px*var(--glint-ui-scale,1))] block text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.35] text-text-muted"
+            className="mt-[calc(3px*var(--glint-ui-scale,1))] block text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.35] text-v3-text-muted"
           >
             {description}
           </span>

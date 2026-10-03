@@ -14,7 +14,7 @@ const tagPillVariants = cva(
         sky: "bg-sky-100 border-sky-200 text-sky-700",
         cyan: "bg-cyan-100 border-cyan-200 text-cyan-700",
         indigo: "bg-indigo-100 border-indigo-200 text-indigo-700",
-        neutral: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-text-muted",
+        neutral: "bg-[hsl(220,20%,97%)] border-[hsl(220,20%,90%)] text-v3-text-muted",
       },
       size: {
         default: "px-2.5 py-1 text-[0.68rem]",

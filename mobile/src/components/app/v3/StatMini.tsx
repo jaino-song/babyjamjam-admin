@@ -20,10 +20,10 @@ interface StatMiniProps {
 }
 
 const colorVariants = [
-  { bg: "bg-primary-light", text: "text-primary" },
-  { bg: "bg-orange-light", text: "text-orange" },
-  { bg: "bg-green-light", text: "text-green" },
-  { bg: "bg-burgundy-light", text: "text-burgundy" },
+  { bg: "bg-v3-primary-light", text: "text-v3-primary" },
+  { bg: "bg-v3-orange-light", text: "text-v3-orange" },
+  { bg: "bg-v3-green-light", text: "text-v3-green" },
+  { bg: "bg-v3-burgundy-light", text: "text-v3-burgundy" },
 ] as const;
 
 const toneVariants = {
@@ -65,15 +65,15 @@ export function StatMini({
       >
         {isLoading ? (
           <>
-            <Skeleton data-slot="stat-mini-icon" className="mini-stat-icon bg-surface" />
+            <Skeleton data-slot="stat-mini-icon" className="mini-stat-icon bg-v3-dim-white" />
             <div data-slot="stat-mini-skeleton-text" className="mini-stat-skeleton-text">
               <Skeleton
                 data-slot="stat-mini-value"
-                className="mini-stat-skeleton-num bg-surface"
+                className="mini-stat-skeleton-num bg-v3-dim-white"
               />
               <Skeleton
                 data-slot="stat-mini-label"
-                className="mini-stat-skeleton-label bg-surface"
+                className="mini-stat-skeleton-label bg-v3-dim-white"
               />
             </div>
           </>
@@ -118,7 +118,7 @@ export function StatMini({
         data-component={`${dataComponent}_icon`}
         className={cn(
           "w-12 h-12 rounded-2xl flex items-center justify-center",
-          isLoading ? "bg-surface" : colorVariant.bg
+          isLoading ? "bg-v3-dim-white" : colorVariant.bg
         )}
       >
         {isLoading ? (
@@ -129,16 +129,16 @@ export function StatMini({
       </div>
       {isLoading ? (
         <div className="space-y-2">
-          <Skeleton className="h-[29px] w-16 bg-surface" />
-          <Skeleton className="h-3 w-20 bg-surface" />
+          <Skeleton className="h-[29px] w-16 bg-v3-dim-white" />
+          <Skeleton className="h-3 w-20 bg-v3-dim-white" />
         </div>
       ) : (
         <div>
           <span className="flex items-center gap-2">
-            <p className="text-2xl font-bold text-dark">{value}</p>
-            <p className="text-[0.7rem] text-text-muted self-end mb-1">{counter}</p>
+            <p className="text-2xl font-bold text-v3-dark">{value}</p>
+            <p className="text-[0.7rem] text-v3-text-muted self-end mb-1">{counter}</p>
           </span>
-          <p className="text-[0.7rem] text-text-muted">{label}</p>
+          <p className="text-[0.7rem] text-v3-text-muted">{label}</p>
         </div>
       )}
     </div>

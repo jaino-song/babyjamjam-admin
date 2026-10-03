@@ -20,7 +20,7 @@ const ICON_WRAP =
 const ICON_SIZE = "h-[calc(18px*var(--glint-ui-scale,1))] w-[calc(18px*var(--glint-ui-scale,1))]";
 const ITEM_LABEL =
   "truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-semibold text-gray-900 transition-colors";
-const ITEM_SUB = "truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted";
+const ITEM_SUB = "truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted";
 
 /**
  * Account menu in the sidebar footer. The profile card is the trigger; the menu
@@ -71,8 +71,8 @@ export function SidebarAccountMenu({
       className={cn(
         "flex flex-col gap-[calc(2px*var(--glint-ui-scale,1))] rounded-2xl border transition-all",
         open
-          ? "border-border bg-white shadow-v3-hover"
-          : "border-border/50 bg-surface/50"
+          ? "border-v3-border bg-white shadow-v3-hover"
+          : "border-v3-border/50 bg-v3-dim-white/50"
       )}
     >
       {/* Menu list — collapses upward via grid-rows 0fr→1fr */}
@@ -93,11 +93,11 @@ export function SidebarAccountMenu({
             onClick={() => navigate("/select-branch")}
             className={ITEM_BASE}
           >
-            <span className={cn(ICON_WRAP, "bg-primary-light text-primary")}>
+            <span className={cn(ICON_WRAP, "bg-v3-primary-light text-v3-primary")}>
               <Building2 className={ICON_SIZE} strokeWidth={2} />
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className={cn(ITEM_LABEL, "group-hover:text-primary")}>지점 변경</span>
+              <span className={cn(ITEM_LABEL, "group-hover:text-v3-primary")}>지점 변경</span>
               <span className={ITEM_SUB}>다른 지점으로 전환</span>
             </span>
           </button>
@@ -109,18 +109,18 @@ export function SidebarAccountMenu({
             onClick={() => navigate("/logout")}
             className={cn(ITEM_BASE, "group/logout")}
           >
-            <span className={cn(ICON_WRAP, "bg-burgundy/10 text-burgundy")}>
+            <span className={cn(ICON_WRAP, "bg-v3-burgundy/10 text-v3-burgundy")}>
               <LogOut className={ICON_SIZE} strokeWidth={2} />
             </span>
             <span className="flex min-w-0 flex-col">
-              <span className={cn(ITEM_LABEL, "group-hover/logout:text-burgundy")}>로그아웃</span>
+              <span className={cn(ITEM_LABEL, "group-hover/logout:text-v3-burgundy")}>로그아웃</span>
               <span className={ITEM_SUB}>계정에서 나가기</span>
             </span>
           </button>
 
           <div
             aria-hidden="true"
-            className="mx-[calc(8px*var(--glint-ui-scale,1))] mb-[calc(3px*var(--glint-ui-scale,1))] mt-[calc(5px*var(--glint-ui-scale,1))] h-px bg-border"
+            className="mx-[calc(8px*var(--glint-ui-scale,1))] mb-[calc(3px*var(--glint-ui-scale,1))] mt-[calc(5px*var(--glint-ui-scale,1))] h-px bg-v3-border"
           />
         </div>
       </div>
@@ -135,15 +135,15 @@ export function SidebarAccountMenu({
       >
         <Avatar className="h-[calc(40px*var(--glint-ui-scale,1))] w-[calc(40px*var(--glint-ui-scale,1))] shrink-0 rounded-full shadow-inner">
           <AvatarImage src={profileImage || ""} alt="" />
-          <AvatarFallback className="bg-gradient-to-br from-primary to-blue-600 text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-white">
+          <AvatarFallback className="bg-gradient-to-br from-v3-primary to-blue-600 text-[calc(14px*var(--glint-ui-scale,1))] font-bold text-white">
             {initials}
           </AvatarFallback>
         </Avatar>
         <span className="flex min-w-0 flex-col">
-          <span className="truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-primary">
+          <span className="truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-semibold text-gray-900 transition-colors group-hover:text-v3-primary">
             {name}
           </span>
-          <span className="truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-text-muted">
+          <span className="truncate text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted">
             {roleLabel}
           </span>
         </span>
@@ -151,7 +151,7 @@ export function SidebarAccountMenu({
           className={cn(
             "ml-auto shrink-0 transition-transform duration-300",
             ICON_SIZE,
-            open ? "rotate-180 text-primary" : "rotate-0 text-text-muted"
+            open ? "rotate-180 text-v3-primary" : "rotate-0 text-v3-text-muted"
           )}
           strokeWidth={2}
         />

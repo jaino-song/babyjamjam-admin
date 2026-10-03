@@ -61,9 +61,9 @@ export function ServiceRecordHeaderCard({
             <div
               key={label}
               data-component={`${dataComponent}_body_row`}
-              className="flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0"
+              className="flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-v3-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0"
             >
-              <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">
+              <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
                 {label}
               </span>
               <Skeleton className="ml-auto h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(88px*var(--glint-ui-scale,1))] bg-white/70" />
@@ -92,13 +92,13 @@ export function ServiceRecordHeaderCard({
           </div>
           <p
             data-component={`${dataComponent}_body_caption`}
-            className="mt-auto text-right text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.4] text-text-muted"
+            className="mt-auto text-right text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold leading-[1.4] text-v3-text-muted"
           >
             {formatDateTimeKo(header.createdAt)} 작성
           </p>
         </div>
       ) : (
-        <div className="mt-[calc(12px*var(--glint-ui-scale,1))] rounded-[14px] border-2 border-dashed border-border px-[calc(22px*var(--glint-ui-scale,1))] py-[calc(22px*var(--glint-ui-scale,1))] text-center text-[calc(12.3px*var(--glint-ui-scale,1))] leading-6 text-text-muted">
+        <div className="mt-[calc(12px*var(--glint-ui-scale,1))] rounded-[14px] border-2 border-dashed border-v3-border px-[calc(22px*var(--glint-ui-scale,1))] py-[calc(22px*var(--glint-ui-scale,1))] text-center text-[calc(12.3px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
           아직 작성된 기본정보가 없습니다.
           <br />
           제공인력이 링크 접속 후 산모·신생아 정보를 입력하면 표시됩니다.

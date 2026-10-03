@@ -1,6 +1,6 @@
 :global([data-slot="app-root"]:has([data-slot="employees-new-page-shell"])) {
   overflow: hidden;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
 }
@@ -40,8 +40,8 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: hsl(var(--surface));
-  color: hsl(var(--text));
+  background: hsl(var(--v3-dim-white));
+  color: hsl(var(--v3-text));
 }
 
 .navbar {
@@ -53,8 +53,8 @@
   justify-content: space-between;
   height: 64px;
   padding: 0 14px;
-  border-bottom: 1px solid hsl(var(--primary));
-  background: hsl(var(--primary));
+  border-bottom: 1px solid hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary));
 }
 
 .navbarIconButton {
@@ -91,13 +91,13 @@
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  background: hsl(var(--surface));
+  background: hsl(var(--v3-dim-white));
 }
 
 .wizardHeader {
   flex-shrink: 0;
   padding: 12px 16px 14px;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--v3-border));
   background: white;
 }
 
@@ -113,7 +113,7 @@
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
-  background: hsl(var(--border));
+  background: hsl(var(--v3-border));
 }
 
 .progressFill {
@@ -124,7 +124,7 @@
 }
 
 .stepCount {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.6rem;
   font-variant-numeric: tabular-nums;
   font-weight: 800;
@@ -132,18 +132,18 @@
 }
 
 .stepCount span {
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
 }
 
 .stepTitle {
   margin-bottom: 4px;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-size: 1.1rem;
   font-weight: 800;
 }
 
 .stepDescription {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.72rem;
   line-height: 1.4;
 }
@@ -154,7 +154,7 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 10px 16px 12px;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--v3-border));
   background: white;
 }
 
@@ -164,8 +164,8 @@
   gap: 4px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: hsl(var(--green-light));
-  color: hsl(var(--green));
+  background: hsl(var(--v3-green-light));
+  color: hsl(var(--v3-green));
   font-size: 0.68rem;
   font-weight: 700;
 }
@@ -216,7 +216,7 @@
   display: block;
   white-space: nowrap;
   margin-bottom: 6px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -256,60 +256,60 @@
 }
 
 .slot_muted {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
 }
 
 .slot_ok {
-  color: hsl(var(--green));
+  color: hsl(var(--v3-green));
 }
 
 .slot_err {
-  color: hsl(var(--burgundy));
+  color: hsl(var(--v3-burgundy));
 }
 
 .slot_pending {
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
 }
 
 .required {
   margin-left: 2px;
-  color: hsl(var(--burgundy));
+  color: hsl(var(--v3-burgundy));
 }
 
 .formInput {
   width: 100%;
   padding: 13px 14px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
   outline: none;
   background: white;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-family: inherit;
   font-size: 0.9rem;
 }
 
 .formInput:focus {
-  border-color: hsl(var(--primary));
+  border-color: hsl(var(--v3-primary));
 }
 
 .formInput::placeholder {
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   opacity: 0.6;
 }
 
 .formInputError,
 .formInputError:focus {
-  border-color: hsl(var(--burgundy));
+  border-color: hsl(var(--v3-burgundy));
 }
 
 .ok {
-  color: hsl(var(--green));
+  color: hsl(var(--v3-green));
   font-weight: 600;
 }
 
 .cardTitle {
   margin: 0 0 12px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -325,7 +325,7 @@
   min-width: 0;
   height: 1lh;
   margin: 0 0 12px;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.05em;
@@ -346,7 +346,7 @@
 .gradeChip {
   min-height: 44px;
   padding: 13px 6px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
   background: white;
   cursor: pointer;
@@ -355,30 +355,30 @@
 }
 
 .gradeChip.selected {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary-light));
+  border-color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary-light));
 }
 
 .gradeName {
   display: block;
   margin-bottom: 2px;
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-size: 0.85rem;
   font-weight: 700;
 }
 
 .gradeSub {
   display: block;
-  color: hsl(var(--text-muted));
+  color: hsl(var(--v3-text-muted));
   font-size: 0.58rem;
 }
 
 .gradeChip.selected .gradeName {
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
 }
 
 .gradeChip.selected .gradeSub {
-  color: hsl(var(--primary));
+  color: hsl(var(--v3-primary));
   opacity: 0.75;
 }
 
@@ -391,10 +391,10 @@
 .areaChip {
   min-height: 44px;
   padding: 10px 4px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 10px;
   background: white;
-  color: hsl(var(--text));
+  color: hsl(var(--v3-text));
   cursor: pointer;
   font-family: inherit;
   font-size: 0.78rem;
@@ -403,8 +403,8 @@
 }
 
 .areaChip.selected {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
+  border-color: hsl(var(--v3-primary));
+  background: hsl(var(--v3-primary));
   color: white;
 }
 
@@ -420,7 +420,7 @@
   align-items: center;
   gap: 4px;
   padding: 18px 12px;
-  border: 1.5px solid hsl(var(--border));
+  border: 1.5px solid hsl(var(--v3-border));
   border-radius: 14px;
   background: white;
   cursor: pointer;
@@ -435,50 +435,50 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: hsl(var(--border));
-  color: hsl(var(--text-muted));
+  background: hsl(var(--v3-border));
+  color: hsl(var(--v3-text-muted));
 }
 
 .openLabel {
-  color: hsl(var(--dark));
+  color: hsl(var(--v3-dark));
   font-size: 0.92rem;
   font-weight: 700;
 }
 
 .openChip.selected.ok {
-  border-color: hsl(var(--green));
-  background: hsl(var(--green-light));
+  border-color: hsl(var(--v3-green));
+  background: hsl(var(--v3-green-light));
 }
 
 .openChip.selected.ok .openIcon {
-  background: hsl(var(--green));
+  background: hsl(var(--v3-green));
   color: white;
 }
 
 .openChip.selected.ok .openLabel {
-  color: hsl(var(--green));
+  color: hsl(var(--v3-green));
 }
 
 .openChip.selected.no {
-  border-color: hsl(var(--burgundy));
-  background: hsl(var(--burgundy-light));
+  border-color: hsl(var(--v3-burgundy));
+  background: hsl(var(--v3-burgundy-light));
 }
 
 .openChip.selected.no .openIcon {
-  background: hsl(var(--burgundy));
+  background: hsl(var(--v3-burgundy));
   color: white;
 }
 
 .openChip.selected.no .openLabel {
-  color: hsl(var(--burgundy));
+  color: hsl(var(--v3-burgundy));
 }
 
 .errorBox {
   margin-bottom: 10px;
   padding: 10px 12px;
   border-radius: 14px;
-  background: hsl(var(--burgundy-light));
-  color: hsl(var(--burgundy));
+  background: hsl(var(--v3-burgundy-light));
+  color: hsl(var(--v3-burgundy));
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -492,7 +492,7 @@
   display: flex;
   gap: 8px;
   padding: 12px 14px 18px;
-  border-top: 1px solid hsl(var(--border));
+  border-top: 1px solid hsl(var(--v3-border));
   background: white;
 }
 
@@ -512,8 +512,8 @@
 }
 
 .secondary {
-  background: hsl(var(--border));
-  color: hsl(var(--text));
+  background: hsl(var(--v3-border));
+  color: hsl(var(--v3-text));
 }
 
 .secondary:disabled {
@@ -523,7 +523,7 @@
 
 .primary {
   flex: 2;
-  background: hsl(var(--primary));
+  background: hsl(var(--v3-primary));
   color: white;
   box-shadow: 0 4px 14px rgba(20, 50, 100, 0.18);
 }

@@ -21,7 +21,7 @@ describe("Input Component", () => {
     expect(input).toHaveClass("px-[calc(14px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("py-[calc(8px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("text-[calc(12px*var(--glint-ui-scale,1))]");
-    expect(input).toHaveClass("focus-visible:border-primary");
+    expect(input).toHaveClass("focus-visible:border-v3-primary");
     expect(input).toHaveClass("focus-visible:ring-[3px]");
   });
 

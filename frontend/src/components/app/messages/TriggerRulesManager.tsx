@@ -1088,12 +1088,12 @@ export function TriggerRulesManager({
                       if (slotLoading) {
                         return (
                           <>
-                            <div data-component={component("trigger-rule-skeleton-icon")} className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-surface">
+                            <div data-component={component("trigger-rule-skeleton-icon")} className="flex h-10 w-10 items-center justify-center rounded-[14px] bg-v3-dim-white">
                               <Skeleton className="h-4 w-4 rounded-md bg-white/70" />
                             </div>
                             <div data-component={component("trigger-rule-skeleton-text")} className="min-w-0 flex-1">
-                              <Skeleton className="h-4 w-32 bg-surface" />
-                              <Skeleton className="mt-2 h-3 w-44 bg-surface" />
+                              <Skeleton className="h-4 w-32 bg-v3-dim-white" />
+                              <Skeleton className="mt-2 h-3 w-44 bg-v3-dim-white" />
                             </div>
                           </>
                         );
@@ -1438,7 +1438,7 @@ export function TriggerRulesManager({
                             <p
                               data-component={component("trigger-rules-required-variables-guidance")}
                               data-slot="required-variables-guidance"
-                              className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-text-muted"
+                              className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-text-muted"
                             >
                               {requiredTemplateVariables.length > 0
                                 ? "고객 정보에서 자동으로 입력되며, 필수값이 비어 있으면 잘못된 메시지 대신 발송이 안전하게 중단돼요."
@@ -1468,7 +1468,7 @@ export function TriggerRulesManager({
                               <p
                                 data-component={component("trigger-rules-required-custom-variable-warning")}
                                 data-slot="required-custom-variable-warning"
-                                className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-burgundy"
+                                className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-burgundy"
                               >
                                 자동 입력 출처가 없는 필수 변수(
                                 {unsupportedRequiredCustomVariables.map((variable) => variable.label).join(", ")}
@@ -1528,7 +1528,7 @@ export function TriggerRulesManager({
             <p
               role="alert"
               data-component={component("trigger-rules-parent-activation-modal-error")}
-              className="text-sm text-burgundy"
+              className="text-sm text-v3-burgundy"
             >
               {parentActivationError}
             </p>

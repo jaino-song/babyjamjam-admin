@@ -2481,7 +2481,7 @@ function ClientFormContent({
                     footer={dialogFormActions}
                 >
                     {notice && (
-                        <p data-component={`${base}_notice`} className="text-sm text-text-muted" role="note">
+                        <p data-component={`${base}_notice`} className="text-sm text-v3-text-muted" role="note">
                             {notice}
                         </p>
                     )}

@@ -149,7 +149,7 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
             onSlotClick={(item) => setSelectedId(item.id)}
             getItemKey={(item) => item.id}
             render={({ item, isLoading }) => {
-              if (isLoading) return <Skeleton className="h-16 w-full rounded-[18px] bg-surface" />;
+              if (isLoading) return <Skeleton className="h-16 w-full rounded-[18px] bg-v3-dim-white" />;
               if (!item || !saved || query.isError) return null;
               return (
                 <AnimatedSlotListItemContent
@@ -200,14 +200,14 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
                         <Switch aria-label="자동화 사용" checked={current.enabled} onCheckedChange={(enabled) => updateDraft({ enabled })} />
                       </div>
                       <InfoCard title="실행 조건" data-component={component("conditions")}>
-                        <div className="space-y-2 text-sm text-text-muted"><p>매일 17:00 (KST) 실행</p><p>대상: 제공기관 검토 단계(검토 필요) 산모 계약서</p><p>계약 종료일이 지난 문서만</p><p>eformsign &apos;검토 완료 확인&apos;을 자동 실행</p></div>
+                        <div className="space-y-2 text-sm text-v3-text-muted"><p>매일 17:00 (KST) 실행</p><p>대상: 제공기관 검토 단계(검토 필요) 산모 계약서</p><p>계약 종료일이 지난 문서만</p><p>eformsign &apos;검토 완료 확인&apos;을 자동 실행</p></div>
                       </InfoCard>
                     </SteppedWizardPanelContent>
-                  ) : <Skeleton className="h-32 w-full bg-surface" />,
+                  ) : <Skeleton className="h-32 w-full bg-v3-dim-white" />,
                 },
                 {
                   key: "description",
-                  children: saved ? <div className="space-y-3 text-sm leading-relaxed text-text-muted"><p>실행 시점은 {formatGraceDays(saved.graceDays)}입니다. 매일 17:00 (KST)에 검토 필요 상태의 산모 계약서를 확인합니다.</p><p>대상 문서에는 eformsign의 &apos;검토 완료 확인&apos; 동작을 자동 실행해 계약 완료로 전환합니다.</p><p>실패 시 최대 시도 횟수까지 재시도 후 알림이 발송됩니다.</p></div> : null,
+                  children: saved ? <div className="space-y-3 text-sm leading-relaxed text-v3-text-muted"><p>실행 시점은 {formatGraceDays(saved.graceDays)}입니다. 매일 17:00 (KST)에 검토 필요 상태의 산모 계약서를 확인합니다.</p><p>대상 문서에는 eformsign의 &apos;검토 완료 확인&apos; 동작을 자동 실행해 계약 완료로 전환합니다.</p><p>실패 시 최대 시도 횟수까지 재시도 후 알림이 발송됩니다.</p></div> : null,
                 },
               ]}
             />}

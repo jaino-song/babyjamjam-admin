@@ -145,7 +145,7 @@ export function FilteredClientsDialog({
             <Dialog open={open} onOpenChange={(open: boolean) => !open && onClose()}>
                 <DialogContent data-component="mobile_notifications_filtered-clients_dialog" className="max-w-[440px] max-h-[80vh] rounded-2xl border-none bg-white text-foreground shadow-v3 p-0 flex flex-col overflow-hidden">
                     <DialogHeader data-component="mobile_notifications_filtered-clients_dialog_header" className="px-6 pt-6 pb-3 text-center">
-                        <DialogTitle className="text-lg md:text-xl font-extrabold text-dark">{title}</DialogTitle>
+                        <DialogTitle className="text-lg md:text-xl font-extrabold text-v3-dark">{title}</DialogTitle>
                         <Button variant="ghost" size="icon" onClick={onClose} className="absolute right-3 top-3 h-8 w-8">
                             <X className="h-5 w-5" />
                         </Button>

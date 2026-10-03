@@ -105,10 +105,10 @@ const CLIENT_FORM_FIELD_ORDER: readonly ClientFormField[] = [
 ];
 
 const SLOT_TONE_CLASS: Record<SlotTone, string> = {
-    muted: "text-text-muted",
-    ok: "text-green",
-    err: "text-burgundy",
-    pending: "text-primary",
+    muted: "text-v3-text-muted",
+    ok: "text-v3-green",
+    err: "text-v3-burgundy",
+    pending: "text-v3-primary",
 };
 
 const messageIdFor = (field: string): string => `${field}-message`;

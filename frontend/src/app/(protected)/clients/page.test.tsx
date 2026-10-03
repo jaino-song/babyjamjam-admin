@@ -362,9 +362,11 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).not.toContain("const filteredClients");
   });
 
-  it("renders no list-panel subtitle and reaches the final page", () => {
-    expect(source).not.toContain("listScopeSubtitle");
-    expect(source).not.toContain("일치 ${matchedTotal}명");
+  it("keeps the matched total separate from loaded rows and reaches the final page", () => {
+    expect(source).toContain("matchedTotal");
+    expect(source).toContain("일치 ${matchedTotal}명 · 현재 ${clients.length}명 표시");
+    expect(source).toContain("const listScopeSubtitle");
+    expect(source).toContain("subtitle={listScopeSubtitle}");
     expect(source).not.toContain('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count"');
     expect(source).toContain("hasMore={Boolean(directory.hasNextPage && !directory.isNextPageError)}");
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
@@ -489,20 +491,21 @@ describe("ClientsPage directory subtitle behavior", () => {
     return render(<ClientsPage />);
   }
 
-  it("does not render a list subtitle while pending, empty, or populated", () => {
-    const { rerender } = renderClientsPage({ isInitialLoading: true });
+  it("hides the match subtitle while the current directory query is pending", () => {
+    renderClientsPage({ isInitialLoading: true });
 
     expect(screen.queryByTestId("clients-list-subtitle")).not.toBeInTheDocument();
+  });
 
-    mockDirectoryState = {
-      ...mockDirectoryState,
+  it("shows a genuine successful empty zero and populated current count", () => {
+    const { rerender } = renderClientsPage({
       data: { pages: [{ data: [], total: 0 }] },
-      isInitialLoading: false,
       isSuccessfulEmpty: true,
-    };
-    rerender(<ClientsPage />);
+    });
 
-    expect(screen.queryByTestId("clients-list-subtitle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
+      "현재 지점 전체 · 일치 0명 · 현재 0명 표시",
+    );
 
     mockDirectoryState = {
       ...mockDirectoryState,
@@ -513,10 +516,12 @@ describe("ClientsPage directory subtitle behavior", () => {
     };
     rerender(<ClientsPage />);
 
-    expect(screen.queryByTestId("clients-list-subtitle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
+      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
+    );
   });
 
-  it("shows the cached-data alert without a subtitle when a same-scope refresh fails", () => {
+  it("keeps the cached match count visible when a same-scope refresh fails", () => {
     renderClientsPage({
       clients: [{ id: 1, name: "기존 고객" }],
       data: { pages: [{ data: [{ id: 1, name: "기존 고객" }], total: 4 }] },
@@ -526,7 +531,9 @@ describe("ClientsPage directory subtitle behavior", () => {
       matchedTotal: 4,
     });
 
-    expect(screen.queryByTestId("clients-list-subtitle")).not.toBeInTheDocument();
+    expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(
+      "현재 지점 전체 · 일치 4명 · 현재 1명 표시",
+    );
     expect(screen.getByRole("alert")).toHaveTextContent("최근에 확인된 목록을 표시하고 있어요");
   });
 

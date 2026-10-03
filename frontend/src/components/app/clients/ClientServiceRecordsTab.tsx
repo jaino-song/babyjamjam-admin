@@ -238,7 +238,7 @@ function ClientServiceRecordsTabContent({
         return (
             <div
                 data-component={`${dataComponent}_error`}
-                className="py-12 text-center text-[calc(13px*var(--glint-ui-scale,1))] text-text-muted"
+                className="py-12 text-center text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted"
             >
                 제공기록지 정보를 불러오지 못했습니다
             </div>
@@ -332,11 +332,11 @@ function ClientServiceRecordsTabContent({
                         {assignments.length > 1 && (
                             <div
                                 data-component={`${dataComponent}_assignment_period`}
-                                className="flex items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-text-muted"
+                                className="flex items-center gap-[calc(10px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
                             >
-                                <span className="h-px flex-1 bg-border" />
+                                <span className="h-px flex-1 bg-v3-border" />
                                 <span>배정 기간 {formatDateKo(assignment.startDate)} - {formatDateKo(assignment.endDate)}</span>
-                                <span className="h-px flex-1 bg-border" />
+                                <span className="h-px flex-1 bg-v3-border" />
                             </div>
                         )}
                         <LinkStatusCard
@@ -378,7 +378,7 @@ function ClientServiceRecordsTabContent({
                         {assignment.signatureDoc && (
                             <SignatureDocCard signatureDoc={assignment.signatureDoc} />
                         )}
-                        {index < assignments.length - 1 && <div className="h-px bg-border" />}
+                        {index < assignments.length - 1 && <div className="h-px bg-v3-border" />}
                     </div>
                 ))}
                 {layout === "desktop" && <RevisionHistoryCard
@@ -492,7 +492,7 @@ function ClientServiceRecordsSkeleton({ layout }: { layout: "desktop" | "mobile"
                     {[0, 1, 2].map((index) => (
                         <div
                             key={index}
-                            className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-border px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] last:border-b-0"
+                            className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-border px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(13px*var(--glint-ui-scale,1))] last:border-b-0"
                         >
                             <Skeleton className="h-[calc(30px*var(--glint-ui-scale,1))] w-[calc(30px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-white/70" />
                             <div className="min-w-0 flex-1 space-y-1.5">
@@ -543,9 +543,9 @@ function ServiceRecordInfoRowSkeleton({ label }: { label: string }) {
     return (
         <div
             data-component={dataComponent}
-            className="flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0"
+            className="flex items-start gap-[calc(16px*var(--glint-ui-scale,1))] border-b border-v3-border py-[calc(10px*var(--glint-ui-scale,1))] last:border-b-0"
         >
-            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">
                 {label}
             </span>
             <Skeleton className="ml-auto h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(88px*var(--glint-ui-scale,1))] bg-white/70" />
@@ -635,15 +635,15 @@ function AssignmentHistoryCard({
                 {ordered.map((assignment) => (
                     <div
                         key={assignment.scheduleId}
-                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-surface py-[calc(8px*var(--glint-ui-scale,1))] last:border-b-0"
+                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-dim-white py-[calc(8px*var(--glint-ui-scale,1))] last:border-b-0"
                     >
                         <div className="min-w-0 flex-1">
-                            <div className="truncate text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-dark">
+                            <div className="truncate text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                                 {isRefreshing ? (
                                     <Skeleton className="h-[calc(13px*var(--glint-ui-scale,1))] w-[calc(72px*var(--glint-ui-scale,1))] bg-white/70" />
                                 ) : assignment.employee.name}
                             </div>
-                            <div className="mt-0.5 text-[calc(11.3px*var(--glint-ui-scale,1))] text-text-muted">
+                            <div className="mt-0.5 text-[calc(11.3px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                 {formatDateKo(assignment.startDate)} - {formatDateKo(assignment.endDate)}
                             </div>
                         </div>
@@ -734,7 +734,7 @@ function RevisionHistoryCard({
             <InfoCard data-component={dataComponent} title="수정본·문서 이력">
                 <div
                     data-component={`${dataComponent}_empty`}
-                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted"
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
                 >
                     아직 제공기록지 이력이 없습니다.
                 </div>
@@ -785,7 +785,7 @@ function RevisionHistoryCard({
             {revisions.length === 0 ? (
                 <div
                     data-component={`${dataComponent}_empty`}
-                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted"
+                    className="py-[calc(12px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
                 >
                     확정된 수정본이 없습니다.
                 </div>
@@ -795,19 +795,19 @@ function RevisionHistoryCard({
                         <div
                             key={revision.id}
                             data-component={`${dataComponent}_revision`}
-                            className="rounded-[calc(12px*var(--glint-ui-scale,1))] border border-border bg-white/50 p-[calc(12px*var(--glint-ui-scale,1))]"
+                            className="rounded-[calc(12px*var(--glint-ui-scale,1))] border border-v3-border bg-white/50 p-[calc(12px*var(--glint-ui-scale,1))]"
                         >
                             <div className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
-                                <span className="text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-dark">
+                                <span className="text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                                     수정본 #{revision.revisionNumber}
                                 </span>
                                 {revision.isCurrent && <StatusPill variant="primary">현재 확정본</StatusPill>}
-                                <span className="ml-auto text-[calc(11px*var(--glint-ui-scale,1))] text-text-muted">
+                                <span className="ml-auto text-[calc(11px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                     {formatDateTimeKo(revision.confirmedAt)}
                                 </span>
                             </div>
                             {revision.documents.length === 0 ? (
-                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-text-muted">
+                                <div className="mt-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                     연결된 문서 작업이 없습니다.
                                 </div>
                             ) : (
@@ -868,15 +868,15 @@ function RevisionDocumentRow({
     return (
         <div
             data-component={`${useClientServiceRecordsDataComponent("revision-history")}_document`}
-            className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
+            className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border pt-[calc(8px*var(--glint-ui-scale,1))] first:border-t-0 first:pt-0"
         >
             <div className="min-w-0 flex-1">
-                <div className="truncate text-[calc(11.8px*var(--glint-ui-scale,1))] font-medium text-dark">
+                <div className="truncate text-[calc(11.8px*var(--glint-ui-scale,1))] font-medium text-v3-dark">
                     {REVISION_DOCUMENT_OPERATION_LABELS[document.operation]}
                     {document.documentVersion ? ` · v${document.documentVersion}` : ""}
                 </div>
                 {reasonLabel && (
-                    <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-text-muted">
+                    <div className="mt-0.5 text-[calc(10.8px*var(--glint-ui-scale,1))] text-v3-text-muted">
                         {reasonLabel}
                     </div>
                 )}
@@ -972,7 +972,7 @@ function LinkStatusCard({
                         usesResendLayout || layout === "mobile" ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
                     )}
                 >
-                    <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-text-muted">
+                    <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
                         {link.status === "canceled"
                             ? CANCELED_LINK_HINT
                             : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
@@ -1092,7 +1092,7 @@ function ServiceSessionsCard({
                             <button
                                 type="button"
                                 data-component={`${dataComponent}_head_refresh`}
-                                className="inline-flex h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center rounded-full text-text-muted transition-colors hover:bg-white/70 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-wait disabled:opacity-70"
+                                className="inline-flex h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center rounded-full text-v3-text-muted transition-colors hover:bg-white/70 hover:text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/30 disabled:cursor-wait disabled:opacity-70"
                                 aria-label={isRefreshing ? "제공기록 새로고침 중" : "제공기록 새로고침"}
                                 aria-busy={isRefreshing}
                                 disabled={isRefreshing}
@@ -1107,12 +1107,12 @@ function ServiceSessionsCard({
                                 />
                             </button>
                         ) : null}
-                        <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-text-muted">
+                        <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                             {isTextRefreshing ? (
                                 <Skeleton className="inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(88px*var(--glint-ui-scale,1))] align-middle bg-white/70" />
                             ) : (
                                 <>
-                                    <b className="text-primary">{lockedCount}</b>/{totalSessions} 제출완료
+                                    <b className="text-v3-primary">{lockedCount}</b>/{totalSessions} 제출완료
                                     {draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}
                                 </>
                             )}
@@ -1216,7 +1216,7 @@ function SessionRow({
             <Collapsible
                 defaultOpen={defaultOpen}
                 data-component={dataComponent}
-                className="border-b border-surface last:border-b-0"
+                className="border-b border-v3-dim-white last:border-b-0"
             >
                 <CollapsibleTrigger asChild>
                     <button
@@ -1225,8 +1225,8 @@ function SessionRow({
                     >
                         <SessionNumber index={slot.sessionIndex} state="idle" />
                         <div className="min-w-0">
-                            <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-dark">{slot.sessionIndex}회차</div>
-                            <div className="mt-0.5 flex flex-wrap gap-x-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-text-muted">
+                            <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
+                            <div className="mt-0.5 flex flex-wrap gap-x-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                                 <span data-slot="revised-date">예정일 {formatDateKo(slot.expectedDate)}</span>
                                 {getOriginalDateLabel(slot.plannedSession, slot.expectedDate) ? (
                                     <span data-slot="original-date">원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}</span>
@@ -1239,7 +1239,7 @@ function SessionRow({
                             ) : (
                                 <StatusPill variant="neutral">미작성</StatusPill>
                             )}
-                            <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-text-muted transition-transform group-data-[state=open]:rotate-180" />
+                            <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-transform group-data-[state=open]:rotate-180" />
                         </div>
                     </button>
                 </CollapsibleTrigger>
@@ -1256,7 +1256,7 @@ function SessionRow({
         <Collapsible
             defaultOpen={defaultOpen}
             data-component={dataComponent}
-            className="border-b border-surface last:border-b-0"
+            className="border-b border-v3-dim-white last:border-b-0"
         >
             <CollapsibleTrigger asChild>
                 <button
@@ -1265,15 +1265,15 @@ function SessionRow({
                 >
                     <SessionNumber index={slot.sessionIndex} state={state} />
                     <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-dark">
+                        <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                             <span data-slot="revised-date">{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
                             {getOriginalDateLabel(slot.plannedSession, record.serviceDate) ? (
-                                <span data-slot="original-date" className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-normal text-text-muted">
+                                <span data-slot="original-date" className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-normal text-v3-text-muted">
                                     원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}
                                 </span>
                             ) : null}
                         </div>
-                        <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-text-muted">
+                        <div className="mt-0.5 text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
                             {isRefreshing ? (
                                 <Skeleton className="block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(132px*var(--glint-ui-scale,1))] bg-white/70" />
                             ) : (
@@ -1302,7 +1302,7 @@ function SessionRow({
                                 {record.locked ? "제출완료" : "임시저장"}
                             </StatusPill>
                         )}
-                        <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-text-muted transition-transform group-data-[state=open]:rotate-180" />
+                        <ChevronDown className="h-[calc(14px*var(--glint-ui-scale,1))] w-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-transform group-data-[state=open]:rotate-180" />
                     </div>
                 </button>
             </CollapsibleTrigger>
@@ -1321,9 +1321,9 @@ function SessionNumber({ index, state }: { index: number; state: "done" | "draft
         <div
             className={cn(
                 "flex h-[calc(30px*var(--glint-ui-scale,1))] w-[calc(30px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-[calc(12px*var(--glint-ui-scale,1))] font-bold",
-                state === "done" && "bg-green-light text-green",
-                state === "draft" && "bg-primary-light text-primary",
-                state === "idle" && "bg-surface text-text-muted",
+                state === "done" && "bg-v3-green-light text-v3-green",
+                state === "draft" && "bg-v3-primary-light text-v3-primary",
+                state === "idle" && "bg-v3-dim-white text-v3-text-muted",
             )}
         >
             {index}
@@ -1349,13 +1349,13 @@ function SessionRecordDetail({
         >
             {SERVICE_RECORD_FORM_LAYOUT.map((section) => (
                 <div key={section.id}>
-                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-text-muted">
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
                         <span
                             className={cn(
                                 "h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full",
-                                section.tone === "mom" && "bg-purple",
-                                section.tone === "baby" && "bg-primary",
-                                section.tone === "finish" && "bg-green",
+                                section.tone === "mom" && "bg-v3-purple",
+                                section.tone === "baby" && "bg-v3-primary",
+                                section.tone === "finish" && "bg-v3-green",
                             )}
                         />
                         {section.title}
@@ -1375,15 +1375,15 @@ function SessionRecordDetail({
             ))}
             {unknownEntries.length > 0 && (
                 <div>
-                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-text-muted">
-                        <span className="h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full bg-text-muted" />
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
+                        <span className="h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full bg-v3-text-muted" />
                         기타 항목
                     </div>
                     <div className="grid grid-cols-2 gap-x-[calc(28px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                         {unknownEntries.map(([key, value]) => (
-                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-surface py-[calc(7px*var(--glint-ui-scale,1))]">
-                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{key}</span>
-                                <span className="text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-dark">{formatUnknownValue(value)}</span>
+                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]">
+                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{key}</span>
+                                <span className="text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-v3-dark">{formatUnknownValue(value)}</span>
                             </div>
                         ))}
                     </div>
@@ -1402,13 +1402,13 @@ function EmptySessionRecordDetail() {
         >
             {SERVICE_RECORD_FORM_LAYOUT.map((section) => (
                 <div key={section.id}>
-                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-text-muted">
+                    <div className="mb-[calc(4px*var(--glint-ui-scale,1))] mt-[calc(14px*var(--glint-ui-scale,1))] flex items-center gap-[calc(6px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))] font-bold tracking-[0.05em] text-v3-text-muted">
                         <span
                             className={cn(
                                 "h-[calc(7px*var(--glint-ui-scale,1))] w-[calc(7px*var(--glint-ui-scale,1))] rounded-full",
-                                section.tone === "mom" && "bg-purple",
-                                section.tone === "baby" && "bg-primary",
-                                section.tone === "finish" && "bg-green",
+                                section.tone === "mom" && "bg-v3-purple",
+                                section.tone === "baby" && "bg-v3-primary",
+                                section.tone === "finish" && "bg-v3-green",
                             )}
                         />
                         {section.title}
@@ -1418,14 +1418,14 @@ function EmptySessionRecordDetail() {
                             <div
                                 key={field.key}
                                 className={cn(
-                                    "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-surface py-[calc(7px*var(--glint-ui-scale,1))]",
+                                    "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
                                     field.kind === "text" && "col-span-full items-start",
                                 )}
                             >
-                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{field.label}</span>
+                                <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{field.label}</span>
                                 <span
                                     data-component={`${dataComponent}_field_empty-value`}
-                                    className="text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-dark"
+                                    className="text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark"
                                 >
                                     -
                                 </span>
@@ -1453,14 +1453,14 @@ function RecordFieldRow({
     return (
         <div
             className={cn(
-                "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-surface py-[calc(7px*var(--glint-ui-scale,1))]",
+                "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
                 isWide && "col-span-full items-start",
             )}
         >
-            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{field.label}</span>
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{field.label}</span>
             <div
                 data-component={`${dataComponent}_value`}
-                className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--glint-ui-scale,1))] text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-dark"
+                className="flex min-w-0 flex-wrap items-center justify-end gap-[calc(5px*var(--glint-ui-scale,1))] text-right text-[calc(12px*var(--glint-ui-scale,1))] font-medium text-v3-dark"
             >
                 {renderFieldValue(field, answers, record)}
             </div>
@@ -1479,12 +1479,12 @@ function renderFieldValue(
         if (field.key === "paymentConfirmed") {
             return record.paymentConfirmed
                 ? <span>완료</span>
-                : <span className="text-text-muted">미확인</span>;
+                : <span className="text-v3-text-muted">미확인</span>;
         }
         if (field.key === "hasMomApproval") {
             return record.hasMomApproval
                 ? <span>서명함</span>
-                : <span className="text-text-muted">서명 전</span>;
+                : <span className="text-v3-text-muted">서명 전</span>;
         }
     }
 
@@ -1532,7 +1532,7 @@ function FreeTextValue({ value }: { value: string | null }) {
 }
 
 function EmptyValue() {
-    return <span className="text-text-muted">미입력</span>;
+    return <span className="text-v3-text-muted">미입력</span>;
 }
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
@@ -1563,8 +1563,8 @@ function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }
 function MetaRow({ label, value }: { label: string; value: ReactNode }) {
     return (
         <div className="flex min-w-0 items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] py-[calc(4px*var(--glint-ui-scale,1))]">
-            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-text-muted">{label}</span>
-            <span className="min-w-0 text-right text-[calc(12.5px*var(--glint-ui-scale,1))] font-medium text-dark">{value}</span>
+            <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{label}</span>
+            <span className="min-w-0 text-right text-[calc(12.5px*var(--glint-ui-scale,1))] font-medium text-v3-dark">{value}</span>
         </div>
     );
 }

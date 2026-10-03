@@ -34,7 +34,7 @@ export function ServiceRecordLinkResetResultModal({
             <div className="px-6 py-4">
                 <label
                     htmlFor="reset-service-record-link-url"
-                    className="mb-2 block text-sm font-medium text-text"
+                    className="mb-2 block text-sm font-medium text-v3-text"
                 >
                     제공기록지 링크
                 </label>

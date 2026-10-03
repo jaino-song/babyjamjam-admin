@@ -479,7 +479,7 @@ export const SystemTemplateEditor = forwardRef<
       {scope === 'branch' ? (
         <p
           data-component={`${dataComponent}_branch-freeze-note`}
-          className="text-sm text-text-muted"
+          className="text-sm text-v3-text-muted"
           role="note"
         >
           이 템플릿을 처음 저장하면 지점의 모든 템플릿이 현재 기본값으로 고정됩니다. 이후 오너가 기본값을 바꿔도 이 지점에는 자동으로 적용되지 않습니다.

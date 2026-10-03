@@ -1099,8 +1099,8 @@ describe("ClientServiceRecordsTab", () => {
         );
         expect(detail).toBeInTheDocument();
         const motherSectionMarker = screen.getByText("산모 기록").querySelector("span");
-        expect(motherSectionMarker).toHaveClass("bg-purple");
-        expect(motherSectionMarker).not.toHaveClass("bg-burgundy");
+        expect(motherSectionMarker).toHaveClass("bg-v3-purple");
+        expect(motherSectionMarker).not.toHaveClass("bg-v3-burgundy");
         const emptyValues = detail!.querySelectorAll(
             `[data-component="${TEST_COMPONENT}_sessions_list_row_detail_field_empty-value"]`,
         );
@@ -1255,20 +1255,20 @@ describe("ClientServiceRecordsTab", () => {
             expect(value).toHaveClass(
                 "text-[calc(12px*var(--glint-ui-scale,1))]",
                 "font-medium",
-                "text-dark",
+                "text-v3-dark",
             );
         });
         expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass(
             "rounded-[8px]",
-            "bg-surface",
+            "bg-v3-dim-white",
         );
         expect(within(sessionDetail!).getByText("실시")).not.toHaveClass(
             "rounded-[8px]",
-            "bg-primary-light",
+            "bg-v3-primary-light",
         );
         expect(sessionDetail).not.toHaveTextContent("✓");
-        expect(within(sessionDetail!).getByText("완료")).not.toHaveClass("text-green");
-        expect(within(sessionDetail!).getByText("서명함")).not.toHaveClass("text-green");
+        expect(within(sessionDetail!).getByText("완료")).not.toHaveClass("text-v3-green");
+        expect(within(sessionDetail!).getByText("서명함")).not.toHaveClass("text-v3-green");
         const headerCaption = overviewCards[1].querySelector<HTMLElement>(
             `[data-component="${TEST_COMPONENT}_overview-grid_header-card_body_caption"]`,
         );

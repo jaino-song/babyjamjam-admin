@@ -45,7 +45,7 @@ export function StatsHero({
         <Link
           href={resolvedBackHref}
           data-component={`${dataComponent}_back-link`}
-          className="inline-flex items-center gap-1 text-[0.78rem] font-medium text-text-muted hover:text-primary transition-colors"
+          className="inline-flex items-center gap-1 text-[0.78rem] font-medium text-v3-text-muted hover:text-v3-primary transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
           <span>{backLabel}</span>
@@ -56,7 +56,7 @@ export function StatsHero({
         aria-label={ariaLabel}
         className={cn(
           "relative overflow-hidden rounded-[24px] p-7",
-          "bg-gradient-to-br from-primary via-primary to-blue-700",
+          "bg-gradient-to-br from-v3-primary via-v3-primary to-blue-700",
           "shadow-v3"
         )}
       >
