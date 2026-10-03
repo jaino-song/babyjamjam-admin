@@ -1,6 +1,7 @@
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
 import { CreateEmployeeScheduleUsecase } from "application/usecases/employee-schedule/create-employee-schedule.usecase";
 import { EmployeeScheduleEntity } from "domain/entities/employee-schedule.entity";
+import { createLifecycleTransactionProbe } from "../utils/lifecycle-transaction-probe";
 
 describe("EmployeeScheduleService", () => {
     const createService = (agentAutomationRecordStore?: { appendScheduleWriteFence: jest.Mock }) => {
@@ -17,6 +18,7 @@ describe("EmployeeScheduleService", () => {
         };
         const serviceRecordLifecycleService = {
             ensureForClient: jest.fn().mockResolvedValue(undefined),
+            resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         const transaction = {};
         let transactionCommitted = false;
@@ -89,7 +91,7 @@ describe("EmployeeScheduleService", () => {
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
         expect(deleteUsecase.execute).toHaveBeenCalledWith("branch-1", schedule.id, transaction);
         expect(serviceRecordLifecycleService.ensureForClient)
-            .toHaveBeenCalledWith(schedule.clientId, transaction);
+            .toHaveBeenCalledWith(schedule.clientId, transaction, undefined);
         expect(deleteUsecase.execute.mock.invocationCallOrder[0])
             .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
     });
@@ -440,6 +442,7 @@ describe("EmployeeScheduleService assignment eligibility", () => {
         };
         const serviceRecordLifecycleService = {
             ensureForClient: jest.fn().mockResolvedValue(undefined),
+            resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         messageAutomationIntentService.fulfillScheduleIntent.mockImplementation(
             ({ scheduleId }: { scheduleId: number }) => serviceRecordLinkService.scheduleForServiceStart(scheduleId),
@@ -572,5 +575,88 @@ describe("EmployeeScheduleService assignment eligibility", () => {
         expect(messageAutomationIntentService.fulfillScheduleIntent).not.toHaveBeenCalled();
         expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
         expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+    });
+});
+
+describe("EmployeeScheduleService lifecycle calendar", () => {
+    // The lifecycle sync reads the branch calendar through the root client, so a
+    // caller that owns the transaction must read it before the transaction opens.
+    const createProbedService = () => {
+        const probe = createLifecycleTransactionProbe();
+        const createUsecase = { execute: jest.fn() };
+        const findByIdUsecase = { execute: jest.fn() };
+        const updateUsecase = { execute: jest.fn() };
+        const deleteUsecase = { execute: jest.fn().mockResolvedValue(undefined) };
+        const messageAutomationIntentService = {
+            persistScheduleIntent: jest.fn().mockResolvedValue(undefined),
+            fulfillScheduleIntent: jest.fn().mockResolvedValue(undefined),
+        };
+        const service = new EmployeeScheduleService(
+            createUsecase as never,
+            findByIdUsecase as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            updateUsecase as never,
+            deleteUsecase as never,
+            probe.prisma as never,
+            messageAutomationIntentService as never,
+            undefined,
+            probe.lifecycle,
+        );
+        return { probe, service, createUsecase, findByIdUsecase, updateUsecase };
+    };
+    const scheduleRow = (clientId = 1) => ({
+        id: 10,
+        clientId,
+        endDate: new Date("2026-09-18T00:00:00.000Z"),
+    }) as EmployeeScheduleEntity;
+
+    it("create reads the branch calendar before its transaction opens and hands it to the lifecycle", async () => {
+        const { probe, service, createUsecase } = createProbedService();
+        createUsecase.execute.mockResolvedValue(scheduleRow());
+
+        await service.create("branch-1", {
+            clientId: 1,
+            primaryEmployeeId: 2,
+            secondaryEmployeeId: null,
+            workAddress: "서울",
+            startDate: "2026-09-07",
+            endDate: "2026-09-18",
+        });
+
+        expect(probe.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect(probe.state.forBranchWhileOpen).toEqual([false]);
+        expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(probe.tables.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
+            create: expect.objectContaining({ requiredSessionCount: 9 }),
+        }));
+    });
+
+    it("update reads the branch calendar before its transaction opens and hands it to the lifecycle", async () => {
+        const { probe, service, findByIdUsecase, updateUsecase } = createProbedService();
+        findByIdUsecase.execute.mockResolvedValue(scheduleRow());
+        updateUsecase.execute.mockResolvedValue(scheduleRow());
+
+        await service.update("branch-1", 10, { workAddress: "부산" });
+
+        expect(probe.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect(probe.state.forBranchWhileOpen).toEqual([false]);
+        expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
+    });
+
+    it("delete reads the branch calendar before its transaction opens and hands it to the lifecycle", async () => {
+        const { probe, service, findByIdUsecase } = createProbedService();
+        findByIdUsecase.execute.mockResolvedValue(scheduleRow());
+
+        await service.delete("branch-1", 10);
+
+        expect(probe.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect(probe.state.forBranchWhileOpen).toEqual([false]);
+        expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
     });
 });

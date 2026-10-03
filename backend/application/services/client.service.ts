@@ -910,6 +910,8 @@ export class ClientService {
         startDate: Date;
         endDate: Date;
         applyMessageAutomation: boolean;
+        /** The branch calendar, read fresh before the caller opened this transaction. */
+        calendar: KrBusinessDayCalendar;
     }): Promise<{ createdScheduleId: number | null; replacedScheduleId: number | null }> {
         const intentAt = new Date();
         const ordinaryMutationId = randomUUID();
@@ -1035,6 +1037,7 @@ export class ClientService {
             await this.serviceRecordLifecycleService?.ensureForClient(
                 params.clientId,
                 transaction,
+                params.calendar,
             );
             return {
                 schedule: newSchedule,
@@ -1142,6 +1145,7 @@ export class ClientService {
                     startDate: startDate ?? existing.startDate ?? new Date(),
                     endDate: endDate ?? existing.endDate ?? new Date(Date.now() + DEFAULT_SERVICE_PERIOD_MS),
                     applyMessageAutomation,
+                    calendar,
                 });
                 if (assignment.replacedScheduleId !== null) {
                     await this.revokeServiceRecordLinkAfterCommit(
@@ -2368,6 +2372,10 @@ export class ClientService {
 
         let replacedScheduleId: number | null = null;
         const ordinaryMutationId = randomUUID();
+        // The lifecycle sync reads the branch calendar through the root client,
+        // so it is resolved before the owning transaction takes a connection.
+        const calendar = await this.serviceRecordLifecycleService
+            ?.resolveCalendarBeforeTransaction(clientId);
         const replacementSchedule = await this.prismaService.$transaction(async (transaction) => {
             // Lock the full historical schedule/employee union before any
             // case or schedule write. The requested providers are part of the
@@ -2477,7 +2485,7 @@ export class ClientService {
                     replaced: false,
                 },
             });
-            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction);
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
             return createdSchedule;
         });
         if (replacedScheduleId !== null) {

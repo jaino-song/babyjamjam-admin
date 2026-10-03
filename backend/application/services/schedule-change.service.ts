@@ -627,6 +627,7 @@ export class ScheduleChangeService {
                 const syncedRecord = await this.lifecycleService?.ensureForClient(
                     schedule.clientId,
                     tx,
+                    calendar,
                 );
                 // A date move never changes how many sessions the case owes. The
                 // lifecycle sync re-caps a legacy case's N from the new period's
@@ -902,7 +903,11 @@ export class ScheduleChangeService {
                     data: { endDate: newEndDate },
                 });
 
-                const syncedRecord = await this.lifecycleService?.ensureForClient(request.clientId, tx);
+                const syncedRecord = await this.lifecycleService?.ensureForClient(
+                    request.clientId,
+                    tx,
+                    calendar,
+                );
 
                 if (syncedRecord) {
                     await this.tokenService.extendExpiryForCase(
