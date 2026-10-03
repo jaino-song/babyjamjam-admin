@@ -858,12 +858,38 @@ describe("EformsignController (Integration)", () => {
             ]);
         });
 
-        it("releases the purge intent when the cancel call fails outright", async () => {
-            eformsignService.cancelDocuments.mockRejectedValue(new Error("socket exploded"));
+        // The provider may have processed the cancel even though the response was lost,
+        // so an ambiguous outcome keeps the generation-fenced intent for reconciliation
+        // (same classification as the permanent-delete path). Never retried inline.
+        it.each([
+            ["a socket failure", new Error("socket exploded")],
+            ["a timeout", Object.assign(new Error("The operation timed out"), { name: "TimeoutError" })],
+            ["an HTTP 500", new EformsignApiError("boom", 500)],
+            ["an HTTP 503", new EformsignApiError("unavailable", 503)],
+            ["an HTTP 408", new EformsignApiError("request timeout", 408)],
+            ["an HTTP 429", new EformsignApiError("slow down", 429)],
+            ["a confirmed absence (HTTP 404)", new EformsignApiError("not found", 404)],
+        ])("keeps the purge intent after %s from the cancel call", async (_label, failure) => {
+            eformsignService.cancelDocuments.mockRejectedValue(failure);
 
             const response = await supersede();
 
             expect(response.status).toBe(500);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["HTTP 400", new EformsignApiError("rejected", 400)],
+            ["HTTP 403", new EformsignApiError("forbidden", 403)],
+        ])("releases the purge intent when eformsign definitively refuses with %s", async (_label, failure) => {
+            eformsignService.cancelDocuments.mockRejectedValue(failure);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
             expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
                 expect.objectContaining({ documentId: "old-doc" }),
@@ -901,6 +927,7 @@ describe("EformsignController (Integration)", () => {
 
         it.each([
             ["another client's document", { clientId: 99, documentKind: "contract" }],
+            ["an unowned legacy document", { clientId: null, documentKind: "contract" }],
             ["a service-record snapshot", { clientId: 7, documentKind: "service_record_snapshot" }],
         ])("refuses to supersede %s", async (_label, document) => {
             docFindUnique.mockResolvedValue(document);

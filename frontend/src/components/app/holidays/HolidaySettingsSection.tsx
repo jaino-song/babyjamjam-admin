@@ -7,9 +7,9 @@ import { CalendarDays } from "lucide-react";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { isoDateInKorea } from "@/lib/date/business-days";
-import { cn } from "@/lib/utils";
 import {
   holidaySettingsApi,
   type HolidaySyncResponse,
@@ -180,26 +180,15 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
           <HolidayReviewCards branchId={branchId} />
 
           <div data-component={`${DATA_COMPONENT}_toolbar`} className="flex flex-wrap items-center justify-between gap-3">
-            <div role="tablist" aria-label="연도" data-component={`${DATA_COMPONENT}_toolbar_year-tabs`} className="flex gap-1.5">
-              {years.map((tabYear) => (
-                <button
-                  key={tabYear}
-                  type="button"
-                  role="tab"
-                  aria-selected={tabYear === year}
-                  data-slot="holiday-year-tab"
-                  className={cn(
-                    "rounded-full px-3.5 py-1.5 text-[13px] font-semibold tabular-nums transition-colors focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
-                    tabYear === year
-                      ? "bg-v3-dark text-white"
-                      : "bg-v3-dim-white text-v3-text-muted hover:text-v3-dark",
-                  )}
-                  onClick={() => setYear(tabYear)}
-                >
-                  {tabYear}
-                </button>
-              ))}
-            </div>
+            <Tabs value={String(year)} onValueChange={(value) => setYear(Number(value))}>
+              <TabsList aria-label="연도" data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}>
+                {years.map((tabYear) => (
+                  <TabsTrigger key={tabYear} value={String(tabYear)} className="tabular-nums">
+                    {tabYear}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
             {data ? (
               <span data-slot="holiday-count" className="text-xs text-v3-text-muted">
                 {`${year}년 공휴일 ${activeCount}일${excludedCount > 0 ? ` · 제외 ${excludedCount}일` : ""}`}

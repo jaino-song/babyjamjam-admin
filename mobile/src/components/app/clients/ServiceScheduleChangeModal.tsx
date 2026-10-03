@@ -6,6 +6,7 @@ import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message
 
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useFieldMessages } from "@/hooks/use-field-messages";
@@ -20,6 +21,10 @@ import {
 const DATE_INPUT_ID = "service-schedule-change-date";
 const UNCHANGED_MESSAGE = "현재 예정일과 다른 날짜를 입력해 주세요";
 const DATE_GUIDANCE: SlotMessage = { text: "출산일 이후만 가능해요", tone: "muted" };
+const CALENDAR_LOADING: SlotMessage = { text: "공휴일 정보를 불러오는 중이에요", tone: "muted" };
+const CALENDAR_FAILED: SlotMessage = { text: "공휴일 정보를 불러오지 못했어요", tone: "err" };
+const CALENDAR_NO_BRANCH: SlotMessage = { text: "지점을 선택한 뒤 다시 시도해 주세요", tone: "err" };
+const CALENDAR_UNSUPPORTED_YEAR: SlotMessage = { text: "이 날짜의 공휴일 정보가 아직 없어요", tone: "err" };
 
 const DATE_SPEC: FieldSpec = { kind: "date", label: "서비스 제공 날짜", required: true };
 
@@ -52,7 +57,12 @@ export function ServiceScheduleChangeModal({
     const locale = useLocale();
     const [edited, setEdited] = useState(false);
     const selectedYear = isRealIsoDate(selectedDate) ? [Number(selectedDate.slice(0, 4))] : [];
-    const { calendar } = useBusinessDayCalendar({ extraYears: selectedYear });
+    const {
+        calendar,
+        ready: isCalendarReady,
+        error: calendarError,
+        retry: retryCalendar,
+    } = useBusinessDayCalendar({ extraYears: selectedYear });
     // Weekends and holidays are blocked by default; an admin may still pick one
     // for a special case after confirming it in a second step.
     const [isConfirmingNonBusinessDay, setIsConfirmingNonBusinessDay] = useState(false);
@@ -66,6 +76,30 @@ export function ServiceScheduleChangeModal({
     const isBeforeMinimum = isRealDate && minimumDate !== null && selectedDate < minimumDate;
     const isValidChange = isRealDate && !isBeforeMinimum && selectedDate !== currentDate;
 
+    // Until the branch calendar is ready the built-in list does not know the branch's own
+    // holidays, so the date is not classified at all. A year the calendar has no data for
+    // makes `isBusinessDay` throw; that also blocks approval instead of crashing the modal.
+    let isNonBusinessDay: boolean | null = null;
+    let isUnsupportedYear = false;
+    if (isRealDate && isCalendarReady) {
+        try {
+            isNonBusinessDay = !calendar.isBusinessDay(selectedDate);
+        } catch {
+            isUnsupportedYear = true;
+        }
+    }
+    const isCalendarBlocking = !isCalendarReady || isUnsupportedYear;
+    const isCalendarFailed = !isCalendarReady && calendarError === "load-failed";
+    const calendarMessage: SlotMessage | null = isCalendarReady
+        ? isUnsupportedYear
+            ? CALENDAR_UNSUPPORTED_YEAR
+            : null
+        : calendarError === "no-branch"
+          ? CALENDAR_NO_BRANCH
+          : calendarError === "load-failed"
+            ? CALENDAR_FAILED
+            : CALENDAR_LOADING;
+
     // An unchanged prefilled date is only called out once the user has touched the field.
     const rangeMessage: SlotMessage | null = isBeforeMinimum
         ? { text: `${minimumDate} 이후로 입력해 주세요`, tone: "err" }
@@ -73,7 +107,7 @@ export function ServiceScheduleChangeModal({
             ? { text: UNCHANGED_MESSAGE, tone: "err" }
             : null;
     // Always-on guidance comes last: any error or format hint replaces it, and it returns once they clear.
-    const slot = pickSlotMessage(fieldMessages.slot("date"), rangeMessage, DATE_GUIDANCE);
+    const slot = pickSlotMessage(fieldMessages.slot("date"), rangeMessage, calendarMessage, DATE_GUIDANCE);
     const hasError = slot?.tone === "err";
     const dateBind = fieldMessages.bind("date");
 
@@ -83,7 +117,8 @@ export function ServiceScheduleChangeModal({
             focusFirstInvalidField([DATE_INPUT_ID]);
             return;
         }
-        if (!calendar.isBusinessDay(selectedDate)) {
+        if (isCalendarBlocking || isNonBusinessDay === null) return;
+        if (isNonBusinessDay) {
             setIsConfirmingNonBusinessDay(true);
             return;
         }
@@ -108,6 +143,7 @@ export function ServiceScheduleChangeModal({
                 cancelLabel="취소"
                 approvalLabel="일정 변경"
                 pendingLabel="변경 중..."
+                approvalDisabled={isCalendarBlocking}
                 isPending={isPending}
                 onOpenChange={(nextOpen) => {
                     if (!nextOpen && !isPending) onClose();
@@ -115,12 +151,28 @@ export function ServiceScheduleChangeModal({
                 onApprove={handleApprove}
             >
                 <div className="space-y-2 pt-5" data-component={`${dataComponent}_date-field`}>
-                    <FieldLabelRow
-                        data-component={`${dataComponent}_date-field`}
-                        htmlFor={DATE_INPUT_ID}
-                        label={`${sessionIndex}회차 서비스 제공 날짜`}
-                        message={slot}
-                    />
+                    <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1">
+                            <FieldLabelRow
+                                data-component={`${dataComponent}_date-field`}
+                                htmlFor={DATE_INPUT_ID}
+                                label={`${sessionIndex}회차 서비스 제공 날짜`}
+                                message={slot}
+                            />
+                        </div>
+                        {isCalendarFailed ? (
+                            <Button
+                                type="button"
+                                variant="link"
+                                size="sm"
+                                data-component={`${dataComponent}_calendar-retry`}
+                                className="h-auto shrink-0 p-0 text-xs"
+                                onClick={retryCalendar}
+                            >
+                                다시 시도
+                            </Button>
+                        ) : null}
+                    </div>
                     <Input
                         id={DATE_INPUT_ID}
                         type="text"

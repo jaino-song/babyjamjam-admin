@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
     getServiceRecordFinalizationDueAt,
@@ -86,6 +86,29 @@ function hasAuthoritativeRevision(record: {
         || record.currentUsableRevisionId != null
         || record.currentUsableDocumentVersion != null
         || record.plannedSessions != null;
+}
+
+/**
+ * Whether an existing case keeps its stored N as-is (no calendar needed): a case
+ * with an authoritative revision, or a legacy case with a stored N whose period
+ * did not move. Everything else re-derives N from the branch calendar.
+ */
+function existingCaseKeepsStoredCount(
+    existing: {
+        startDate: Date | null;
+        endDate: Date | null;
+        requiredSessionCount: number | null;
+        currentRevisionId?: string | null;
+        currentUsableRevisionId?: string | null;
+        currentUsableDocumentVersion?: number | null;
+        plannedSessions?: Prisma.JsonValue | null;
+    },
+    client: { startDate: Date | null; endDate: Date | null },
+): boolean {
+    const periodChanged = isoDate(existing.startDate) !== isoDate(client.startDate)
+        || isoDate(existing.endDate) !== isoDate(client.endDate);
+    return hasAuthoritativeRevision(existing)
+        || (existing.requiredSessionCount !== null && !periodChanged);
 }
 
 function legacySessionCount(
@@ -194,8 +217,18 @@ function isReadyCurrentSnapshot(snapshot: LockedServiceRecordSnapshot): boolean 
         && snapshot.hasCurrentAuditTrailPdf;
 }
 
+/** The few caller frames above the lifecycle service, for the in-transaction calendar warning. */
+function callPath(): string {
+    const frames = (new Error().stack ?? "").split("\n").slice(1)
+        .map((line) => line.trim().replace(/^at (async )?/, ""))
+        .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line));
+    return frames.slice(0, 3).join(" <- ") || "unknown";
+}
+
 @Injectable()
 export class ServiceRecordLifecycleService {
+    private readonly logger = new Logger(ServiceRecordLifecycleService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly holidayCalendar: HolidayCalendarService,
@@ -206,13 +239,26 @@ export class ServiceRecordLifecycleService {
         tx?: Prisma.TransactionClient,
     ): Promise<ServiceRecordCaseRecord | null> {
         if (!tx && typeof this.prisma.$transaction === "function") {
+            // The calendar is read through the root client, so it must be read
+            // before the owning transaction pins a pooled connection.
+            const preRead = await this.prisma.employee_schedule.findUnique({
+                where: { id: scheduleId },
+                select: { clientId: true },
+            });
+            const calendar = preRead
+                ? await this.resolveCalendarBeforeTransaction(preRead.clientId)
+                : undefined;
             return this.prisma.$transaction(async (transaction) => {
                 const schedule = await transaction.employee_schedule.findUnique({
                     where: { id: scheduleId },
                     select: { clientId: true },
                 });
                 if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-                return this.ensureForClient(schedule.clientId, transaction);
+                return this.ensureForClient(
+                    schedule.clientId,
+                    transaction,
+                    schedule.clientId === preRead?.clientId ? calendar : undefined,
+                );
             });
         }
         const db = tx ?? this.prisma;
@@ -240,16 +286,70 @@ export class ServiceRecordLifecycleService {
         // transaction so callers cannot observe a stale client or schedule
         // set and then repair it from a separate root transaction.
         if (!tx && typeof this.prisma.$transaction === "function") {
+            // `holidayCalendar.forBranch` reads through the root client, so the
+            // calendar is resolved before this transaction takes a pooled
+            // connection; resolving it inside would hold one connection while
+            // waiting for a second.
+            const resolvedCalendar = calendar ?? await this.resolveCalendarBeforeTransaction(clientId);
             return this.prisma.$transaction((transaction) =>
-                this.ensureForClient(clientId, transaction, calendar));
+                this.ensureForClient(clientId, transaction, resolvedCalendar));
         }
-        return this.ensureForClientInTransaction(clientId, tx, calendar);
+        // Captured here, before any await, while the caller's frames are still on the stack.
+        const callSite = tx && !calendar ? callPath() : undefined;
+        return this.ensureForClientInTransaction(clientId, tx, calendar, callSite);
+    }
+
+    /**
+     * Reads the branch calendar (fresh) ahead of an owning transaction, but only
+     * when `ensureForClientInTransaction` is going to need it: a brand-new case,
+     * or an existing one whose N must be re-derived. Returns undefined when the
+     * branch or period is missing or the stored N is kept; the in-transaction
+     * lazy read then stays as a rare fallback (a case created between this read
+     * and the transaction).
+     *
+     * A caller that opens its own `$transaction` must call this before opening
+     * it and hand the result to `ensureForClient(..., calendar)`: the calendar
+     * service reads through the root client, so reading it from inside the
+     * transaction holds one pooled connection while waiting for a second.
+     * `pendingPeriod` carries a client period the caller is about to write inside
+     * that transaction, so the check judges the period `ensureForClient` will see.
+     */
+    async resolveCalendarBeforeTransaction(
+        clientId: number,
+        pendingPeriod?: { startDate?: Date | null; endDate?: Date | null },
+    ): Promise<KrBusinessDayCalendar | undefined> {
+        const client = await this.prisma.client.findUnique({
+            where: { id: clientId },
+            select: {
+                branchId: true,
+                startDate: true,
+                endDate: true,
+                employeeSchedules: {
+                    select: { branchId: true },
+                    orderBy: [{ startDate: "asc" }, { id: "asc" }],
+                },
+            },
+        });
+        if (!client) return undefined;
+        const period = {
+            startDate: pendingPeriod?.startDate !== undefined ? pendingPeriod.startDate : client.startDate,
+            endDate: pendingPeriod?.endDate !== undefined ? pendingPeriod.endDate : client.endDate,
+        };
+        if (!period.startDate) return undefined;
+        const branchId = client.branchId
+            ?? client.employeeSchedules.find((schedule) => schedule.branchId)?.branchId
+            ?? null;
+        if (!branchId) return undefined;
+        const existing = await this.prisma.service_record_case.findUnique({ where: { clientId } });
+        if (existing && existingCaseKeepsStoredCount(existing, period)) return undefined;
+        return this.holidayCalendar.forBranch(branchId, { fresh: true });
     }
 
     private async ensureForClientInTransaction(
         clientId: number,
         tx?: Prisma.TransactionClient,
         passedCalendar?: KrBusinessDayCalendar,
+        callSite?: string,
     ): Promise<ServiceRecordCaseRecord | null> {
         const db = tx ?? this.prisma;
         let client = await db.client.findUnique({
@@ -330,7 +430,20 @@ export class ServiceRecordLifecycleService {
         // N and an unchanged period needs no calendar at all.
         let calendar = passedCalendar;
         const resolveCalendar = async (): Promise<KrBusinessDayCalendar> => {
-            calendar ??= await this.holidayCalendar.forBranch(branchId, { fresh: true });
+            if (!calendar) {
+                if (tx) {
+                    // The caller owns this transaction and did not hand a
+                    // calendar in: the read below goes through the root client
+                    // while the transaction holds a pooled connection. Name the
+                    // call path so the caller can resolve it beforehand.
+                    this.logger.warn(
+                        `[CALENDAR_READ_INSIDE_TRANSACTION] clientId=${clientId} branchId=${branchId} — `
+                        + "resolveCalendarBeforeTransaction() before opening the transaction and pass it "
+                        + `to ensureForClient. callPath=${callSite ?? "unknown"}`,
+                    );
+                }
+                calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+            }
             return calendar;
         };
         const finalizationDueAt = client.endDate
@@ -347,13 +460,8 @@ export class ServiceRecordLifecycleService {
         // re-capped by the business days of the NEW period. A holiday-calendar
         // change alone never lowers (or restores) N. Legacy null/zero values
         // remain visible and are not silently backfilled.
-        const periodChanged = existing
-            ? isoDate(existing.startDate) !== isoDate(client.startDate)
-                || isoDate(existing.endDate) !== isoDate(client.endDate)
-            : false;
         const sessionCount = existing
-            ? hasAuthoritativeRevision(existing)
-                || (existing.requiredSessionCount !== null && !periodChanged)
+            ? existingCaseKeepsStoredCount(existing, client)
                 ? existing.requiredSessionCount
                 : legacySessionCount(
                     client.startDate,

@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 
+import { useBusinessDayCalendar, type UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slot";
 import { ServiceScheduleChangeModal } from "../ServiceScheduleChangeModal";
 
@@ -252,5 +254,95 @@ describe("ServiceScheduleChangeModal", () => {
             expect(slot()).toHaveTextContent("2026-07-25 이후로 입력해 주세요");
             expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
         });
+    });
+});
+
+describe("branch calendar readiness", () => {
+    const mockedCalendar = useBusinessDayCalendar as jest.MockedFunction<typeof useBusinessDayCalendar>;
+    const retry = jest.fn();
+    const result = (overrides: Partial<UseBusinessDayCalendarResult>): UseBusinessDayCalendarResult => ({
+        calendar: KR_BUILTIN_CALENDAR,
+        ready: true,
+        error: null,
+        retry,
+        version: KR_BUILTIN_CALENDAR.version,
+        ...overrides,
+    });
+    // The branch added Wednesday 2026-07-22 as its own holiday; the built-in list does not know it.
+    const branchCalendar = createKrBusinessDayCalendar(["2026-07-22"], {
+        supportedYears: [2026, 2031],
+        version: "branch",
+    });
+    const notReady = result({ ready: false, error: null });
+    const baseProps = {
+        open: true,
+        sessionIndex: 3,
+        currentDate: "2026-07-20",
+        minimumDate: "2026-07-17",
+        selectedDate: "2026-07-22",
+        isPending: false,
+        onDateChange: jest.fn(),
+        onClose: jest.fn(),
+    };
+    const slot = () => document.getElementById("service-schedule-change-date-message");
+
+    beforeEach(() => retry.mockClear());
+    afterEach(() => mockedCalendar.mockImplementation(() => result({})));
+
+    it("does not classify the date or submit while the calendar is loading, then asks once it is ready", () => {
+        mockedCalendar.mockImplementation(() => notReady);
+        const onSubmit = jest.fn();
+        const { rerender } = render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+
+        const approve = screen.getByRole("button", { name: "일정 변경" });
+        expect(approve).toBeDisabled();
+        expect(slot()).toHaveTextContent("공휴일 정보를 불러오는 중이에요");
+        fireEvent.click(approve);
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(screen.queryByText("주말·공휴일이에요")).not.toBeInTheDocument();
+
+        mockedCalendar.mockImplementation(() => result({ calendar: branchCalendar }));
+        rerender(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(onSubmit).not.toHaveBeenCalled();
+        expect(screen.getByText("주말·공휴일이에요")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+        expect(onSubmit).toHaveBeenCalledWith(true);
+    });
+
+    it("does not throw for a year outside the built-in range while the calendar is not ready", () => {
+        mockedCalendar.mockImplementation(() => notReady);
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} selectedDate="2031-07-22" onSubmit={onSubmit} />);
+
+        expect(() => fireEvent.click(screen.getByRole("button", { name: "일정 변경" }))).not.toThrow();
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("blocks a date in a year the ready calendar has no data for instead of throwing", () => {
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} selectedDate="2031-07-22" onSubmit={onSubmit} />);
+
+        expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+        expect(slot()).toHaveTextContent("이 날짜의 공휴일 정보가 아직 없어요");
+        expect(slot()).toHaveAttribute("data-slot", "field-error-message");
+        expect(() => fireEvent.click(screen.getByRole("button", { name: "일정 변경" }))).not.toThrow();
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("shows the load failure in the slot with a retry and keeps approval blocked", () => {
+        mockedCalendar.mockImplementation(() => result({ ready: false, error: "load-failed" }));
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+
+        expect(slot()).toHaveTextContent("공휴일 정보를 불러오지 못했어요");
+        expect(slot()).toHaveAttribute("data-slot", "field-error-message");
+        expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+        expectNoFieldMessageBelowControl(document.body);
+
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(onSubmit).not.toHaveBeenCalled();
     });
 });

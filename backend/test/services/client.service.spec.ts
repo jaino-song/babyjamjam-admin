@@ -175,6 +175,7 @@ describe("ClientService", () => {
     const createMockServiceRecordLifecycleService = () => ({
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
         ensureForClient: jest.fn().mockResolvedValue(undefined),
+        resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         markTerminated: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -3834,6 +3835,38 @@ describe("ClientService", () => {
             expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
                 mockClient.id, expect.anything(), calendar,
             );
+        });
+
+        it("reusing a client with an assignment hands the pre-transaction calendar to the lifecycle repair", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const existingClient = createClientEntity();
+            clientRepository.findByPhone.mockResolvedValue(existingClient);
+            prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+            prismaService.employee_schedule.create.mockResolvedValue({ id: 33, clientId: existingClient.id });
+
+            await service.create(branchId, { ...createParams, primaryEmployeeId: 5 });
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            loadedBeforeTransaction();
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                existingClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("requestReplacement resolves the lifecycle calendar before the transaction and hands it to the repair", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            serviceRecordLifecycleService.resolveCalendarBeforeTransaction.mockResolvedValue(calendar);
+            findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+            prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+            prismaService.employee_schedule.create.mockResolvedValue({ id: 90, clientId: 1 });
+
+            await service.requestReplacement(branchId, 1, 7);
+
+            expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction).toHaveBeenCalledWith(1);
+            expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction.mock.invocationCallOrder[0]!)
+                .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
         });
 
         it("terminateService loads the calendar before the transaction and passes it to the update", async () => {
