@@ -26,6 +26,7 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { SERVICE_RECORD_EDIT_REPOSITORY } from "domain/repositories/service-record-edit.repository.interface";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { HolidayModule } from "./holiday.module";
 
 /**
  * No-login daily service-record capture (BJJ-247).
@@ -33,7 +34,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
  * hooks (employee-schedule + client modules) can issue and revoke links.
  */
 @Module({
-    imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, SystemSettingModule, EformsignDocModule],
+    imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, SystemSettingModule, EformsignDocModule, HolidayModule],
     controllers: [ServiceRecordEntryController, ScheduleChangeController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,

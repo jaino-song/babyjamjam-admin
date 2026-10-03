@@ -5,6 +5,7 @@ import {
 } from "application/services/service-record-lifecycle.service";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const mockCaptureServiceRecordError = jest.fn();
 const workerPrincipal = { branchId: "branch-1", source: "worker" as const };
@@ -65,7 +66,7 @@ function setup(options: {
     const service = new ServiceRecordFinalizationService(
         prismaWithTransaction as unknown as PrismaService,
         lifecycle as unknown as ServiceRecordLifecycleService,
-        snapshot as unknown as CreateAndSendServiceRecordSnapshotUsecase,
+        snapshot as unknown as CreateAndSendServiceRecordSnapshotUsecase, createHolidayCalendarStub(),
     );
     return { service, prisma: prismaWithTransaction, lifecycle, snapshot };
 }

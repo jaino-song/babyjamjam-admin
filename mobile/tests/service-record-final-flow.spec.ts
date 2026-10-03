@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { isoDateInKorea } from "../src/lib/date/business-days";
+import { isoDateInKorea, KOREAN_HOLIDAY_CALENDAR } from "../src/lib/date/business-days";
 
 test.use({
   storageState: { cookies: [], origins: [] },
@@ -25,6 +25,19 @@ const header = {
 
 async function mockShellRequests(page: import("@playwright/test").Page) {
   await page.route("**/api/**", (route) => route.fulfill({ json: {} }));
+  // Token-page branch calendar. Registered after the catch-all above (later routes win),
+  // because an empty `{}` body would make the calendar fail to load.
+  await page.route(/\/api\/service-record\/[^/]+\/holidays\?year=\d+$/, (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    return route.fulfill({
+      json: {
+        year,
+        revision: 1,
+        supported: true,
+        holidays: (KOREAN_HOLIDAY_CALENDAR[year] ?? []).map((date) => ({ date, name: "공휴일" })),
+      },
+    });
+  });
 }
 
 async function signServiceRecord(page: import("@playwright/test").Page) {

@@ -13,11 +13,12 @@ import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture, serviceRecordConfirmBarrier,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
 function edit(prisma: unknown) {
-    return new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
+    return new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
 }
 
 // Actual production authorization transaction only. This suite never invokes

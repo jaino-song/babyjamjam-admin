@@ -1,4 +1,4 @@
-import { countBusinessDaysKr } from "@/lib/date/business-days";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 export interface ServiceDateDurationCheck {
   periodKey: string;
@@ -18,13 +18,14 @@ export function getServiceDateDurationCheck(
   startDate: string | null | undefined,
   endDate: string | null | undefined,
   duration: number | null | undefined,
+  calendar: KrBusinessDayCalendar,
 ): ServiceDateDurationCheck {
   const periodKey = getServiceDateDurationPeriodKey(startDate, endDate, duration);
   let businessDays: number | null = null;
 
   if (startDate && endDate) {
     try {
-      businessDays = countBusinessDaysKr(startDate, endDate);
+      businessDays = calendar.countBusinessDays(startDate, endDate);
     } catch {
       businessDays = null;
     }

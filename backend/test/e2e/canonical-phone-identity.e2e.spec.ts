@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EmployeeEntity } from "domain/entities/employee.entity";
 import { normalizePhone } from "domain/utils/normalize-phone";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.employee.repository";
 
@@ -32,7 +33,7 @@ function createClient(phone: string): ClientEntity {
         serviceStatus: null,
         breastPump: false,
         eDocId: null,
-    });
+    }, KR_BUILTIN_CALENDAR);
 }
 
 function createEmployee(phone: string): EmployeeEntity {
@@ -130,8 +131,8 @@ describeE2E("canonical phone identity (real PostgreSQL)", () => {
         const secondUpdate = await clientRepository.findById(branchId, second.id);
         expect(firstUpdate).not.toBeNull();
         expect(secondUpdate).not.toBeNull();
-        firstUpdate!.update({ phone: "+82 10 9999 8888" });
-        secondUpdate!.update({ phone: "010-9999-8888" });
+        firstUpdate!.update({ phone: "+82 10 9999 8888" }, KR_BUILTIN_CALENDAR);
+        secondUpdate!.update({ phone: "010-9999-8888" }, KR_BUILTIN_CALENDAR);
 
         const results = await Promise.allSettled([
             clientRepository.update(branchId, firstUpdate!),

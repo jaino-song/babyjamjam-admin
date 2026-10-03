@@ -2,6 +2,7 @@ import { ConflictException } from "@nestjs/common";
 
 import { INVALID_PHONE_MESSAGE } from "application/utils/normalize-phone";
 import { clientDurationOutOfRangeMessage } from "domain/entities/client.entity";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
 import {
     assertAllowedClientArea,
@@ -99,10 +100,23 @@ describe("client write validation", () => {
     });
 
     it("structures derived duration failures with client-specific problem codes", () => {
-        expect(thrownErrorOf(() => deriveClientDuration(new Date("2026-01-02"), new Date("2026-01-01"))))
+        expect(thrownErrorOf(() => deriveClientDuration(new Date("2026-01-02"), new Date("2026-01-01"), KR_BUILTIN_CALENDAR)))
             .toMatchObject(publicProblem("CLIENT_SERVICE_PERIOD_INVALID", "/endDate", "INVALID_VALUE", "서비스 시작일은 종료일보다 늦을 수 없습니다."));
         expect(thrownErrorOf(() => assertClientDurationMatchesDates(15, 14)))
             .toMatchObject(publicProblem("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", clientDurationOutOfRangeMessage(14)));
+    });
+
+    it("counts business days with the supplied branch calendar and fails closed on an unsupported year", () => {
+        const branchCalendar = createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), "2026-05-07"],
+            { supportedYears: [2026], version: "branch-test" },
+        );
+        const start = new Date("2026-05-04");
+        const end = new Date("2026-05-08");
+        expect(deriveClientDuration(start, end, KR_BUILTIN_CALENDAR)).toBe(4);
+        expect(deriveClientDuration(start, end, branchCalendar)).toBe(3);
+        expect(thrownErrorOf(() => deriveClientDuration(new Date("2027-01-04"), new Date("2027-01-08"), branchCalendar)))
+            .toMatchObject(publicProblem("CLIENT_SERVICE_PERIOD_UNCOMPUTABLE", "/endDate", "INVALID_VALUE", "서비스 기간을 계산할 수 없습니다. 시작일과 종료일을 확인해 주세요."));
     });
 
     it("enforces merged date ordering while preserving canonical null and equal-date behavior", () => {

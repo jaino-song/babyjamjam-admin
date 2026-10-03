@@ -60,11 +60,9 @@ test.describe('chat message feedback', () => {
   });
 
   test('should show feedback buttons on assistant messages', async ({ page }) => {
-    await page.goto('/dashboard');
+    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
+    await page.goto('/chat');
     await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await chatInput.click();
 
     await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
     await expect(page.getByTestId('message-feedback')).toBeVisible({ timeout: 5000 });
@@ -84,11 +82,9 @@ test.describe('chat message feedback', () => {
       });
     });
 
-    await page.goto('/dashboard');
+    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
+    await page.goto('/chat');
     await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await chatInput.click();
 
     await expect(page.getByTestId('thumbs-up')).toBeVisible({ timeout: 5000 });
     await page.getByTestId('thumbs-up').click();
@@ -100,11 +96,9 @@ test.describe('chat message feedback', () => {
   });
 
   test('should open modal on thumbs down click', async ({ page }) => {
-    await page.goto('/dashboard');
+    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
+    await page.goto('/chat');
     await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await chatInput.click();
 
     await expect(page.getByTestId('thumbs-down')).toBeVisible({ timeout: 5000 });
     await page.getByTestId('thumbs-down').click();
@@ -113,11 +107,9 @@ test.describe('chat message feedback', () => {
   });
 
   test('should have submit button disabled until comment is entered', async ({ page }) => {
-    await page.goto('/dashboard');
+    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
+    await page.goto('/chat');
     await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await chatInput.click();
 
     await page.getByTestId('thumbs-down').click();
     await expect(page.getByText('어떤 점이 불만족스러우셨나요?')).toBeVisible({ timeout: 5000 });
@@ -141,11 +133,9 @@ test.describe('chat message feedback', () => {
       });
     });
 
-    await page.goto('/dashboard');
+    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
+    await page.goto('/chat');
     await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await chatInput.click();
 
     await page.getByTestId('thumbs-down').click();
     await page.getByPlaceholder('피드백을 입력해주세요...').fill('응답이 부정확해요');

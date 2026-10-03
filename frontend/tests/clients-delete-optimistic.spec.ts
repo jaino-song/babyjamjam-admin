@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { holidayCalendarResponse } from "./helpers/client-form";
 
 const CLIENT_A = {
   id: 101,
@@ -75,13 +76,33 @@ test("closes and unlocks the page before a pending delete settles", async ({ pag
         body: JSON.stringify({ data: clients, total: clients.length, page: 1, limit: 50, totalPages: 1 }),
       });
     }
+    if (pathname === "/api/clients/list-summary") {
+      const total = deleteSucceeded ? 1 : 2;
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          total,
+          byTab: { all: total, pre_booking: 0, waiting: total, replacement_requested: 0, active: 0, completed: 0, terminated: 0 },
+          dueDate: { thisMonth: 0, nextMonth: 0 },
+          serviceEnd: { count: 0, from: "2026-10-02", to: "2026-10-05" },
+        }),
+      });
+    }
+    if (pathname === "/api/consultation-inquiries") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ data: [], total: 0, page: 1, limit: 1, totalPages: 1 }) });
+    }
+    if (/^\/api\/branches\/[^/]+\/holidays$/.test(pathname)) {
+      const year = Number(new URL(request.url()).searchParams.get("year"));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(holidayCalendarResponse(year)) });
+    }
     if (pathname === "/api/auth/me") {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: "e2e-user", name: "E2E Tester", role: "admin", branchName: "테스트 지점" }) });
     }
     if (pathname.startsWith("/api/admin/service-records/client/")) {
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ record: null, assignments: [] }) });
     }
-    if (pathname === "/api/eformsign-docs/client" || pathname === "/api/clients/alerts" || pathname === "/api/message-trigger-jobs/upcoming" || pathname === "/api/voucher-price-infos/years" || pathname === "/api/out-of-pocket-price-infos" || pathname === "/api/area-templates") {
+    if (pathname === "/api/eformsign-docs/client" || pathname === "/api/clients/alerts" || pathname === "/api/message-trigger-jobs/upcoming" || pathname === "/api/voucher-price-infos/years" || pathname === "/api/out-of-pocket-price-infos" || pathname === "/api/area-templates" || pathname === "/api/area-templates/available-areas" || pathname === "/api/notifications") {
       return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     }
     if (pathname === "/api/notifications/unread/count") {

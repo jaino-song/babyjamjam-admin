@@ -139,6 +139,18 @@ describe("ScheduleChangeController (Integration)", () => {
                 11,
                 "2026-07-23",
                 tenant,
+                { allowNonBusinessDay: false },
+            );
+        });
+
+        it("forwards a confirmed weekend or holiday exception", async () => {
+            await controller.applyAdminChange(tenant, 11, { toDate: "2026-07-19", allowNonBusinessDay: true });
+
+            expect(scheduleChangeService.applyAdminChange).toHaveBeenCalledWith(
+                11,
+                "2026-07-19",
+                tenant,
+                { allowNonBusinessDay: true },
             );
         });
     });

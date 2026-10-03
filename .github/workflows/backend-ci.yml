@@ -37,8 +37,10 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
 
-    # Throwaway Postgres used ONLY as prisma's shadow database for the
-    # migrations drift guard below — never seeded, never read by tests.
+    # Throwaway Postgres, two uses, two databases: the default `postgres` database is
+    # prisma's shadow database for the migrations drift guard below (never seeded), and
+    # `throwaway_ci` (created by the real-database specs step) is where those specs
+    # migrate and write. The unit-test step never reads either.
     # trust auth: no password exists at all (ephemeral localhost container).
     services:
       postgres:
@@ -171,6 +173,22 @@ jobs:
           --to-schema-datamodel prisma/schema.prisma
           --shadow-database-url "postgresql://postgres@localhost:5432/postgres"
           --exit-code
+
+      # The specs under backend/test/prisma/*.real-db.spec.ts skip themselves unless
+      # HOLIDAY_REVIEW_REAL_DB=1, so no step above ever ran them. They need a real PostgreSQL
+      # (partial unique index, RESTRICT foreign key, advisory locks, the revision triggers) and
+      # refuse any database whose name does not contain "throwaway". A separate database keeps
+      # the `postgres` one clean for the drift guard above.
+      - name: Real-database specs (holiday calendar and review)
+        run: |
+          psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'
+          pnpm --filter ./backend exec prisma migrate deploy
+          pnpm --filter ./backend test --runInBand test/prisma/
+        env:
+          CI: true
+          DATABASE_URL: postgresql://postgres@localhost:5432/throwaway_ci
+          DIRECT_URL: postgresql://postgres@localhost:5432/throwaway_ci
+          HOLIDAY_REVIEW_REAL_DB: '1'
 
   auth-e2e:
     name: auth e2e · ${{ matrix.tenant_isolation_mode }} · postgres · valkey · mailpit

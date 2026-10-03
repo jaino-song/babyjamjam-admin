@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -14,6 +14,7 @@ import { parseInteger } from "interface/parse-integer";
 import { parseBooleanQuery } from "interface/parse-boolean";
 import {
     DeleteDocumentsRequestDto,
+    SupersedeDocumentRequestDto,
     ReRequestOutsiderDocumentRequestDto,
 } from "interface/dto/eformsign.dto";
 import {
@@ -57,7 +58,9 @@ import {
     normalizeEformsignStatusCode,
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function throwHttpOrInternalError(error: unknown): never {
     if (error instanceof HttpException) {
@@ -186,7 +189,7 @@ type EformsignStatusSignal = {
     display_status: EformsignDocDisplayStatus;
 };
 
-function toStatusSignal(doc: unknown): EformsignStatusSignal {
+function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): EformsignStatusSignal {
     const { current_status: currentStatus, contract_end_date: contractEndDate } = doc as {
         current_status?: {
             status_type?: unknown;
@@ -212,7 +215,7 @@ function toStatusSignal(doc: unknown): EformsignStatusSignal {
                 ? recipient.recipient_type
                 : null),
         contract_end_date: stringFromUnknown(contractEndDate),
-        display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc),
+        display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc, new Date(), calendar),
     };
 }
 
@@ -234,6 +237,7 @@ export class EformsignController {
         private readonly getContractClientCandidateUsecase: GetContractClientCandidateUsecase,
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) { }
 
     /**
@@ -278,9 +282,13 @@ export class EformsignController {
                 ),
             },
         );
+        // Display only, and the request's own branch (params.branchId is the tenant's):
+        // the cached calendar is enough, fetched once for the whole page.
+        const calendar = await this.holidayCalendar.forBranch(params.branchId);
         const { documents } = this.mirrorListService.filterScope(
             snapshot.entries.map((entry) => entry.document),
             params,
+            calendar,
         );
         const page = documents.slice(params.skip, params.skip + params.limit);
 
@@ -289,7 +297,7 @@ export class EformsignController {
             // the 서명 완료→검토 필요 flip moves with the calendar, not with document writes.
             documents: enrichMirrorPage(page).map((document) => ({
                 ...document,
-                display_status: resolveEformsignDocDisplayStatus(document),
+                display_status: resolveEformsignDocDisplayStatus(document, new Date(), calendar),
             })),
             total_rows: documents.length,
             limit: params.limit,
@@ -541,6 +549,8 @@ export class EformsignController {
                         ),
                     },
                 );
+            // Display only; fetched once per request, never per row.
+            const calendar = await this.holidayCalendar.forBranch(branchId);
             const { documents } = this.mirrorListService.filterScope(
                 countSnapshot.entries.map((entry) => entry.document),
                 {
@@ -552,8 +562,9 @@ export class EformsignController {
                     search,
                     excludeDeleted,
                 },
+                calendar,
             );
-            return { documents: documents.map((doc) => toStatusSignal(doc)) };
+            return { documents: documents.map((doc) => toStatusSignal(doc, calendar)) };
         } catch (error) {
             throwHttpOrInternalError(error);
         }
@@ -788,23 +799,101 @@ export class EformsignController {
             }
             return { ...result, unresolved_document_ids: unresolvedDocumentIds };
         } catch (error) {
-            const apiError = error instanceof EformsignApiError ? error : null;
-            const isConfirmedDocumentAbsence = isEformsignDocumentAbsentError(error);
-            if (
-                apiError !== null
-                && apiError.status >= 400
-                && apiError.status < 500
-                // A confirmed absence may mean the document is already gone at the vendor,
-                // so there is nothing left to cancel. Retain the generation-fenced intent
-                // until reconciliation can purge the local detail and PDFs safely.
-                && !isConfirmedDocumentAbsence
-                && ![408, 429].includes(apiError.status)
-            ) {
+            if (isDefinitiveVendorRefusal(error)) {
                 await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
             }
             if (error instanceof HttpException) {
                 throw error;
             }
+            throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
+        }
+    }
+
+    /**
+     * Cancel a contract that a re-issue replaced. Unlike a delete, this never
+     * touches a signed or otherwise finished contract, and it refuses until the
+     * replacement is the client's linked contract, so the client is never left
+     * pointing at nothing. Only a contract eformsign actually cancelled is purged.
+     */
+    @Post("documents/:documentId/supersede")
+    async supersedeDocument(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Param("documentId") documentId: string,
+        @Body() body: SupersedeDocumentRequestDto,
+    ) {
+        let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
+        let vendorCancelled = false;
+        try {
+            const branchId = tenant.branchId ?? "";
+            const allowedDocuments = await this.filterDocumentsByBranch(
+                branchId,
+                [{ id: documentId }],
+                { includePermanentPurgePending: true },
+            );
+            if (allowedDocuments.length !== 1) {
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+            }
+            const client = await this.prisma.client.findFirst({
+                where: { id: body.clientId, branchId },
+                select: { eDocId: true },
+            });
+            if (!client) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            if (!client.eDocId || client.eDocId === documentId) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            // Only this client's own contract can be superseded, never another
+            // client's document or a service-record snapshot.
+            const document = await this.prisma.eformsign_doc.findUnique({
+                where: { documentId },
+                select: { clientId: true, documentKind: true },
+            });
+            if (
+                !document
+                || document.documentKind === "service_record_snapshot"
+                // Positive ownership only: an unowned (clientId null) legacy document is
+                // not this client's, so a caller must not be able to cancel and purge it
+                // just by knowing its id.
+                || document.clientId !== body.clientId
+            ) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            const terminalDocumentIds = await this.documentMirrorService
+                .findTerminalDocumentIds([documentId]);
+            if (terminalDocumentIds.length > 0) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
+            permanentPurgeRequests = await this.documentMirrorService.requestPermanentPurge([documentId]);
+            const result = await this.credentialBoundary.withCredentials(
+                tenant,
+                "document.cancel",
+                ({ accessToken }) => this.eformsignService.cancelDocuments(accessToken, [documentId]),
+            );
+            if (!successfulDeletedDocumentIds(result).includes(documentId)) {
+                // eformsign refused (most likely signed in the meantime): keep the record
+                // and release the purge intent, whatever the refusal code. A kept intent
+                // would let the nightly sync purge a contract that turned out signed.
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            vendorCancelled = true;
+            await this.documentMirrorService.purgeDocuments([documentId]);
+            await this.documentMirrorService.clearPermanentPurgeRequest([]);
+            return { documentId, superseded: true };
+        } catch (error) {
+            // Once eformsign confirmed the cancellation the intent stays, so a failed local
+            // purge is still completed. Before that, release it only when the cancel was
+            // definitively refused or never sent (our own HttpException: a refusal in the
+            // result, or a credential/capability failure). A timeout, network error or 5xx
+            // is ambiguous (eformsign may have processed it), so, as in the permanent-delete
+            // path, the generation-fenced intent is kept for reconciliation to finish.
+            if (
+                !vendorCancelled
+                && permanentPurgeRequests.length > 0
+                && (error instanceof HttpException || isDefinitiveVendorRefusal(error))
+            ) {
+                await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
+            }
+            if (error instanceof HttpException) throw error;
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
@@ -1083,6 +1172,24 @@ export class EformsignController {
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
+}
+
+/**
+ * A vendor HTTP refusal that settles the outcome: 4xx other than a request timeout, rate
+ * limit or confirmed document absence. Everything else (timeouts, network errors, 5xx,
+ * absence) is ambiguous, and the generation-fenced purge intent must be kept for
+ * reconciliation, which can verify the vendor state before purging.
+ */
+function isDefinitiveVendorRefusal(error: unknown): boolean {
+    if (!(error instanceof EformsignApiError)) return false;
+    const { status } = error;
+    return status >= 400
+        && status < 500
+        // A confirmed absence may mean the document is already gone at the vendor,
+        // so there is nothing left to cancel. Retain the intent until reconciliation can
+        // purge the local detail and PDFs safely.
+        && !isEformsignDocumentAbsentError(error)
+        && ![408, 429].includes(status);
 }
 
 function successfulDeletedDocumentIds(result: unknown): string[] {

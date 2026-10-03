@@ -9,6 +9,7 @@ import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
   FileText,
@@ -35,6 +36,7 @@ import {
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocsLiveStream } from "@/hooks/useEformsignDocsLiveStream";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useInfiniteContracts, type ContractsSectionParam } from "@/hooks/useInfiniteContracts";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
 import { useClientServiceRecords } from "@/features/service-records/hooks/use-service-records";
@@ -46,6 +48,7 @@ import {
   type DocumentStatusCategory,
   contractStatusBadgeType,
   mapDocStatusLabel,
+  calendarForEndDate,
   getStatusCategory,
   foldContractStats,
 } from "@/lib/eformsign/status-codes";
@@ -455,6 +458,8 @@ type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
 export default function ContractsPage() {
   const router = useRouter();
+  // Display-only (status labels, stat counts): the built-in calendar stands in while it loads.
+  const { calendar } = useBusinessDayCalendar();
   const searchParams = useSearchParams();
   const [activeSection, setActiveSection] = useState<SectionId>("maternity");
   const [activeTab, setActiveTab] = useState<string>("all");
@@ -587,8 +592,8 @@ export default function ContractsPage() {
   );
 
   const stats = useMemo(
-    () => getContractStatsValues(statusCounts),
-    [statusCounts],
+    () => getContractStatsValues(statusCounts, calendar),
+    [statusCounts, calendar],
   );
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
@@ -612,9 +617,13 @@ export default function ContractsPage() {
 
   const handleStartContractCreation = useCallback(() => {
     setSelectedDocId(null);
-    setContractCreationActiveStep(0);
+    // A creation still in progress is resumed where it is; only a genuinely new
+    // contract starts at the first step.
+    if (!hasContractCreationSession) {
+      setContractCreationActiveStep(0);
+    }
     setIsCreating(true);
-  }, []);
+  }, [hasContractCreationSession]);
 
   useEffect(() => {
     if (searchParams.get("create") !== "1") return;
@@ -644,10 +653,10 @@ export default function ContractsPage() {
   }, []);
 
   const handleContractCreationSessionChange = useCallback((hasSession: boolean) => {
+    // The session ending does not move the wizard: a failed run lands on 계약 정보
+    // via the form's own step change, and real ends (cancel, new send, close) reset
+    // the step themselves.
     setHasContractCreationSession(hasSession);
-    if (!hasSession) {
-      setContractCreationActiveStep(0);
-    }
   }, []);
 
   const handleDeleteRequest = (documentId: string) => {
@@ -823,12 +832,17 @@ export default function ContractsPage() {
                       document={doc}
                       customerName={customerName}
                       isLoading={isLoading}
+                      calendar={calendar}
                     />
                   );
                 }}
               />
           </ListPanel>
 
+          {/* SplitLayout regroups its children into a fragment only when there are more than two,
+              which moves the creation form (and unmounts its session) the moment a document is
+              selected. One stable detail group keeps the form mounted while it is hidden. */}
+          <>
           {(isCreating || hasContractCreationSession) && (
             <div
               data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"
@@ -890,6 +904,7 @@ export default function ContractsPage() {
           ) : !isCreating && !hasContractCreationSession ? (
             <EmptyState icon={FileText} message="계약을 선택하면 상세 정보가 표시됩니다" />
           ) : null}
+          </>
         </SplitLayout>
             </section>
           ) : null}
@@ -949,6 +964,7 @@ export default function ContractsPage() {
                         customerName={resolveCustomerName(doc)}
                         subtitle="제공기록지"
                         isLoading={isLoading}
+                        calendar={calendar}
                       />
                     )}
                   />
@@ -1143,6 +1159,8 @@ export function ContractDetail({
   const isMobile = useIsMobile();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  // Display-only (status label, receipt gate): the built-in calendar stands in while it loads.
+  const { calendar } = useBusinessDayCalendar();
   const documentJobsEnabled = isFeatureEnabled("eformsignDocumentJobs");
   const enqueueFinalizationMutation = useEnqueueEformsignDocumentFinalization();
   const detailQuery = useQuery<EformsignDocument>({
@@ -1172,7 +1190,12 @@ export function ContractDetail({
       full: ["계약 종료일", "계약종료일", "endDate", "contractEndDate"],
     }) ?? "",
   );
-  const statusLabel = mapDocStatusLabel(detailedDocument.current_status, contractEndDateIso || null);
+  const statusLabel = mapDocStatusLabel(
+    detailedDocument.current_status,
+    contractEndDateIso || null,
+    undefined,
+    calendar,
+  );
   const statusType: StatusType = contractStatusBadgeType(statusLabel);
   const [activeDetailTab, setActiveDetailTab] = useState<DetailTabKey>("document");
   const [isReRequestDialogOpen, setIsReRequestDialogOpen] = useState(false);
@@ -2044,25 +2067,20 @@ export function ContractDetail({
               aria-label="계약 작업 불러오는 중"
             />
           ) : isReviewNeeded ? (
-            <div
-              className={
-                reviewAction === "finalize"
-                  ? "grid grid-cols-1 gap-[calc(12px*var(--glint-ui-scale,1))] sm:grid-cols-2 [&>button]:!w-full"
-                  : undefined
-              }
-            >
-              {reviewAction === "finalize" && (
-                <Button
-                  variant="positive-outline"
-                  size="sm"
-                  data-component={`${dataComponent}_header_preview-trigger`}
-                  className="w-full"
-                  onClick={() => setIsPreviewOpen(true)}
-                >
-                  <Eye className="h-4 w-4" />
-                  문서 보기
-                </Button>
-              )}
+            // Both review surfaces reuse this trigger: 계약서 (finalize) previews the
+            // contract, 제공기록지 (preview) previews the service-record document — the
+            // shared modal carries that surface's 확인 review-confirm action below.
+            <div className="grid grid-cols-1 gap-[calc(12px*var(--glint-ui-scale,1))] sm:grid-cols-2 [&>button]:!w-full">
+              <Button
+                variant="positive-outline"
+                size="sm"
+                data-component={`${dataComponent}_header_preview-trigger`}
+                className="w-full"
+                onClick={() => setIsPreviewOpen(true)}
+              >
+                <Eye className="h-4 w-4" />
+                문서 보기
+              </Button>
               <ContractReviewActionButton
                 data-component={`${dataComponent}_header_review-trigger`}
                 action={reviewAction}
@@ -2324,6 +2342,7 @@ export function ContractDetail({
             category,
             currentStatus: detailedDocument.current_status,
             contractEndDate: detailedDocument.contract_end_date,
+            calendar: calendarForEndDate(detailedDocument.contract_end_date, calendar),
           })
             ? undefined
             : () =>
@@ -2357,6 +2376,7 @@ export const contractStatsQueryKeys = {
 
 export function getContractStatsValues(
   statusCounts: EformsignStatusCountsResponse | undefined,
+  calendar?: KrBusinessDayCalendar,
 ): ReturnType<typeof foldContractStats> | null {
-  return statusCounts ? foldContractStats(statusCounts.documents) : null;
+  return statusCounts ? foldContractStats(statusCounts.documents, calendar) : null;
 }

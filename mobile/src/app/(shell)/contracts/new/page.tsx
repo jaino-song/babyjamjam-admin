@@ -32,8 +32,9 @@ import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete"
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
-import { normalizeIsoDate, toIsoDate, todayIsoDate } from "@/lib/contracts/date-input";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { isStrictIsoDate, normalizeIsoDate, toIsoDate, todayIsoDate } from "@/lib/contracts/date-input";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
 import {
@@ -189,6 +190,23 @@ const clientBirthdayValue = (client: ClientWithBirthdayAliases | null | undefine
 const normalizeBirthdayInput = (value: string | null | undefined): string =>
   normalizeBirthdayIsoDate(value) ?? value ?? "";
 
+/**
+ * Calendar years the form's own dates need on top of the default window: the
+ * year of each complete date, plus the year after the start date because a
+ * period that starts in December ends in January.
+ */
+const calendarYearsForDates = (startDate: string, endDate: string): number[] => {
+  const years = new Set<number>();
+  const start = normalizeIsoDate(startDate);
+  const end = normalizeIsoDate(endDate);
+  if (isStrictIsoDate(start)) {
+    years.add(Number(start.slice(0, 4)));
+    years.add(Number(start.slice(0, 4)) + 1);
+  }
+  if (isStrictIsoDate(end)) years.add(Number(end.slice(0, 4)));
+  return [...years];
+};
+
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
   const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
@@ -252,7 +270,54 @@ export default function ContractCreationPage() {
     setFullPrice, setGrant, setActualPrice,
     setStartDate, setEndDate, setPaymentDate,
     setPreservePrefilledPrices,
+    supersede, clearSupersede,
   } = useFormStore();
+
+  // Re-issue: the replaced unsigned contract is cancelled only after the new one was
+  // sent, and only when the contract just sent belongs to the same client. The target
+  // is taken out of the store on entry so it never outlives this visit.
+  const [supersedeTarget, setSupersedeTarget] = useState(supersede);
+  useEffect(() => {
+    clearSupersede();
+  }, [clearSupersede]);
+  useEffect(() => {
+    if (supersedeTarget && clientId !== supersedeTarget.clientId) setSupersedeTarget(null);
+  }, [clientId, supersedeTarget]);
+  const supersedePreviousContract = (sentClientId: number | null | undefined) => {
+    if (!supersedeTarget || sentClientId !== supersedeTarget.clientId) return;
+    const { documentId, clientId: supersedeClientId } = supersedeTarget;
+    setSupersedeTarget(null);
+    eformsignApi.supersedeDocument(documentId, supersedeClientId)
+      .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
+      .catch(() => {
+        toast({
+          variant: "destructive",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
+        });
+      });
+  };
+
+  // The branch holiday calendar. The end date is saved with the contract, so
+  // its auto-calculation waits for `ready`; before then `calendar` is the built-in list.
+  const calendarYears = useMemo(() => calendarYearsForDates(startDate, endDate), [endDate, startDate]);
+  const {
+    calendar,
+    ready: calendarReady,
+    error: calendarError,
+    retry: retryCalendar,
+  } = useBusinessDayCalendar({ extraYears: calendarYears });
+  const calendarRef = useRef(calendar);
+  calendarRef.current = calendar;
+  const endDateCalcSkippedRef = useRef(false);
+  // The auto calculation reached a year the branch calendar does not cover. The end date is
+  // cleared (never left stale), a notice is shown and submitting is blocked until it is resolved.
+  const [endDateUnsupported, setEndDateUnsupported] = useState(false);
+  const endDateCalcInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
+  // The (startDate, duration) a picked client's stored end date was filled with; no recalculation while they stay the same.
+  // A client prefilled from another screen arrives with its stored end date, which is kept too.
+  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(
+    clientId !== null && endDate && startDate && voucherDuration ? { startDate, voucherDuration } : null,
+  );
 
   const { data: voucherPriceInfos, isLoading: isPriceLoading } =
     useVoucherPriceInfos(voucherType || "", voucherYear || 0);
@@ -561,14 +626,53 @@ export default function ContractCreationPage() {
     setActualPrice,
   ]);
 
-  // Business-day end date auto-calc from startDate + duration
+  // Business-day end date auto-calc from startDate + duration, on the branch
+  // calendar. It runs when the start date or duration changes; a run skipped
+  // while the calendar was loading happens once when it becomes ready, and a
+  // new calendar object/version alone never recomputes (or overwrites a manual end date).
   useEffect(() => {
-    if (!startDate || !voucherDuration) return;
+    const previousInputs = endDateCalcInputsRef.current;
+    endDateCalcInputsRef.current = { startDate, voucherDuration };
+    const inputsChanged = previousInputs === null
+      || previousInputs.startDate !== startDate
+      || previousInputs.voucherDuration !== voucherDuration;
+    if (!inputsChanged && !endDateCalcSkippedRef.current) return;
+    const kept = keptEndDateInputsRef.current;
+    if (kept) {
+      if (kept.startDate === startDate && kept.voucherDuration === voucherDuration) {
+        endDateCalcSkippedRef.current = false;
+        setEndDateUnsupported(false);
+        return;
+      }
+      keptEndDateInputsRef.current = null;
+    }
+    if (!startDate || !voucherDuration) {
+      endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
+      return;
+    }
     const n = parseInt(voucherDuration, 10);
-    if (!Number.isFinite(n) || n <= 0) return;
-    const endIso = calcEndDateBusinessDays(startDate, n);
-    if (endIso) setEndDate(endIso);
-  }, [startDate, voucherDuration, setEndDate]);
+    if (!Number.isFinite(n) || n <= 0) {
+      endDateCalcSkippedRef.current = false;
+      setEndDateUnsupported(false);
+      return;
+    }
+    if (!calendarReady) {
+      endDateCalcSkippedRef.current = true;
+      return;
+    }
+    endDateCalcSkippedRef.current = false;
+    try {
+      const endIso = calendarRef.current.calcEndDateBusinessDays(startDate, n);
+      setEndDateUnsupported(false);
+      if (endIso) setEndDate(endIso);
+    } catch {
+      // A year the branch calendar does not cover: clear the end date instead of keeping the
+      // previous one, and leave it to the user (the server validates a typed date).
+      setEndDate("");
+      setEndDateUnsupported(true);
+    }
+  }, [calendarReady, startDate, voucherDuration, setEndDate]);
 
   const showErrorToast = (message: string) => {
     // Locally authored validation copy renders verbatim — the legacy
@@ -632,6 +736,7 @@ export default function ContractCreationPage() {
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
     contractOnlyChoiceRef.current = null;
+    keptEndDateInputsRef.current = null;
     setLoadedClientBaseline(selectedClientId !== null && client
       ? { ...buildLoadedBaseline(client), id: selectedClientId }
       : null);
@@ -659,7 +764,18 @@ export default function ContractCreationPage() {
         setStartDate(startNorm);
         setPaymentDate(defaultPaymentDate);
       }
-      if (client.endDate) setEndDate(normalizeIsoDate(client.endDate));
+      if (client.endDate) {
+        setEndDate(normalizeIsoDate(client.endDate));
+        setEndDateUnsupported(false);
+        if (client.startDate && client.duration) {
+          // Show the stored end date as-is; only a start/duration edit recalculates it.
+          keptEndDateInputsRef.current = {
+            startDate: normalizeIsoDate(client.startDate),
+            voucherDuration: client.duration.toString(),
+          };
+          endDateCalcSkippedRef.current = false;
+        }
+      }
       if (client.primaryEmployee && employees) {
         const primaryEmp = employees.find((e) => e.id === client.primaryEmployee?.id);
         if (primaryEmp) {
@@ -1007,6 +1123,7 @@ export default function ContractCreationPage() {
           }
           iframeOutcomeConfirmedRef.current = true;
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+          supersedePreviousContract(finalClientId);
           startNavigation();
           setTimeout(() => {
             closeEformsignModal();
@@ -1025,6 +1142,8 @@ export default function ContractCreationPage() {
   };
 
   const handleSubmit = async () => {
+    // The saved end date depends on the branch calendar.
+    if (!calendarReady || endDateUnsupported) return;
     if (contractDateProblem) {
       setActiveStep(WIZARD_STEPS.length - 1);
       revealStepMessages(WIZARD_STEPS.length - 1);
@@ -1272,6 +1391,7 @@ export default function ContractCreationPage() {
         );
 
         if (isHeadlessSuccessResponse(headless)) {
+          supersedePreviousContract(finalClientId);
           startNavigation();
           setCreationProgress({ step: "sent", completed: true, failed: false });
           queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
@@ -1354,6 +1474,7 @@ export default function ContractCreationPage() {
               showSubmissionFailure(new Error("The adopted document response was invalid"), "UNKNOWN");
               return;
             }
+            supersedePreviousContract(finalClientId);
             startNavigation();
             setCreationProgress({ step: "sent", completed: true, failed: false });
             queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
@@ -1442,7 +1563,7 @@ export default function ContractCreationPage() {
   const isFirstStep = activeStep === 0;
   const isLastStep = isContractInfoStep;
   const isBusy = isSubmitting || isNavigationPending;
-  const isPrimaryDisabled = isBusy || Boolean(submissionLock);
+  const isPrimaryDisabled = isBusy || Boolean(submissionLock) || (isLastStep && (!calendarReady || endDateUnsupported));
 
   return (
     <>
@@ -1946,6 +2067,12 @@ export default function ContractCreationPage() {
                     <div className={styles.formCardTitle} data-component="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_period-card-title">
                       서비스 기간
                     </div>
+                    <CalendarLoadNotice
+                      error={calendarError ?? (endDateUnsupported ? "unsupported-year" : null)}
+                      onRetry={retryCalendar}
+                      loading={!calendarReady && !calendarError}
+                      dataComponent="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_calendar-notice"
+                    />
                     <ContractFormField
                       dataComponent="mobile_contracts-new_review_start-date-field"
                       label="시작일"
@@ -1984,6 +2111,9 @@ export default function ContractCreationPage() {
                         className={styles.formInput}
                         value={endDateInput}
                         onChange={(e) => {
+                          // A manual end date wins over a calculation that was waiting for the calendar.
+                          endDateCalcSkippedRef.current = false;
+                          setEndDateUnsupported(false);
                           fieldInteractions.onChange("endDate", endDateInput, formatIsoDateInput(e.target.value));
                           handleDateInputChange(setEndDateInput, setEndDate, e.target.value);
                         }}

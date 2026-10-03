@@ -1,5 +1,6 @@
 import { ClientService } from "application/services/client.service";
 import { ClientEntity } from "domain/entities/client.entity";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 type AutomaticUpdateResult = "updated" | "stale";
 
@@ -59,7 +60,7 @@ function createService(client: ClientEntity) {
         clientRepository as never,
         {} as never,
         {} as never,
-        {} as never,
+        {} as never, createHolidayCalendarStub(),
     );
     return { clientRepository, listClientsUsecase, prisma, service };
 }

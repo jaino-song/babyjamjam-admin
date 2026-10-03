@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { api } from "@/lib/api/client";
 import { ClientFormPanel } from "../ClientFormDialog";
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
@@ -68,7 +69,7 @@ describe("ClientFormPanel phone duplicate check", () => {
     expect(nameInput).toHaveAttribute("placeholder", "홍길동");
     expect(screen.getByLabelText(/주소/)).toHaveAttribute(
       "placeholder",
-      "예: 인천광역시 서구",
+      "인천광역시 서구",
     );
     fireEvent.change(nameInput, { target: { value: "홍길동" } });
     fireEvent.change(screen.getByLabelText(/생년월일/), { target: { value: "1990-01-01" } });

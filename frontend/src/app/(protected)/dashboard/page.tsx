@@ -9,6 +9,7 @@ import {
 } from "@/hooks/useDashboardStats";
 import { Client } from "@/lib/client/types";
 import { isServiceEndingNextBusinessDay } from "@/lib/dashboard/client-due";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useInitialUser } from "@/providers/UserProvider";
 import {
   StatsBar,
@@ -59,6 +60,8 @@ export default function DashboardPage() {
     refetch: refetchOverview,
   } = useDashboardOverview(50);
   const user = useInitialUser();
+  // Display-only: the built-in calendar stands in until the branch calendar loads.
+  const { calendar } = useBusinessDayCalendar();
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [extraClientPages, setExtraClientPages] = useState<Client[][]>([]);
   const [isFetchingNextClients, setIsFetchingNextClients] = useState(false);
@@ -192,8 +195,8 @@ export default function DashboardPage() {
   }, [upcomingClients]);
 
   const endingNextBusinessDayClients = useMemo(() => {
-    return clients.filter((client) => isServiceEndingNextBusinessDay(client));
-  }, [clients]);
+    return clients.filter((client) => isServiceEndingNextBusinessDay(client, new Date(), calendar));
+  }, [calendar, clients]);
 
   const dashboardStats = useMemo(() => {
     return {
@@ -261,6 +264,7 @@ export default function DashboardPage() {
           >
             <RecentActivitiesPanel
               items={endingNextBusinessDayClients}
+              calendar={calendar}
               isLoading={overviewLoading}
               isError={overviewError}
               onRetry={() => refetchClients()}

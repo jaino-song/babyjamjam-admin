@@ -14,6 +14,7 @@ import {
     PaginatedResult,
 } from "domain/repositories/client.repository.interface";
 import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import {
@@ -514,6 +515,7 @@ export class SbClientRepository implements IClientRepository {
         id: number,
         expectedTargetVersion: string,
         updates: Parameters<IClientRepository["updateIfTargetVersion"]>[3],
+        calendar: KrBusinessDayCalendar,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null> {
         const apply = async (tx: Prisma.TransactionClient): Promise<ClientEntity | null> => {
@@ -522,7 +524,7 @@ export class SbClientRepository implements IClientRepository {
                 return null;
             }
 
-            current.update(updates);
+            current.update(updates, calendar);
             const data = await this.getClientUpdateData(current, tx);
             const updated = await tx.client.updateMany({
                 where: { id, branchId: branchid },

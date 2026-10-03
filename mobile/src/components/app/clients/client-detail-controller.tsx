@@ -6,14 +6,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 
 import { clientQueryKeys, fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
-import { useEmployees } from "@/hooks/useEmployees";
+import { useIssueContract } from "@/hooks/useIssueContract";
 import { useClientMessageHistory } from "@/hooks/useClientMessageHistory";
 import { useLocale } from "@/providers/LocaleProvider";
 import { eformsignApi } from "@/services/api";
-import { todayIsoDate } from "@/lib/contracts/date-input";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
-import { useFormStore } from "@/stores/form-store";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { Button } from "@/components/ui/button";
 import type { Client } from "@/lib/client/types";
@@ -24,29 +22,6 @@ import {
   type DetailTabId,
 } from "./client-detail";
 
-function contractPrefillDate(value: string | null | undefined): string | undefined {
-  if (!value) return undefined;
-
-  const dateOnlyMatch = value.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (dateOnlyMatch) return dateOnlyMatch[1];
-
-  const digits = value.replace(/\D/g, "");
-  if (digits.length >= 8) {
-    const iso = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
-    const date = new Date(`${iso}T00:00:00`);
-    if (!Number.isNaN(date.getTime())) return iso;
-  }
-
-  if (digits.length === 6) {
-    const yy = Number(digits.slice(0, 2));
-    const year = yy >= 70 ? 1900 + yy : 2000 + yy;
-    const iso = `${year}-${digits.slice(2, 4)}-${digits.slice(4, 6)}`;
-    const date = new Date(`${iso}T00:00:00`);
-    if (!Number.isNaN(date.getTime())) return iso;
-  }
-
-  return undefined;
-}
 
 export interface UseClientDetailControllerOptions {
   client?: Client | null;
@@ -83,8 +58,6 @@ export function useClientDetailController({
   const locale = useLocale();
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { data: employees = [] } = useEmployees();
-  const prefillContractCreation = useFormStore((state) => state.prefillFromContract);
   const deleteClient = useDeleteClient();
   // A URL-selected client is authoritative while the detail request is in
   // flight. A selected row may seed the controller only when it represents
@@ -226,39 +199,7 @@ export function useClientDetailController({
     if (localDetailClient) router.push(`/messages/new?clientId=${localDetailClient.id}`);
   }, [localDetailClient, router]);
 
-  const handleIssueContract = useCallback((target: Client) => {
-    const primaryEmployee =
-      employees.find((employee) => employee.id === target.primaryEmployee?.id) ??
-      employees.find((employee) => employee.name.trim() === target.primaryEmployee?.name?.trim());
-    const secondaryEmployee = target.secondaryEmployee
-      ? employees.find((employee) => employee.id === target.secondaryEmployee?.id)
-      : undefined;
-
-    prefillContractCreation({
-      clientId: target.id,
-      name: target.name,
-      phone: target.phone ?? "",
-      birthday: target.birthday ?? "",
-      dueDate: contractPrefillDate(target.dueDate),
-      address: target.address ?? "",
-      employeeId: primaryEmployee?.id ?? target.primaryEmployee?.id ?? null,
-      employeeName: primaryEmployee?.name ?? target.primaryEmployee?.name ?? "",
-      employeePhone: primaryEmployee?.phone ?? "",
-      employee2Id: secondaryEmployee?.id ?? target.secondaryEmployee?.id ?? null,
-      employee2Name: secondaryEmployee?.name ?? target.secondaryEmployee?.name ?? "",
-      employee2Phone: secondaryEmployee?.phone ?? target.secondaryEmployee?.phone ?? "",
-      startDate: contractPrefillDate(target.startDate),
-      endDate: contractPrefillDate(target.endDate),
-      fullPrice: target.fullPrice ?? "",
-      grant: target.grant ?? "",
-      actualPrice: target.actualPrice ?? "",
-      paymentDate: todayIsoDate(),
-      voucherType: target.type ?? "",
-      voucherDuration: target.duration != null ? String(target.duration) : "",
-      area: target.areaId ?? "",
-    });
-    router.push("/contracts/new");
-  }, [employees, prefillContractCreation, router]);
+  const handleIssueContract = useIssueContract();
 
   const handleDeleteConfirm = async () => {
     if (

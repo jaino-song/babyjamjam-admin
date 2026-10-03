@@ -1,5 +1,5 @@
 import type { Client } from "@/lib/client/types";
-import { diffBusinessDaysKr, isoDateInKorea } from "@/lib/date/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 export interface DashboardDueInfo {
   due: string;
@@ -19,10 +19,19 @@ function normalizeIsoDate(value: string | null | undefined) {
   return isoDateInKorea(date);
 }
 
-function businessDayDiff(targetDate: string | null | undefined, today = new Date()) {
+function businessDayDiff(
+  targetDate: string | null | undefined,
+  calendar: KrBusinessDayCalendar,
+  today = new Date(),
+) {
   const targetIso = normalizeIsoDate(targetDate);
   if (!targetIso) return null;
-  return diffBusinessDaysKr(targetIso, isoDateInKorea(today));
+  try {
+    return calendar.diffBusinessDays(targetIso, isoDateInKorea(today));
+  } catch {
+    // A year the branch calendar does not cover: show no due text rather than a wrong one.
+    return null;
+  }
 }
 
 function dueToneForBusinessDiff(diff: number): DashboardDueInfo["dueTone"] | undefined {
@@ -34,9 +43,10 @@ function dueToneForBusinessDiff(diff: number): DashboardDueInfo["dueTone"] | und
 
 export function dueForServiceStartDate(
   startDate: string | null | undefined,
+  calendar: KrBusinessDayCalendar,
   today = new Date(),
 ): DashboardDueInfo | null {
-  const diff = businessDayDiff(startDate, today);
+  const diff = businessDayDiff(startDate, calendar, today);
   if (diff === null) return null;
 
   if (diff < 0) {
@@ -48,9 +58,10 @@ export function dueForServiceStartDate(
 
 export function dueForServiceEndDate(
   endDate: string | null | undefined,
+  calendar: KrBusinessDayCalendar,
   today = new Date(),
 ): DashboardDueInfo | null {
-  const diff = businessDayDiff(endDate, today);
+  const diff = businessDayDiff(endDate, calendar, today);
   if (diff === null) return null;
 
   if (diff < 0) {
@@ -62,9 +73,10 @@ export function dueForServiceEndDate(
 
 function dueForReplacementRequestDate(
   requestedAt: string | null | undefined,
+  calendar: KrBusinessDayCalendar,
   today = new Date(),
 ): DashboardDueInfo {
-  const diff = businessDayDiff(requestedAt, today);
+  const diff = businessDayDiff(requestedAt, calendar, today);
   if (diff === null || diff === 0) return { due: "교체 요청 오늘", dueTone: "urgent" };
   if (diff < 0) return { due: `교체 요청 ${Math.abs(diff)} 영업일 경과`, dueTone: "urgent" };
   return { due: `교체 요청 ${diff} 영업일 남음`, dueTone: "urgent" };
@@ -72,25 +84,27 @@ function dueForReplacementRequestDate(
 
 export function dueForContractRequired(
   client: Pick<Client, "startDate">,
+  calendar: KrBusinessDayCalendar,
   today = new Date(),
 ): DashboardDueInfo | null {
-  return dueForServiceStartDate(client.startDate, today);
+  return dueForServiceStartDate(client.startDate, calendar, today);
 }
 
 export function dueForServiceStatus(
   client: Pick<Client, "serviceStatus" | "startDate" | "endDate" | "updatedAt" | "createdAt">,
+  calendar: KrBusinessDayCalendar,
   today = new Date(),
 ): DashboardDueInfo | null {
   switch (client.serviceStatus) {
     case "waiting":
-      return dueForServiceStartDate(client.startDate, today);
+      return dueForServiceStartDate(client.startDate, calendar, today);
     case "active":
-      return dueForServiceEndDate(client.endDate, today);
+      return dueForServiceEndDate(client.endDate, calendar, today);
     case "completed":
     case "terminated":
       return null;
     case "replacement_requested":
-      return dueForReplacementRequestDate(client.updatedAt ?? client.createdAt, today);
+      return dueForReplacementRequestDate(client.updatedAt ?? client.createdAt, calendar, today);
     default:
       return null;
   }

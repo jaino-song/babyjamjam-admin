@@ -847,6 +847,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   );
   const receiverEntryError = receiverEntry && receiverEntry.receiver === receiver ? receiverEntry.message : null;
   const setReceiverEntryError = (message: SlotMessage) => setReceiverEntry({ message, receiver });
+  // Entry problems are tied to the receiver text only, so a client picked from the
+  // dropdown (which leaves that text alone) must clear them explicitly.
+  const clearReceiverEntryError = () => setReceiverEntry(null);
   const [recipientNameInputValue, setRecipientNameInputValue] = useState("");
   const [recipients, setRecipients] = useState<RecipientChip[]>(() => initialRecipient ? [initialRecipient] : []);
 
@@ -1570,6 +1573,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
 
     setRecipients((current) => [...current, ...filteredRecipients]);
     setReceiver("");
+    clearReceiverEntryError();
     setErrorMessage(null);
     return true;
   };
@@ -1605,6 +1609,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setIsReceiptLinkPreparing(true);
       setRecipients([selectedRecipient]);
       setReceiver("");
+      clearReceiverEntryError();
       setErrorMessage(null);
       wasAdded = true;
     } else {
@@ -1707,6 +1712,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setIsReceiptLinkPreparing(false);
     }
     setRecipients((current) => current.filter((item) => item.id !== recipientId));
+    clearReceiverEntryError();
   };
 
   const handleTemplateVariableChange = (key: string, value: string) => {
@@ -1998,6 +2004,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         onChange={handleClientRecipientSelect}
                         inputValue={recipientNameInputValue}
                         onInputValueChange={(value) => {
+                          if (value !== recipientNameInputValue) clearReceiverEntryError();
                           setRecipientNameInputValue(value);
                           if (!isServiceEndNoticeSelected) {
                             handleTemplateVariableChange("name", value);

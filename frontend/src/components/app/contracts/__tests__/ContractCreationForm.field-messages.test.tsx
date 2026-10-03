@@ -11,6 +11,7 @@ const mockCreateClientMutateAsync = jest.fn();
 const mockUpdateClientMutateAsync = jest.fn();
 const mockDeleteClientMutateAsync = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));

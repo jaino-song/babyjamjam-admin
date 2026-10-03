@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { getKoreanHolidays } from "../src/lib/date/business-days";
+
 /**
  * This is the UI side of the service-record contract. `totalSessions: 4` is a
  * synthetic fixture so it can prove the rendered slot count without mutating
@@ -10,6 +12,23 @@ test("renders exactly four service-record slots from the supplied session count"
   const token = "phase3-service-record-four-slots";
   await page.route("**/api/**", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) });
+  });
+  // The token page's branch calendar (public holidays for the requested year). Registered after the
+  // `**/api/**` catch-all above, because Playwright matches the last-registered route first.
+  await page.route(`**/api/service-record/${token}/holidays**`, async (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    let holidays: string[] = [];
+    let supported = true;
+    try {
+      holidays = [...getKoreanHolidays(year)];
+    } catch {
+      supported = false;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ year, revision: 1, supported, holidays: holidays.map((date) => ({ date, name: "공휴일" })) }),
+    });
   });
   await page.route(`**/api/service-record/${token}/link`, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ valid: true }) });

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { getKoreanHolidays } from "../src/lib/date/business-days";
+
 /**
  * The registration wizard used to take every date as bare YYMMDD. Dates are
  * keyed in as YYYY-MM-DD now, matching the call review sheet, so a reviewer
@@ -41,8 +43,30 @@ async function mockApi(page: Page) {
   // registered first and the specific handlers override it.
   await page.route("**/api/**", (route) => route.fulfill(json([])));
   await page.route("**/api/auth/me", (route) =>
-    route.fulfill(json({ id: "owner-1", name: "관리자", role: "owner" })),
+    route.fulfill(json({ id: "owner-1", name: "관리자", role: "owner", branchId: "e2e-branch" })),
   );
+  // The branch holiday calendar the wizard waits for: the public list, no branch edits.
+  await page.route("**/api/branches/*/holidays**", (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    let dates: string[] = [];
+    let supported = true;
+    try {
+      dates = [...getKoreanHolidays(year)];
+    } catch {
+      supported = false;
+    }
+    return route.fulfill(
+      json({
+        year,
+        revision: 1,
+        supported,
+        synced: true,
+        lastSyncedAt: null,
+        holidays: dates.map((date) => ({ date, name: "공휴일", source: "public", excluded: false, overrideId: null })),
+        inactiveOverrides: [],
+      }),
+    );
+  });
   await page.route("**/api/clients/7", (route) => route.fulfill(json(CLIENT)));
 }
 

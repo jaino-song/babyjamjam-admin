@@ -2,10 +2,12 @@ import {
   getStatusCategory,
   getStatusColor,
   isDeletedStatusCode,
+  isReceiptSendableOnCalendar,
   mapDocStatusLabel,
   mapStatusToLabel,
   normalizeStatusCode,
 } from "../status-codes";
+import { createKrBusinessDayCalendar, getKoreanHolidays, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 
 describe("eformsign status code helpers", () => {
   it("normalizes status codes to the 3-digit eformsign format", () => {
@@ -69,5 +71,61 @@ describe("eformsign status code helpers", () => {
         step_recipients: [{ recipient_type: "01" }],
       }),
     ).toBe("검토 필요");
+  });
+
+  describe("review window on a branch calendar", () => {
+    const providerReviewStep = {
+      status_type: "060",
+      step_type: "05",
+      step_name: "제공기관 확인",
+      step_recipients: [{ recipient_type: "01" }],
+    };
+
+    beforeEach(() => {
+      // Friday 2026-07-10, noon KST.
+      jest.useFakeTimers({ now: new Date("2026-07-10T03:00:00Z") });
+    });
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("opens the review window a business day earlier when the branch closes the day before the end date", () => {
+      const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-07-13"], {
+        version: "kr-db-test",
+        supportedYears: [2026],
+      });
+
+      // End date Tuesday 07-14: the window opens one business day before it.
+      expect(mapDocStatusLabel(providerReviewStep, "2026-07-14", null, KR_BUILTIN_CALENDAR)).toBe("서명 완료");
+      expect(mapDocStatusLabel(providerReviewStep, "2026-07-14", null, branchCalendar)).toBe("검토 필요");
+    });
+
+    it("reads an end date in a year the branch calendar did not load on the built-in list", () => {
+      const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026)], {
+        version: "kr-db-test",
+        supportedYears: [2026],
+      });
+
+      expect(mapDocStatusLabel(providerReviewStep, "2025-07-14", null, branchCalendar)).toBe("검토 필요");
+    });
+
+    it("gates the receipt action on the built-in list for an end date the branch calendar did not load", () => {
+      const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026)], {
+        version: "kr-db-test",
+        supportedYears: [2026],
+      });
+      const params = {
+        displayStatus: null,
+        category: "in-progress" as const,
+        currentStatus: providerReviewStep,
+        contractEndDate: "2024-12-20",
+      };
+
+      expect(() => isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).not.toThrow();
+      expect(isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).toBe(
+        isReceiptSendableOnCalendar({ ...params, calendar: KR_BUILTIN_CALENDAR }),
+      );
+      expect(isReceiptSendableOnCalendar({ ...params, calendar: branchCalendar })).toBe(true);
+    });
   });
 });

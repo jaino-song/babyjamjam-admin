@@ -7,7 +7,7 @@ import { ClientEntity, clientDurationOutOfRangeMessage } from "domain/entities/c
 import { IClientRepository } from "domain/repositories/client.repository.interface";
 import { isServiceStatus, SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
 import {
-    countBusinessDaysKr,
+    type KrBusinessDayCalendar,
     UnsupportedKoreanHolidayYearError,
 } from "domain/utils/business-days";
 
@@ -127,13 +127,15 @@ export function parseClientDate(value: string | null | undefined, field: ClientD
 
 /**
  * Derive a client's persisted duration from its authoritative calendar dates.
- * The count is inclusive and skips Korean weekends/holidays exactly as the
- * service-record lifecycle does. A missing endpoint remains nullable for
- * pre-booking clients that do not yet have a complete service period.
+ * The count is inclusive and skips weekends and the supplied branch calendar's
+ * holidays exactly as the service-record lifecycle does. A missing endpoint
+ * remains nullable for pre-booking clients that do not yet have a complete
+ * service period.
  */
 export function deriveClientDuration(
     startDate: Date | null | undefined,
     endDate: Date | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): number | null {
     if (!startDate || !endDate) return null;
     if (
@@ -150,7 +152,7 @@ export function deriveClientDuration(
     }
 
     try {
-        const duration = countBusinessDaysKr(
+        const duration = calendar.countBusinessDays(
             startDate.toISOString().slice(0, 10),
             endDate.toISOString().slice(0, 10),
         );

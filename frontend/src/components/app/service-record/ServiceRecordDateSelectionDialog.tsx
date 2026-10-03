@@ -11,16 +11,13 @@ import {
     CompactDateSelect,
     type CompactDateSelectOption,
 } from "@/components/app/v3";
-import {
-    assertSupportedKoreanHolidayYear,
-    KOREAN_HOLIDAY_CALENDAR,
-    KOREAN_HOLIDAY_CALENDAR_VERSION,
-    isBusinessDayKr,
-} from "@/lib/date/business-days";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 const SOURCE_COMPONENT = "ServiceRecordDateSelectionDialog";
 const DEFAULT_DATA_COMPONENT = "desktop_service-record-admin_date-selection-dialog";
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const MIN_CALENDAR_YEAR = 2000;
+const MAX_CALENDAR_YEAR = 2100;
 
 export type ServiceRecordDateBlockReason =
     | "malformed"
@@ -42,6 +39,8 @@ export interface ServiceRecordDateSelectionDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     currentServiceDate: string;
+    /** The branch calendar; business days and selectable years come from it. */
+    calendar: KrBusinessDayCalendar;
     /** Explicitly retained selection after a failed save; never auto-submitted. */
     selectedServiceDate?: string | null;
     sessionLabel: ReactNode;
@@ -96,14 +95,14 @@ function formatDateForDisplay(value: string): string | null {
     return parts ? `${String(parts.year).padStart(4, "0")}.${String(parts.month).padStart(2, "0")}.${String(parts.day).padStart(2, "0")}` : null;
 }
 
-function toDraftSelection(value: string): DraftSelection {
+function toDraftSelection(value: string, calendar: KrBusinessDayCalendar): DraftSelection {
     const parts = parseIsoDate(value);
     if (!parts) {
         return { year: "", month: "", day: "", blockedReason: "malformed" };
     }
 
     try {
-        assertSupportedKoreanHolidayYear(parts.year);
+        calendar.assertSupportedYear(parts.year);
     } catch {
         return {
             year: "",
@@ -113,7 +112,7 @@ function toDraftSelection(value: string): DraftSelection {
         };
     }
 
-    if (!isBusinessDayKr(value)) {
+    if (!calendar.isBusinessDay(value)) {
         return {
             year: "",
             month: "",
@@ -130,21 +129,35 @@ function toDraftSelection(value: string): DraftSelection {
     };
 }
 
-export function getSupportedKoreanBusinessYears(): number[] {
-    return Object.keys(KOREAN_HOLIDAY_CALENDAR)
-        .map(Number)
-        .filter((year) => Number.isInteger(year))
-        .sort((left, right) => left - right);
+function isSupportedYear(calendar: KrBusinessDayCalendar, year: number): boolean {
+    try {
+        calendar.assertSupportedYear(year);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
-export function getBusinessDayOptions(year: number, month: number): CompactDateSelectOption[] {
-    if (!getSupportedKoreanBusinessYears().includes(year) || month < 1 || month > 12) return [];
+export function getSupportedKoreanBusinessYears(calendar: KrBusinessDayCalendar): number[] {
+    const years: number[] = [];
+    for (let year = MIN_CALENDAR_YEAR; year <= MAX_CALENDAR_YEAR; year += 1) {
+        if (isSupportedYear(calendar, year)) years.push(year);
+    }
+    return years;
+}
+
+export function getBusinessDayOptions(
+    year: number,
+    month: number,
+    calendar: KrBusinessDayCalendar,
+): CompactDateSelectOption[] {
+    if (!isSupportedYear(calendar, year) || month < 1 || month > 12) return [];
 
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const options: CompactDateSelectOption[] = [];
     for (let day = 1; day <= daysInMonth; day += 1) {
         const value = toIsoDate({ year, month, day });
-        if (!isBusinessDayKr(value)) continue;
+        if (!calendar.isBusinessDay(value)) continue;
         options.push({
             label: `${day}일`,
             value: String(day).padStart(2, "0"),
@@ -153,31 +166,25 @@ export function getBusinessDayOptions(year: number, month: number): CompactDateS
     return options;
 }
 
-export function getInitialServiceRecordDateSelection(value: string): InitialServiceRecordDateSelection {
+export function getInitialServiceRecordDateSelection(
+    value: string,
+    calendar: KrBusinessDayCalendar,
+): InitialServiceRecordDateSelection {
     const parts = parseIsoDate(value);
     if (!parts) return { parts: null, reason: "malformed" };
 
-    try {
-        assertSupportedKoreanHolidayYear(parts.year);
-    } catch {
-        return { parts: null, reason: "unsupported-year" };
-    }
+    if (!isSupportedYear(calendar, parts.year)) return { parts: null, reason: "unsupported-year" };
 
-    return isBusinessDayKr(value)
+    return calendar.isBusinessDay(value)
         ? { parts, reason: null }
         : { parts: null, reason: "non-business-day" };
 }
 
-export function isSelectableServiceRecordDate(value: string): boolean {
+export function isSelectableServiceRecordDate(value: string, calendar: KrBusinessDayCalendar): boolean {
     const parts = parseIsoDate(value);
     if (!parts) return false;
 
-    try {
-        assertSupportedKoreanHolidayYear(parts.year);
-        return isBusinessDayKr(value);
-    } catch {
-        return false;
-    }
+    return isSupportedYear(calendar, parts.year) && calendar.isBusinessDay(value);
 }
 
 function getMonthOptions(): CompactDateSelectOption[] {
@@ -187,8 +194,8 @@ function getMonthOptions(): CompactDateSelectOption[] {
     });
 }
 
-function getYearOptions(): CompactDateSelectOption[] {
-    return getSupportedKoreanBusinessYears().map((year) => ({
+function getYearOptions(calendar: KrBusinessDayCalendar): CompactDateSelectOption[] {
+    return getSupportedKoreanBusinessYears(calendar).map((year) => ({
         label: `${year}년`,
         value: String(year),
     }));
@@ -199,25 +206,26 @@ function getBlockedMessage(reason: ServiceRecordDateBlockReason): string {
         case "malformed":
             return "현재 제공일 형식이 올바르지 않아 변경할 수 없습니다.";
         case "unsupported-year":
-            return `현재 제공일의 연도를 지원하지 않는 달력입니다. 지원 달력 버전: ${KOREAN_HOLIDAY_CALENDAR_VERSION}`;
+            return "현재 제공일의 연도를 지원하지 않는 달력입니다.";
         case "non-business-day":
             return "현재 제공일이 주말 또는 공휴일이어서 변경할 수 없습니다.";
     }
 }
 
-function getSelectionDate(selection: DraftSelection): string | null {
+function getSelectionDate(selection: DraftSelection, calendar: KrBusinessDayCalendar): string | null {
     if (selection.blockedReason || !/^\d{4}$/.test(selection.year) || !/^\d{2}$/.test(selection.month) || !/^\d{2}$/.test(selection.day)) {
         return null;
     }
 
     const value = `${selection.year}-${selection.month}-${selection.day}`;
-    return isSelectableServiceRecordDate(value) ? value : null;
+    return isSelectableServiceRecordDate(value, calendar) ? value : null;
 }
 
 export function ServiceRecordDateSelectionDialog({
     open,
     onOpenChange,
     currentServiceDate,
+    calendar,
     selectedServiceDate = null,
     sessionLabel,
     onApply,
@@ -230,9 +238,9 @@ export function ServiceRecordDateSelectionDialog({
 }: ServiceRecordDateSelectionDialogProps) {
     const dataComponent = canonicalDataComponent ?? legacyDataComponent ?? DEFAULT_DATA_COMPONENT;
     const selectionSourceDate = selectedServiceDate ?? currentServiceDate;
-    const resetKey = `${open ? "open" : "closed"}:${currentServiceDate}:${selectionSourceDate}`;
+    const resetKey = `${open ? "open" : "closed"}:${calendar.version}:${currentServiceDate}:${selectionSourceDate}`;
     const [draftState, setDraftState] = useState<DraftSelectionState>(() => ({
-        ...toDraftSelection(selectionSourceDate),
+        ...toDraftSelection(selectionSourceDate, calendar),
         resetKey,
     }));
     const [validationState, setValidationState] = useState<{ resetKey: string; error: string | null }>(() => ({
@@ -241,26 +249,26 @@ export function ServiceRecordDateSelectionDialog({
     }));
     const selection: DraftSelection = draftState.resetKey === resetKey
         ? draftState
-        : toDraftSelection(selectionSourceDate);
+        : toDraftSelection(selectionSourceDate, calendar);
     const applyError = validationState.resetKey === resetKey ? validationState.error : null;
 
     const updateSelection = (update: (current: DraftSelection) => DraftSelection) => {
         setDraftState((current) => ({
-            ...update(current.resetKey === resetKey ? current : toDraftSelection(selectionSourceDate)),
+            ...update(current.resetKey === resetKey ? current : toDraftSelection(selectionSourceDate, calendar)),
             resetKey,
         }));
     };
     const clearApplyError = () => setValidationState({ resetKey, error: null });
 
-    const yearOptions = useMemo(() => getYearOptions(), []);
+    const yearOptions = useMemo(() => getYearOptions(calendar), [calendar]);
     const monthOptions = useMemo(() => getMonthOptions(), []);
     const dayOptions = useMemo(
         () => selection.year && selection.month
-            ? getBusinessDayOptions(Number(selection.year), Number(selection.month))
+            ? getBusinessDayOptions(Number(selection.year), Number(selection.month), calendar)
             : [],
-        [selection.month, selection.year],
+        [calendar, selection.month, selection.year],
     );
-    const selectedDate = useMemo(() => getSelectionDate(selection), [selection]);
+    const selectedDate = useMemo(() => getSelectionDate(selection, calendar), [calendar, selection]);
     const isBlocked = selection.blockedReason !== null;
     const controlsDisabled = busy || disabled;
     const applyDisabled = controlsDisabled || isBlocked || selectedDate === null;
@@ -275,8 +283,8 @@ export function ServiceRecordDateSelectionDialog({
     };
 
     const handleApply = () => {
-        const nextDate = getSelectionDate(selection);
-        if (!nextDate || !isSelectableServiceRecordDate(nextDate)) {
+        const nextDate = getSelectionDate(selection, calendar);
+        if (!nextDate || !isSelectableServiceRecordDate(nextDate, calendar)) {
             setValidationState({
                 resetKey,
                 error: "선택한 날짜가 영업일이 아닙니다. 다시 선택해 주세요.",

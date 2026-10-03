@@ -2,6 +2,8 @@ import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 function contractDetail() {
     return {
@@ -85,7 +87,7 @@ function expectedMirrorGeneration() {
 }
 
 describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
-    function setup(document = mirroredDocument()) {
+    function setup(document = mirroredDocument(), holidayCalendar = createHolidayCalendarStub()) {
         const transaction = {
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
@@ -185,6 +187,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         };
         return {
             document,
+            holidayCalendar,
             transaction,
             prisma,
             settings,
@@ -195,7 +198,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 prisma as never,
                 config,
                 settings as never,
-                messageTrigger as never,
+                holidayCalendar, messageTrigger as never,
                 serviceRecordLifecycle as never,
                 notificationService as never,
             ),
@@ -571,7 +574,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             "eformsign_doc",
             "eformsign_doc",
         ]);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction, undefined);
     });
 
     it("does not claim an older mirrored revision before document or client pointer writes", async () => {
@@ -751,7 +754,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
             data: { eDocId: "doc-1" },
         });
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(21, transaction, undefined);
     });
 
     it("does not initialize lifecycle when an assigned mirror repair is ambiguous", async () => {
@@ -892,7 +895,37 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             }),
         });
         expect(serviceRecordLifecycle.ensureForClient)
-            .toHaveBeenCalledWith(31, expect.anything());
+            .toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
+    });
+
+    it("derives the created client's duration from the creating branch's calendar, loaded fresh", async () => {
+        // 2026-08-01..14 holds 10 business days; the branch adds 2026-08-12 off.
+        const holidayCalendar = createHolidayCalendarStub();
+        const branchCalendar = createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), "2026-08-12"],
+            { supportedYears: [2026], version: "branch-test" },
+        );
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+        const document = mirroredDocument({
+            branchId: "branch-1",
+            customerPhone: "01012345678",
+            detailPayload: contractDetail(),
+        });
+        const { transaction, usecase, prisma, serviceRecordLifecycle } = setup(document, holidayCalendar);
+        transaction.client.findMany.mockResolvedValue([]);
+
+        await expect(usecase.execute("doc-1")).resolves.toBe("created");
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-1", { fresh: true });
+        // Read once, before the serializable transaction opens, and handed to the lifecycle repair.
+        expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction, branchCalendar);
+        expect(transaction.client.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ duration: 9 }),
+            select: { id: true },
+        });
     });
 
     it("auto-registers a branchless contract only after the observed generation and ownership fence", async () => {
@@ -1281,7 +1314,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
         expect(transaction.message_trigger_rule.upsert).not.toHaveBeenCalled();
         expect(transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything());
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("retries a raw PostgreSQL serialization conflict from the mirror fence", async () => {
@@ -1415,6 +1448,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
             21,
             transaction,
+            undefined,
         );
     });
 
@@ -1447,6 +1481,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
             31,
             transaction,
+            KR_BUILTIN_CALENDAR,
         );
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
         expect(messageTrigger.syncClientRulesForClient).not.toHaveBeenCalled();
@@ -1536,7 +1571,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(tx.client.create).toHaveBeenCalledTimes(1);
         expect(tx.employee_schedule.create).toHaveBeenCalledTimes(1);
         expect(tx.eformsign_doc.updateMany).not.toHaveBeenCalled();
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, transaction, KR_BUILTIN_CALENDAR);
         expect(messageTrigger.ensureDefaultRulesForBranch).not.toHaveBeenCalled();
     });
 
@@ -1565,6 +1600,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
             31,
             transaction,
+            KR_BUILTIN_CALENDAR,
         );
         expect(messageTrigger.ensureDefaultRulesForBranch)
             .toHaveBeenCalledWith("branch-1");
@@ -1661,7 +1697,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 customerPhone: "01012345678",
             },
         });
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything());
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(31, expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("uses only an explicitly active global branch for auto-registration", async () => {

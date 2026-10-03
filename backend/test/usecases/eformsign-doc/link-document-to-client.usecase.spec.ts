@@ -1,6 +1,14 @@
 import { LinkDocumentToClientUsecase } from "application/usecases/eformsign-doc/link-document-to-client.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
+
+/** A branch calendar over the given years: the built-in 2026 holidays plus the given branch-added days off. */
+const branchCalendar = (extra: string[], supportedYears = [2026]) => createKrBusinessDayCalendar(
+    [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra],
+    { supportedYears, version: "branch-test" },
+);
 
 describe("LinkDocumentToClientUsecase", () => {
     const branchId = "branch-1";
@@ -81,7 +89,7 @@ describe("LinkDocumentToClientUsecase", () => {
         eformsignDocRepository.linkClientIfActive.mockResolvedValue(true);
         usecase = new LinkDocumentToClientUsecase(
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
     });
 
@@ -186,5 +194,28 @@ describe("LinkDocumentToClientUsecase", () => {
         );
         expect(phoneMatchedClient.eDocId).toBeNull();
         expect(clientRepository.update).not.toHaveBeenCalled();
+    });
+    it("re-derives the client duration with the branch calendar, loaded fresh", async () => {
+        // 2026-05-04..08 has 4 business days (5/5 is a holiday); the branch adds 5/7 off.
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar(["2026-05-07"]));
+        const branchUsecase = new LinkDocumentToClientUsecase(
+            eformsignDocRepository as never,
+            clientRepository as never,
+            holidayCalendar,
+        );
+        const client = ClientEntity.reconstitute(
+            12, "고객 12", null, "01012345678", null, null, null, null, null,
+            new Date("2026-05-04T00:00:00.000Z"), new Date("2026-05-08T00:00:00.000Z"),
+            null, true, null, null, null, false, null,
+        );
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(createDoc({ clientId: 7 }));
+        clientRepository.findByPhone.mockResolvedValue(client);
+
+        await branchUsecase.execute(branchId, documentId);
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+        expect(client.eDocId).toBe(documentId);
+        expect(client.duration).toBe(3);
     });
 });

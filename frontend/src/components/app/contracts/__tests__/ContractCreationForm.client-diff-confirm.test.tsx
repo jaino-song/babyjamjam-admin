@@ -19,6 +19,7 @@ const mockDeleteClientMutateAsync = jest.fn();
 const mockEnqueueMutateAsync = jest.fn();
 const mockDispatchHeadless = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));

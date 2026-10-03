@@ -109,6 +109,14 @@ const PROBLEM_CODES = [
     "AUTH_RESET_TOKEN_INVALID",
     "AUTH_RESET_TOKEN_EXPIRED",
     "AUTH_RESET_TOKEN_USED",
+    // Registered holiday-calendar codes (branch holiday overrides).
+    "HOLIDAY_NAME_REQUIRED",
+    "HOLIDAY_NOT_WEEKDAY",
+    "HOLIDAY_DATE_IN_PAST",
+    "HOLIDAY_YEAR_UNSUPPORTED",
+    "HOLIDAY_ALREADY_PUBLIC",
+    "HOLIDAY_NOT_PUBLIC",
+    "HOLIDAY_OVERRIDE_EXISTS",
     "EMPLOYEE_ASSIGNMENT_UNAVAILABLE",
 ];
 const PROBLEM_ERROR_CODES = [
@@ -1032,6 +1040,83 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "이미 사용된 재설정 링크예요. 새 재설정 이메일을 요청해 주세요.",
             "en-US": "This reset link has already been used. Request a new reset email.",
+        },
+    },
+    HOLIDAY_NAME_REQUIRED: {
+        status: 400,
+        title: {
+            "ko-KR": "공휴일 이름을 입력해 주세요",
+            "en-US": "A holiday name is required",
+        },
+        detail: {
+            "ko-KR": "공휴일 이름을 입력해 주세요. 1자 이상 50자 이하로 적어 주세요.",
+            "en-US": "Enter a holiday name between 1 and 50 characters.",
+        },
+    },
+    HOLIDAY_NOT_WEEKDAY: {
+        status: 400,
+        title: {
+            "ko-KR": "평일만 휴무일로 추가할 수 있어요",
+            "en-US": "Only weekdays can be added as holidays",
+        },
+        detail: {
+            "ko-KR": "토요일과 일요일은 이미 쉬는 날이라 휴무일로 추가할 수 없어요. 평일을 선택해 주세요.",
+            "en-US": "Saturdays and Sundays are already non-business days. Choose a weekday.",
+        },
+    },
+    HOLIDAY_DATE_IN_PAST: {
+        status: 409,
+        title: {
+            "ko-KR": "지난 날짜는 바꿀 수 없어요",
+            "en-US": "Past dates can’t be changed",
+        },
+        detail: {
+            "ko-KR": "지난 날짜는 바꿀 수 없어요. 오늘 이후 날짜를 선택해 주세요.",
+            "en-US": "Past dates can’t be changed. Choose today or a later date.",
+        },
+    },
+    HOLIDAY_YEAR_UNSUPPORTED: {
+        status: 409,
+        title: {
+            "ko-KR": "아직 지원하지 않는 연도예요",
+            "en-US": "This year isn’t supported yet",
+        },
+        detail: {
+            "ko-KR": "이 연도의 공휴일 정보가 아직 없어요. 공휴일 정보가 준비된 뒤에 다시 시도해 주세요.",
+            "en-US": "Holiday data isn’t available for this year yet. Try again once it is published.",
+        },
+    },
+    HOLIDAY_ALREADY_PUBLIC: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 공휴일이에요",
+            "en-US": "This date is already a public holiday",
+        },
+        detail: {
+            "ko-KR": "이 날짜는 이미 공휴일이에요. 다른 날짜를 선택해 주세요.",
+            "en-US": "This date is already a public holiday. Choose another date.",
+        },
+    },
+    HOLIDAY_NOT_PUBLIC: {
+        status: 409,
+        title: {
+            "ko-KR": "공휴일이 아닌 날짜예요",
+            "en-US": "This date is not a public holiday",
+        },
+        detail: {
+            "ko-KR": "공휴일이 아닌 날짜는 제외할 수 없어요. 공휴일을 선택해 주세요.",
+            "en-US": "Only public holidays can be excluded. Choose a public holiday.",
+        },
+    },
+    HOLIDAY_OVERRIDE_EXISTS: {
+        status: 409,
+        title: {
+            "ko-KR": "이미 설정된 날짜예요",
+            "en-US": "This date already has a setting",
+        },
+        detail: {
+            "ko-KR": "이 날짜에는 이미 지점 설정이 있어요. 기존 설정을 삭제한 뒤 다시 시도해 주세요.",
+            "en-US": "This date already has a branch setting. Remove it and try again.",
         },
     },
 };

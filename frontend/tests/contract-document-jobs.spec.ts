@@ -45,7 +45,9 @@ test.describe("contract document jobs wiring", () => {
     expect(source).toContain("<ContractStatsBar");
     expect(source).toContain("documentJobsQuery.summary");
     expect(statsSource).toContain('label="전자문서 처리중"');
-    expect(statsSource).toContain("summary?.activeCount ?? 0");
+    // Only the active count is shown; without summary data the tile reads "—" instead of a false 0.
+    expect(statsSource).toContain('hasSummaryData && summary ? summary.activeCount : "—"');
+    expect(statsSource).toContain("value={activeCount}");
     expect(statsSource).toContain("className=\"ms-auto max-lg:ms-0\"");
   });
 });

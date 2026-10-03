@@ -26,6 +26,7 @@ import { ClientAgentCapabilitiesProvider } from "application/usecases/client/cli
 import { DashboardAgentCapabilitiesProvider } from "application/usecases/client/dashboard-agent-capabilities.provider";
 import { ClientWriteAgentCapabilitiesProvider } from "application/usecases/client/client-write-agent-capabilities.provider";
 import { VoucherPriceInfoModule } from "./voucher-price-info.module";
+import { HolidayModule } from "./holiday.module";
 
 @Module({
     imports: [
@@ -37,6 +38,7 @@ import { VoucherPriceInfoModule } from "./voucher-price-info.module";
         ServiceRecordEntryModule,
         EformsignDocModule,
         VoucherPriceInfoModule,
+        HolidayModule,
     ],
     controllers: [ClientController],
     providers: [

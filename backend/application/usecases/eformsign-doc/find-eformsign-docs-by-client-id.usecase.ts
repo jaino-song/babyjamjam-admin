@@ -5,6 +5,7 @@ import {
 } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export type EformsignDocWithContractEndDate = ReturnType<EformsignDocEntity["toJSON"]> & {
     /** YYYY-MM-DD from the mirrored detail payload; null when not recoverable. */
@@ -18,6 +19,7 @@ export class FindEformsignDocsByClientIdUsecase {
     constructor(
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     execute(branchid: string, clientId: number): Promise<EformsignDocEntity[]> {
@@ -38,6 +40,8 @@ export class FindEformsignDocsByClientIdUsecase {
                 docs.map((doc) => doc.documentId),
             )
             : new Map<string, string>();
+        // Display only, for the request's own branch: the cached calendar, fetched once for all rows.
+        const calendar = await this.holidayCalendar.forBranch(branchid);
         return docs.map((doc) => {
             const contractEndDate = endDates.get(doc.documentId) ?? null;
             return {
@@ -51,7 +55,7 @@ export class FindEformsignDocsByClientIdUsecase {
                         step_name: doc.stepName,
                     },
                     ...(contractEndDate ? { contract_end_date: contractEndDate } : {}),
-                }),
+                }, new Date(), calendar),
             };
         });
     }

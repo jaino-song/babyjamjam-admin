@@ -42,9 +42,10 @@ import { AGENT_TASK_REPOSITORY } from "domain/repositories/agent-task.repository
 import { CLIENT_REPOSITORY } from "domain/repositories/client.repository.interface";
 import { PrismaAgentTaskRepository } from "infrastructure/database/repositories/prisma-agent-task.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { HolidayModule } from "./holiday.module";
 
 @Module({
-    imports: [DiscoveryModule, SystemSettingModule, SystemAdminModule, DatabaseModule, CallInboxModule, ConsultationInquiryModule, DocumentModule],
+    imports: [DiscoveryModule, SystemSettingModule, SystemAdminModule, DatabaseModule, CallInboxModule, ConsultationInquiryModule, DocumentModule, HolidayModule],
     controllers: [AgentController, AgentActionController, AgentTaskController],
     providers: [
         AgentFlagsService,
