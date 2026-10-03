@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import type {
     HolidayChange,
     ReviewCategory,
@@ -176,6 +178,19 @@ export interface IHolidayReviewRepository {
 
     /** The listed ids that belong to this event in this branch (unknown ids are simply absent). */
     findEventItemsByIds(branchId: string, eventId: string, itemIds: string[]): Promise<ReviewItemRecord[]>;
+
+    /**
+     * Claims the still-open calculation as fixed inside the client's write transaction.
+     * Serializes with the processor; the row lock excludes keep/reclassification until
+     * commit. Any client write failure rolls this decision back to open.
+     */
+    claimOpenItemForFix(
+        branchId: string,
+        eventId: string,
+        item: ReviewItemRecord,
+        userId: string | null,
+        transaction: Prisma.TransactionClient,
+    ): Promise<boolean>;
 
     /**
      * Moves one OPEN item to a final status. Returns false when it was no longer open

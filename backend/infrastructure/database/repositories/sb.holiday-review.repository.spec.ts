@@ -1,5 +1,7 @@
+import { Prisma } from "@prisma/client";
+
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SbHolidayReviewRepository } from "./sb.holiday-review.repository";
+import { SbHolidayReviewRepository, HOLIDAY_REVIEW_LOCK_KEY } from "./sb.holiday-review.repository";
 
 const BRANCH = "11111111-1111-4111-8111-111111111111";
 const EVENT = "22222222-2222-4222-8222-222222222222";
@@ -148,6 +150,37 @@ describe("SbHolidayReviewRepository HTTP-path methods", () => {
     });
 
     describe("writes only move OPEN items of this branch and event", () => {
+        it.each([0, 1])("claimOpenItemForFix locks the processor and CASes the entire calculation (count=%s)", async (count) => {
+            const { prisma, repository } = makeRepository();
+            const transaction = {
+                $executeRaw: jest.fn<Promise<number>, [Prisma.Sql]>(async () => 1),
+                end_date_review_item: { updateMany: jest.fn(async () => ({ count })) },
+            };
+            const expected = {
+                id: ITEM, clientId: 7, clientName: "김아기", storedEnd: "2026-11-13",
+                recalculatedEnd: "2026-11-16", affectedFrom: "2026-11-10",
+                category: "safe" as const, reason: "no_sessions_after_date" as const, status: "open" as const,
+            };
+
+            expect(await repository.claimOpenItemForFix(
+                BRANCH, EVENT, expected, "user-1", transaction as unknown as Prisma.TransactionClient,
+            )).toBe(count === 1);
+            const lock = transaction.$executeRaw.mock.calls[0]?.[0];
+            expect(lock?.sql).toContain("pg_advisory_xact_lock");
+            expect(lock?.values).toEqual([HOLIDAY_REVIEW_LOCK_KEY]);
+            expect(transaction.$executeRaw.mock.invocationCallOrder[0])
+                .toBeLessThan(transaction.end_date_review_item.updateMany.mock.invocationCallOrder[0] ?? 0);
+            expect(transaction.end_date_review_item.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: ITEM, branchId: BRANCH, changeEventId: EVENT, clientId: 7, status: "open",
+                    storedEnd: day(expected.storedEnd), recalculatedEnd: day(expected.recalculatedEnd),
+                    affectedFrom: day(expected.affectedFrom), category: "safe", reason: "no_sessions_after_date",
+                },
+                data: { status: "fixed", resolvedBy: "user-1", resolvedAt: expect.any(Date) },
+            });
+            expect(prisma.end_date_review_item.updateMany).not.toHaveBeenCalled();
+        });
+
         it("closeOpenItem", async () => {
             const { prisma, repository } = makeRepository();
 
@@ -282,7 +315,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
 
     function makeTxRepository(currentEnd: Date | null | "missing") {
         const tx = {
-            $executeRaw: jest.fn(async () => 1),
+            $executeRaw: jest.fn<Promise<number>, [Prisma.Sql]>(async () => 1),
             holiday_change_event: {
                 findFirst: jest.fn(async () => ({ id: EVENT })),
                 findMany: jest.fn(async () => [{ id: EVENT }]),
@@ -306,6 +339,8 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
 
         await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "applied", created: 1, obsoleted: 0 });
 
+        const lock = tx.$executeRaw.mock.calls[0]?.[0];
+        expect(lock?.values).toEqual([HOLIDAY_REVIEW_LOCK_KEY]);
         expect(tx.client.findMany).toHaveBeenCalledWith({
             where: { id: { in: [CLIENT] }, branchId: { in: [BRANCH] } },
             select: { id: true, endDate: true },

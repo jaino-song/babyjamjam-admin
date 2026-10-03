@@ -243,6 +243,35 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
         return rows.map(toItemRecord);
     }
 
+    async claimOpenItemForFix(
+        branchId: string,
+        eventId: string,
+        item: ReviewItemRecord,
+        userId: string | null,
+        transaction: Prisma.TransactionClient,
+    ): Promise<boolean> {
+        // Acquire before the client write locks, in the same order as the processor.
+        await transaction.$executeRaw(Prisma.sql`
+            SELECT pg_advisory_xact_lock(hashtextextended(${HOLIDAY_REVIEW_LOCK_KEY}, 0))
+        `);
+        const result = await transaction.end_date_review_item.updateMany({
+            where: {
+                id: item.id,
+                branchId,
+                changeEventId: eventId,
+                clientId: item.clientId,
+                status: "open",
+                storedEnd: toDbDate(item.storedEnd),
+                recalculatedEnd: toDbDate(item.recalculatedEnd),
+                affectedFrom: toDbDate(item.affectedFrom),
+                category: item.category,
+                reason: item.reason,
+            },
+            data: { status: "fixed", resolvedBy: userId, resolvedAt: new Date() },
+        });
+        return result.count > 0;
+    }
+
     async closeOpenItem(
         branchId: string,
         eventId: string,
