@@ -68,6 +68,7 @@ import {
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
 import { CalendarClock, Users } from "lucide-react";
 
@@ -592,6 +593,8 @@ function ClientContractsList({
     isLoading: boolean;
     dataComponentPrefix: string;
 }) {
+    // Display-only: the built-in calendar stands in until the branch calendar loads.
+    const { calendar } = useBusinessDayCalendar();
     if (isLoading) {
         return (
             <div data-component={`${dataComponentPrefix}-contracts-skeleton-list`} className="space-y-3">
@@ -645,6 +648,7 @@ function ClientContractsList({
                     },
                     doc.contractEndDate ?? null,
                     doc.displayStatus,
+                    calendar,
                 );
                 return (
                     <InfoCard

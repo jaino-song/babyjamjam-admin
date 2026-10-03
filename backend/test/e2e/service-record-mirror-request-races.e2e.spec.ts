@@ -14,6 +14,7 @@ import {
     assertApprovedServiceRecordWriteLockDatabaseTarget,
     createApprovedServiceRecordWriteLockClient,
 } from "./helpers/service-record-write-lock-order.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const E2E_ENABLED = process.env["SERVICE_RECORD_WRITE_LOCK_E2E"] === "1";
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
@@ -228,7 +229,7 @@ function createMirrorUsecase(
     return new LinkMirroredEformsignDocByPhoneUsecase(
         client as unknown as PrismaService,
         config,
-        settings as never,
+        settings as never, createHolidayCalendarStub(),
     );
 }
 
@@ -725,11 +726,11 @@ describe("service-record mirror and schedule request races (real PostgreSQL)", (
             await Promise.all([leftClient.$connect(), rightClient.$connect()]);
             const leftService = new ScheduleChangeService(
                 withScheduleRequestReadBarrier(leftClient, barrier) as unknown as PrismaService,
-                realTokenService(),
+                realTokenService(), createHolidayCalendarStub(),
             );
             const rightService = new ScheduleChangeService(
                 withScheduleRequestReadBarrier(rightClient, barrier) as unknown as PrismaService,
-                realTokenService(),
+                realTokenService(), createHolidayCalendarStub(),
             );
             const leftUserId = crypto.randomUUID();
             const rightUserId = crypto.randomUUID();
@@ -794,11 +795,11 @@ describe("service-record mirror and schedule request races (real PostgreSQL)", (
             await Promise.all([approveClient.$connect(), rejectClient.$connect()]);
             const approvalService = new ScheduleChangeService(
                 withScheduleRequestReadBarrier(approveClient, barrier) as unknown as PrismaService,
-                realTokenService(),
+                realTokenService(), createHolidayCalendarStub(),
             );
             const rejectionService = new ScheduleChangeService(
                 withScheduleRequestReadBarrier(rejectClient, barrier) as unknown as PrismaService,
-                realTokenService(),
+                realTokenService(), createHolidayCalendarStub(),
             );
             const approvalUserId = crypto.randomUUID();
             const rejectionUserId = crypto.randomUUID();

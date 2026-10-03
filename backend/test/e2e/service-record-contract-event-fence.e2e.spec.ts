@@ -8,6 +8,7 @@ import {
     createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -75,7 +76,7 @@ describeE2E("contract completion event ownership fence (real disposable PostgreS
         prisma = createApprovedServiceRecordConfirmClient();
         await prisma.$connect();
         eformsignDocs = new SbEformsignDocRepository(prisma as unknown as PrismaService) as ContractEventFenceRepository;
-        lifecycle = new ServiceRecordLifecycleService(prisma as unknown as PrismaService) as ContractEventFenceLifecycle;
+        lifecycle = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub()) as ContractEventFenceLifecycle;
         revisions = new ServiceRecordEditRepository(prisma as unknown as PrismaService);
     });
 
@@ -345,7 +346,7 @@ describeE2E("contract completion event ownership fence (real disposable PostgreS
             },
         });
         const racedLifecycle = new ServiceRecordLifecycleService(
-            instrumented as unknown as PrismaService,
+            instrumented as unknown as PrismaService, createHolidayCalendarStub(),
         ) as ContractEventFenceLifecycle;
         const syncPromise = racedLifecycle.syncEndDateFromCurrentContract({
             branchId: fixture.branch.id,

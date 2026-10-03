@@ -6,6 +6,7 @@ import {
     assertApprovedServiceRecordConfirmDatabaseTarget, createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -29,7 +30,7 @@ describeE2E("confirmation and historically unbound contract jobs (actual Postgre
             stepRecipientType: "group", stepRecipientName: "Synthetic provider", stepRecipientSms: "",
         } });
         await prisma.client.update({ where: { id: fixture.client.id }, data: { eDocId: documentId } });
-        const service = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
+        const service = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
         const started = await service.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         const draft = started.draft!;
         const changed = await service.updateDraft(fixture.branch.id, draft.id, fixture.actorUserId, {

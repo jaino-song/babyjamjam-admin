@@ -9,6 +9,7 @@ import {
 } from "./helpers/service-record-confirm.helper";
 
 import { completeServiceRecordFinalizationCase } from "./helpers/service-record-finalization.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const E2E_ENABLED = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1";
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
@@ -67,7 +68,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
             await prisma.service_record_case.update({ where: { id: fixture.record.id },
                 data: { status: "READY_TO_FINALIZE" } });
         }
-        const ordinaryService = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never));
+        const ordinaryService = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as never), createHolidayCalendarStub());
         const started = await ordinaryService.startDraft(
             fixture.branch.id,
             fixture.client.id,
@@ -144,7 +145,7 @@ describeE2E("service-record confirmation rollback (real disposable PostgreSQL)",
         });
         injectFailure = true;
         const faultedService = new AdminServiceRecordEditService(
-            new ServiceRecordEditRepository(faultedClient as never),
+            new ServiceRecordEditRepository(faultedClient as never), createHolidayCalendarStub(),
         );
 
         await expect(faultedService.confirmDraft(

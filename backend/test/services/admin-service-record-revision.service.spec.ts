@@ -4,6 +4,7 @@ import { AdminServiceRecordService } from "application/services/admin-service-re
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 function createPrisma() {
     return {
@@ -19,7 +20,7 @@ function createService(
         prisma as unknown as PrismaService,
         {} as ServiceRecordLinkService,
         {} as MessageTriggerService,
-        undefined,
+        createHolidayCalendarStub(), undefined,
         repository as never,
     );
 }

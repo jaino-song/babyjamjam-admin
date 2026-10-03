@@ -533,12 +533,24 @@ export class ServiceRecordTokenService {
         });
     }
 
-    async extendExpiryForCase(serviceRecordCaseId: string, newExpiresAt: Date, tx?: Prisma.TransactionClient): Promise<void> {
+    async extendExpiryForCase(
+        serviceRecordCaseId: string,
+        newExpiresAt: Date,
+        tx?: Prisma.TransactionClient,
+        options: { onlyRaise?: boolean } = {},
+    ): Promise<void> {
         const db = tx ?? this.prismaService;
         const record = await db.service_record_case.findUnique({ where: { id: serviceRecordCaseId }, select: { branchId: true } });
         if (!record) return;
         await db.service_record_token.updateMany({
-            where: { serviceRecordCaseId, branchId: record.branchId, active: true, revokedAt: null },
+            where: {
+                serviceRecordCaseId,
+                branchId: record.branchId,
+                active: true,
+                revokedAt: null,
+                // onlyRaise: an earlier end date must not cut short a link already sent.
+                ...(options.onlyRaise ? { expiresAt: { lt: newExpiresAt } } : {}),
+            },
             data: { expiresAt: newExpiresAt },
         });
     }

@@ -46,6 +46,8 @@ import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 /**
  * The schedule invariant policy signals a double-booking with a
@@ -171,6 +173,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
         private readonly systemSettingService: SystemSettingService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional()
         private readonly messageTriggerService?: MessageTriggerService,
         @Optional()
@@ -501,6 +504,14 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         existingClientId?: number;
     }): Promise<TransactionResult> {
         let lastError: unknown;
+        // SAVED computation: the derived duration (and the new case's N) is
+        // persisted on a client created for `creationBranchId`, the only branch
+        // this transaction may create in. Read the calendar before the
+        // serializable transaction opens, never inside it (a second pooled
+        // connection held while the advisory and row locks are taken).
+        const creationCalendar = params.canCreate && params.creationBranchId
+            ? await this.holidayCalendar.forBranch(params.creationBranchId, { fresh: true })
+            : null;
         for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
             try {
                 return await this.prisma.$transaction(
@@ -719,10 +730,19 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         // one; the date-derived count is only a fallback for
                         // the completed contracts whose payload has none.
                         let duration = candidate.duration;
+                        // SAVED computation: the derived duration is persisted
+                        // on the client created below, for the branch it is
+                        // created in. The create gate above guarantees that
+                        // branch is params.creationBranchId, whose calendar was
+                        // loaded before the transaction; the in-transaction
+                        // read is only a fallback.
+                        const calendar = creationCalendar
+                            ?? await this.holidayCalendar.forBranch(creationBranchId, { fresh: true });
                         try {
                             const derivedDuration = deriveClientDuration(
                                 candidate.startDate,
                                 candidate.endDate,
+                                calendar,
                             );
                             if (candidate.duration !== null && candidate.duration !== undefined) {
                                 assertClientDurationMatchesDates(candidate.duration, derivedDuration);
@@ -793,7 +813,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             },
                         );
                         if (params.initializeLifecycle) {
-                            await this.ensureServiceRecordLifecycle(client.id, transaction, true);
+                            await this.ensureServiceRecordLifecycle(client.id, transaction, true, calendar);
                         }
                         if (completeLockSurface) {
                             await lockServiceRecordWriteSet(transaction, {
@@ -1697,11 +1717,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         clientId: number,
         transaction?: Prisma.TransactionClient,
         rethrow = false,
+        calendar?: KrBusinessDayCalendar,
     ): Promise<void> {
         if (!this.serviceRecordLifecycleService) return;
         try {
             if (transaction) {
-                await this.serviceRecordLifecycleService.ensureForClient(clientId, transaction);
+                await this.serviceRecordLifecycleService.ensureForClient(clientId, transaction, calendar);
             } else {
                 await this.serviceRecordLifecycleService.ensureForClient(clientId);
             }

@@ -15,6 +15,7 @@ import {
     createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -131,8 +132,8 @@ function createMirrorLinker(prisma: PrismaClient): LinkMirroredEformsignDocByPho
         prisma as unknown as PrismaService,
         config,
         settings as never,
-        undefined,
-        new ServiceRecordLifecycleService(prisma as unknown as PrismaService),
+        createHolidayCalendarStub(), undefined,
+        new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub()),
     );
 }
 
@@ -240,7 +241,7 @@ function createReconciler(
         }),
     };
     const lifecycle = new ServiceRecordLifecycleService(
-        lifecyclePrisma as unknown as PrismaService,
+        lifecyclePrisma as unknown as PrismaService, createHolidayCalendarStub(),
     );
     const reconciler = new ReconcileCompletedMirroredEformsignDocUsecase(
         linkMirroredDocumentByPhoneUsecase,

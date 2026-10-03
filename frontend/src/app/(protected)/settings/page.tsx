@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   Bell,
+  CalendarDays,
   KeyRound,
   type LucideProps,
   Palette,
@@ -17,6 +18,8 @@ import {
 } from "lucide-react";
 import { CallIngestTokenBranchRequired } from "@/components/app/call-ingest-tokens/CallIngestTokenBranchRequired";
 import { CallIngestTokenSection } from "@/components/app/call-ingest-tokens/CallIngestTokenSection";
+import { HolidayBranchRequired } from "@/components/app/holidays/HolidayBranchRequired";
+import { HolidaySettingsSection } from "@/components/app/holidays/HolidaySettingsSection";
 import { SendNotificationBranchRequired } from "@/components/app/notifications/SendNotificationBranchRequired";
 import { SendNotificationSection } from "@/components/app/notifications/SendNotificationSection";
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -78,6 +81,7 @@ const BASE_NAV_SECTIONS = [
 const BRANCH_MANAGER_NAV_SECTIONS = [
   { id: "send-notification", label: "알림 보내기", icon: Send },
   { id: "call-ingest-tokens", label: "통화 수집 토큰", icon: KeyRound },
+  { id: "holidays", label: "공휴일", icon: CalendarDays },
 ] as const;
 
 type SectionId =
@@ -87,6 +91,7 @@ type SectionId =
   | "security"
   | "pricing"
   | "call-ingest-tokens"
+  | "holidays"
   | "send-notification";
 
 const THEME_OPTIONS = [
@@ -456,6 +461,16 @@ export default function SettingsPage() {
               // whose session has no selected branch can reach this section.
               // Explain that rather than rendering an empty panel.
               <CallIngestTokenBranchRequired />
+            )
+          )}
+
+          {activeSection === "holidays" && canManageBranchSettings && (
+            branchId ? (
+              // key={branchId} drops the previous branch's year tab, sync result and
+              // draft when the active branch changes.
+              <HolidaySettingsSection key={branchId} branchId={branchId} branchName={user?.branchName} />
+            ) : (
+              <HolidayBranchRequired />
             )
           )}
 

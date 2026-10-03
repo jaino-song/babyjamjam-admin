@@ -1,4 +1,5 @@
 import { expect, Page, test } from "@playwright/test";
+import { KOREAN_HOLIDAY_CALENDAR } from "@babyjamjam/shared/utils/business-days";
 
 test.beforeEach(async ({ page, baseURL }) => {
   const appUrl = baseURL ?? "http://localhost:3000";
@@ -22,7 +23,7 @@ const MOCK_CLIENT = {
   id: 1,
   name: "홍테스트",
   phone: "01012345678",
-  birthday: "900101",
+  birthday: "1990-01-01",
   address: "인천 남동구 테스트로 123",
   dueDate: "2026-05-30",
 };
@@ -187,6 +188,27 @@ async function installCommonRoutes(
     return route.fallback();
   });
 
+  // The form waits for the branch holiday calendar before it computes or saves
+  // dates. Serve the built-in list for whichever year is requested. Registered
+  // after the catch-all above because Playwright matches the last route first.
+  await page.route("**/api/branches/*/holidays*", (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    const dates = KOREAN_HOLIDAY_CALENDAR[year] ?? [];
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        year,
+        revision: "e2e-builtin",
+        supported: dates.length > 0,
+        synced: false,
+        lastSyncedAt: null,
+        holidays: dates.map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null })),
+        inactiveOverrides: [],
+      }),
+    });
+  });
+
   await page.route("**/api/eformsign/auth-status", (route) =>
     route.fulfill({
       status: 200,
@@ -309,37 +331,47 @@ async function gotoContractsPage(page: Page) {
   await page.goto("/contracts");
 }
 
+const CREATION_FORM = '[data-component="desktop_contracts_creation_form"]';
+const STEPPER = '[data-component="desktop_v3_stepped-wizard_stepper-desktop"]';
+const STEP_CONTENT = '[data-component="desktop_v3_stepped-wizard_step-content"]';
+const MANUAL_DIALOG = '[data-component="desktop_messages_sections_contract-form-dialog"]';
+
 async function openContractCreationForm(page: Page) {
   await gotoContractsPage(page);
-  await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"]').click();
-  await expect(page.locator('[data-component="contract-creation-form"]')).toBeVisible();
-  await expect(page.locator('[data-component="stepped-wizard-stepper-desktop"]')).toBeVisible();
-  await expect(page.locator('[data-component="stepped-wizard-stepper-desktop"]')).toContainText("전자문서 생성");
+  await page.getByRole("button", { name: "전자문서 발송" }).click();
+  await expect(page.locator(CREATION_FORM)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "전자계약서 작성" })).toBeVisible();
+  await expect(page.locator(STEPPER)).toBeVisible();
+  await expect(page.locator(STEPPER)).toContainText("전자문서 생성");
 }
 
 async function selectClient(page: Page, name: string) {
-  await page.locator('[data-component="clients-autocomplete-input"]').click();
-  await page.locator('[data-component="clients-autocomplete-dropdown"] input').fill(name);
-  await page.locator('[data-component="clients-autocomplete-dropdown"]').getByText(name, { exact: true }).click();
-  await expect(page.locator('[data-component="clients-autocomplete-input"]')).toContainText(name);
+  const trigger = page.getByRole("combobox", { name: "산모님 성함", exact: true });
+  await trigger.click();
+  await page.getByRole("combobox", { name: "산모님 성함 검색" }).fill(name);
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+  await expect(trigger).toContainText(name);
 }
 
 async function selectDocType(page: Page, label: string) {
-  await page.locator('[data-component="contract-creation-doc-type-trigger"]').click();
-  await page.locator('[data-component="contract-creation-doc-type-dropdown"]').getByText(label, { exact: true }).click();
-  await expect(page.locator('[data-component="contract-creation-doc-type-trigger"]')).toContainText(label);
+  const trigger = page.getByRole("combobox", { name: "계약서 선택" });
+  await trigger.click();
+  await page.getByRole("option", { name: label, exact: true }).click();
+  await expect(trigger).toContainText(label);
 }
 
 async function selectEmployee(page: Page, index: number, name: string) {
-  const autocomplete = page.getByTestId("employee-autocomplete").nth(index);
-  await autocomplete.locator('[data-component="employee-autocomplete-input"]').click();
-  await page.locator('[data-component="employee-autocomplete-dropdown"] input').fill(name);
-  await page.locator('[data-component="employee-autocomplete-dropdown"]').getByText(name, { exact: true }).click();
-  await expect(autocomplete.locator('[data-component="employee-autocomplete-input"]')).toContainText(name);
+  const label = `제공인력 ${index + 1} 선택`;
+  const trigger = page.getByRole("combobox", { name: label, exact: true });
+  await trigger.click();
+  await page.getByRole("combobox", { name: `${label} 검색` }).fill(name);
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+  await expect(trigger).toContainText(name);
 }
 
 async function fillVoucherStep(page: Page) {
-  const selects = page.locator('[data-component="stepped-wizard-step-content"] select');
+  // The three voucher selects have no accessible names yet, so address them by position.
+  const selects = page.locator(`${STEP_CONTENT} select`);
   await selects.nth(0).selectOption("2026");
   await selects.nth(1).selectOption("A가1형");
   await expect(selects).toHaveCount(3);
@@ -374,8 +406,21 @@ async function completeContractWizard(page: Page) {
   });
 }
 
+/**
+ * Submit the contract info step. The mocked client record has none of the contract's area, provider,
+ * voucher or date values, so the app asks whether to copy them to the client record too.
+ */
+async function submitContractCreation(page: Page, choice: "contract-only" | "update-client" = "update-client") {
+  await page.getByTestId("contract-creation-submit").click();
+  const mismatchDialog = page.getByRole("dialog", { name: "고객 정보와 다른 내용이 있어요" });
+  await expect(mismatchDialog).toBeVisible();
+  await mismatchDialog
+    .getByRole("button", { name: choice === "update-client" ? "고객 정보도 수정" : "계약서에만 반영" })
+    .click();
+  await expect(mismatchDialog).toBeHidden();
+}
+
 test.describe("Contract creation iframe + success flow", () => {
-  test.describe.configure({ mode: "serial" });
 
   test("persists the selected provider assignment before creating an electronic document", async ({ page }) => {
     await stubEformsignSdk(page);
@@ -411,7 +456,7 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await openContractCreationForm(page);
     await completeContractWizard(page);
-    await page.getByTestId("contract-creation-submit").click();
+    await submitContractCreation(page);
 
     await expect.poll(() => requestOrder).toEqual(["assignment", "document"]);
     expect(capturedClientUpdateBody).toEqual(expect.objectContaining({
@@ -432,13 +477,13 @@ test.describe("Contract creation iframe + success flow", () => {
     await selectEmployee(page, 0, MOCK_EMPLOYEES[0].name);
     await page.getByTestId("contract-creation-next").click();
 
-    const stepContent = page.locator('[data-component="stepped-wizard-step-content"]');
+    const stepContent = page.locator(STEP_CONTENT);
     const selects = stepContent.locator("select");
     await expect(selects).toHaveCount(3);
     await expect(selects.nth(2)).toBeVisible();
     await expect(selects.nth(2)).toBeDisabled();
 
-    const priceFields = page.locator('[data-component="contract-creation-price-fields"]');
+    const priceFields = page.locator('[data-component="desktop_contracts_creation_price-fields"]');
     await expect(priceFields).toBeVisible();
 
     const priceInputs = priceFields.locator("input");
@@ -507,7 +552,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await openContractCreationForm(page);
     await completeContractWizard(page);
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
-    await page.getByTestId("contract-creation-submit").click();
+    await submitContractCreation(page);
 
     await expect.poll(() => capturedClientUpdateBody).not.toBeNull();
     expect(capturedClientUpdateBody).toEqual(expect.objectContaining({
@@ -517,22 +562,8 @@ test.describe("Contract creation iframe + success flow", () => {
       endDate: "2026-06-15",
     }));
 
-    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toHaveAttribute(
-      "data-state",
-      "error"
-    );
-    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toContainText(
-      "전자문서 클라이언트 시작 실패"
-    );
-    await expect(page.getByTestId("contract-creation-progress-step-client-started")).toContainText(
-      "수동으로 입력해 주세요"
-    );
-    await expect(page.getByTestId("contract-creation-progress-error-client-started")).toBeVisible();
-    await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
-    await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
-
-    await page.getByTestId("contract-creation-manual").click();
+    // The offline dispatch answers `fallbackHint: "iframe"` (nothing was sent), so the app reopens
+    // the eformsign editor on its own instead of waiting for the staff member to ask for it.
     await expect.poll(() => capturedGenerateBody).not.toBeNull();
     expect(capturedGenerateBody).toEqual(expect.objectContaining({
       clientId: MOCK_CLIENT.id,
@@ -559,14 +590,13 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect.poll(async () => {
       return page.evaluate(() => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
     }).toBeGreaterThan(0);
-    const manualDialog = page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]');
+    const manualDialog = page.locator(MANUAL_DIALOG);
     await expect(manualDialog).toBeVisible();
     await expect(page.locator("#eformsign_iframe")).toBeVisible();
-    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
     await expect(manualDialog.locator('[data-testid="contract-creation-progress-stepper"]')).toHaveCount(0);
 
     const sdkCall = await page.evaluate(() => {
-      const calls = (window as Window & {
+      const calls = (window as unknown as {
         __eformsignCalls: Array<{ options: unknown; iframeId: string }>;
       }).__eformsignCalls;
       return calls[0];
@@ -577,7 +607,7 @@ test.describe("Contract creation iframe + success flow", () => {
     });
 
     await page.evaluate(() => {
-      const calls = (window as Window & {
+      const calls = (window as unknown as {
         __eformsignCalls: Array<{ actionCallback?: (response: unknown) => void }>;
       }).__eformsignCalls;
       calls[0].actionCallback?.({
@@ -591,12 +621,12 @@ test.describe("Contract creation iframe + success flow", () => {
     });
 
     await page.evaluate((documentId) => {
-      const calls = (window as Window & {
+      const calls = (window as unknown as {
         __eformsignCalls: Array<{ successCallback?: (response: unknown) => void }>;
       }).__eformsignCalls;
       calls[0].successCallback?.({ code: "-1", document_id: documentId, type: "document" });
     }, CONTRACT_DOC_ID);
-    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
+    const successModal = page.locator('[data-component="desktop_contracts_creation_success-notification"]');
     await expect(successModal).toBeVisible();
     await expect(successModal).toContainText("계약서가 성공적으로 생성되었습니다.");
     await successModal.getByRole("button", { name: "확인" }).click();
@@ -607,17 +637,57 @@ test.describe("Contract creation iframe + success flow", () => {
       clientId: MOCK_CLIENT.id,
       statusType: "060",
       stepRecipientName: MOCK_CLIENT.name,
-      stepRecipientSms: MOCK_CLIENT.phone,
+      stepRecipientSms: "010-1234-5678",
       linkToClient: true,
     });
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
-    await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
-    const actions = page.locator('[data-component="stepped-wizard-actions"]');
-    await expect(actions.getByRole("button", { name: "취소" })).toHaveCount(0);
-    await expect(page.getByTestId("contract-creation-new-send")).toBeVisible();
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
+  });
 
+  test("keeps the 전자문서 생성 step visible while the iframe fallback is open and after success", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page);
+    await page.route("**/api/clients/1", async (route) =>
+      route.request().method() === "PATCH"
+        ? route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MOCK_CLIENT) })
+        : route.fallback(),
+    );
+    await page.route("**/api/generate-document", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(MOCK_SDK_OPTIONS) }),
+    );
+    await page.route("**/api/eformsign-docs", async (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ id: 99, documentId: CONTRACT_DOC_ID, clientId: MOCK_CLIENT.id, statusType: "060" }),
+          })
+        : route.fallback(),
+    );
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await submitContractCreation(page);
+
+    await expect(page.locator("#eformsign_iframe")).toBeVisible();
+    await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
+    // The SDK is opened a beat after the dialog, so wait for it before driving its callback.
+    await expect.poll(async () => {
+      return page.evaluate(() => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0);
+    }).toBeGreaterThan(0);
+
+    await page.evaluate((documentId) => {
+      const calls = (window as unknown as {
+        __eformsignCalls: Array<{ successCallback?: (response: unknown) => void }>;
+      }).__eformsignCalls;
+      calls[0].successCallback?.({ code: "-1", document_id: documentId, type: "document" });
+    }, CONTRACT_DOC_ID);
+    const successModal = page.locator('[data-component="desktop_contracts_creation_success-notification"]');
+    await successModal.getByRole("button", { name: "확인" }).click();
+
+    await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
+    await expect(page.getByRole("button", { name: "취소" })).toHaveCount(0);
     await page.getByTestId("contract-creation-new-send").click();
-    await expect(actions.getByRole("button", { name: "취소" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "취소" })).toBeVisible();
     await expect(page.getByTestId("contract-creation-next")).toBeDisabled();
     await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(0);
   });
@@ -665,8 +735,7 @@ test.describe("Contract creation iframe + success flow", () => {
         contentType: "application/json",
         body: JSON.stringify({
           ok: false,
-          reason: "release to iframe fallback after progress assertion",
-          fallbackHint: "iframe",
+          reason: "release to failed state after progress assertion",
           durationMs: 1,
         }),
       });
@@ -681,9 +750,9 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await openContractCreationForm(page);
     await completeContractWizard(page);
-    await page.getByTestId("contract-creation-submit").click();
+    await submitContractCreation(page);
 
-    await expect(page.locator('[data-component="stepped-wizard-stepper-desktop-circle"]').nth(4)).toHaveClass(/scale-110/);
+    await expect(page.locator('[data-component="desktop_v3_stepped-wizard_stepper-desktop_item_step_circle"]').nth(4)).toHaveClass(/scale-110/);
     await expect(page.getByTestId("contract-creation-progress-stepper")).toHaveCount(1);
     await expect.poll(async () => page.getByTestId("contract-creation-progress-stepper").evaluate((el) => el.tagName))
       .toBe("OL");
@@ -700,7 +769,7 @@ test.describe("Contract creation iframe + success flow", () => {
       "active"
     );
     await expect(page.getByTestId("contract-creation-progress-spinner-creating")).toBeVisible();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
 
     releaseDispatch();
@@ -711,7 +780,7 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(page.getByTestId("contract-creation-progress-step-creating")).toContainText("전자문서 생성 실패");
     await expect(page.getByTestId("contract-creation-progress-error-creating")).toBeVisible();
     await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
   });
 
@@ -751,7 +820,6 @@ test.describe("Contract creation iframe + success flow", () => {
         body: JSON.stringify({
           ok: false,
           reason: "release after retained-session assertion",
-          fallbackHint: "iframe",
           durationMs: 1,
         }),
       });
@@ -759,18 +827,19 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await openContractCreationForm(page);
     await completeContractWizard(page);
-    await page.getByTestId("contract-creation-submit").click();
+    await submitContractCreation(page);
 
     await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
       "data-state",
       "active"
     );
-    await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_item_content"]').getByText("기존고객").click();
-    await expect(page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_content"]')).toBeVisible();
-    await expect(page.locator('[data-component="contract-creation-form"]')).toBeHidden();
+    // The list shows the CRM client name (none is mapped here), so find the row by its document name.
+    await page.getByRole("button", { name: /기존 전자문서/ }).click();
+    await expect(page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeVisible();
+    await expect(page.locator(CREATION_FORM)).toBeHidden();
 
     await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"]').click();
-    await expect(page.locator('[data-component="contract-creation-form"]')).toBeVisible();
+    await expect(page.locator(CREATION_FORM)).toBeVisible();
     await expect(page.getByTestId("contract-creation-progress-step-creating")).toHaveAttribute(
       "data-state",
       "active"
@@ -826,7 +895,6 @@ test.describe("Contract creation iframe + success flow", () => {
             ? {
               ok: false,
               reason: "selector miss",
-              fallbackHint: "iframe",
               durationMs: 1,
             }
             : {
@@ -840,7 +908,7 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await openContractCreationForm(page);
     await completeContractWizard(page);
-    await page.getByTestId("contract-creation-submit").click();
+    await submitContractCreation(page);
 
     const failedStep = page.getByTestId("contract-creation-progress-step-info-inserted");
     await expect(failedStep).toHaveAttribute("data-state", "error");
@@ -848,25 +916,24 @@ test.describe("Contract creation iframe + success flow", () => {
     await expect(failedStep).toContainText("수동으로 입력해 주세요");
     await expect(page.getByTestId("contract-creation-progress-error-info-inserted")).toBeVisible();
     await expect(page.getByTestId("contract-creation-retry")).toBeVisible();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
 
     await page.getByTestId("contract-creation-retry").click();
-    const successModal = page.locator('[data-component="contract-creation-success-notification"]');
+    const successModal = page.locator('[data-component="desktop_contracts_creation_success-notification"]');
     await expect(successModal).toBeVisible();
     await expect(successModal).toContainText("계약서가 성공적으로 생성되었습니다.");
     await successModal.getByRole("button", { name: "확인" }).click();
 
     expect(dispatchCalls).toBe(2);
     await expect(page.getByTestId("contract-creation-progress-step-sent")).toHaveAttribute("data-state", "done");
-    const actions = page.locator('[data-component="stepped-wizard-actions"]');
-    await expect(actions.getByRole("button", { name: "취소" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "취소" })).toHaveCount(0);
     await expect(page.getByTestId("contract-creation-new-send")).toBeVisible();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
     await expect(page.locator("#eformsign_iframe")).toHaveCount(0);
   });
 
-  test("manual fallback failure shows an error and returns to the contract info step", async ({ page }) => {
+  test("iframe fallback failure shows an error and does not open the editor", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page);
     await page.route("**/api/generate-document", (route) =>
@@ -875,13 +942,31 @@ test.describe("Contract creation iframe + success flow", () => {
 
     await openContractCreationForm(page);
     await completeContractWizard(page);
-    await page.getByTestId("contract-creation-submit").click();
-    await expect(page.getByTestId("contract-creation-manual")).toBeVisible();
-    await page.getByTestId("contract-creation-manual").click();
+    // installCommonRoutes answers the headless dispatch with `fallbackHint: "iframe"`, so the app
+    // reopens the editor on its own and `generate-document` is what fails here.
+    await submitContractCreation(page);
 
     await expect(page.locator('[data-component="desktop_messages_sections_contract-form-error"]')).toContainText(
-      "Request failed with status code 500"
+      "계약서 생성 중 오류가 발생했어요."
     );
+    await expect(page.locator(MANUAL_DIALOG)).toHaveCount(0);
+    const sdkCallCount = await page.evaluate(
+      () => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0
+    );
+    expect(sdkCallCount).toBe(0);
+  });
+
+  test("iframe fallback failure returns to the contract info step", async ({ page }) => {
+    await stubEformsignSdk(page);
+    await installCommonRoutes(page);
+    await page.route("**/api/generate-document", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) })
+    );
+
+    await openContractCreationForm(page);
+    await completeContractWizard(page);
+    await submitContractCreation(page);
+
     await expect(page.locator(
       [
         '[data-component="desktop_contracts_creation_form_start-date-input"]',
@@ -890,10 +975,5 @@ test.describe("Contract creation iframe + success flow", () => {
       ].join(", ")
     )).toHaveCount(3);
     await expect(page.getByTestId("contract-creation-submit")).toBeEnabled();
-    await expect(page.locator('[data-component="desktop_messages_sections_contract-form-dialog"]')).toHaveCount(0);
-    const sdkCallCount = await page.evaluate(
-      () => (window as Window & { __eformsignCalls?: unknown[] }).__eformsignCalls?.length ?? 0
-    );
-    expect(sdkCallCount).toBe(0);
   });
 });

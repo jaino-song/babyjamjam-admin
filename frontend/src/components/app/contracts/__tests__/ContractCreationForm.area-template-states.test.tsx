@@ -36,6 +36,7 @@ const mockAreaTemplatesQuery: AreaTemplatesQueryState = {
   refetch: mockRefetchAreaTemplates,
 };
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));

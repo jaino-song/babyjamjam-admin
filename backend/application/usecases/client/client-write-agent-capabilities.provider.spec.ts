@@ -3,9 +3,11 @@ import { ConflictException } from "@nestjs/common";
 
 import { AgentActionCertainFailureError } from "application/agent/action-coordinator.service";
 import { ClientWriteAgentCapabilitiesProvider } from "./client-write-agent-capabilities.provider";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../../test/utils/holiday-calendar.stub";
 
 describe("ClientWriteAgentCapabilitiesProvider", () => {
-    function setup() {
+    function setup(holidayCalendar = createHolidayCalendarStub()) {
         const createClient = { execute: jest.fn().mockResolvedValue({ id: 1, name: "홍길동" }) };
         const updateClient = {
             execute: jest.fn().mockResolvedValue({ id: 1, name: "홍길동" }),
@@ -60,11 +62,12 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            voucherServiceSelection as never,
+            holidayCalendar, voucherServiceSelection as never,
             triggerService as never,
             messageAutomationIntentService as never,
         );
         return {
+            holidayCalendar,
             createClient,
             updateClient,
             findClient,
@@ -153,7 +156,67 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             fullPrice: "3500000",
             grant: "2400000",
             actualPrice: "1100000",
-        }), transaction);
+        }), transaction, KR_BUILTIN_CALENDAR);
+    });
+
+    describe("branch calendar read before the owning transaction", () => {
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+        // A distinct branch calendar (not the built-in one) so identity proves the hand-off.
+        const branchCalendar = () => createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+            { supportedYears: [2024], version: "branch-test" },
+        );
+
+        it("create loads the calendar before the transaction and hands it to the usecase and the lifecycle repair", async () => {
+            const calendar = branchCalendar();
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const { capabilities, createClient, prisma, transaction, serviceRecordLifecycle } = setup(holidayCalendar);
+            const capability = capabilities.find((entry) => entry.meta.name === "clients.create")!;
+
+            await capability.execute(context, { name: "홍길동", phone: "01012345678" });
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+            expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction, calendar);
+            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, calendar);
+        });
+
+        it("an approved update loads the calendar before the transaction and hands it to the usecase and the lifecycle repair", async () => {
+            const calendar = branchCalendar();
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const { capabilities, updateClient, prisma, transaction, serviceRecordLifecycle } = setup(holidayCalendar);
+            const capability = capabilities.find((entry) => entry.meta.name === "clients.update")!;
+
+            await capability.executeApprovedTarget!(context, { id: 1, name: "새 이름" }, "approved-target");
+
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+            expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
+                "branch-a", 1, expect.objectContaining({ name: "새 이름" }), "approved-target", transaction, calendar,
+            );
+            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, calendar);
+        });
+
+        it("a direct update hands the loaded calendar to the usecase and the lifecycle repair", async () => {
+            const calendar = branchCalendar();
+            const holidayCalendar = createHolidayCalendarStub();
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const { capabilities, updateClient, serviceRecordLifecycle } = setup(holidayCalendar);
+            const capability = capabilities.find((entry) => entry.meta.name === "clients.update")!;
+
+            await capability.execute(context, { id: 1, name: "새 이름" });
+
+            expect(updateClient.execute).toHaveBeenCalledWith(
+                "branch-a", 1, expect.objectContaining({ name: "새 이름" }), undefined, calendar,
+            );
+            expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, undefined, calendar);
+        });
     });
 
     it("keeps the updated capability description focused on facts, lookups, and one approval proposal", () => {
@@ -179,7 +242,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.objectContaining({
             dueDate: new Date("2026-08-03T00:00:00.000Z"),
-        }), expect.objectContaining({ agent_action: expect.any(Object) }));
+        }), expect.objectContaining({ agent_action: expect.any(Object) }), KR_BUILTIN_CALENDAR);
         expect(capability.inputSchema.safeParse({ ...input, dueDate: "2026-02-31" }).success).toBe(false);
     });
 
@@ -231,6 +294,28 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         }));
     });
 
+    it("validates client writes against the branch calendar, loaded fresh", async () => {
+        // The built-in calendar gives 2024-01-01..2024-06-01 102 business days; the branch adds 2024-03-05 off.
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+            { supportedYears: [2024], version: "branch-test" },
+        ));
+        const { capabilities, updateClient } = setup(holidayCalendar);
+        const capability = capabilities.find((entry) => entry.meta.name === "clients.update")!;
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+
+        await expect(capability.execute(context, { id: 1, duration: 102 })).rejects.toThrow("1일 이상 101일 이하");
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith("branch-a", { fresh: true });
+        expect(updateClient.execute).not.toHaveBeenCalled();
+
+        await capability.execute(context, { id: 1, duration: 101 });
+        expect(updateClient.execute).toHaveBeenCalledTimes(1);
+    });
+
     it("does not report a created client when the action receipt cannot be persisted", async () => {
         const { capabilities, transaction, createClient } = setup();
         transaction.agent_action.updateMany.mockResolvedValue({ count: 0 });
@@ -241,7 +326,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
         }, { name: "홍길동", phone: "01012345678" })).rejects.toThrow("receipt could not be persisted");
 
-        expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction);
+        expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction, KR_BUILTIN_CALENDAR);
     });
 
     it("normalizes non-voucher create pricing and synchronizes its service record in the transaction", async () => {
@@ -268,8 +353,8 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             fullPrice: "120000",
             grant: "0",
             actualPrice: "120000",
-        }), transaction);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction);
+        }), transaction, KR_BUILTIN_CALENDAR);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
     });
 
     it("preserves voucher pricing when creating a voucher client", async () => {
@@ -296,7 +381,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             fullPrice: "120000",
             grant: "90000",
             actualPrice: "30000",
-        }), expect.anything());
+        }), expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it("canonicalizes create input before it reaches proposal hashing", async () => {
@@ -387,13 +472,14 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             }),
             "approved-target",
             transaction,
+            KR_BUILTIN_CALENDAR,
         );
         expect(serviceRecordLifecycle.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({
             clientId: 1,
             startDate: new Date("2024-02-29T00:00:00.000Z"),
             endDate: new Date("2024-03-01T00:00:00.000Z"),
         }), transaction);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, transaction, KR_BUILTIN_CALENDAR);
         expect(transaction.agent_action.updateMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ capability: "clients.update" }),
         }));
@@ -593,7 +679,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(directUpdates["birthDate"]).toBeUndefined();
         expect(approvedUpdates["birthDate"]).toBeUndefined();
         expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
-            "branch-a", 1, expect.objectContaining({ birthDate: undefined }), "approved-target", transaction,
+            "branch-a", 1, expect.objectContaining({ birthDate: undefined }), "approved-target", transaction, KR_BUILTIN_CALENDAR,
         );
     });
 
@@ -612,9 +698,9 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             type: "standard",
             grant: "50000",
             actualPrice: "50000",
-        }));
+        }), undefined, KR_BUILTIN_CALENDAR);
         expect(serviceRecordLifecycle.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({ clientId: 1 }), undefined);
-        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(1, undefined, KR_BUILTIN_CALENDAR);
     });
 
     it("normalizes a voucher toggle to canonical non-voucher pricing", async () => {
@@ -640,7 +726,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             fullPrice: "140000",
             grant: "0",
             actualPrice: "140000",
-        }));
+        }), undefined, KR_BUILTIN_CALENDAR);
     });
 
     it("rejects invalid dates and preserves leap-day calendar dates", async () => {
@@ -669,7 +755,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             endDate: new Date("2024-03-01T00:00:00.000Z"),
             dueDate: new Date("2024-02-29T00:00:00.000Z"),
             birthDate: new Date("1990-02-28T00:00:00.000Z"),
-        }), expect.anything());
+        }), expect.anything(), KR_BUILTIN_CALENDAR);
     });
 
     it.each([
@@ -694,10 +780,10 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         await update.execute(context, { id: 1, birthday });
         await update.executeApprovedTarget!(context, { id: 1, birthday }, "approved-target");
 
-        expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.objectContaining({ birthday }), expect.anything());
-        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ birthday }));
+        expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.objectContaining({ birthday }), expect.anything(), KR_BUILTIN_CALENDAR);
+        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ birthday }), undefined, KR_BUILTIN_CALENDAR);
         expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
-            "branch-a", 1, expect.objectContaining({ birthday }), "approved-target", transaction,
+            "branch-a", 1, expect.objectContaining({ birthday }), "approved-target", transaction, KR_BUILTIN_CALENDAR,
         );
     });
 
@@ -822,7 +908,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         clientRepository.findByPhone.mockResolvedValueOnce(existingClient);
         await updateCapability.execute(context, { id: 1, phone: "010-1234-5678" });
-        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ phone: "010-1234-5678" }));
+        expect(updateClient.execute).toHaveBeenCalledWith("branch-a", 1, expect.objectContaining({ phone: "010-1234-5678" }), undefined, KR_BUILTIN_CALENDAR);
 
         clientRepository.findByPhone.mockResolvedValueOnce({ ...existingClient, id: 2 });
         await expect(updateCapability.execute(context, { id: 1, phone: "010 1234 5678" })).rejects.toThrow("같은 전화번호의 고객이 이미 등록되어 있습니다.");
@@ -843,7 +929,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         await capability.execute(context, { id: 1, endDate: "2024-01-01" });
         await capability.execute(context, { id: 1, startDate: null });
         expect(updateClient.execute).toHaveBeenCalledTimes(2);
-        expect(updateClient.execute).toHaveBeenLastCalledWith("branch-a", 1, expect.objectContaining({ startDate: null }));
+        expect(updateClient.execute).toHaveBeenLastCalledWith("branch-a", 1, expect.objectContaining({ startDate: null }), undefined, KR_BUILTIN_CALENDAR);
 
         await expect(capability.execute(context, { id: 1, endDate: null, duration: 5 }))
             .rejects.toThrow("서비스 기간을 지정하려면 시작일과 종료일이 모두 있어야 합니다.");
@@ -855,7 +941,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         await capability.executeApprovedTarget!(context, { id: 1, startDate: null }, "approved-target");
         expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
-            "branch-a", 1, expect.objectContaining({ startDate: null }), "approved-target", transaction,
+            "branch-a", 1, expect.objectContaining({ startDate: null }), "approved-target", transaction, KR_BUILTIN_CALENDAR,
         );
     });
 
@@ -998,6 +1084,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             }),
             "approved-target",
             transaction,
+            KR_BUILTIN_CALENDAR,
         );
     });
 
@@ -1036,7 +1123,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             .rejects.toThrow("service record sync failed");
 
         expect(updateClient.executeApprovedTarget).toHaveBeenCalledWith(
-            "branch-a", 1, expect.objectContaining({ name: "새 이름" }), "approved-target", transaction,
+            "branch-a", 1, expect.objectContaining({ name: "새 이름" }), "approved-target", transaction, KR_BUILTIN_CALENDAR,
         );
         expect(transaction.agent_action.updateMany).not.toHaveBeenCalled();
     });
@@ -1177,6 +1264,12 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
                 };
             }),
         };
+        const taskCalendar = createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+            { supportedYears: [2024], version: "branch-test" },
+        );
+        const taskHolidayCalendar = createHolidayCalendarStub();
+        (taskHolidayCalendar.forBranch as jest.Mock).mockResolvedValue(taskCalendar);
         const provider = new ClientWriteAgentCapabilitiesProvider(
             createClient as never,
             updateClient as never,
@@ -1184,7 +1277,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            undefined,
+            taskHolidayCalendar, undefined,
             undefined,
             intent as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
@@ -1204,6 +1297,11 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         expect(result).toEqual({ id: 7, name: "합성고객", status: "created" });
         expect(automationRecords.runTaskMutation).toHaveBeenCalledTimes(1);
+        // The calendar is read before the task transaction opens and handed through.
+        expect((taskHolidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(automationRecords.runTaskMutation.mock.invocationCallOrder[0]!);
+        expect(createClient.execute).toHaveBeenCalledWith("branch-a", expect.any(Object), transaction, taskCalendar);
+        expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(7, transaction, taskCalendar);
         expect(intent.persistClientIntent).toHaveBeenCalledWith(
             transaction,
             expect.objectContaining({ branchId: "branch-a", clientId: 7, taskOrigin: true }),
@@ -1293,7 +1391,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             clientRepository as never,
             prisma as never,
             serviceRecordLifecycle as never,
-            undefined,
+            createHolidayCalendarStub(), undefined,
             undefined,
             intent as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
@@ -1350,7 +1448,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         const provider = new ClientWriteAgentCapabilitiesProvider(
             setupResult.createClient as never, setupResult.updateClient as never, setupResult.findClient as never,
             setupResult.clientRepository as never, { ...setupResult.prisma, area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) } } as never,
-            setupResult.serviceRecordLifecycle as never, undefined, setupResult.triggerService as never,
+            setupResult.serviceRecordLifecycle as never, createHolidayCalendarStub(), undefined, setupResult.triggerService as never,
             setupResult.messageAutomationIntentService as never,
             { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
             records as never,

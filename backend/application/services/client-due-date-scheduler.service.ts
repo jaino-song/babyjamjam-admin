@@ -96,6 +96,11 @@ export class ClientDueDateSchedulerService {
                 );
                 break;
             }
+            // The lifecycle sync reads the branch calendar through the root
+            // client, so it is resolved before the owning transaction takes a
+            // connection. The transaction is about to set startDate to dueDate.
+            const calendar = await this.serviceRecordLifecycleService
+                ?.resolveCalendarBeforeTransaction(client.id, { startDate: client.dueDate });
             const result = this.serviceRecordLifecycleService || this.messageAutomationIntentService
                 ? await this.prisma.$transaction(async (tx) => {
                     const updated = await tx.client.updateMany({
@@ -108,7 +113,7 @@ export class ClientDueDateSchedulerService {
                     });
                     if (updated.count > 0) {
                         if (this.serviceRecordLifecycleService) {
-                            await this.serviceRecordLifecycleService.ensureForClient(client.id, tx);
+                            await this.serviceRecordLifecycleService.ensureForClient(client.id, tx, calendar);
                         }
                         if (this.messageAutomationIntentService && client.branchId && client.dueDate) {
                             await this.messageAutomationIntentService.persistClientIntent(tx, {

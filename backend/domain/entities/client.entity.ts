@@ -5,7 +5,7 @@ import {
 } from "domain/value-objects/service-status.vo";
 import { assertValidPhone, normalizePhone } from "domain/utils/normalize-phone";
 import { normalizeKoreanWon } from "domain/value-objects/money.vo";
-import { countBusinessDaysKr } from "domain/utils/business-days";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
 interface UpdateClientProps {
     name?: string;
@@ -72,7 +72,8 @@ function deriveCreatedClientDuration(
     startDate: Date | null,
     endDate: Date | null,
     suppliedDuration: number | null | undefined,
-    allowBusinessDayMismatch = false,
+    allowBusinessDayMismatch: boolean | undefined,
+    calendar: KrBusinessDayCalendar,
 ): number | null {
     if (!startDate || !endDate) {
         // A pre-booking may carry an explicit policy duration before both
@@ -90,7 +91,7 @@ function deriveCreatedClientDuration(
         throw new Error("서비스 시작일은 종료일보다 늦을 수 없습니다.");
     }
 
-    const derivedDuration = countBusinessDaysKr(
+    const derivedDuration = calendar.countBusinessDays(
         startDate.toISOString().slice(0, 10),
         endDate.toISOString().slice(0, 10),
     );
@@ -177,6 +178,7 @@ export class ClientEntity {
 
     static create(
         props: CreateClientProps,
+        calendar: KrBusinessDayCalendar,
     ): ClientEntity {
         const phoneNormalized = assertValidPhone(props.phone);
         const duration = deriveCreatedClientDuration(
@@ -184,6 +186,7 @@ export class ClientEntity {
             props.endDate,
             props.duration,
             props.allowBusinessDayMismatch,
+            calendar,
         );
         return new ClientEntity(
             0,
@@ -213,7 +216,7 @@ export class ClientEntity {
         );
     }
 
-    update(props: UpdateClientProps): void {
+    update(props: UpdateClientProps, calendar: KrBusinessDayCalendar): void {
         // Optional means omitted/preserve; null is an explicit clear for a
         // nullable column. Checking against undefined keeps those states
         // distinct without spreading a partial patch over persisted values.
@@ -232,7 +235,13 @@ export class ClientEntity {
             // deriveCreatedClientDuration validates that and returns it
             // unchanged; an omitted value returns the raw derived count,
             // used below only to fill a still-null duration.
-            derivedDuration = deriveCreatedClientDuration(nextStartDate, nextEndDate, props.duration, props.allowBusinessDayMismatch);
+            derivedDuration = deriveCreatedClientDuration(
+                nextStartDate,
+                nextEndDate,
+                props.duration,
+                props.allowBusinessDayMismatch,
+                calendar,
+            );
         } else if (hasServiceDateUpdate) {
             // An explicit non-null duration requires a complete service
             // period. An omitted duration is left as-is: it no longer

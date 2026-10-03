@@ -11,6 +11,7 @@ const mockDispatchHeadless = jest.fn();
 const mockGenerateDocument = jest.fn();
 const mockCreateDocRecord = jest.fn();
 const mockAdoptDocument = jest.fn();
+const mockSupersedeDocument = jest.fn();
 const mockOpenDocument = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
@@ -37,6 +38,8 @@ const mockClients = [{
   endDate: "2026-09-16",
   eDocId: null,
 } as Client];
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -87,6 +90,7 @@ jest.mock("@/services/api", () => ({
     generateDocument: mockGenerateDocument,
     createDocRecord: mockCreateDocRecord,
     adoptDocument: mockAdoptDocument,
+    supersedeDocument: mockSupersedeDocument,
   },
 }));
 
@@ -247,6 +251,8 @@ function installFormState(overrides: Record<string, unknown> = {}) {
     setVoucherYear: setter(),
     setArea: setter(),
     setPreservePrefilledPrices: setter(),
+    supersede: null,
+    clearSupersede: jest.fn(),
     ...overrides,
   };
   mockUseFormStore.mockReturnValue(state);
@@ -286,6 +292,7 @@ beforeEach(() => {
   mockCreateDocRecord.mockResolvedValue({ id: 21, documentId: "doc-iframe" });
   mockAdoptDocument.mockResolvedValue({ documentId: "doc-adopted" });
   mockGenerateDocument.mockResolvedValue({ mode: { type: "01" } });
+  mockSupersedeDocument.mockResolvedValue(undefined);
 });
 
 describe("contract creation mutation lifecycle", () => {
@@ -482,6 +489,35 @@ describe("contract creation mutation lifecycle", () => {
     expect(mockPush).not.toHaveBeenCalled();
     act(() => jest.advanceTimersByTime(3_000));
     expect(mockPush).toHaveBeenCalledWith("/contracts");
+  });
+
+  it("cancels the re-issued client's previous contract only after the new one was sent", async () => {
+    jest.useFakeTimers();
+    const state = installFormState({ supersede: { clientId: 7, documentId: "old-doc" } });
+    mockDispatchHeadless.mockResolvedValue({
+      ok: false,
+      reason: "template_navigation_failed",
+      failedStep: "info-inserted",
+      fallbackHint: "iframe",
+      durationMs: 1,
+    });
+    const submit = await renderReadyPage();
+    // The target leaves the store on entry so it cannot leak into a later visit.
+    expect(state.clearSupersede).toHaveBeenCalled();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+    act(() => jest.advanceTimersByTime(500));
+    expect(mockSupersedeDocument).not.toHaveBeenCalled();
+    const options = mockOpenDocument.mock.calls[0]?.[2] as {
+      onSuccess: (response: unknown) => Promise<void>;
+    };
+    await act(async () => {
+      await options.onSuccess({ code: "-1", document_id: "doc-iframe" });
+    });
+
+    expect(mockSupersedeDocument).toHaveBeenCalledWith("old-doc", 7);
   });
 });
 

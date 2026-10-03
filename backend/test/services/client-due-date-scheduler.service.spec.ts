@@ -3,6 +3,7 @@ import { MessageTriggerService } from "application/services/message-trigger.serv
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+import { createLifecycleTransactionProbe } from "../utils/lifecycle-transaction-probe";
 
 describe("ClientDueDateSchedulerService", () => {
     const createMockPrismaService = () => ({
@@ -316,5 +317,34 @@ describe("ClientDueDateSchedulerService", () => {
             },
             data: { startDate: new Date("2026-06-19T00:00:00.000Z") },
         });
+    });
+
+    it("reads the branch calendar before the owning transaction opens and hands it to the lifecycle sync", async () => {
+        // The lifecycle sync reads the calendar through the root client; reading it from
+        // inside this transaction would hold one pooled connection while waiting for a second.
+        const probe = createLifecycleTransactionProbe({ clientId: 7 });
+        probe.tables.client.findMany.mockResolvedValue([
+            { id: 7, branchId: probe.branchId, dueDate: new Date("2026-09-07T00:00:00.000Z") },
+        ]);
+        const lifecycleScheduler = new ClientDueDateSchedulerService(
+            probe.prisma as unknown as PrismaService,
+            createSchedulerLeaseMock(),
+            undefined,
+            probe.lifecycle,
+        );
+
+        const count = await lifecycleScheduler.copyUpcomingDueDatesToStartDates(
+            new Date("2026-09-01T00:00:00.000Z"),
+        );
+
+        expect(count).toBe(1);
+        expect(probe.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect(probe.state.forBranchWhileOpen).toEqual([false]);
+        expect((probe.holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(probe.prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(probe.tables.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            // 09-07..09-18 is ten business days; the branch closing on 09-14 leaves nine.
+            create: expect.objectContaining({ requiredSessionCount: 9 }),
+        }));
     });
 });

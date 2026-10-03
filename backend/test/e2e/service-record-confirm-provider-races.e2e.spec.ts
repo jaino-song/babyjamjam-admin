@@ -16,6 +16,7 @@ import {
     serviceRecordConfirmBarrier,
     SHIFTED_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
@@ -89,7 +90,7 @@ function instrumentPrisma(prisma: PrismaClient, hooks: LockHooks = {}): PrismaCl
 
 function adminService(prisma: PrismaClient): AdminServiceRecordEditService {
     return new AdminServiceRecordEditService(
-        new ServiceRecordEditRepository(prisma as unknown as PrismaService),
+        new ServiceRecordEditRepository(prisma as unknown as PrismaService), createHolidayCalendarStub(),
     );
 }
 
@@ -97,7 +98,7 @@ function providerService(prisma: PrismaClient): ServiceRecordEntryService {
     return new ServiceRecordEntryService(
         prisma as unknown as PrismaService,
         { extendExpiryForCase: async () => undefined } as never,
-        new ServiceRecordLifecycleService(prisma as unknown as PrismaService),
+        new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub()), createHolidayCalendarStub(),
     );
 }
 

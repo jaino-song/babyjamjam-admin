@@ -3,7 +3,8 @@ import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/syn
 import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
-import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("SyncClientEndDateUsecase", () => {
     const branchId = "test-branch";
@@ -105,7 +106,7 @@ describe("SyncClientEndDateUsecase", () => {
         usecase = new SyncClientEndDateUsecase(
             eformsignClient as never,
             eformsignDocRepository as never,
-            clientRepository as never,
+            clientRepository as never, createHolidayCalendarStub(),
         );
 
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity());
@@ -179,6 +180,32 @@ describe("SyncClientEndDateUsecase", () => {
         await expect(usecase.execute(branchId, documentId, accessToken, { throwOnError: true }))
             .rejects.toBeInstanceOf(UnsupportedKoreanHolidayYearError);
         expect(clientRepository.update).not.toHaveBeenCalled();
+    });
+
+    it("uses the branch calendar, loaded fresh, so a branch-supported year is accepted", async () => {
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+            [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...(KOREAN_HOLIDAY_CALENDAR[2027] ?? []), "2028-01-03"],
+            { supportedYears: [2026, 2027, 2028], version: "branch-test" },
+        ));
+        const branchUsecase = new SyncClientEndDateUsecase(
+            eformsignClient as never,
+            eformsignDocRepository as never,
+            clientRepository as never,
+            holidayCalendar,
+        );
+        eformsignClient.getDocument.mockResolvedValue(
+            createDocumentResponse([
+                { id: "계약 종료 년도", value: "2028", type: "text" },
+                { id: "계약 종료 월", value: "01", type: "text" },
+                { id: "계약 종료 일", value: "03", type: "text" },
+            ]),
+        );
+
+        await expect(branchUsecase.execute(branchId, documentId, accessToken, { throwOnError: true }))
+            .resolves.toEqual({ clientId: 7, endDate: new Date("2028-01-03T00:00:00.000Z") });
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+        expect(clientRepository.update).toHaveBeenCalledTimes(1);
     });
 
     it("should delegate persistence when an atomic lifecycle writer is provided", async () => {

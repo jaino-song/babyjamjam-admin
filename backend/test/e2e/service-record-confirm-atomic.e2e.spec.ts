@@ -10,6 +10,7 @@ import {
     ORIGINAL_THIRTEEN_DATES,
     SHIFTED_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -21,7 +22,7 @@ describeE2E("atomic service-record confirmation (real disposable PostgreSQL)", (
         assertApprovedServiceRecordConfirmDatabaseTarget();
         prisma = createApprovedServiceRecordConfirmClient();
         await prisma.$connect();
-        service = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as PrismaService));
+        service = new AdminServiceRecordEditService(new ServiceRecordEditRepository(prisma as PrismaService), createHolidayCalendarStub());
     });
 
     afterAll(async () => {

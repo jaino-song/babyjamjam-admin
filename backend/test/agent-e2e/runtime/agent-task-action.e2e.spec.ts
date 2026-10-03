@@ -17,6 +17,7 @@ import type { AgentTaskAutomationPort, AgentTaskAutomationSource } from "applica
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import type { CapabilityDefinition } from "application/agent/capability.types";
 import { assertApprovedAgentTaskPersistenceDatabaseTarget, createApprovedAgentTaskPersistenceClient } from "./agent-task-persistence.helper";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const describeDb = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
 const userId = "b6100000-0000-4000-8000-000000000001";
@@ -113,7 +114,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
             return { availability: impact.question.availability, effects: impact.effects,
                 complete: true, clientIdentity: null, sourceGuard: agentBindingHash(input), affectedJobs: [] };
         };
-        const instance = (repository = tasks) => new AgentTaskService(repository, policy as never, clients as never, actions, automation);
+        const instance = (repository = tasks) => new AgentTaskService(repository, policy as never, clients as never, createHolidayCalendarStub(), actions, automation);
         service = instance();
         return { evaluate, instance, changePolicy: () => { policyVersion++; }, restorePolicy: () => { policyVersion = 1; } };
     }
@@ -144,7 +145,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         tasks = new PrismaAgentTaskRepository(db as never);
         sessions = new PrismaAgentSessionRepository(db as never);
         actions = coordinator();
-        service = new AgentTaskService(tasks, policy as never, clients as never, actions);
+        service = new AgentTaskService(tasks, policy as never, clients as never, createHolidayCalendarStub(), actions);
         meta.approvalPolicy = "structured";
         definition.planAutomationImpact = undefined;
         flags.isCapabilityEnabled.mockReset().mockResolvedValue(true);
@@ -320,7 +321,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         const beforeEvents = await db.agent_task_event.findMany({ where: { sessionId } });
         const beforeSession = await db.agent_session.findUniqueOrThrow({ where: { id: sessionId } });
         const faulty = new AgentTaskService(new PrismaAgentTaskRepository(failAfterWrite(db, "agent_task", "updateMany") as never),
-            policy as never, clients as never, actions);
+            policy as never, clients as never, createHolidayCalendarStub(), actions);
         const request = operation === "invalidate"
             ? faulty.patch(principal, initial.snapshot.taskId, { clientEventId: randomUUID(), expectedRevision: initial.snapshot.revision,
                 operations: [{ op: "set", field: "name", value: "SYN_EDIT" }] })
@@ -420,7 +421,7 @@ describeDb("atomic task review and execution on guarded PostgreSQL", () => {
         const oldAction = await actions.get(review.snapshot.action!.actionId, owner);
         const count = await db.agent_task_event.count({ where: { sessionId } });
         const faulty = new AgentTaskService(new PrismaAgentTaskRepository(failAfterWrite(db, "agent_task", "updateMany", true) as never),
-            policy as never, clients as never, actions);
+            policy as never, clients as never, createHolidayCalendarStub(), actions);
         await expect(faulty.patch(principal, before.id, { clientEventId: randomUUID(), expectedRevision: before.revision,
             operations: [{ op: "set", field: "name", value: "SYN_POSTWRITE" }] })).rejects.toMatchObject({ status: 503 });
         expect(await state(before.id)).toEqual(before);

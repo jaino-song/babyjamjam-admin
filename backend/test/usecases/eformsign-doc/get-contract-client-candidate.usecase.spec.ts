@@ -2,6 +2,8 @@ import { Logger } from "@nestjs/common";
 
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR, KR_BUILTIN_HOLIDAYS } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 describe("GetContractClientCandidateUsecase", () => {
     const findUnique = jest.fn();
@@ -22,7 +24,7 @@ describe("GetContractClientCandidateUsecase", () => {
         findEmployee.mockResolvedValue(null);
         findVoucherPrices.mockResolvedValue([]);
         createEmployee.execute.mockReset();
-        usecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never);
+        usecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never, createHolidayCalendarStub());
     });
 
     afterEach(() => {
@@ -249,6 +251,71 @@ describe("GetContractClientCandidateUsecase", () => {
         await expect(usecase.execute("doc-ambiguous-price", "branch-1")).resolves.toEqual(
             expect.objectContaining({ type: null, duration: null }),
         );
+    });
+
+    describe("business-day duration backfill", () => {
+        const START = "2026-08-19";
+        const END = "2026-09-15";
+        const priceAmounts = { fullPrice: "2928000", grant: "1440000", actualPrice: "1488000" };
+
+        beforeEach(() => {
+            findUnique.mockResolvedValue({
+                documentId: "doc-business-days",
+                customerName: null,
+                customerPhone: null,
+                detailPayload: {
+                    fields: [
+                        { id: "이용자 성명", value: "박지원" },
+                        { id: "서비스 기간", value: `${START} ~ ${END}` },
+                        { id: "총 서비스 금액", value: "2,928,000" },
+                        { id: "정부지원금", value: "1,440,000" },
+                        { id: "본인부담금", value: "1,488,000" },
+                    ],
+                },
+            });
+        });
+
+        function priceRowsAround(count: number) {
+            return [
+                { type: "A통합1형", duration: BigInt(count), ...priceAmounts },
+                { type: "B통합2형", duration: BigInt(count - 1), ...priceAmounts },
+            ];
+        }
+
+        it("picks the price row whose duration is the BRANCH's business-day count of the period", async () => {
+            const builtinCount = KR_BUILTIN_CALENDAR.countBusinessDays(START, END)!;
+            findVoucherPrices.mockResolvedValue(priceRowsAround(builtinCount));
+
+            const builtinResult = await usecase.execute("doc-business-days", "branch-1");
+            expect(builtinResult).toEqual(expect.objectContaining({ type: "A통합1형", duration: builtinCount }));
+
+            // The branch closes on a weekday inside the period, so its count is one lower.
+            const branchCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-09-01"], {
+                supportedYears: [2026],
+            });
+            expect(branchCalendar.countBusinessDays(START, END)).toBe(builtinCount - 1);
+            const stub = createHolidayCalendarStub();
+            (stub.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+            const branchUsecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never, stub);
+
+            const branchResult = await branchUsecase.execute("doc-business-days", "branch-1");
+
+            expect(branchResult).toEqual(expect.objectContaining({ type: "B통합2형", duration: builtinCount - 1 }));
+            expect(stub.forBranch).toHaveBeenCalledWith("branch-1");
+        });
+
+        it("does not backfill the voucher duration when there is no branch to count against", async () => {
+            const builtinCount = KR_BUILTIN_CALENDAR.countBusinessDays(START, END)!;
+            findVoucherPrices.mockResolvedValue(priceRowsAround(builtinCount));
+            const stub = createHolidayCalendarStub();
+            const noBranchUsecase = new GetContractClientCandidateUsecase(prisma, createEmployee as never, stub);
+
+            const result = await noBranchUsecase.execute("doc-business-days");
+
+            expect(result).toEqual(expect.objectContaining({ type: null, duration: null }));
+            expect(stub.forBranch).not.toHaveBeenCalled();
+            expect(findVoucherPrices).not.toHaveBeenCalled();
+        });
     });
 
     it("payload가 없으면 문서 컬럼 폴백을 반환한다", async () => {

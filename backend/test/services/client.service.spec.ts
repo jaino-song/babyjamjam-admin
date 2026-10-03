@@ -23,6 +23,14 @@ import { SystemSettingService } from "../../application/services/system-setting.
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
+import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+
+/** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
+const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
+    [...(KOREAN_HOLIDAY_CALENDAR[2026] ?? []), ...extra],
+    { supportedYears: [2026], version: "branch-test" },
+);
 
 describe("ClientService", () => {
     // ============================================
@@ -167,6 +175,7 @@ describe("ClientService", () => {
     const createMockServiceRecordLifecycleService = () => ({
         validatePeriodChange: jest.fn().mockResolvedValue(undefined),
         ensureForClient: jest.fn().mockResolvedValue(undefined),
+        resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         markTerminated: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -264,6 +273,7 @@ describe("ClientService", () => {
     let configService: ReturnType<typeof createMockConfigService>;
     let documentSnapshotService: ReturnType<typeof createMockDocumentSnapshotService>;
     let linkMirroredDocumentByPhoneUsecase: ReturnType<typeof createMockLinkMirroredDocumentByPhoneUsecase>;
+    let holidayCalendar: ReturnType<typeof createHolidayCalendarStub>;
 
     beforeEach(() => {
         createClientUsecase = createMockCreateClientUsecase();
@@ -285,6 +295,7 @@ describe("ClientService", () => {
         configService = createMockConfigService();
         documentSnapshotService = createMockDocumentSnapshotService();
         linkMirroredDocumentByPhoneUsecase = createMockLinkMirroredDocumentByPhoneUsecase();
+        holidayCalendar = createHolidayCalendarStub();
 
         service = new ClientService(
             createClientUsecase as unknown as CreateClientUsecase,
@@ -298,7 +309,7 @@ describe("ClientService", () => {
             systemSettingService as unknown as SystemSettingService,
             documentSnapshotService as unknown as EformsignDocumentSnapshotService,
             messageAutomationIntentService as unknown as MessageAutomationIntentService,
-            triggerService as unknown as MessageTriggerService,
+            holidayCalendar, triggerService as unknown as MessageTriggerService,
             serviceRecordLinkService as unknown as ServiceRecordLinkService,
             serviceRecordLifecycleService as unknown as ServiceRecordLifecycleService,
             configService as unknown as ConfigService,
@@ -370,6 +381,7 @@ describe("ClientService", () => {
                 branchId,
                 expect.objectContaining({ phone: null }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
         });
 
@@ -405,6 +417,18 @@ describe("ClientService", () => {
                 expect(createdDuration()).toBe(15);
             });
 
+            it("derives the duration from the branch calendar, loaded fresh", async () => {
+                // The branch adds 2026-08-26 off, so the same period holds 14 sessions, not 15.
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-08-26"]));
+                const client = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(client);
+
+                await service.create(branchId, { ...baseParams, ...servicePeriod, duration: null });
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+                expect(createdDuration()).toBe(14);
+            });
+
             it("derives the duration when the caller omits it entirely", async () => {
                 const client = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(client);
@@ -432,7 +456,7 @@ describe("ClientService", () => {
                 expect(createClientUsecase.execute).toHaveBeenCalledWith(branchId, expect.objectContaining({
                     duration: 15, startDate: new Date("2026-08-26"), endDate: new Date("2026-09-14"),
                     allowBusinessDayMismatch: true,
-                }), expect.anything());
+                }), expect.anything(), KR_BUILTIN_CALENDAR);
             });
 
             it("still rejects a supplied duration that exceeds the business-day count", async () => {
@@ -497,6 +521,7 @@ describe("ClientService", () => {
                         workAddress: "123 Main St",
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
@@ -590,6 +615,7 @@ describe("ClientService", () => {
                         address: "123 Main St",
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
                 expect(result).toBe(mockClient);
@@ -628,6 +654,7 @@ describe("ClientService", () => {
                     careCenter: null,
                 }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
         });
 
@@ -1178,6 +1205,7 @@ describe("ClientService", () => {
                 branchId,
                 expect.objectContaining({ suppressGreetingSms: expectedSuppressed }),
                 expect.anything(),
+                KR_BUILTIN_CALENDAR,
             );
             expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                 branchId,
@@ -1263,6 +1291,7 @@ describe("ClientService", () => {
                         secondaryEmployeeId: 6,
                     }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
@@ -1332,6 +1361,7 @@ describe("ClientService", () => {
                 expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
                     existingClient.id,
                     prismaService,
+                    KR_BUILTIN_CALENDAR,
                 );
             });
 
@@ -1682,6 +1712,7 @@ describe("ClientService", () => {
                     branchId,
                     expect.objectContaining({ suppressGreetingSms: expectedSuppress }),
                     expect.anything(),
+                    KR_BUILTIN_CALENDAR,
                 );
                 expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(
                     branchId,
@@ -1725,6 +1756,30 @@ describe("ClientService", () => {
         });
 
         describe("given existing client and no employee change", () => {
+            it("runs the internal claim before client writes on the same transaction", async () => {
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+                const beforeWrite = jest.fn(async () => undefined);
+
+                await service.update(branchId, existingClient.id, { endDate: "2024-05-30" }, beforeWrite);
+
+                expect(beforeWrite).toHaveBeenCalledWith(prismaService);
+                expect(beforeWrite.mock.invocationCallOrder[0])
+                    .toBeLessThan(prismaService.client.updateMany.mock.invocationCallOrder[0] ?? 0);
+                expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+            });
+
+            it("does not write client state when the internal claim rejects", async () => {
+                findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+                const beforeWrite = jest.fn(async () => { throw new ConflictException({ code: "ITEM_NOT_OPEN" }); });
+
+                await expect(service.update(branchId, 1, { endDate: "2024-05-30" }, beforeWrite))
+                    .rejects.toMatchObject({ response: { code: "ITEM_NOT_OPEN" } });
+
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
+            });
+
             it("revalidates a service-period change inside the owning transaction", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
@@ -1750,6 +1805,75 @@ describe("ClientService", () => {
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
             });
 
+            describe("expectedEndDate guard", () => {
+                it("rejects with SERVICE_RECORD_WRITE_TARGET_CHANGED when the end date moved since the snapshot", async () => {
+                    const existingClient = createClientEntity(); // endDate 2024-06-01
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-05-31",
+                    })).rejects.toMatchObject({
+                        status: 409,
+                        response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+                    });
+
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(serviceRecordLifecycleService.validatePeriodChange).not.toHaveBeenCalled();
+                });
+
+                it("rejects when the client has no end date but one was expected", async () => {
+                    const existingClient = createClientEntity();
+                    existingClient.endDate = null;
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+
+                it("writes normally when the end date still matches, without persisting the guard", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await service.update(branchId, existingClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    });
+
+                    const { data } = prismaService.client.updateMany.mock.calls[0][0];
+                    expect(data.endDate).toEqual(new Date("2024-05-30"));
+                    expect(data).not.toHaveProperty("expectedEndDate");
+                });
+
+                it("treats a guard on its own as no update", async () => {
+                    const existingClient = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                    await expect(service.update(branchId, existingClient.id, { expectedEndDate: "2000-01-01" }))
+                        .resolves.toBe(existingClient);
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
+                });
+
+                it("checks the end date of the row read after locking, not the stale preflight copy", async () => {
+                    const staleClient = createClientEntity(); // endDate 2024-06-01
+                    findClientByIdUsecase.execute.mockResolvedValue(staleClient);
+                    prismaService.client.findUnique.mockResolvedValue({
+                        ...staleClient,
+                        branchId,
+                        endDate: new Date("2024-06-05T00:00:00.000Z"),
+                    });
+
+                    await expect(service.update(branchId, staleClient.id, {
+                        endDate: "2024-05-30",
+                        expectedEndDate: "2024-06-01",
+                    })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } });
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                });
+            });
+
             it("should update client without creating new schedule", async () => {
                 // Arrange
                 const existingClient = createClientEntity();
@@ -1770,6 +1894,25 @@ describe("ClientService", () => {
                     data: expect.objectContaining({ name: "New Name", address: "New Address" }),
                 }));
                 expect(result).toBe(existingClient);
+            });
+
+            it("loads the branch calendar before the transaction and hands it to the lifecycle repair", async () => {
+                const calendar = createKrBusinessDayCalendar(
+                    [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+                    { supportedYears: [2024], version: "branch-test" },
+                );
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await service.update(branchId, existingClient.id, { name: "새 고객 이름" });
+
+                expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+                expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                    .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+                expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                    existingClient.id, expect.anything(), calendar,
+                );
             });
 
             it("should refresh assignment jobs when the client name changes", async () => {
@@ -2129,6 +2272,24 @@ describe("ClientService", () => {
                         response: clientProblemResponse("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", "서비스 기간은 1일 이상 102일 이하여야 합니다. (시작일~종료일 영업일 기준)"),
                     });
                 expect(prismaService.$transaction).not.toHaveBeenCalled();
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("validates the duration against the branch calendar, loaded fresh, and reuses it in the locked re-check", async () => {
+                // The branch adds 2024-03-05 off, so 2024-01-01..2024-06-01 holds 101 sessions, not 102.
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(createKrBusinessDayCalendar(
+                    [...(KOREAN_HOLIDAY_CALENDAR[2024] ?? []), "2024-03-05"],
+                    { supportedYears: [2024], version: "branch-test" },
+                ));
+                const existingClient = createClientEntity();
+                findClientByIdUsecase.execute.mockResolvedValue(existingClient);
+
+                await expect(service.update(branchId, 1, { duration: 102 }))
+                    .rejects.toMatchObject({
+                        status: 400,
+                        response: clientProblemResponse("CLIENT_DURATION_OUT_OF_RANGE", "/duration", "OUT_OF_RANGE", "서비스 기간은 1일 이상 101일 이하여야 합니다. (시작일~종료일 영업일 기준)"),
+                    });
+                expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
                 expect(prismaService.client.updateMany).not.toHaveBeenCalled();
             });
 
@@ -3348,6 +3509,16 @@ describe("ClientService", () => {
                 expect(await actionRequiredFor(client)).toBeNull();
             });
 
+            it("counts the send window with the branch calendar", async () => {
+                // 2026-03-26 is 7 business days out, so no send alert; a branch day off on
+                // 2026-03-20 pulls it to 6 and the alert appears.
+                const client = createClient("2026-03-26", null);
+                expect(await actionRequiredFor(client)).toBeNull();
+
+                (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-03-20"]));
+                expect(await actionRequiredFor(client)).toEqual({ reason: "발송 필요", priority: 3 });
+            });
+
             it("counts the window in business days, not calendar days", async () => {
                 // 2026-03-22 is 5 calendar days out but only 3 business days.
                 const client = createClient("2026-03-22", null);
@@ -3495,6 +3666,26 @@ describe("ClientService", () => {
             ]);
         });
 
+        it("uses one branch calendar for both the scan cutoff and the per-client decision", async () => {
+            const lteOf = (): Date => {
+                const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+                return where.OR[1].startDate.lte as Date;
+            };
+            const client = alertClient({ eDocId: null, startDate: new Date("2026-03-26T00:00:00.000Z") });
+            prismaService.client.findMany.mockResolvedValue([client]);
+
+            // 2026-03-26 is 7 business days out: beyond both the cutoff and the threshold.
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
+            const builtinCutoff = lteOf();
+
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(branchCalendar2026(["2026-03-20"]));
+            const alerts = await service.getActionRequiredAlerts(branchId);
+
+            expect(alerts).toEqual([expect.objectContaining({ reason: "발송 필요", priority: 3 })]);
+            expect(lteOf().getTime()).toBeGreaterThan(builtinCutoff.getTime());
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
+        });
+
         it("reports 발송 필요 when no document has been sent", async () => {
             prismaService.client.findMany.mockResolvedValue([
                 alertClient({ eDocId: null, startDate: new Date("2026-03-20T00:00:00.000Z") }),
@@ -3610,6 +3801,134 @@ describe("ClientService", () => {
     });
 
     // ============================================
+    // The branch calendar is a saved computation, read ONCE and before the
+    // owning transaction opens (a second pooled connection held while client
+    // rows are locked starves the direct route's five-connection pool).
+    // ============================================
+    describe("branch calendar read before the owning transaction", () => {
+        const createParams = {
+            name: "New Client",
+            address: "123 Main St",
+            phone: "010-1234-5678",
+            startDate: "2026-08-26",
+            endDate: "2026-09-14",
+            careCenter: false,
+            voucherClient: true,
+            breastPump: false,
+            reuseExistingClient: true,
+        };
+
+        function loadedBeforeTransaction() {
+            const forBranchOrder = (holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!;
+            const transactionOrder = (prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!;
+            expect(forBranchOrder).toBeLessThan(transactionOrder);
+        }
+
+        it("create without an employee reads the calendar once and passes it to the usecase and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            createClientUsecase.execute.mockResolvedValue(mockClient);
+
+            await service.create(branchId, createParams);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(createClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                mockClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("create with an employee reads the calendar once and passes it to the usecase and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            createClientUsecase.executeWithInitialSchedule.mockResolvedValue({ client: mockClient, scheduleId: 10 });
+
+            await service.create(branchId, { ...createParams, primaryEmployeeId: 5 });
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            loadedBeforeTransaction();
+            expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
+                branchId, expect.anything(), expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                mockClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("reusing a client with an assignment hands the pre-transaction calendar to the lifecycle repair", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const existingClient = createClientEntity();
+            clientRepository.findByPhone.mockResolvedValue(existingClient);
+            prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+            prismaService.employee_schedule.create.mockResolvedValue({ id: 33, clientId: existingClient.id });
+
+            await service.create(branchId, { ...createParams, primaryEmployeeId: 5 });
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+            loadedBeforeTransaction();
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
+                existingClient.id, expect.anything(), calendar,
+            );
+        });
+
+        it("requestReplacement resolves the lifecycle calendar before the transaction and hands it to the repair", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            serviceRecordLifecycleService.resolveCalendarBeforeTransaction.mockResolvedValue(calendar);
+            findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+            prismaService.employee_schedule.findFirst.mockResolvedValue(null);
+            prismaService.employee_schedule.create.mockResolvedValue({ id: 90, clientId: 1 });
+
+            await service.requestReplacement(branchId, 1, 7);
+
+            expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction).toHaveBeenCalledWith(1);
+            expect(serviceRecordLifecycleService.resolveCalendarBeforeTransaction.mock.invocationCallOrder[0]!)
+                .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+        });
+
+        it("terminateService loads the calendar before the transaction and passes it to the update", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            findClientByIdUsecase.execute.mockResolvedValue(createClientEntity());
+            updateClientUsecase.execute.mockResolvedValue(createClientEntity());
+            prismaService.employee_schedule.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+
+            await service.terminateService(branchId, 1, "Client requested");
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(updateClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, 1, expect.anything(), expect.anything(), calendar,
+            );
+        });
+
+        it("completeReplacement loads the calendar before the transaction and passes it to the update and the lifecycle", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            const mockClient = createClientEntity();
+            findClientByIdUsecase.execute.mockResolvedValue(mockClient);
+            updateClientUsecase.execute.mockResolvedValue(mockClient);
+            clientRepository.findByIdForUpdate.mockResolvedValue(mockClient);
+
+            await service.completeReplacement(branchId, 1);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            loadedBeforeTransaction();
+            expect(updateClientUsecase.execute).toHaveBeenCalledWith(
+                branchId, 1, expect.anything(), expect.anything(), calendar,
+            );
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(1, expect.anything(), calendar);
+        });
+    });
+
+    // ============================================
     // terminateService
     // ============================================
     describe("terminateService", () => {
@@ -3634,7 +3953,7 @@ describe("ClientService", () => {
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: "terminated",
                     endDate: expect.any(Date),
-                }, expect.anything());
+                }, expect.anything(), KR_BUILTIN_CALENDAR);
                 expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
                     where: { clientId: 1, branchId, replaced: false, terminatedAt: null },
                     data: { terminatedAt: expect.any(Date) },
@@ -3660,7 +3979,7 @@ describe("ClientService", () => {
                 // Assert
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, expect.objectContaining({
                     serviceStatus: "terminated",
-                }), expect.anything());
+                }), expect.anything(), KR_BUILTIN_CALENDAR);
             });
 
             it("should sync client trigger rules with includePast=false", async () => {
@@ -4285,7 +4604,7 @@ describe("ClientService", () => {
                 // Should compute status (active since we're between start and end dates)
                 expect(updateClientUsecase.execute).toHaveBeenCalledWith(branchId, 1, {
                     serviceStatus: expect.stringMatching(/active|waiting|completed/),
-                }, expect.anything());
+                }, expect.anything(), KR_BUILTIN_CALENDAR);
             });
         });
 

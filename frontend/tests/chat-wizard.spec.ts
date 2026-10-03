@@ -128,14 +128,9 @@ test.describe('Chat client registration wizard', () => {
       });
     });
 
-    await page.goto('/dashboard');
-    await page.waitForLoadState('networkidle');
-
-    const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-    await chatInput.click();
-
-    await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 5000 });
+    // The dashboard chat widget was removed; the chat is its own /chat page.
+    await page.goto('/chat');
+    await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
 
     await page.getByRole('button', { name: '산모 등록' }).click();
     await expect(page.getByLabel('이름')).toBeVisible({ timeout: 5000 });

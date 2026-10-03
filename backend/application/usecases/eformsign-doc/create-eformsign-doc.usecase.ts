@@ -8,6 +8,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 export interface CreateEformsignDocParams {
     documentId: string;
@@ -52,6 +53,7 @@ export class CreateEformsignDocUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(
@@ -108,18 +110,21 @@ export class CreateEformsignDocUsecase {
             try {
                 const client = linkedClient ?? await this.clientRepository.findById(branchid, clientId);
                 if (client) {
+                    // SAVED computation: the client update re-derives its duration.
+                    const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
                     if (params.clientTargetVersion) {
                         const linked = await this.clientRepository.updateIfTargetVersion(
                             branchid,
                             client.id,
                             params.clientTargetVersion,
                             { eDocId: params.documentId },
+                            calendar,
                         );
                         if (!linked) {
                             throw new Error("Client changed before contract link could be persisted");
                         }
                     } else {
-                        client.update({ eDocId: params.documentId });
+                        client.update({ eDocId: params.documentId }, calendar);
                         await this.clientRepository.update(branchid, client);
                     }
                     this.logger.log(`Linked document ${params.documentId} to client ${client.id}`);

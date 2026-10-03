@@ -73,8 +73,8 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await page.waitForLoadState('networkidle');
     
-    // Should see the feedback list
-    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });
+    // Should see the feedback list panel with the mocked rows
+    await expect(page.getByRole('heading', { name: '피드백 목록' })).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('홍길동')).toBeVisible();
   });
 
@@ -115,14 +115,13 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await page.waitForLoadState('networkidle');
     
-    await expect(page.getByText('전체').first()).toBeVisible();
-    await expect(page.getByText('긍정적').first()).toBeVisible();
-    await expect(page.getByText('부정적').first()).toBeVisible();
-    
-    const statsCards = page.locator('.bg-white.rounded-lg.shadow.p-6');
-    await expect(statsCards.nth(0)).toContainText('15');
-    await expect(statsCards.nth(1)).toContainText('10');
-    await expect(statsCards.nth(2)).toContainText('5');
+    // The stats bar renders one stat per label, value first.
+    const stat = (label: string) => page
+      .locator('[data-slot="stat-mini-content"]')
+      .filter({ has: page.locator('[data-slot="stat-mini-label"]', { hasText: label }) });
+    await expect(stat('전체')).toContainText('15');
+    await expect(stat('긍정적')).toContainText('10');
+    await expect(stat('부정적')).toContainText('5');
   });
 
   test('displays feedback list with correct data', async ({ page }) => {
@@ -139,16 +138,33 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await page.waitForLoadState('networkidle');
     
-    // Check table headers
-    await expect(page.getByText('날짜')).toBeVisible();
-    await expect(page.getByText('사용자')).toBeVisible();
-    await expect(page.getByText('유형')).toBeVisible();
-    await expect(page.getByText('코멘트')).toBeVisible();
-    
-    // Check feedback items
+    // Feedback rows: user name as the title, the comment as the subtitle.
+    await expect(page.getByRole('heading', { name: '피드백 목록' })).toBeVisible();
     await expect(page.getByText('홍길동')).toBeVisible();
     await expect(page.getByText('김철수')).toBeVisible();
     await expect(page.getByText('답변이 부정확합니다')).toBeVisible();
+
+    // Nothing is selected yet, so the detail panel shows its placeholder.
+    await expect(page.getByText('피드백을 선택하면 상세 정보가 표시됩니다')).toBeVisible();
+
+    // Selecting a row opens the detail panel with that feedback's info card.
+    await page.route('**/api/admin/feedback/feedback-2', async (route) => {
+      const feedback = MOCK_FEEDBACK_LIST.data[1];
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...feedback,
+          session: { id: 'session-1', messages: [feedback.message] },
+        }),
+      });
+    });
+    await page.getByText('김철수').click();
+    const detail = page.locator('[data-component="desktop_admin_split-layout_detail-panel"]');
+    await expect(detail.getByText('부정적 피드백')).toBeVisible();
+    await expect(detail.getByText('피드백 정보')).toBeVisible();
+    await expect(detail.getByText('답변이 부정확합니다')).toBeVisible();
+    await expect(detail.getByText('다른 답변입니다')).toBeVisible();
   });
 
   test('shows empty state when no feedback exists', async ({ page }) => {
@@ -165,7 +181,7 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await page.waitForLoadState('networkidle');
     
-    await expect(page.getByText('피드백이 없습니다.')).toBeVisible();
+    await expect(page.getByText('피드백이 없습니다')).toBeVisible();
   });
 
   test('positive filter shows only positive feedback', async ({ page }) => {
@@ -207,6 +223,6 @@ test.describe('Admin Feedback Page', () => {
     await page.waitForLoadState('networkidle');
     
     // Should see the feedback list
-    await expect(page.getByText('피드백 관리')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole('heading', { name: '피드백 목록' })).toBeVisible({ timeout: 5000 });
   });
 });

@@ -10,6 +10,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 import { EformsignWebhookPayloadDto } from "interface/dto/eformsign-webhook.dto";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 describe("EformsignWebhookService", () => {
     const branchId = "test-branch";
@@ -1746,7 +1747,7 @@ describe("EformsignWebhookService", () => {
         );
         const realLinkDocumentUsecase = new LinkDocumentToClientUsecase(
             statefulDocRepository as never,
-            statefulClientRepository as never,
+            statefulClientRepository as never, createHolidayCalendarStub(),
         );
         const statefulService = new EformsignWebhookService(
             realUpdateStatusUsecase,

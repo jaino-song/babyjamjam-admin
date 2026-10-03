@@ -17,6 +17,8 @@ let mockLatePrefill: Record<string, unknown> = {};
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,

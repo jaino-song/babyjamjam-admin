@@ -7,6 +7,7 @@ import {
     deriveClientDuration,
 } from "application/usecases/client/client-write-validation";
 import { ClientEntity } from "domain/entities/client.entity";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { ConfirmNewClientFieldsDto } from "interface/dto/call-inbox.dto";
 import { CreateClientDto } from "interface/dto/client.dto";
 
@@ -75,19 +76,19 @@ describe("client pricing and service-period invariants", () => {
             fullPrice: "1,000원",
             grant: "500원",
             actualPrice: "500",
-        });
+        }, KR_BUILTIN_CALENDAR);
         expect(entity.fullPrice).toBe("1000");
         expect(entity.grant).toBe("500");
         expect(entity.actualPrice).toBe("500");
 
-        entity.update({ fullPrice: "2,000원" });
+        entity.update({ fullPrice: "2,000원" }, KR_BUILTIN_CALENDAR);
         expect(entity.fullPrice).toBe("2000");
         expect(() => ClientEntity.create({
             ...requiredClientProps,
             fullPrice: "1000abc",
             grant: "0",
             actualPrice: "1000",
-        })).toThrow("Invalid Korean won amount");
+        }, KR_BUILTIN_CALENDAR)).toThrow("Invalid Korean won amount");
         // duration is the contracted session count and is authoritative
         // once set: a supplied value that fits within the derived
         // business-day count is accepted and persisted unchanged, even
@@ -98,7 +99,7 @@ describe("client pricing and service-period invariants", () => {
             fullPrice: "1000",
             grant: "0",
             actualPrice: "1000",
-        });
+        }, KR_BUILTIN_CALENDAR);
         expect(smallerDuration.duration).toBe(5);
         expect(() => ClientEntity.create({
             ...requiredClientProps,
@@ -106,7 +107,7 @@ describe("client pricing and service-period invariants", () => {
             fullPrice: "1000",
             grant: "0",
             actualPrice: "1000",
-        })).toThrow("서비스 기간은 1일 이상 6일 이하여야 합니다.");
+        }, KR_BUILTIN_CALENDAR)).toThrow("서비스 기간은 1일 이상 6일 이하여야 합니다.");
         const legacyFormatted = ClientEntity.reconstitute(
             1,
             requiredClientProps.name,
@@ -153,7 +154,7 @@ describe("client pricing and service-period invariants", () => {
     it("derives one inclusive Korean business-day duration and rejects a duration that cannot fit", () => {
         const start = new Date("2026-08-03T00:00:00.000Z");
         const end = new Date("2026-08-10T00:00:00.000Z");
-        expect(deriveClientDuration(start, end)).toBe(6);
+        expect(deriveClientDuration(start, end, KR_BUILTIN_CALENDAR)).toBe(6);
         // A supplied duration only needs to fit within the derived count,
         // not equal it.
         expect(() => assertClientDurationMatchesDates(5, 6)).not.toThrow();
@@ -174,13 +175,13 @@ describe("client pricing and service-period invariants", () => {
         });
         expect(() => deriveClientDuration(
             new Date("2028-01-03T00:00:00.000Z"),
-            new Date("2028-01-04T00:00:00.000Z"),
+            new Date("2028-01-04T00:00:00.000Z"), KR_BUILTIN_CALENDAR,
         )).toThrow(BadRequestException);
         expect(() => deriveClientDuration(
             new Date("2028-01-03T00:00:00.000Z"),
-            new Date("2028-01-04T00:00:00.000Z"),
+            new Date("2028-01-04T00:00:00.000Z"), KR_BUILTIN_CALENDAR,
         )).toThrow("서비스 기간을 계산할 수 없습니다. 시작일과 종료일을 확인해 주세요.");
-        expect(() => deriveClientDuration(end, start)).toThrow(BadRequestException);
+        expect(() => deriveClientDuration(end, start, KR_BUILTIN_CALENDAR)).toThrow(BadRequestException);
     });
 
     it("keeps entity duration fixed across date patches and only fills a null duration", () => {
@@ -189,20 +190,20 @@ describe("client pricing and service-period invariants", () => {
             fullPrice: "1000",
             grant: "0",
             actualPrice: "1000",
-        });
+        }, KR_BUILTIN_CALENDAR);
         expect(entity.duration).toBe(6);
 
         // Extending the end date (e.g. a postponed session) must not change
         // the stored session count, even though the business-day span for
         // the new range grows to 7.
-        entity.update({ endDate: new Date("2026-08-11T00:00:00.000Z") });
+        entity.update({ endDate: new Date("2026-08-11T00:00:00.000Z") }, KR_BUILTIN_CALENDAR);
         expect(entity.duration).toBe(6);
 
         // A supplied duration wins as long as it fits within the (possibly
         // extended) business-day span.
-        entity.update({ duration: 7 });
+        entity.update({ duration: 7 }, KR_BUILTIN_CALENDAR);
         expect(entity.duration).toBe(7);
-        expect(() => entity.update({ duration: 8 }))
+        expect(() => entity.update({ duration: 8 }, KR_BUILTIN_CALENDAR))
             .toThrow("서비스 기간은 1일 이상 7일 이하여야 합니다.");
         expect(entity.duration).toBe(7);
 
@@ -210,7 +211,7 @@ describe("client pricing and service-period invariants", () => {
         // an already-set duration (this was the incident this model exists
         // to fix: a schedule change silently rewrote 15 to 18).
         entity.duration = 1;
-        entity.update({ name: "프로필만 변경" });
+        entity.update({ name: "프로필만 변경" }, KR_BUILTIN_CALENDAR);
         expect(entity.duration).toBe(1);
 
         const beforeInvalidPatch = {
@@ -221,20 +222,20 @@ describe("client pricing and service-period invariants", () => {
         expect(() => entity.update({
             endDate: new Date("2026-08-01T00:00:00.000Z"),
             duration: 1,
-        })).toThrow();
+        }, KR_BUILTIN_CALENDAR)).toThrow();
         expect(entity.startDate).toEqual(beforeInvalidPatch.startDate);
         expect(entity.endDate).toEqual(beforeInvalidPatch.endDate);
         expect(entity.duration).toBe(beforeInvalidPatch.duration);
 
         // Clearing a date does not wipe out a stored duration: duration no
         // longer depends on a complete range.
-        entity.update({ endDate: null });
+        entity.update({ endDate: null }, KR_BUILTIN_CALENDAR);
         expect(entity.endDate).toBeNull();
         expect(entity.duration).toBe(1);
 
         // A still-null duration is filled once the missing date reappears.
         entity.duration = null;
-        entity.update({ endDate: new Date("2026-08-10T00:00:00.000Z") });
+        entity.update({ endDate: new Date("2026-08-10T00:00:00.000Z") }, KR_BUILTIN_CALENDAR);
         expect(entity.duration).toBe(6);
     });
 
@@ -246,17 +247,17 @@ describe("client pricing and service-period invariants", () => {
             fullPrice: "1000",
             grant: "0",
             actualPrice: "1000",
-        });
+        }, KR_BUILTIN_CALENDAR);
 
         // The missing date completes the range to a 6-business-day span.
         // The pre-booking duration (5, already <= 6) is not resupplied
         // here, so it survives the transition instead of being
         // invalidated or silently re-derived.
-        prebooking.update({ endDate: requiredClientProps.endDate });
+        prebooking.update({ endDate: requiredClientProps.endDate }, KR_BUILTIN_CALENDAR);
         expect(prebooking.endDate).toEqual(requiredClientProps.endDate);
         expect(prebooking.duration).toBe(5);
 
-        prebooking.update({ duration: 6 });
+        prebooking.update({ duration: 6 }, KR_BUILTIN_CALENDAR);
         expect(prebooking.duration).toBe(6);
     });
 });

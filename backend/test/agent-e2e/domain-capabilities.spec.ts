@@ -5,6 +5,8 @@ import { EmployeeAgentCapabilitiesProvider } from "application/usecases/employee
 import { VoucherAgentCapabilitiesProvider } from "application/usecases/voucher-price-info/voucher-agent-capabilities.provider";
 import { BankAccountAgentCapabilitiesProvider } from "application/usecases/bank-account-info/bank-account-agent-capabilities.provider";
 import { EformsignAgentCapabilitiesProvider } from "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider";
+import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const context = {
     principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
@@ -141,7 +143,7 @@ describe("Release A domain read capabilities", () => {
             stepRecipientType: "05", stepRecipientName: "이용자", stepRecipientSms: "010-0000-0000", expiredDate: new Date("2026-12-01T00:00:00Z"), expired: false, clientId: 10,
         });
         const find = { execute: jest.fn().mockResolvedValue([active, deleted]) };
-        const provider = new EformsignAgentCapabilitiesProvider(find as never);
+        const provider = new EformsignAgentCapabilitiesProvider(find as never, createHolidayCalendarStub());
         const output = await provider.getCapabilities()[0]!.execute(context, { clientId: 10 });
         expect(output).toMatchObject({ documents: [{ documentId: "doc-active", status: "completed" }] });
         expect(find.execute).toHaveBeenCalledWith("branch-a", 10);
@@ -172,7 +174,7 @@ describe("Release A domain read capabilities", () => {
                 updatedDate: new Date("2026-09-20T00:00:00.000Z"), expired: false,
             }]),
         };
-        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, findRecentContracts as never);
+        const provider = new EformsignAgentCapabilitiesProvider(findDocs as never, createHolidayCalendarStub(), findRecentContracts as never);
         const capability = provider.getCapabilities().find(({ meta }) => meta.name === "contracts.recent")!;
 
         const output = await capability.execute(context, {}) as { documents: Array<Record<string, unknown>> };
@@ -180,5 +182,37 @@ describe("Release A domain read capabilities", () => {
         expect(output.documents).toEqual([expect.objectContaining({ documentId: "doc-1", clientName: "산모", status: "completed" })]);
         expect(JSON.stringify(output)).not.toContain('"050"');
         expect(findRecentContracts.execute).toHaveBeenCalledWith("branch-a", 10);
+    });
+
+    it("resolves contract display statuses on the principal's branch calendar, fetched once per call", async () => {
+        // End date Fri 2026-08-07, today Wed 2026-08-05 (KST): a branch holiday on 8/6 opens
+        // the review window a day early, so the same row reads 검토 필요 instead of 서명 완료.
+        const row = {
+            documentId: "doc-1", documentName: "계약서", clientId: 10, clientName: "산모",
+            statusType: "070", statusDetail: "제공기관 확인", stepType: "06", stepName: "제공기관 확인",
+            updatedDate: new Date("2026-08-01T00:00:00.000Z"), expired: false, contractEndDate: "2026-08-07",
+        };
+        const findRecentContracts = { execute: jest.fn().mockResolvedValue([row, { ...row, documentId: "doc-2" }]) };
+        const builtinStub = createHolidayCalendarStub();
+        const branchStub = createHolidayCalendarStub();
+        (branchStub.forBranch as jest.Mock).mockResolvedValue(
+            createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], { supportedYears: [2026] }),
+        );
+        const recent = (stub: ReturnType<typeof createHolidayCalendarStub>) =>
+            new EformsignAgentCapabilitiesProvider({ execute: jest.fn() } as never, stub, findRecentContracts as never)
+                .getCapabilities().find(({ meta }) => meta.name === "contracts.recent")!;
+
+        jest.useFakeTimers({ now: new Date("2026-08-05T03:00:00.000Z") });
+        try {
+            const builtin = await recent(builtinStub).execute(context, {}) as { documents: Array<{ status: string }> };
+            const branch = await recent(branchStub).execute(context, {}) as { documents: Array<{ status: string }> };
+
+            expect(builtin.documents.map((doc) => doc.status)).toEqual(["signed", "signed"]);
+            expect(branch.documents.map((doc) => doc.status)).toEqual(["review", "review"]);
+            expect(branchStub.forBranch).toHaveBeenCalledTimes(1);
+            expect(branchStub.forBranch).toHaveBeenCalledWith("branch-a");
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });

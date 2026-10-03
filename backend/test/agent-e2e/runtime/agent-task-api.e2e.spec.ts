@@ -32,6 +32,7 @@ import {
     assertApprovedAgentTaskPersistenceDatabaseTarget,
     createApprovedAgentTaskPersistenceClient,
 } from "./agent-task-persistence.helper";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const describeAgentE2E = process.env["AGENT_E2E"] === "1" ? describe : describe.skip;
 const USER_ID = "97000000-0000-4000-8000-000000000001";
@@ -153,7 +154,7 @@ describeAgentE2E("agent task API against the guarded local database", () => {
             findByPhone: jest.fn().mockResolvedValue(null),
             findById: jest.fn().mockResolvedValue(null),
         };
-        const taskService = new AgentTaskService(repository as never, policy as never, clients as never);
+        const taskService = new AgentTaskService(repository as never, policy as never, clients as never, createHolidayCalendarStub());
         httpTaskService = taskService;
         const jwtGuard = {
             canActivate: (context: { switchToHttp(): { getRequest(): { user?: unknown } } }) => {
@@ -261,7 +262,7 @@ describeAgentE2E("agent task API against the guarded local database", () => {
             assertCanPatch: jest.fn().mockReturnValue(capability),
         };
         const clients = { findByPhone: jest.fn().mockResolvedValue(null), findById: jest.fn().mockResolvedValue(null) };
-        return new AgentTaskService(repository as never, policy as never, clients as never);
+        return new AgentTaskService(repository as never, policy as never, clients as never, createHolidayCalendarStub());
     }
 
     async function createExtraSession(input: { expiresAt: Date; archivedAt?: Date | null }) {

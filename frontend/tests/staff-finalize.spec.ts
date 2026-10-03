@@ -1,5 +1,6 @@
 import { test, expect, Page } from "@playwright/test";
 import { PDFDocument } from "pdf-lib";
+import { KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 test.beforeEach(async ({ page, baseURL }) => {
   const appUrl = baseURL ?? "http://localhost:3000";
@@ -131,6 +132,15 @@ async function installCommonRoutes(page: Page) {
     return route.fallback();
   });
 
+  // Branch holiday calendar for the apps' business-day maths (built-in list, no branch changes).
+  await page.route("**/api/branches/*/holidays**", async (route) => {
+      const year = Number(new URL(route.request().url()).searchParams.get("year"));
+      const holidays = KR_BUILTIN_HOLIDAYS
+          .filter((date) => date.startsWith(`${year}-`))
+          .map((date) => ({ date, name: "공휴일", source: "builtin", excluded: false, overrideId: null }));
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ year, revision: 1, supported: holidays.length > 0, synced: true, lastSyncedAt: null, holidays, inactiveOverrides: [] }) });
+  });
+
   await page.route("**/api/eformsign/auth-status", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ hasAppAuthToken: true, hasAccessToken: true, hasRefreshToken: true }) })
   );
@@ -229,8 +239,6 @@ async function createTestPdf(): Promise<Buffer> {
 }
 
 test.describe("Staff finalize iframe + prefill flow", () => {
-  test.describe.configure({ mode: "serial" });
-
   test("previews a review-needed maternity document without starting finalization", async ({ page }) => {
     await installCommonRoutes(page);
 
@@ -271,7 +279,8 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     await reviewItem.click();
 
     const previewTrigger = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_preview-trigger"]');
-    await expect(previewTrigger).toHaveRole("button", { name: "문서 보기" });
+    await expect(previewTrigger).toHaveRole("button");
+    await expect(previewTrigger).toHaveAccessibleName("문서 보기");
     await previewTrigger.click();
 
     const previewDialog = page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_dialogs_document-preview"]');
@@ -288,11 +297,13 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     let capturedGenerateBody: Record<string, unknown> | null = null;
 
     await installCommonRoutes(page);
+    // A 5xx leaves the outcome unknown (the page then asks for a manual status check and never
+    // reopens the editor), so force the iframe fallback with an explicit "nothing was applied" verdict.
     await page.route("**/api/eformsign-docs/finalize-headless", async (route) =>
       route.fulfill({
-        status: 500,
+        status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ message: "force iframe fallback" }),
+        body: JSON.stringify({ ok: false, reason: "force iframe fallback", fallbackHint: "iframe", durationMs: 1 }),
       })
     );
     await page.route("**/api/generate-staff-document", async (route) => {
@@ -383,6 +394,13 @@ test.describe("Staff finalize iframe + prefill flow", () => {
   test("backend failure surfaces an error toast and keeps the dialog open", async ({ page }) => {
     await stubEformsignSdk(page);
     await installCommonRoutes(page);
+    await page.route("**/api/eformsign-docs/finalize-headless", async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: false, reason: "force iframe fallback", fallbackHint: "iframe", durationMs: 1 }),
+      })
+    );
     await page.route("**/api/generate-staff-document", (route) =>
       route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) })
     );
@@ -394,7 +412,7 @@ test.describe("Staff finalize iframe + prefill flow", () => {
     await page.locator('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document_header_review-trigger"]').click();
     await fillEndDateAndSubmit(page, "2026-07-15");
 
-    await expect(page.getByText("최종 확인 실패")).toBeVisible();
+    await expect(page.getByText("최종 확인을 마치지 못했어요")).toBeVisible();
     // Date dialog remains open so staff can retry.
     await expect(page.getByPlaceholder("YYYY-MM-DD")).toBeVisible();
   });

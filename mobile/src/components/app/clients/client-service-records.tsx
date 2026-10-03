@@ -34,6 +34,7 @@ import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
@@ -41,6 +42,7 @@ import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { getServiceRecordAdminHref } from "@/lib/frontend-origin";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
@@ -116,6 +118,9 @@ function ClientServiceRecordsContent({
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
         [overview?.assignments],
     );
+    // Display-only: expected session dates may use the built-in calendar while
+    // the branch calendar loads. Old assignments pull their own years in.
+    const { calendar } = useBusinessDayCalendar({ extraYears: assignmentCalendarYears(assignments) });
     const [selectedEntry, setSelectedEntry] = useState<{
         key: string;
         assignmentScheduleId: number;
@@ -159,7 +164,7 @@ function ClientServiceRecordsContent({
     }
 
     if (selectedAssignment && selectedEntry) {
-        const selectedSlot = buildSessionSlots(selectedAssignment)
+        const selectedSlot = buildSessionSlots(selectedAssignment, calendar)
             .find((slot) => slot.sessionIndex === selectedEntry.sessionIndex) ?? null;
         return (
             <div
@@ -202,6 +207,7 @@ function ClientServiceRecordsContent({
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
+                        calendar={calendar}
                         isRefreshing={isRefreshing}
                         onRefresh={onRefresh}
                         onSelectSession={(sessionIndex, trigger) => {
@@ -475,18 +481,20 @@ function ServiceHeaderCard({
 function ServiceSessionsCard({
     assignment,
     delay,
+    calendar,
     isRefreshing,
     onRefresh,
     onSelectSession,
 }: {
     assignment: ServiceRecordAssignment;
     delay: number;
+    calendar: KrBusinessDayCalendar;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onSelectSession: (sessionIndex: number, trigger: HTMLElement) => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions-card");
-    const slots = buildSessionSlots(assignment);
+    const slots = buildSessionSlots(assignment, calendar);
     const lockedCount = assignment.sessions.filter((session) => session.locked).length;
     const draftCount = assignment.sessions.filter((session) => !session.locked).length;
 
@@ -746,7 +754,7 @@ function sortAssignmentsNewestFirst(assignments: ServiceRecordAssignment[]): Ser
     });
 }
 
-function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
+function buildSessionSlots(assignment: ServiceRecordAssignment, calendar: KrBusinessDayCalendar): SessionSlot[] {
     const total = Math.max(
         assignment.totalSessions,
         assignment.sessions.reduce((max, session) => Math.max(max, session.sessionIndex), 0),
@@ -757,7 +765,7 @@ function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
         return {
             sessionIndex,
             record: sessionsByIndex.get(sessionIndex) ?? null,
-            expectedDate: getExpectedSessionDate(assignment.startDate, sessionIndex, assignment.sessions),
+            expectedDate: getExpectedSessionDate(assignment.startDate, sessionIndex, assignment.sessions, calendar),
         };
     });
 }
@@ -766,8 +774,31 @@ function getExpectedSessionDate(
     startDate: string,
     sessionIndex: number,
     sessions: ServiceRecordSession[],
+    calendar: KrBusinessDayCalendar,
 ): string | null {
-    return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions);
+    try {
+        return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions, calendar);
+    } catch {
+        // The branch calendar does not cover this year: show "unknown" rather than a wrong date.
+        return null;
+    }
+}
+
+// Years of the dates an assignment holds, plus the following year so a schedule
+// that crosses New Year stays inside the loaded window.
+function assignmentCalendarYears(assignments: ServiceRecordAssignment[]): number[] {
+    const years = new Set<number>();
+    const addYear = (value: string | null) => {
+        const year = Number(datePartOf(value)?.slice(0, 4));
+        if (!Number.isInteger(year)) return;
+        years.add(year);
+        years.add(year + 1);
+    };
+    for (const assignment of assignments) {
+        addYear(assignment.startDate);
+        for (const session of assignment.sessions) addYear(session.serviceDate);
+    }
+    return [...years];
 }
 
 // Mirrors SERVICE_RECORD_LINK_GRACE_DAYS in backend/domain/constants/service-record-link-message.ts

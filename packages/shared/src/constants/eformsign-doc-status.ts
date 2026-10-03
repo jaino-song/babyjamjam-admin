@@ -1,5 +1,5 @@
 import { isProviderReviewWorkflowStep } from "./eformsign-status-codes";
-import { assertSupportedKoreanHolidayYear, isBusinessDayKr } from "../utils/business-days";
+import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "../utils/business-days";
 
 // Preserve the historical named export for consumers that imported the
 // display-status module directly; the set itself now comes from the single
@@ -95,19 +95,6 @@ function parseYmdToUtc(ymd: string): Date | null {
     return parsed;
 }
 
-const SUBTRACT_BUSINESS_DAY_SEARCH_LIMIT = 30;
-
-/** Step back `days` Korean business days (weekends AND KR holidays skipped). */
-function subtractBusinessDays(date: Date, days: number): Date {
-    const result = new Date(date.getTime());
-    let remaining = days;
-    for (let i = 0; remaining > 0 && i < SUBTRACT_BUSINESS_DAY_SEARCH_LIMIT; i += 1) {
-        result.setUTCDate(result.getUTCDate() - 1);
-        if (isBusinessDayKr(result.toISOString().slice(0, 10))) remaining -= 1;
-    }
-    return result;
-}
-
 /**
  * True when today (KST) is on or after 1 Korean business day before the
  * contract end date — e.g. a Friday end date opens on Thursday, a Monday end
@@ -120,14 +107,15 @@ function subtractBusinessDays(date: Date, days: number): Date {
 export function isContractReviewWindowOpen(
     contractEndDate: string | null | undefined,
     now: Date = new Date(),
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
 ): boolean {
     const endDate = contractEndDate ? parseYmdToUtc(contractEndDate) : null;
     if (!endDate) return true;
-    assertSupportedKoreanHolidayYear(endDate.getUTCFullYear());
+    calendar.assertSupportedYear(endDate.getUTCFullYear());
 
-    const threshold = subtractBusinessDays(endDate, 1);
+    const threshold = calendar.shiftBusinessDays(endDate.toISOString().slice(0, 10), -1);
     const todayKst = KST_YMD_FORMAT.format(now);
-    return todayKst >= threshold.toISOString().slice(0, 10);
+    return todayKst >= threshold;
 }
 
 /**
@@ -140,6 +128,8 @@ export function resolveContractDocDisplayStatus(params: {
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
     now?: Date;
+    /** Holiday calendar to use; defaults to the built-in Korean calendar. */
+    calendar?: KrBusinessDayCalendar;
     // "unassigned" is excluded deliberately, not by omission: whether a row is
     // claimed lives only in the local mirror, so this client-side fallback
     // cannot decide it and must not pretend to. A payload carrying
@@ -148,7 +138,7 @@ export function resolveContractDocDisplayStatus(params: {
     if (params.category === "completed") return "completed";
     if (params.category === "expired") return "expired";
     if (!isProviderReviewWorkflowStep(params.currentStatus)) return "pending";
-    return isContractReviewWindowOpen(params.contractEndDate, params.now) ? "review" : "signed";
+    return isContractReviewWindowOpen(params.contractEndDate, params.now, params.calendar) ? "review" : "signed";
 }
 
 /**
@@ -180,6 +170,7 @@ export function isContractReceiptSendable(params: {
     currentStatus?: { step_type?: string | null; step_name?: string | null } | null;
     contractEndDate?: string | null;
     now?: Date;
+    calendar?: KrBusinessDayCalendar;
 }): boolean {
     if (isContractDocDisplayStatus(params.displayStatus)) {
         return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(params.displayStatus);
@@ -194,6 +185,7 @@ export function isContractReceiptSendable(params: {
             currentStatus: params.currentStatus ?? null,
             contractEndDate: params.contractEndDate ?? null,
             now: params.now,
+            calendar: params.calendar,
         }),
     );
 }
@@ -204,6 +196,7 @@ export function resolveContractDocStatusLabel(params: {
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
     now?: Date;
+    calendar?: KrBusinessDayCalendar;
 }): ContractDocStatusLabel {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS[resolveContractDocDisplayStatus(params)];
 }

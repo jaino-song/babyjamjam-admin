@@ -6,6 +6,8 @@ import { useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useEformsignDocumentsByType } from "@/hooks/useEformsignDocuments";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { EformsignDocument, EformsignDocumentView } from "@/lib/eformsign/types";
 import {
   DocumentFilterType,
@@ -36,7 +38,10 @@ const STATUS_OPTIONS: FilterOption[] = [
 const EXCLUDED_CUSTOMER_NAMES = ["송진호", "인천 아이미래로"];
 
 // Transform API document to view model
-const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null => {
+const transformDocument = (
+  doc: EformsignDocument,
+  calendar: KrBusinessDayCalendar,
+): EformsignDocumentView | null => {
   const customerName = getEformsignCustomerName(doc);
 
   // Skip documents without a customer name
@@ -53,7 +58,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
     doc_id: doc.id,
     customer_name: customerName,
     created_date: doc.created_date,
-    status: mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status),
+    status: mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar),
   };
 };
 
@@ -66,6 +71,8 @@ const EFORMSIGN_LIST_BASE = "mobile_contracts_eformsign-list";
 
 export function DocumentsList() {
   const locale = useLocale();
+  // Display-only status labels: the built-in list is fine until the branch calendar loads.
+  const { calendar } = useBusinessDayCalendar();
   const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>(null);
 
   // Local document reads only require the app session.
@@ -119,10 +126,10 @@ export function DocumentsList() {
 
   const documents = useMemo<DocumentRow[]>(() => {
     return (data?.documents || [])
-      .map(transformDocument)
+      .map((doc) => transformDocument(doc, calendar))
       .filter((doc): doc is EformsignDocumentView => doc !== null)
       .map((doc) => doc as DocumentRow);
-  }, [data?.documents]);
+  }, [calendar, data?.documents]);
 
   // Error state - now after all hooks are called
   if (authError || error) {

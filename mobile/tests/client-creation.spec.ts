@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { getKoreanHolidays } from "../src/lib/date/business-days";
+
 const VOUCHER_TYPE = "A가1형";
 const VOUCHER_DURATION = "10";
 
@@ -55,6 +57,40 @@ const OUT_OF_POCKET_PRICE_INFOS = [
 type CreateClientPayload = Record<string, unknown>;
 
 async function mockClientsWizardRoutes(page: Page, options?: { onCreate?: (payload: CreateClientPayload) => void }) {
+  // The last step waits for the branch holiday calendar, which needs a branch on the auth user.
+  await page.route("**/api/auth/me", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ id: "owner-1", name: "관리자", role: "owner", branchId: "e2e-branch" }),
+    });
+  });
+
+  // The branch holiday calendar: the public list for the requested year, no branch edits.
+  await page.route("**/api/branches/*/holidays**", async (route) => {
+    const year = Number(new URL(route.request().url()).searchParams.get("year"));
+    let dates: string[] = [];
+    let supported = true;
+    try {
+      dates = [...getKoreanHolidays(year)];
+    } catch {
+      supported = false;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        year,
+        revision: 1,
+        supported,
+        synced: true,
+        lastSyncedAt: null,
+        holidays: dates.map((date) => ({ date, name: "공휴일", source: "public", excluded: false, overrideId: null })),
+        inactiveOverrides: [],
+      }),
+    });
+  });
+
   await page.route("**/api/notifications/vapid-key**", async (route) => {
     await route.fulfill({
       status: 200,
