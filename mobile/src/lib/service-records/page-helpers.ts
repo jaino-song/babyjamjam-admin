@@ -1,4 +1,5 @@
 import { holidayYearsToRequest } from "@babyjamjam/shared/utils/holiday-calendar";
+import { previousBusinessDay } from "@babyjamjam/shared/utils/service-record-schedule";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 export function isServiceDateMismatch(
@@ -8,14 +9,17 @@ export function isServiceDateMismatch(
     return serviceDate !== today;
 }
 
-// Number of business days (on the given branch calendar) the schedule moves
-// when the caregiver picks `nextIso` instead of the expected `expectedIso`.
-// `countBusinessDays` counts both endpoints inclusive, so subtract 1 to get the
-// shift amount.
+// Signed number of business days (on the given branch calendar) the schedule
+// moves when the caregiver picks `nextIso` instead of the expected `expectedIso`.
+// This mirrors the delta `shiftServiceRecordScheduleSuffix` computes in
+// packages/shared/src/utils/service-record-schedule.ts: a weekend/holiday
+// target counts as the business day before it (`previousBusinessDay`), and the
+// expected date may itself be an admin-approved weekend/holiday exception, which
+// `diffBusinessDays` handles because it only counts business days after it.
 // Returns `null` (instead of throwing) when either date falls in a year the
-// calendar doesn't cover, or when `countBusinessDays` itself returns `null`
-// (invalid ISO input) — callers must treat `null` as "the shift cannot be
-// computed" and avoid presenting it as a valid value.
+// calendar doesn't cover, or when the input is not a valid ISO date — callers
+// must treat `null` as "the shift cannot be computed" and avoid presenting it as
+// a valid value.
 // The result decides the schedule-shift confirmation, so callers must pass the
 // loaded branch calendar (not the built-in list) before acting on it.
 export function getServiceDateShiftBusinessDays(
@@ -23,14 +27,14 @@ export function getServiceDateShiftBusinessDays(
     nextIso: string,
     calendar: KrBusinessDayCalendar,
 ): number | null {
-    let count: number | null;
     try {
-        count = calendar.countBusinessDays(expectedIso, nextIso);
+        const target = calendar.isBusinessDay(nextIso) ? nextIso : previousBusinessDay(nextIso, calendar);
+        const delta = calendar.diffBusinessDays(target, expectedIso);
+        // diffBusinessDays returns -0 for a backward span with no business days.
+        return delta === 0 ? 0 : delta;
     } catch {
         return null;
     }
-    if (count === null) return null;
-    return count - 1;
 }
 
 interface LegacyServiceDateContext {

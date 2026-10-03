@@ -1,4 +1,8 @@
 import { buildCalendarFromHolidayYears } from "@babyjamjam/shared/utils/holiday-calendar";
+import {
+    previousBusinessDay,
+    shiftServiceRecordScheduleSuffix,
+} from "@babyjamjam/shared/utils/service-record-schedule";
 
 import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import {
@@ -53,6 +57,44 @@ describe("getServiceDateShiftBusinessDays", () => {
 
     it("returns null for an invalid ISO date", () => {
         expect(getServiceDateShiftBusinessDays("2026-08-26", "not-a-date", KR_BUILTIN_CALENDAR)).toBeNull();
+    });
+});
+
+describe("getServiceDateShiftBusinessDays parity with shiftServiceRecordScheduleSuffix", () => {
+    // 2026-08-29 is a Saturday, 08-30 a Sunday; 2026-09-25 is a Chuseok holiday (Friday).
+    const cases: Array<{ name: string; expected: string; next: string; shift: number }> = [
+        { name: "a normal weekday shift", expected: "2026-08-26", next: "2026-08-28", shift: 2 },
+        { name: "an expected Sunday moved to Monday", expected: "2026-08-30", next: "2026-08-31", shift: 1 },
+        { name: "an expected Saturday moved to Sunday", expected: "2026-08-29", next: "2026-08-30", shift: 0 },
+        { name: "an expected holiday exception moved to the next business day", expected: "2026-09-25", next: "2026-09-28", shift: 1 },
+        { name: "a target that is itself a holiday", expected: "2026-09-23", next: "2026-09-25", shift: 0 },
+        { name: "a backward shift", expected: "2026-08-28", next: "2026-08-26", shift: -2 },
+    ];
+
+    it.each(cases)("$name", ({ expected, next, shift }) => {
+        const original = KR_BUILTIN_CALENDAR.isBusinessDay(expected)
+            ? expected
+            : previousBusinessDay(expected, KR_BUILTIN_CALENDAR);
+        const vector = [{
+            sessionIndex: 1,
+            serviceDate: expected,
+            originalDate: original,
+            assignmentId: "assignment-1",
+            scheduleId: 1,
+            employeeId: 1,
+            provenanceVersion: "v1",
+        }];
+        const backend = shiftServiceRecordScheduleSuffix(
+            vector,
+            1,
+            next,
+            KR_BUILTIN_CALENDAR,
+            { allowNonBusinessDay: true },
+        ).deltaBusinessDays;
+
+        // `+ 0` folds the backend's -0 (a backward span without business days) into 0.
+        expect(backend + 0).toBe(shift);
+        expect(getServiceDateShiftBusinessDays(expected, next, KR_BUILTIN_CALENDAR)).toBe(backend + 0);
     });
 });
 
