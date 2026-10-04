@@ -4,6 +4,7 @@ import { ConfigService } from "@nestjs/config";
 import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
+import { createLifecycleTransactionProbe } from "../../utils/lifecycle-transaction-probe";
 
 function contractDetail() {
     return {
@@ -181,6 +182,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         };
         const serviceRecordLifecycle = {
             ensureForClient: jest.fn().mockResolvedValue(undefined),
+            resolveCalendarBeforeTransaction: jest.fn().mockResolvedValue(undefined),
         };
         const notificationService = {
             sendToBranchUsers: jest.fn().mockResolvedValue({ sent: 1, failed: 0 }),
@@ -204,6 +206,72 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             ),
         };
     }
+
+    it.each([
+        { completeLocks: false, knownClient: false, retry: false },
+        { completeLocks: true, knownClient: false, retry: false },
+        { completeLocks: false, knownClient: true, retry: false },
+        { completeLocks: true, knownClient: true, retry: false },
+        { completeLocks: true, knownClient: false, retry: true },
+        { completeLocks: true, knownClient: true, retry: true },
+    ])("preloads the existing client's calendar outside the transaction ($completeLocks locks, $knownClient known, $retry retry)", async ({ completeLocks, knownClient, retry }) => {
+        const probe = createLifecycleTransactionProbe({ clientId: 21 });
+        const document = mirroredDocument({
+            branchId: probe.branchId,
+            customerPhone: "01012345678",
+        });
+        const { prisma, transaction, settings } = setup(document, probe.holidayCalendar);
+        settings.getClientAutoRegistrationEnabled.mockResolvedValue(false);
+        transaction.client.findMany.mockResolvedValue([{
+            id: 21,
+            branchId: probe.branchId,
+            phone: "010-1234-5678",
+            eDocId: null,
+        }]);
+        transaction.client.findUnique.mockImplementation(async () => ({
+            ...await probe.tables.client.findUnique(),
+            eDocId: null,
+        }));
+        const tx = Object.assign(transaction, {
+            service_record_case: probe.tables.service_record_case,
+            service_record_token: probe.tables.service_record_token,
+        });
+        if (completeLocks) {
+            Object.assign(tx.employee_schedule, { findMany: jest.fn().mockResolvedValue([]) });
+        }
+        if (retry) transaction.$executeRaw.mockRejectedValueOnce({ code: "P2034" });
+        prisma.$transaction.mockImplementation(async (work) => {
+            probe.state.open = true;
+            try {
+                return await work(tx);
+            } finally {
+                probe.state.open = false;
+            }
+        });
+        const resolveCalendar = jest.spyOn(probe.lifecycle, "resolveCalendarBeforeTransaction");
+        const usecase = new LinkMirroredEformsignDocByPhoneUsecase(
+            prisma as never,
+            { get: jest.fn() } as unknown as ConfigService,
+            settings as never,
+            probe.holidayCalendar,
+            undefined,
+            probe.lifecycle,
+        );
+
+        await expect(usecase.execute("doc-1", {
+            ...(knownClient ? { existingClientId: 21, existingClientBranchId: probe.branchId } : {}),
+            suppressOutboundAutomation: true,
+        })).resolves.toBe("linked");
+
+        expect(probe.state.forBranchWhileOpen).toEqual([false]);
+        expect(probe.holidayCalendar.forBranch).toHaveBeenCalledWith(probe.branchId, { fresh: true });
+        expect(probe.tables.service_record_case.upsert).toHaveBeenCalled();
+        expect(prisma.$transaction).toHaveBeenCalledTimes(retry ? 2 : 1);
+        if (knownClient) {
+            expect(resolveCalendar).toHaveBeenCalledWith(21);
+            expect(resolveCalendar).toHaveBeenCalledTimes(1);
+        }
+    });
 
     it("keeps an explicitly classified revision contract eligible when it carries a case scope", () => {
         const { usecase } = setup();
