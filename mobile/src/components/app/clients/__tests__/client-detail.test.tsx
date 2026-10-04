@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, renderHook, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
@@ -10,6 +10,12 @@ import {
 } from "../client-detail";
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
+import { useIssueContract } from "@/hooks/useIssueContract";
+import { useFormStore } from "@/stores/form-store";
+
+jest.mock("@/hooks/useEmployees", () => ({
+  useEmployees: () => ({ data: [] }),
+}));
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/clients",
@@ -92,7 +98,13 @@ jest.mock("../ServiceRecordLinkResetResultModal", () => ({
 }));
 
 jest.mock("../ServiceScheduleChangeModal", () => ({
-  ServiceScheduleChangeModal: () => null,
+  ServiceScheduleChangeModal: ({ onSubmit }: { onSubmit: (allow: boolean) => void }) => (
+    <button onClick={() => onSubmit(false)}>일정 변경 적용</button>
+  ),
+}));
+
+jest.mock("@/services/api", () => ({
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }) },
 }));
 
 const client: Client = {
@@ -186,6 +198,82 @@ function contractDocumentWithDates({
 }
 
 describe("ClientDetailContent", () => {
+  it("leaves the payment date blank when the old document fetch fails during reissue", async () => {
+    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
+    const { eformsignApi } = await import("@/services/api");
+    jest.mocked(fetchClientServiceRecords).mockResolvedValue({ assignments: [{ scheduleId: 7, replaced: false }] } as never);
+    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
+      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
+    } as never);
+    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
+    jest.mocked(eformsignApi.getDocument).mockRejectedValueOnce(new Error("Document unavailable"));
+    useFormStore.getState().resetAll();
+    const { result } = renderHook(() => useIssueContract());
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail"
+        client={{ ...client, eDocId: "old-document", documentStatus: "completed" }}
+        activeTab="basic"
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={result.current}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByText("서비스 일정 변경"));
+    await user.click(await screen.findByText("일정 변경 적용"));
+    await user.click(await screen.findByText("수정 전송"));
+
+    expect(eformsignApi.getDocument).toHaveBeenCalledWith("old-document");
+    expect(useFormStore.getState().paymentDate).toBe("");
+    expect(useFormStore.getState().isContractReissue).toBe(true);
+    expect(useFormStore.getState().supersede).toBeNull();
+  });
+  it.each([
+    ["requested", "latest-document"],
+    ["completed", undefined],
+  ] as const)("reissues using the latest document's %s status, not the stale pin", async (documentStatus, expected) => {
+    const { eformsignApi } = await import("@/services/api");
+    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
+    jest.mocked(fetchClientServiceRecords).mockResolvedValue({
+      assignments: [{ scheduleId: 7, replaced: false }],
+    } as never);
+    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
+      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
+    } as never);
+    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
+    const target = {
+      ...client, eDocId: "old-document", latestContractDocumentId: "latest-document", documentStatus,
+    };
+    const onIssueContract = jest.fn();
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail"
+        client={target}
+        activeTab="basic"
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={onIssueContract}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByText("서비스 일정 변경"));
+    await user.click(await screen.findByText("일정 변경 적용"));
+    await user.click(await screen.findByText("수정 전송"));
+
+    expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      supersedeDocumentId: expected,
+    }));
+    expect(eformsignApi.getDocument).toHaveBeenLastCalledWith("latest-document");
+  });
   it.each([
     ["unsigned", false, "고객 (고객)"],
     ["signed while provider review is pending", true, "-"],

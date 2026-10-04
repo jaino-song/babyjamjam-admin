@@ -355,7 +355,23 @@ describe("service-record-edit-preview.policy", () => {
             ]);
         });
 
-        it("blocks a persisted vector that lands on a branch holiday and reports the calendar version", () => {
+        it("preserves legacy session dates after a branch holiday is added", () => {
+            const legacy = source({ plannedSessions: null });
+            const preview = buildServiceRecordEditPreview({
+                ...baseInput,
+                calendar: withBranchHoliday("2026-09-09", "kr-db-legacy-revised"),
+                source: legacy,
+                changes: {},
+            });
+
+            expect(preview.blockingReasons.map(({ code }) => code)).not.toContain("NON_BUSINESS_DATE");
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.before.sessions.map(({ serviceDate }) => serviceDate))
+                .toEqual(legacy.sessions.map(({ serviceDate }) => serviceDate));
+            expect(preview.after.sessions).toEqual(preview.before.sessions);
+        });
+
+        it("preserves a persisted vector after a branch holiday is added and reports the calendar version", () => {
             const builtinPreview = buildServiceRecordEditPreview({
                 ...baseInput,
                 calendar: KR_BUILTIN_CALENDAR,
@@ -373,8 +389,8 @@ describe("service-record-edit-preview.policy", () => {
                 changes: {},
             });
             expect(branchPreview.calendarVersion).toBe("kr-db-branch-b");
-            expect(branchPreview.blockingReasons.length).toBeGreaterThan(0);
-            expect(branchPreview.before.sessions).toEqual([]);
+            expect(branchPreview.blockingReasons).toEqual([]);
+            expect(branchPreview.before.sessions).toEqual(builtinPreview.before.sessions);
         });
     });
 });

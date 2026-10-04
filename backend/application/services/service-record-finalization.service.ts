@@ -190,7 +190,7 @@ function currentPlannedSessionVector(
     }
 
     try {
-        return validateServiceRecordScheduleVector(entries, requiredSessionCount, calendar);
+        return validateServiceRecordScheduleVector(entries, requiredSessionCount, calendar, { persisted: true });
     } catch {
         return null;
     }

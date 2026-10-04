@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useEmployees } from "@/hooks/useEmployees";
 import type { ContractReissueOptions } from "@/components/app/clients/ServiceScheduleContractResendModal";
-import { todayIsoDate } from "@/lib/contracts/date-input";
 import { useFormStore } from "@/stores/form-store";
 import type { Client } from "@/lib/client/types";
 
@@ -64,7 +63,8 @@ export function useIssueContract() {
       fullPrice: target.fullPrice ?? "",
       grant: target.grant ?? "",
       actualPrice: target.actualPrice ?? "",
-      paymentDate: reissue?.paymentDate ?? todayIsoDate(),
+      paymentDate: reissue?.paymentDate,
+      isContractReissue: reissue != null,
       supersedeDocumentId: reissue?.supersedeDocumentId,
       voucherType: target.type ?? "",
       voucherDuration: target.duration != null ? String(target.duration) : "",

@@ -646,20 +646,21 @@ export function ClientDetailContent({
     setIsPreparingContractReissue(true);
     let paymentDate: string | undefined;
     try {
-      if (target.eDocId) {
-        const previous = await eformsignApi.getDocument(target.eDocId);
+      const previousDocumentId = target.latestContractDocumentId ?? target.eDocId;
+      if (previousDocumentId) {
+        const previous = await eformsignApi.getDocument(previousDocumentId);
         paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
       }
     } catch {
-      // Without the old document the payment date falls back to the form's default.
+      // Without the old document the payment date is left for the user to fill.
     } finally {
       setIsPreparingContractReissue(false);
     }
     setContractResendClient(null);
     onIssueContract(target, {
       paymentDate,
-      supersedeDocumentId: target.eDocId && isCancellableContractStatus(target.documentStatus)
-        ? target.eDocId
+      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus)
+        ? target.latestContractDocumentId
         : undefined,
     });
   };

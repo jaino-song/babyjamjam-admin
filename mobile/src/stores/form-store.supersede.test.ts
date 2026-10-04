@@ -35,4 +35,33 @@ describe("form store contract re-issue target", () => {
         useFormStore.getState().prefillFromContract({ supersedeDocumentId: "doc-old" });
         expect(useFormStore.getState().supersede).toBeNull();
     });
+
+    it("keeps an unknown reissue date blank without requiring a cancellation target", () => {
+        useFormStore.getState().prefillFromContract({ clientId: 7, isContractReissue: true });
+        expect(useFormStore.getState().paymentDate).toBe("");
+        expect(useFormStore.getState().isContractReissue).toBe(true);
+        expect(useFormStore.getState().supersede).toBeNull();
+    });
+
+    it("clears the reissue flag when switching to another client", () => {
+        useFormStore.getState().prefillFromContract({ clientId: 7, isContractReissue: true });
+        useFormStore.getState().setClientId(8);
+        expect(useFormStore.getState().isContractReissue).toBe(false);
+    });
+
+    it("keeps the reissue flag when selecting the same client", () => {
+        useFormStore.getState().prefillFromContract({ clientId: 7, isContractReissue: true });
+        useFormStore.getState().setClientId(7);
+        expect(useFormStore.getState().isContractReissue).toBe(true);
+        expect(useFormStore.getState().paymentDate).toBe("");
+    });
+
+    it.each(["contract", "client", "reset"])("clears reissue context on %s entry", (entry) => {
+        useFormStore.getState().prefillFromContract({ clientId: 7, isContractReissue: true });
+        if (entry === "contract") useFormStore.getState().prefillFromContract({ clientId: 8 });
+        if (entry === "client") useFormStore.getState().prefillFromClient({ id: 8, name: "다른 산모" });
+        if (entry === "reset") useFormStore.getState().resetAll();
+        expect(useFormStore.getState().isContractReissue).toBe(false);
+        expect(useFormStore.getState().paymentDate).not.toBe("");
+    });
 });

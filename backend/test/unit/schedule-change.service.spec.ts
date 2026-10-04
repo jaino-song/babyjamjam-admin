@@ -1498,9 +1498,7 @@ describe("ScheduleChangeService", () => {
             });
         });
 
-        it("validates the persisted planned vector against the branch calendar", async () => {
-            // The vector holds 2026-07-06; the branch has since made that day a holiday,
-            // so the vector is no longer authoritative and the preview must refuse it.
+        it("preserves the persisted planned vector after the branch adds a holiday", async () => {
             useBranchHoliday("2026-07-06");
             prismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
                 client: { id: CLIENT_ID, duration: 3 },
@@ -1512,7 +1510,11 @@ describe("ScheduleChangeService", () => {
             });
             prismaService.service_record_day.findMany.mockResolvedValue([createDay(1, "2026-07-01", true)]);
 
-            await expectConflictCode(() => service.preview(ctx), "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE");
+            await expect(service.preview(ctx)).resolves.toMatchObject({
+                sessionIndex: 2,
+                fromDate: "2026-07-03",
+                toDate: "2026-07-07",
+            });
         });
     });
 });
