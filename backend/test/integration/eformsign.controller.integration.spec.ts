@@ -812,6 +812,9 @@ describe("EformsignController (Integration)", () => {
                 stepType: "05", stepName: "고객 서명",
             });
             eformsignDocService.findAll.mockResolvedValue([{ documentId: "old-doc" }] as never);
+            eformsignService.getDocumentById.mockResolvedValue({
+                current_status: { status_type: "030", step_type: "05", step_name: "고객 서명" },
+            });
         });
 
         it("cancels and purges the replaced contract once the replacement is linked", async () => {
@@ -824,6 +827,13 @@ describe("EformsignController (Integration)", () => {
             expect(response.status).toBe(201);
             expect(eformsignService.cancelDocuments).toHaveBeenCalledWith("server-access-token", ["old-doc"]);
             expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+            expect(eformsignService.getDocumentById).toHaveBeenCalledWith("server-access-token", "old-doc");
+            expect(eformsignService.getDocumentById.mock.invocationCallOrder[0])
+                .toBeLessThan(eformsignService.cancelDocuments.mock.invocationCallOrder[0] ?? 0);
+            expect(eformsignService.cancelDocuments.mock.invocationCallOrder[0])
+                .toBeLessThan(documentMirrorService.purgeDocuments.mock.invocationCallOrder[0] ?? 0);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 
         it("never touches a signed contract", async () => {
@@ -865,7 +875,7 @@ describe("EformsignController (Integration)", () => {
             expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
         });
 
-        it("keeps the record and releases the purge intent on any refusal", async () => {
+        it("keeps the record without any purge intent on any refusal", async () => {
             // e.g. the customer signed it after the local mirror last synced: a kept
             // intent would let the nightly sync purge the signed contract.
             eformsignService.cancelDocuments.mockResolvedValue({
@@ -876,14 +886,11 @@ describe("EformsignController (Integration)", () => {
 
             expect(response.status).toBe(409);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
-            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
-                expect.objectContaining({ documentId: "old-doc" }),
-            ]);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 
-        // The provider may have processed the cancel even though the response was lost,
-        // so an ambiguous outcome keeps the generation-fenced intent for reconciliation
-        // (same classification as the permanent-delete path). Never retried inline.
+        // An ambiguous supersede must leave the old contract visible, without a retry intent.
         it.each([
             ["a socket failure", new Error("socket exploded")],
             ["a timeout", Object.assign(new Error("The operation timed out"), { name: "TimeoutError" })],
@@ -892,7 +899,7 @@ describe("EformsignController (Integration)", () => {
             ["an HTTP 408", new EformsignApiError("request timeout", 408)],
             ["an HTTP 429", new EformsignApiError("slow down", 429)],
             ["a confirmed absence (HTTP 404)", new EformsignApiError("not found", 404)],
-        ])("keeps the purge intent after %s from the cancel call", async (_label, failure) => {
+        ])("never records a purge intent and returns 500 after %s", async (_label, failure) => {
             eformsignService.cancelDocuments.mockRejectedValue(failure);
 
             const response = await supersede();
@@ -900,13 +907,14 @@ describe("EformsignController (Integration)", () => {
             expect(response.status).toBe(500);
             expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
             expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 
         it.each([
             ["HTTP 400", new EformsignApiError("rejected", 400)],
             ["HTTP 403", new EformsignApiError("forbidden", 403)],
-        ])("releases the purge intent when eformsign definitively refuses with %s", async (_label, failure) => {
+        ])("never records a purge intent when eformsign refuses with %s", async (_label, failure) => {
             eformsignService.cancelDocuments.mockRejectedValue(failure);
 
             const response = await supersede();
@@ -914,12 +922,11 @@ describe("EformsignController (Integration)", () => {
             expect(response.status).toBe(500);
             expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
-            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
-                expect.objectContaining({ documentId: "old-doc" }),
-            ]);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 
-        it("keeps the purge intent when eformsign cancelled but the local purge failed", async () => {
+        it("returns 500 without a purge intent when cancelled but the local purge failed", async () => {
             eformsignService.cancelDocuments.mockResolvedValue({
                 result: { success_result: ["old-doc"], fail_result: [] },
             });
@@ -928,10 +935,13 @@ describe("EformsignController (Integration)", () => {
             const response = await supersede();
 
             expect(response.status).toBe(500);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledTimes(1);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
             expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
         });
 
-        it("releases the purge intent when eformsign definitively refuses", async () => {
+        it("never records a purge intent when eformsign definitively refuses", async () => {
             eformsignService.cancelDocuments.mockResolvedValue({
                 result: {
                     success_result: [],
@@ -943,9 +953,58 @@ describe("EformsignController (Integration)", () => {
 
             expect(response.status).toBe(409);
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
-            expect(documentMirrorService.clearPermanentPurgeRequest).toHaveBeenCalledWith([
-                expect.objectContaining({ documentId: "old-doc" }),
-            ]);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["completed", "003", "05", "고객 서명"],
+            ["provider review", "070", "06", "제공기관 확인"],
+            ["unknown status", "999", "05", "고객 서명"],
+            ["missing status", undefined, null, null],
+        ])("rejects fresh %s data even when the local row is unsigned", async (_label, statusType, stepType, stepName) => {
+            eformsignService.getDocumentById.mockResolvedValue({
+                current_status: { status_type: statusType, step_type: stepType, step_name: stepName },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["HTTP 404", new EformsignApiError("absent", 404), 409, "REQUEST_CONFLICT"],
+            ["vendor absence", new EformsignApiError("absent", 400, "4000006"), 409, "REQUEST_CONFLICT"],
+            ["HTTP 500", new EformsignApiError("unavailable", 500), 503, "DEPENDENCY_UNAVAILABLE"],
+            ["timeout", Object.assign(new Error("timeout"), { name: "TimeoutError" }), 503, "DEPENDENCY_UNAVAILABLE"],
+        ])("does not cancel after a fresh read fails with %s", async (_label, failure, status, code) => {
+            eformsignService.getDocumentById.mockRejectedValue(failure);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(status);
+            expect(response.body.code).toBe(code);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("rejects a locally completed contract even when fresh data would be unsigned", async () => {
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "003", stepType: "05", stepName: "고객 서명",
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
         });
 
         it.each([

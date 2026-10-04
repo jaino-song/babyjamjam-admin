@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -59,7 +59,7 @@ import {
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
-import { hasCustomerSigned } from "domain/utils/eformsign-customer-signature";
+import { hasCustomerSigned, isCancellableUnsignedContract } from "domain/utils/eformsign-customer-signature";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
@@ -814,7 +814,9 @@ export class EformsignController {
      * Cancel a contract that a re-issue replaced. Unlike a delete, this never
      * touches a signed or otherwise finished contract, and it refuses until the
      * replacement is the client's linked contract, so the client is never left
-     * pointing at nothing. Only a contract eformsign actually cancelled is purged.
+     * pointing at nothing. Supersede never records a purge intent, so reconciliation
+     * can never purge on its behalf. The local copy is removed only after eformsign
+     * confirms the cancellation in this request.
      */
     @Post("documents/:documentId/supersede")
     async supersedeDocument(
@@ -822,7 +824,7 @@ export class EformsignController {
         @Param("documentId") documentId: string,
         @Body() body: SupersedeDocumentRequestDto,
     ) {
-        let permanentPurgeRequests: EformsignPermanentPurgeRequest[] = [];
+        let cancelAttempted = false;
         let vendorCancelled = false;
         try {
             const branchId = tenant.branchId ?? "";
@@ -868,37 +870,50 @@ export class EformsignController {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
-            permanentPurgeRequests = await this.documentMirrorService.requestPermanentPurge([documentId]);
+            const fresh = await this.credentialBoundary.withCredentials(
+                tenant,
+                "document.read",
+                ({ accessToken }) => this.eformsignService.getDocumentById(accessToken, documentId),
+            ).catch((error: unknown) => {
+                if (isEformsignDocumentAbsentError(error)) {
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+            });
+            const freshContract = {
+                statusType: fresh?.current_status?.status_type,
+                stepType: fresh?.current_status?.step_type ?? null,
+                stepName: fresh?.current_status?.step_name ?? null,
+            };
+            if (hasCustomerSigned(freshContract) || !isCancellableUnsignedContract(freshContract)) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
             const result = await this.credentialBoundary.withCredentials(
                 tenant,
                 "document.cancel",
-                ({ accessToken }) => this.eformsignService.cancelDocuments(accessToken, [documentId]),
+                ({ accessToken }) => {
+                    cancelAttempted = true;
+                    return this.eformsignService.cancelDocuments(accessToken, [documentId]);
+                },
             );
             if (!successfulDeletedDocumentIds(result).includes(documentId)) {
-                // eformsign refused (most likely signed in the meantime): keep the record
-                // and release the purge intent, whatever the refusal code. A kept intent
-                // would let the nightly sync purge a contract that turned out signed.
+                // A refusal (possibly signed in the meantime) leaves the local record intact.
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
             vendorCancelled = true;
             await this.documentMirrorService.purgeDocuments([documentId]);
-            await this.documentMirrorService.clearPermanentPurgeRequest([]);
             return { documentId, superseded: true };
         } catch (error) {
-            // Once eformsign confirmed the cancellation the intent stays, so a failed local
-            // purge is still completed. Before that, release it only when the cancel was
-            // definitively refused or never sent (our own HttpException: a refusal in the
-            // result, or a credential/capability failure). A timeout, network error or 5xx
-            // is ambiguous (eformsign may have processed it), so, as in the permanent-delete
-            // path, the generation-fenced intent is kept for reconciliation to finish.
-            if (
-                !vendorCancelled
-                && permanentPurgeRequests.length > 0
-                && (error instanceof HttpException || isDefinitiveVendorRefusal(error))
-            ) {
-                await this.documentMirrorService.clearPermanentPurgeRequest(permanentPurgeRequests);
-            }
             if (error instanceof HttpException) throw error;
+            if (cancelAttempted && !vendorCancelled) {
+                Logger.warn({
+                    message: "supersede cancel outcome ambiguous; old contract left intact and visible",
+                    documentId,
+                    clientId: body.clientId,
+                    branchId: tenant.branchId ?? "",
+                }, EformsignController.name);
+            }
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
