@@ -38,7 +38,7 @@ export class ServiceRecordScheduleValidationError extends Error {
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function assertDateOnly(value: string, sessionIndex: number | null, calendar: KrBusinessDayCalendar): void {
+function assertDateOnly(value: string, sessionIndex: number | null, calendar?: KrBusinessDayCalendar): void {
     if (!DATE_ONLY_PATTERN.test(value)) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_DATE",
@@ -60,7 +60,7 @@ function assertDateOnly(value: string, sessionIndex: number | null, calendar: Kr
             sessionIndex,
         );
     }
-    calendar.assertSupportedYear(year!);
+    calendar?.assertSupportedYear(year!);
 }
 
 function assertBusinessDate(value: string, sessionIndex: number | null, calendar: KrBusinessDayCalendar): void {
@@ -88,7 +88,8 @@ function cloneEntry(entry: ServiceRecordPlannedSession): ServiceRecordPlannedSes
 }
 
 /**
- * Validates a complete authoritative vector before it is persisted or shifted.
+ * Validates a complete authoritative vector. New plans use the current calendar;
+ * persisted dates retain their historical validity across calendar revisions.
  * The function intentionally requires ownership and original-date provenance;
  * callers with legacy rows must first resolve those fields from unique source
  * evidence rather than inventing placeholders.
@@ -97,6 +98,7 @@ export function validateServiceRecordScheduleVector(
     entries: ReadonlyArray<ServiceRecordPlannedSession>,
     requiredSessionCount?: number,
     calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    options: { persisted?: boolean } = {},
 ): ServiceRecordPlannedSession[] {
     const expectedCount = requiredSessionCount ?? entries.length;
     if (!Number.isInteger(expectedCount) || expectedCount <= 0) {
@@ -133,10 +135,14 @@ export function validateServiceRecordScheduleVector(
         }
         indices.add(entry.sessionIndex);
 
-        // A current date may be an admin-approved weekend or holiday exception
-        // (see shiftServiceRecordScheduleSuffix); the original projection never is.
-        assertDateOnly(entry.serviceDate, entry.sessionIndex, calendar);
-        assertBusinessDate(entry.originalDate, entry.sessionIndex, calendar);
+        // 저장된 날짜와 승인된 예외는 이후 달력 변경으로 무효화하지 않는다.
+        if (options.persisted) {
+            assertDateOnly(entry.serviceDate, entry.sessionIndex);
+            assertDateOnly(entry.originalDate, entry.sessionIndex);
+        } else {
+            assertBusinessDate(entry.serviceDate, entry.sessionIndex, calendar);
+            assertBusinessDate(entry.originalDate, entry.sessionIndex, calendar);
+        }
         if (dates.has(entry.serviceDate)) {
             throw new ServiceRecordScheduleValidationError(
                 "DUPLICATE_SERVICE_DATE",
@@ -202,7 +208,7 @@ export function shiftServiceRecordScheduleSuffix(
     calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
     options: { allowNonBusinessDay?: boolean } = {},
 ): ServiceRecordScheduleShiftResult {
-    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar);
+    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar, { persisted: true });
     if (!Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > vector.length) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_SESSION_INDEX",
@@ -251,7 +257,7 @@ export function shiftServiceRecordScheduleSuffix(
         }
         shifted.push({ ...entry, serviceDate });
     }
-    return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length, calendar) };
+    return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length, calendar, { persisted: true }) };
 }
 
 /** A per-session correction moves later dates only with explicit approval. */
@@ -263,7 +269,7 @@ export function moveServiceRecordSessionDate(
     calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
 ): ServiceRecordScheduleShiftResult {
     if (shiftFollowing) return shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate, calendar);
-    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar);
+    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar, { persisted: true });
     const selected = vector.find((entry) => entry.sessionIndex === sessionIndex);
     if (!selected) throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", "수정할 회차를 찾을 수 없습니다.", sessionIndex);
     assertBusinessDate(newDate, sessionIndex, calendar);
@@ -273,7 +279,7 @@ export function moveServiceRecordSessionDate(
         entries: validateServiceRecordScheduleVector(vector.map((entry) => ({
             ...entry,
             serviceDate: entry.sessionIndex === sessionIndex ? newDate : entry.serviceDate,
-        })), vector.length, calendar),
+        })), vector.length, calendar, { persisted: true }),
     };
 }
 

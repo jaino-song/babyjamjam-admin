@@ -115,7 +115,7 @@ function plannedSessionVector(
     try {
         return {
             state: "valid",
-            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined, calendar),
+            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined, calendar, { persisted: true }),
         };
     } catch {
         return { state: "invalid", entries: null };

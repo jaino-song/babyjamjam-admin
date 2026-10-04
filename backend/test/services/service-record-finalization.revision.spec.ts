@@ -150,7 +150,7 @@ describe("ServiceRecordFinalizationService revised claim and the branch calendar
         });
     });
 
-    it("blocks and recomputes a READY revised source whose planned date the branch closed, reading the calendar before the transaction", async () => {
+    it("keeps a READY revised source eligible after its planned date becomes a holiday", async () => {
         const holidayCalendar = createHolidayCalendarStub();
         (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => createKrBusinessDayCalendar(
             [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), "2026-09-07"],
@@ -158,12 +158,15 @@ describe("ServiceRecordFinalizationService revised claim and the branch calendar
         ));
         const { claim, prisma, lifecycle } = claimHarness(holidayCalendar);
 
-        await expect(claim()).resolves.toEqual({ claimed: false, attempts: 0, blockedGeneration: true });
+        // Like the built-in case, it reaches freezing (the harness omits the job service).
+        await expect(claim()).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
+        });
 
         expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
         expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
             .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
-        expect(lifecycle.recompute).toHaveBeenCalledWith(caseId, expect.anything());
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
     });
 });
 
