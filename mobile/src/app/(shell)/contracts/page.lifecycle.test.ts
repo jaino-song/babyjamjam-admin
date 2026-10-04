@@ -1,6 +1,61 @@
 import fs from "node:fs";
+import vm from "node:vm";
+import ts from "typescript";
+
+import { buildContractClientPrefill, buildContractCreationPrefillFromClient } from "@/lib/contracts/contract-client-prefill";
+import { customerName } from "@/lib/eformsign/display-name";
+import type { EformsignDocument } from "@/lib/eformsign/types";
+import { formatKoreanPhoneNumber } from "@/lib/phone";
+import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
+
+// Execute the page's actual pure helpers without exporting a non-route symbol
+// from a Next page or loading its UI/network dependencies. No helper is mocked.
+const parsedPage = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const helperSource = parsedPage.statements.filter((statement) =>
+  (ts.isFunctionDeclaration(statement) && statement.name !== undefined && /^[a-z]/.test(statement.name.text)) ||
+  (ts.isVariableStatement(statement) && statement.declarationList.declarations.some((declaration) =>
+    ts.isIdentifier(declaration.name) && declaration.name.text.startsWith("PAYMENT_RECEIPT_DATE_"))),
+).map((statement) => statement.getText(parsedPage)).join("\n");
+const buildListReissuePrefill = vm.runInNewContext(
+  ts.transpileModule(helperSource, { fileName: "helpers.tsx", compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React } }).outputText +
+    "\nbuildContractCreationPrefillFromContract;",
+  { buildContractClientPrefill, buildContractCreationPrefillFromClient, customerName, formatKoreanPhoneNumber },
+) as (doc: EformsignDocument, metadata: undefined, employees: []) => ContractCreationPrefill;
+
+describe("mobile contracts list reissue payment date", () => {
+  afterEach(() => useFormStore.getState().resetAll());
+
+  it.each([
+    [[], ""],
+    [[{ id: "paymentDate", value: "2026-08-20" }], "2026-08-20"],
+  ])("marks the old document as a reissue and preserves its payment date (%j)", (fields, expected) => {
+    const doc: EformsignDocument = {
+      id: "old-contract",
+      document_number: "1",
+      document_name: "계약서",
+      template: { id: "contract-template", name: "계약서" },
+      creator: { recipient_type: "member", name: "담당자" },
+      last_editor: { recipient_type: "member", name: "담당자" },
+      created_date: 0,
+      updated_date: 0,
+      current_status: {
+        status_type: "032", status_doc_type: "", status_doc_detail: "",
+        step_type: "", step_index: "", step_name: "", step_recipients: [],
+        step_group: 0, expired_date: 0, _expired: false,
+      },
+      fields,
+      next_status: [], previous_status: [], histories: [], recipients: [], detail_template_info: [],
+    };
+    const prefill = buildListReissuePrefill(doc, undefined, []);
+
+    useFormStore.getState().prefillFromContract(prefill);
+
+    expect(useFormStore.getState().paymentDate).toBe(expected);
+    expect(prefill.isContractReissue).toBe(true);
+  });
+});
 
 describe("mobile contracts action lifecycle", () => {
   it("keeps every detail info row mounted and skeletonizes its value during the initial detail request", () => {
@@ -148,7 +203,7 @@ describe("mobile contracts action lifecycle", () => {
 
   it("routes both prefill flows through the shared contract transformer and keeps service dates on the existing normalizer", () => {
     expect(source).toContain("return buildContractClientPrefill({");
-    expect(source).toContain("return buildContractCreationPrefillFromClient({");
+    expect(source).toContain("...buildContractCreationPrefillFromClient({");
     expect(source).toContain("birthday: documentFieldValue(doc, [\"생년월일\"");
     expect(source).toContain("clientPrefill,");
     expect(source).toContain("const dueDate = normalizeDateToYymmdd(");
