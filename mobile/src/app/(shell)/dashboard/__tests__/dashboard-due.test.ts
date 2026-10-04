@@ -84,4 +84,24 @@ describe("dashboard due labels", () => {
       createdAt: "2026-06-01",
     }, KR_BUILTIN_CALENDAR, TODAY)).toMatchObject({ due: "교체 요청 2 영업일 경과" });
   });
+
+  it.each([
+    { diff: null, requestedAt: "2025-07-07", expected: null },
+    { diff: 0, requestedAt: "2026-07-07", expected: { due: "교체 요청 오늘", dueTone: "urgent" } },
+    { diff: 1, requestedAt: "2026-07-08", expected: { due: "교체 요청 1 영업일 남음", dueTone: "urgent" } },
+    { diff: -1, requestedAt: "2026-07-06", expected: { due: "교체 요청 1 영업일 경과", dueTone: "urgent" } },
+  ])("formats replacement requests with business-day difference $diff", ({ requestedAt, expected }) => {
+    const branchCalendar = createKrBusinessDayCalendar([...getKoreanHolidays(2026)], {
+      version: "kr-db-test",
+      supportedYears: [2026],
+    });
+
+    expect(dueForServiceStatus({
+      serviceStatus: "replacement_requested",
+      startDate: "2026-06-01",
+      endDate: "2026-07-20",
+      updatedAt: requestedAt,
+      createdAt: "2026-06-01",
+    }, branchCalendar, TODAY)).toEqual(expected);
+  });
 });
