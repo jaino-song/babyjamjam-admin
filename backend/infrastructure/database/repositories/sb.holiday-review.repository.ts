@@ -360,6 +360,18 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
         let obsoleted = 0;
 
         if (drafts.length > 0) {
+            // Lock clients before review items, matching the provider save's write order.
+            // Hold through the end-date recheck and inserts: a concurrent extension either
+            // commits before this recheck, or waits and sees our item in its open-item lookup.
+            await tx.$queryRaw(Prisma.sql`
+                SELECT "id" FROM "client"
+                WHERE ${Prisma.join(drafts.map((draft) => Prisma.sql`
+                    ("id" = ${draft.clientId} AND "branch_id" = ${draft.branchId}::uuid)
+                `), " OR ")}
+                ORDER BY "id" ASC
+                FOR UPDATE
+            `);
+
             // An open item that belongs to THIS event stays untouched (replay safety).
             const openRows = await tx.end_date_review_item.findMany({
                 where: {
@@ -380,10 +392,8 @@ export class SbHolidayReviewRepository implements IHolidayReviewRepository {
             }
 
             // `storedEnd` was read before this transaction too. A client whose end date moved since
-            // (a save, an auto-extend) was classified against a stale one: retry later. This re-read
-            // is not a lock on the client rows, so a save that lands after it is not excluded here;
-            // that residual race is covered by the resolve path, which refuses to fix an item whose
-            // stored end no longer matches the client's (`stillMatchesStoredEnd`).
+            // (a save, an auto-extend) was classified against a stale one: retry later. The client
+            // row locks above exclude further end-date writes until this transaction commits.
             const currentEnds = await tx.client.findMany({
                 where: {
                     id: { in: drafts.map((draft) => draft.clientId) },
