@@ -730,8 +730,8 @@ export default function ContractCreationPage() {
     setRegisteredBaseline(loadedClientBaselineRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 고객이 바뀌거나 목록이 도착했을 때만 저장값을 만들어요.
   }, [allClients, clientId]);
-
   const handleClientSelect = (selectedClientId: number | null, client: Client | null) => {
+    const selectedPaymentDate = selectedClientId === clientId ? defaultPaymentDate : todayIsoDate();
     persistedClientIdRef.current = null;
     persistedClientSnapshotRef.current = null;
     retryWithPersistedClientRef.current = false;
@@ -762,7 +762,7 @@ export default function ContractCreationPage() {
       if (client.startDate) {
         const startNorm = normalizeIsoDate(client.startDate);
         setStartDate(startNorm);
-        setPaymentDate(defaultPaymentDate);
+        setPaymentDate(selectedPaymentDate);
       }
       if (client.endDate) {
         setEndDate(normalizeIsoDate(client.endDate));
@@ -796,7 +796,7 @@ export default function ContractCreationPage() {
       setName(""); setPhone(""); setBirthday(""); setAddress(""); setDueDate("");
       setVoucherType(""); setVoucherDuration("");
       setFullPrice(""); setGrant(""); setActualPrice("");
-      setStartDate(""); setEndDate(""); setPaymentDate(defaultPaymentDate);
+      setStartDate(""); setEndDate(""); setPaymentDate(selectedPaymentDate);
       setArea("");
       setEmployeeSelection(null, "", "");
       setEmployee2Selection(null, "", "");
