@@ -167,6 +167,8 @@ export interface ClientWithEmployees {
     areaId: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatusType;
+    /** ID of the same latest contract used for documentStatus. */
+    latestContractDocumentId?: string | null;
     badges: ClientBadge[];
     actionRequired: ClientActionRequired | null;
     /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
@@ -1584,6 +1586,7 @@ export class ClientService {
                     areaId: client.areaId,
                     hasSigned: hasCustomerSigned(latestContract),
                     documentStatus,
+                    latestContractDocumentId: latestContract?.documentId ?? null,
                     badges,
                     actionRequired,
                     serviceRecordPeriodLocked: periodLockedClientIds.has(client.id),

@@ -692,8 +692,8 @@ export default function ClientsPage() {
         }
         setContractReissue({
             paymentDate,
-            supersedeDocumentId: client.eDocId && isCancellableContractStatus(client.documentStatus)
-                ? client.eDocId
+            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus)
+                ? client.latestContractDocumentId
                 : undefined,
         });
         setMaternityContractClient(client);
