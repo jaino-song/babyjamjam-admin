@@ -172,13 +172,31 @@ describe("calendar parameter", () => {
     }));
 
     it("preserves historical dates after a calendar revision but rejects new holiday input", () => {
-        const revised = createKrBusinessDayCalendar(["2028-01-04"], { supportedYears: [2028] });
+        const revised = createKrBusinessDayCalendar(["2028-01-04", "2028-01-07"], { supportedYears: [2028] });
         expect(validateServiceRecordScheduleVector(vector, 3, revised, { persisted: true })).toEqual(vector);
         expect(() => validateServiceRecordScheduleVector(vector, 3, revised)).toThrow("Korean business day");
         expect(() => validateServiceRecordScheduleVector([
             { ...vector[0]!, serviceDate: "2028-01-04" },
         ], 1, revised)).toThrow("Korean business day");
-        expect(() => moveServiceRecordSessionDate(vector, 1, "2028-01-04", false, revised)).toThrow();
+        expect(() => moveServiceRecordSessionDate(vector, 3, "2028-01-07", false, revised)).toThrow(
+            expect.objectContaining({ code: "NON_BUSINESS_DATE" }),
+        );
+    });
+
+    it("moves only session 1 while preserving session 2 on a newly declared holiday", () => {
+        const revised = createKrBusinessDayCalendar(["2028-01-05"], { supportedYears: [2028] });
+        const historical = [
+            { ...vector[0]!, serviceDate: "2028-01-04", originalDate: "2028-01-04" },
+            { ...vector[1]!, serviceDate: "2028-01-05", originalDate: "2028-01-05" },
+            vector[2]!,
+        ];
+
+        const moved = moveServiceRecordSessionDate(historical, 1, "2028-01-03", false, revised);
+
+        expect(moved.entries).toEqual([
+            { ...historical[0]!, serviceDate: "2028-01-03" },
+            ...historical.slice(1),
+        ]);
     });
 
     it("shifts historical vectors against the revised current calendar", () => {
