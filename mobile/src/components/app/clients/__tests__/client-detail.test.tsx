@@ -237,6 +237,7 @@ describe("ClientDetailContent", () => {
     ["requested", "latest-document"],
     ["completed", undefined],
   ] as const)("reissues using the latest document's %s status, not the stale pin", async (documentStatus, expected) => {
+    const { eformsignApi } = await import("@/services/api");
     const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
     jest.mocked(fetchClientServiceRecords).mockResolvedValue({
       assignments: [{ scheduleId: 7, replaced: false }],
@@ -271,6 +272,7 @@ describe("ClientDetailContent", () => {
     expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       supersedeDocumentId: expected,
     }));
+    expect(eformsignApi.getDocument).toHaveBeenLastCalledWith("latest-document");
   });
   it.each([
     ["unsigned", false, "고객 (고객)"],

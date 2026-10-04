@@ -646,8 +646,9 @@ export function ClientDetailContent({
     setIsPreparingContractReissue(true);
     let paymentDate: string | undefined;
     try {
-      if (target.eDocId) {
-        const previous = await eformsignApi.getDocument(target.eDocId);
+      const previousDocumentId = target.latestContractDocumentId ?? target.eDocId;
+      if (previousDocumentId) {
+        const previous = await eformsignApi.getDocument(previousDocumentId);
         paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
       }
     } catch {

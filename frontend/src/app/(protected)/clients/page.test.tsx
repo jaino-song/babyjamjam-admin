@@ -620,6 +620,7 @@ describe("ClientsPage create selection behavior", () => {
     ["requested", "latest-document"],
     ["completed", "none"],
   ])("reissues using the latest document's %s status, not the stale pin", async (documentStatus, expected) => {
+    const { eformsignApi } = await import("@/services/api");
     const { serviceRecordsApi } = await import("@/features/service-records/api/service-records.api");
     jest.mocked(serviceRecordsApi.getClientOverview).mockResolvedValue({
       data: { assignments: [{ scheduleId: 7, replaced: false }] },
@@ -643,6 +644,7 @@ describe("ClientsPage create selection behavior", () => {
     fireEvent.click(await screen.findByText("수정 전송"));
 
     await waitFor(() => expect(screen.getByTestId("reissue-document")).toHaveTextContent(expected));
+    expect(eformsignApi.getDocument).toHaveBeenLastCalledWith("latest-document");
   });
 
   it("keeps the newly created detail selected through onSuccess then onClose", () => {

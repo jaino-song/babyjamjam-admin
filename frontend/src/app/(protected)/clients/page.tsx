@@ -674,15 +674,15 @@ export default function ClientsPage() {
             currentClient?.id === client.id ? client : currentClient
         ));
     };
-
     // 수정 전송: reopen the contract wizard with the new period, keeping the old payment date.
     // An unsigned old contract is cancelled by the wizard once the new one is sent.
     const handleContractReissue = async (client: Client) => {
         setIsPreparingContractReissue(true);
         let paymentDate: string | undefined;
         try {
-            if (client.eDocId) {
-                const previous = await eformsignApi.getDocument(client.eDocId);
+            const previousDocumentId = client.latestContractDocumentId ?? client.eDocId;
+            if (previousDocumentId) {
+                const previous = await eformsignApi.getDocument(previousDocumentId);
                 paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
             }
         } catch {
