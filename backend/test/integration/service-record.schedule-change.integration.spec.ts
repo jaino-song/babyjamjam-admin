@@ -170,7 +170,7 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
                 { year: 2026 },
             );
 
-            expect(holidayCalendar.getEffectiveYear).toHaveBeenCalledWith("org-1", 2026);
+            expect(holidayCalendar.getEffectiveYear).toHaveBeenCalledWith("org-1", 2026, { fresh: true });
             expect(result).toEqual({
                 year: 2026,
                 revision: 7,

@@ -77,7 +77,10 @@ describeReal("holiday review (real PostgreSQL)", () => {
         processor = new HolidayReviewProcessorService(
             repository,
             calendar,
-            { findAllActive: async () => [{ id: branchA, name: "A" }, { id: branchB, name: "B" }] },
+            {
+                findAll: async () => [{ id: branchA, name: "A" }, { id: branchB, name: "B" }],
+                findAllActive: async () => [{ id: branchA, name: "A" }, { id: branchB, name: "B" }],
+            },
             { holdsLease: () => true } as never,
         );
         // The fixtures are dated around Nov 2026 and the repository compares stored end dates with

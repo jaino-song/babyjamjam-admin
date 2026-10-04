@@ -83,7 +83,12 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
     const built = useMemo<{ calendar: KrBusinessDayCalendar | null; invalid: boolean }>(() => {
         if (branchId === null || loaded === null) return { calendar: null, invalid: false };
         try {
-            const next = buildCalendarFromHolidayYears(loaded);
+            const calendar = buildCalendarFromHolidayYears(loaded);
+            const revisions = [...loaded]
+                .sort((a, b) => a.year - b.year)
+                .map(({ year, revision }) => `${year}:${revision}`)
+                .join(",");
+            const next = { ...calendar, version: `${calendar.version}-revisions-${revisions}` };
             const previous = lastBuilt.current;
             if (previous && previous.branchId === branchId && previous.calendar.version === next.version) {
                 return { calendar: previous.calendar, invalid: false };
