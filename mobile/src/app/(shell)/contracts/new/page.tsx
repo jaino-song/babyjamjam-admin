@@ -261,7 +261,7 @@ export default function ContractCreationPage() {
     showEmployee2, employee2Id, employee2Name, employee2Phone,
     voucherType, voucherDuration, voucherYear,
     fullPrice, grant, actualPrice,
-    startDate, endDate, paymentDate,
+    startDate, endDate, paymentDate, isContractReissue,
     preservePrefilledPrices,
     setClientId, setIsManualEntry, setName, setPhone, setBirthday, setAddress, setDueDate, setArea,
     setIsEmployeeManualEntry, setEmployeeSelection,
@@ -374,7 +374,7 @@ export default function ContractCreationPage() {
   const persistedClientIdRef = useRef<number | null>(null);
   const persistedClientSnapshotRef = useRef<string | null>(null);
   const retryWithPersistedClientRef = useRef(false);
-  const defaultPaymentDate = useMemo(() => todayIsoDate(), []);
+  const defaultPaymentDate = useMemo(() => isContractReissue ? "" : todayIsoDate(), [isContractReissue]);
   const hasAppliedPaymentStepDefaultRef = useRef(false);
 
   // Local YYYY-MM-DD drafts so partial input doesn't trash the ISO store value
@@ -410,7 +410,7 @@ export default function ContractCreationPage() {
 
     if (hasAppliedPaymentStepDefaultRef.current) return;
     hasAppliedPaymentStepDefaultRef.current = true;
-    if (!normalizedPaymentDate) setPaymentDate(defaultPaymentDate);
+    if (!normalizedPaymentDate && defaultPaymentDate) setPaymentDate(defaultPaymentDate);
   }, [defaultPaymentDate, isContractInfoStep, normalizedPaymentDate, setPaymentDate]);
   // 저장소에는 예전 6자리(YYMMDD) 값이 들어올 수 있어 toIsoDate로 읽어요. 직접 입력한 값은 항상 YYYY-MM-DD예요.
   useEffect(() => { setStartDateInput(toIsoDate(startDate)); }, [startDate]);
