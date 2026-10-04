@@ -83,6 +83,7 @@ export class ServiceRecordEntryController {
         const effective = await this.holidayCalendar.getEffectiveYear(
             req.serviceRecordContext.branchId,
             query.year,
+            { fresh: true },
         );
         return {
             year: effective.year,
