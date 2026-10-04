@@ -75,9 +75,10 @@ function dueForReplacementRequestDate(
   requestedAt: string | null | undefined,
   calendar: KrBusinessDayCalendar,
   today = new Date(),
-): DashboardDueInfo {
+): DashboardDueInfo | null {
   const diff = businessDayDiff(requestedAt, calendar, today);
-  if (diff === null || diff === 0) return { due: "교체 요청 오늘", dueTone: "urgent" };
+  if (diff === null) return null;
+  if (diff === 0) return { due: "교체 요청 오늘", dueTone: "urgent" };
   if (diff < 0) return { due: `교체 요청 ${Math.abs(diff)} 영업일 경과`, dueTone: "urgent" };
   return { due: `교체 요청 ${diff} 영업일 남음`, dueTone: "urgent" };
 }

@@ -3,6 +3,7 @@ import { createProblemDetails } from "@babyjamjam/shared";
 import type { ChangeEvent, ReactNode } from "react";
 
 import type { Client } from "@/lib/client/types";
+import { todayIsoDate } from "@/lib/contracts/date-input";
 
 const mockPush = jest.fn();
 const mockStartNavigation = jest.fn();
@@ -17,6 +18,7 @@ const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 const mockToast = jest.fn();
 const mockUseFormStore = jest.fn();
+const mockSelectClient = jest.fn();
 // The stored record of the client already selected in the form store (id 7). It matches the
 // default form state below, so a submit without edits has nothing to ask about; the page builds
 // its diff baseline from this record, not from the store's form values.
@@ -96,6 +98,7 @@ jest.mock("@/services/api", () => ({
 
 jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
   ClientAutocomplete: (props: Record<string, unknown>) => {
+    mockSelectClient.mockImplementation(props.onChange as (id: number | null, client: Client | null) => void);
     const React = jest.requireActual("react") as typeof import("react");
     const onInputValueChange = props.onInputValueChange as ((value: string) => void) | undefined;
     return React.createElement("input", {
@@ -285,6 +288,7 @@ function expectNoContractSideEffects(): void {
 beforeEach(() => {
   jest.useRealTimers();
   jest.clearAllMocks();
+  mockUseFormStore.mockReset();
   installEventSourceStub();
   installFormState();
   mockCreateClient.mockResolvedValue({ id: 8 });
@@ -581,6 +585,63 @@ describe("contract date validation", () => {
     expect(screen.getByTestId("contract-creation-date-range-error")).toHaveTextContent("존재하지 않는 날짜예요");
     fireEvent.click(submit);
     expect(document.activeElement).toBe(paymentDateInput);
+    expectNoContractSideEffects();
+  });
+
+  it("blocks an unknown reissue payment date until the operator enters it", async () => {
+    const state = installFormState({ paymentDate: "", isContractReissue: true });
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-reissue", durationMs: 1 });
+    const submit = await renderReadyPage();
+    const paymentDateInput = getDateInput("본인부담금 수령 날짜");
+
+    expect(paymentDateInput).toHaveValue("");
+    expect(state.setPaymentDate).not.toHaveBeenCalled();
+    fireEvent.click(submit);
+    expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("수령 날짜를 입력해 주세요")).toBeInTheDocument();
+    expect(document.activeElement).toBe(paymentDateInput);
+    expectNoContractSideEffects();
+
+    fireEvent.change(paymentDateInput, { target: { value: "20260915" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentYear: "26", paymentMonth: "09", paymentDay: "15" }),
+      7,
+      expect.any(String),
+    );
+  });
+
+  it("keeps a known reissue payment date prefilled", async () => {
+    installFormState({ paymentDate: "2026-09-15", isContractReissue: true });
+    await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue("2026-09-15");
+  });
+
+  it("still defaults a blank new-contract payment date to today", async () => {
+    const state = installFormState({ paymentDate: "", isContractReissue: false });
+    await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue(todayIsoDate());
+    expect(state.setPaymentDate).toHaveBeenCalledWith(todayIsoDate());
+  });
+
+  it.each(["doc-old", undefined])("defaults payment to today after switching reissue client A to B (target %s)", async (supersedeDocumentId) => {
+    const { useFormStore } = jest.requireActual<typeof import("@/stores/form-store")>("@/stores/form-store");
+    useFormStore.getState().resetAll();
+    useFormStore.getState().prefillFromContract({
+      clientId: 7,
+      name: "테스트 고객",
+      isContractReissue: true,
+      supersedeDocumentId,
+    });
+    mockUseFormStore.mockImplementation(useFormStore);
+    const { default: ContractCreationPage } = await import("./page");
+    render(<ContractCreationPage />);
+
+    act(() => mockSelectClient(8, { ...mockClients[0], id: 8 }));
+
+    expect(useFormStore.getState().paymentDate).toBe(todayIsoDate());
+    expect(useFormStore.getState().isContractReissue).toBe(false);
     expectNoContractSideEffects();
   });
 
