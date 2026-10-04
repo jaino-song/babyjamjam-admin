@@ -57,6 +57,7 @@ interface World {
     /** Open items of EARLIER events, by client id. */
     openItems?: OpenReviewItemRef[];
     activeBranches?: string[];
+    inactiveBranches?: string[];
     holdsLease?: boolean;
 }
 
@@ -108,6 +109,10 @@ function makeProcessor(world: World = {}) {
         | "applyEventResult"
     >;
     const branches = {
+        findAll: jest.fn(async () =>
+            [...(world.activeBranches ?? [BRANCH_A, BRANCH_B]), ...(world.inactiveBranches ?? [])]
+                .map((id) => ({ id, name: id })),
+        ),
         findAllActive: jest.fn(async () =>
             (world.activeBranches ?? [BRANCH_A, BRANCH_B]).map((id) => ({ id, name: id })),
         ),
@@ -236,7 +241,8 @@ describe("HolidayReviewProcessorService", () => {
 
             await service.processDueEvents(NOW);
 
-            expect(branches.findAllActive).toHaveBeenCalledTimes(1);
+            expect(branches.findAll).toHaveBeenCalledTimes(1);
+            expect(branches.findAllActive).not.toHaveBeenCalled();
             expect(repository.findReviewCandidates).toHaveBeenCalledWith(BRANCH_A, "2026-11-10");
             expect(repository.findReviewCandidates).toHaveBeenCalledWith(BRANCH_B, "2026-11-10");
             const drafts = repository.applyEventResult.mock.calls[0]![0].drafts;
@@ -244,6 +250,35 @@ describe("HolidayReviewProcessorService", () => {
                 [1, BRANCH_A],
                 [2, BRANCH_B],
             ]);
+        });
+
+        it("drafts items for inactive branches on a public event and processes the event only once", async () => {
+            const { service, repository } = makeProcessor({
+                publicExtra: ["2026-11-10"],
+                queue: [event({ id: "e1", date: "2026-11-10" })],
+                activeBranches: [BRANCH_A],
+                inactiveBranches: [BRANCH_B],
+                candidates: {
+                    [BRANCH_A]: [candidate()],
+                    [BRANCH_B]: [candidate({ clientId: 2, branchId: BRANCH_B })],
+                },
+            });
+
+            await expect(service.processDueEvents(NOW)).resolves.toEqual({ processed: 1, stopped: false });
+
+            expect(repository.applyEventResult.mock.calls[0]![0].drafts).toEqual([
+                expect.objectContaining({ clientId: 1, branchId: BRANCH_A, recalculatedEnd: "2026-11-16" }),
+                expect.objectContaining({
+                    clientId: 2,
+                    branchId: BRANCH_B,
+                    storedEnd: STORED_END,
+                    previousEnd: STORED_END,
+                    recalculatedEnd: "2026-11-16",
+                    category: "safe",
+                }),
+            ]);
+            await expect(service.processDueEvents(NOW)).resolves.toEqual({ processed: 0, stopped: false });
+            expect(repository.applyEventResult).toHaveBeenCalledTimes(1);
         });
 
         it("only looks at the event's own branch for a branch event", async () => {
@@ -257,6 +292,7 @@ describe("HolidayReviewProcessorService", () => {
             await service.processDueEvents(NOW);
 
             expect(branches.findAllActive).not.toHaveBeenCalled();
+            expect(branches.findAll).not.toHaveBeenCalled();
             expect(repository.findReviewCandidates).toHaveBeenCalledTimes(1);
             expect(repository.findReviewCandidates).toHaveBeenCalledWith(BRANCH_A, "2026-11-10");
             expect(repository.applyEventResult.mock.calls[0]![0].drafts).toHaveLength(1);

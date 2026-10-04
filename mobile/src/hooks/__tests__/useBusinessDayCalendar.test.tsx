@@ -215,6 +215,37 @@ describe("useBusinessDayCalendar", () => {
         expect(result.current.calendar).toBe(first);
     });
 
+    it("includes the later year's holiday when years refetch to the same revision separately", async () => {
+        const branchHoliday = ordinaryWednesday(THIS_YEAR);
+        let revision = 1;
+        mockGetYear.mockImplementation(async (_branchId: string, year: number) =>
+            payload(year, revision > 1 && year === THIS_YEAR ? [branchHoliday] : [], revision),
+        );
+
+        const { result, queryClient } = setup();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        const first = result.current.calendar;
+        expect(first.isBusinessDay(branchHoliday)).toBe(true);
+
+        revision = 2;
+        await act(async () => {
+            await queryClient.refetchQueries({ queryKey: ["holidays", "branch-1", THIS_YEAR - 1], exact: true });
+        });
+        await waitFor(() => expect(result.current.calendar).not.toBe(first));
+        const partiallyUpdated = result.current.calendar;
+        expect(partiallyUpdated.isBusinessDay(branchHoliday)).toBe(true);
+
+        await act(async () => {
+            await queryClient.refetchQueries({ queryKey: ["holidays", "branch-1", THIS_YEAR], exact: true });
+        });
+
+        await waitFor(() => expect(result.current.calendar.isBusinessDay(branchHoliday)).toBe(false));
+        expect(result.current.ready).toBe(true);
+        expect(result.current.error).toBeNull();
+        expect(result.current.version).not.toBe(partiallyUpdated.version);
+        expect(result.current.version).toBe(result.current.calendar.version);
+    });
+
     it("builds a new calendar when a refetch brings a new revision", async () => {
         const branchHoliday = ordinaryWednesday(THIS_YEAR);
         let revision = 1;

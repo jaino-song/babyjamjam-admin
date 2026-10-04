@@ -571,7 +571,7 @@ export class ServiceRecordFinalizationService {
                     // existing lifecycle policy recalculate it while this
                     // transaction still owns the case/client lock.
                     if (current.status === SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE) {
-                        await this.lifecycleService.recompute(caseId, tx);
+                        await this.lifecycleService.recompute(caseId, tx, calendar);
                     }
                     return { claimed: false, attempts: 0, blockedGeneration: true };
                 }

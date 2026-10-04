@@ -291,6 +291,11 @@ export class ServiceRecordEntryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
+        // The in-transaction recompute derives a legacy null N from the branch
+        // calendar. Read it fresh here, before the transaction opens, so that
+        // recompute never reads it through the root client while this
+        // transaction holds a pooled connection and the service-record locks.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const updated = await this.prisma.$transaction(async (tx) => {
             const schedule = tx.employee_schedule?.findUnique
                 ? await tx.employee_schedule.findUnique({
@@ -392,7 +397,7 @@ export class ServiceRecordEntryService {
                 },
                 update: { serviceRecordCaseId: record.id, ...dto },
             });
-            await this.lifecycleService.recompute(record.id, tx);
+            await this.lifecycleService.recompute(record.id, tx, calendar);
             return aggregate;
         });
         return this.headerFromCase(updated);
@@ -756,7 +761,7 @@ export class ServiceRecordEntryService {
                     row = { ...row, clientSignature: dto.clientSignature, clientSignedAt };
                 }
             }
-            await this.lifecycleService.recompute(record.id, tx);
+            await this.lifecycleService.recompute(record.id, tx, calendar);
             return row;
         });
         if (lock) {
