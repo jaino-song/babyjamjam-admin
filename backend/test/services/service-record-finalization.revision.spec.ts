@@ -114,8 +114,7 @@ function buildService(jobService: Record<string, jest.Mock>) {
 describe("ServiceRecordFinalizationService revised claim and the branch calendar", () => {
     const referenceDate = new Date("2026-09-30T00:00:00.000Z");
 
-    function claimHarness(holidayCalendar: ReturnType<typeof createHolidayCalendarStub>) {
-        const record = source();
+    function claimHarness(holidayCalendar: ReturnType<typeof createHolidayCalendarStub>, record = source()) {
         const tx = {
             service_record_case: {
                 findUnique: jest.fn(async (args: { where: Record<string, unknown>; select?: Record<string, unknown> }) => {
@@ -138,8 +137,22 @@ describe("ServiceRecordFinalizationService revised claim and the branch calendar
         const claim = () => (service as unknown as {
             claimFinalizationCase: (id: string, branch: string, reference: Date) => Promise<unknown>;
         }).claimFinalizationCase(caseId, branchId, referenceDate);
-        return { claim, prisma, lifecycle };
+        return { claim, prisma, lifecycle, tx };
     }
+
+    it("passes the calendar loaded before the claim transaction to an ineligible source recompute", async () => {
+        const holidayCalendar = createHolidayCalendarStub();
+        const calendar = createKrBusinessDayCalendar([], { version: "test", supportedYears: [2026] });
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+        const { claim, prisma, lifecycle, tx } = claimHarness(holidayCalendar, { ...source(), days: [] });
+
+        await expect(claim()).resolves.toMatchObject({ claimed: false, blockedGeneration: true });
+
+        // Claim always opens its owning transaction before returning this result.
+        expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0])
+            .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(lifecycle.recompute).toHaveBeenCalledWith(caseId, tx, calendar);
+    });
 
     it("treats a revised source as eligible under the built-in calendar", async () => {
         // Eligible sources proceed to freezing, which needs the job service this harness omits.

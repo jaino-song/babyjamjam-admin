@@ -121,7 +121,7 @@ export class HolidayReviewProcessorService {
     ): Promise<"applied" | "already_processed" | "events_changed" | "items_changed"> {
         const branchIds = event.branchId !== null
             ? [event.branchId]
-            : (await this.branchRepository.findAllActive()).map((branch) => branch.id);
+            : (await this.branchRepository.findAll()).map((branch) => branch.id);
 
         // Calendars and candidates are loaded before the write transaction opens.
         const drafts: ReviewItemDraft[] = [];
