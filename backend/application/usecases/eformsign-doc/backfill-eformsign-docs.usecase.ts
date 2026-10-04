@@ -728,6 +728,7 @@ export class BackfillEformsignDocsUsecase {
      * document. Deleting here would erase the vendor's copy — and its audit trail —
      * behind the operator's back, hours after a delete that promised to keep it.
      */
+    // Purge intents are delete-origin only; supersede must never write one.
     private async retryConfirmedPresentPermanentPurge(
         documentId: string,
         vendorStatusType: string | undefined,
