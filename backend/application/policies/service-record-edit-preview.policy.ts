@@ -353,7 +353,7 @@ function projectPersisted(
     }
     if (blockingReasons.length > 0) return { entries: [], source: "planned", blockingReasons };
     try {
-        const validated = validateServiceRecordScheduleVector(entries, expected, calendar);
+        const validated = validateServiceRecordScheduleVector(entries, expected, calendar, { persisted: true });
         const rangeBlockingReasons = [
             ...persistedDayReasons(source, validated),
             ...assignmentRangeReasons(source, validated),
@@ -435,7 +435,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
     }
     if (blockingReasons.length > 0) return { entries: [], source: "legacy", blockingReasons };
     try {
-        const validated = validateServiceRecordScheduleVector(entries, expected, calendar);
+        const validated = validateServiceRecordScheduleVector(entries, expected, calendar, { persisted: true });
         const rangeBlockingReasons = assignmentRangeReasons(source, validated);
         return {
             entries: rangeBlockingReasons.length > 0 ? [] : validated,
@@ -781,9 +781,10 @@ export function buildServiceRecordEditPreview(
                 projection.entries,
                 input.source.requiredSessionCount ?? undefined,
                 input.calendar,
+                { persisted: true },
             );
             after = applyStoredDates(before, draftSessions);
-            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, input.calendar);
+            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, input.calendar, { persisted: true });
             blockingReasons.push(...assignmentRangeReasons(input.source, after));
         } catch (error) {
             blockingReasons.push(reasonFromError(error));

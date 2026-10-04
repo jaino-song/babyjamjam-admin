@@ -27,12 +27,15 @@ export declare class ServiceRecordScheduleValidationError extends Error {
 /** The latest business day strictly before `iso`. */
 export declare function previousBusinessDay(iso: string, calendar: KrBusinessDayCalendar): string;
 /**
- * Validates a complete authoritative vector before it is persisted or shifted.
+ * Validates a complete authoritative vector. New plans use the current calendar;
+ * persisted dates retain their historical validity across calendar revisions.
  * The function intentionally requires ownership and original-date provenance;
  * callers with legacy rows must first resolve those fields from unique source
  * evidence rather than inventing placeholders.
  */
-export declare function validateServiceRecordScheduleVector(entries: ReadonlyArray<ServiceRecordPlannedSession>, requiredSessionCount?: number, calendar?: KrBusinessDayCalendar): ServiceRecordPlannedSession[];
+export declare function validateServiceRecordScheduleVector(entries: ReadonlyArray<ServiceRecordPlannedSession>, requiredSessionCount?: number, calendar?: KrBusinessDayCalendar, options?: {
+    persisted?: boolean;
+}): ServiceRecordPlannedSession[];
 /**
  * Shift the selected session and every later session by one signed business
  * day delta. Each original date is retained and each current date is shifted

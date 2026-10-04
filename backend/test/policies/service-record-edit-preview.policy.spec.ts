@@ -355,7 +355,7 @@ describe("service-record-edit-preview.policy", () => {
             ]);
         });
 
-        it("blocks a persisted vector that lands on a branch holiday and reports the calendar version", () => {
+        it("preserves a persisted vector after a branch holiday is added and reports the calendar version", () => {
             const builtinPreview = buildServiceRecordEditPreview({
                 ...baseInput,
                 calendar: KR_BUILTIN_CALENDAR,
@@ -373,8 +373,8 @@ describe("service-record-edit-preview.policy", () => {
                 changes: {},
             });
             expect(branchPreview.calendarVersion).toBe("kr-db-branch-b");
-            expect(branchPreview.blockingReasons.length).toBeGreaterThan(0);
-            expect(branchPreview.before.sessions).toEqual([]);
+            expect(branchPreview.blockingReasons).toEqual([]);
+            expect(branchPreview.before.sessions).toEqual(builtinPreview.before.sessions);
         });
     });
 });
