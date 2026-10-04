@@ -796,7 +796,12 @@ export class ScheduleChangeService {
                     serviceDate: day.serviceDate,
                     locked: day.locked,
                 })), calendar, record);
-                if (target.sessionIndex !== request.sessionIndex || target.fromDate !== toIso(request.fromDate)) {
+                if (
+                    target.sessionIndex !== request.sessionIndex
+                    || target.fromDate !== toIso(request.fromDate)
+                    || target.toDate !== toIso(request.toDate)
+                    || target.newEndDate !== toIso(request.newEndDate)
+                ) {
                     throw new StaleRequestError(request.id, request.branchId);
                 }
 
