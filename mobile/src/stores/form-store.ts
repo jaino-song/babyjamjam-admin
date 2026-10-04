@@ -170,7 +170,10 @@ export const useFormStore = create<FormStore>((set) => {
         supersede: null,
         clearSupersede: () => set({ supersede: null }),
         // Client selection setters
-        setClientId: (clientId: number | null) => set({ clientId }),
+        setClientId: (clientId: number | null) => set((state) => ({
+            clientId,
+            isContractReissue: clientId === state.clientId && state.isContractReissue,
+        })),
         setIsManualEntry: (isManualEntry: boolean) => set({ isManualEntry }),
         setName: (name: string) => set({ name }),
         setPhone: (phone: string) => set({ phone: formatKoreanPhoneNumber(phone) }),
