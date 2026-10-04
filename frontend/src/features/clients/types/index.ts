@@ -74,6 +74,8 @@ export interface Client {
     areaId?: string | null;
     hasSigned: boolean;
     documentStatus: DocumentStatus;    // eformsign document status: created/opened/completed
+    /** ID of the same latest contract used for documentStatus. */
+    latestContractDocumentId?: string | null;
     badges?: ClientBadge[];
     actionRequired?: ClientActionRequired | null;
     pendingScheduleChange?: PendingScheduleChange | null;

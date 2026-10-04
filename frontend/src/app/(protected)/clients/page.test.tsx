@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { fireEvent, render, screen, cleanup } from "@testing-library/react";
+import { fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 
 const mockRouter = { replace: jest.fn(), push: jest.fn() };
@@ -127,7 +127,9 @@ jest.mock("@/components/app/clients/ClientFormDialog", () => ({
 }));
 
 jest.mock("@/components/app/clients/MaternityContractDialog", () => ({
-  MaternityContractDialog: () => null,
+  MaternityContractDialog: ({ supersedeDocumentId }: { supersedeDocumentId?: string }) => (
+    <div data-testid="reissue-document">{supersedeDocumentId ?? "none"}</div>
+  ),
 }));
 
 jest.mock("@/components/app/contracts/ContractClientSelector", () => ({
@@ -135,8 +137,8 @@ jest.mock("@/components/app/contracts/ContractClientSelector", () => ({
 }));
 
 jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
-  ClientDetailPanel: ({ client }: { client: { name: string } }) => (
-    <div data-testid="client-detail">{client.name}</div>
+  ClientDetailPanel: ({ client, trailing }: { client: { name: string }; trailing?: ReactNode }) => (
+    <div data-testid="client-detail">{client.name}{trailing}</div>
   ),
 }));
 
@@ -180,7 +182,9 @@ jest.mock("@/components/app/clients/ServiceRecordLinkResetResultModal", () => ({
 }));
 
 jest.mock("@/components/app/clients/ServiceScheduleChangeModal", () => ({
-  ServiceScheduleChangeModal: () => null,
+  ServiceScheduleChangeModal: ({ onSubmit }: { onSubmit: (allow: boolean) => void }) => (
+    <button onClick={() => onSubmit(false)}>일정 변경 적용</button>
+  ),
 }));
 
 jest.mock("@/providers/LocaleProvider", () => ({
@@ -212,7 +216,7 @@ jest.mock("@/components/ui/switch", () => ({ Switch: () => null }));
 jest.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
-  DropdownMenuItem: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => <button onClick={onClick}>{children}</button>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
@@ -267,6 +271,7 @@ jest.mock("@/lib/phone", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }) },
   settingsApi: {
     getClientRegistrationPolicy: jest.fn(),
     updateClientRegistrationPolicy: jest.fn(),
@@ -609,6 +614,35 @@ describe("ClientsPage create selection behavior", () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it.each([
+    ["requested", "latest-document"],
+    ["completed", "none"],
+  ])("reissues using the latest document's %s status, not the stale pin", async (documentStatus, expected) => {
+    const { serviceRecordsApi } = await import("@/features/service-records/api/service-records.api");
+    jest.mocked(serviceRecordsApi.getClientOverview).mockResolvedValue({
+      data: { assignments: [{ scheduleId: 7, replaced: false }] },
+    } as never);
+    jest.mocked(serviceRecordsApi.previewScheduleChange).mockResolvedValue({
+      data: { fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1 },
+    } as never);
+    jest.mocked(serviceRecordsApi.applyScheduleChange).mockResolvedValue({
+      data: { clientId: 7, newEndDate: "2026-10-30" },
+    } as never);
+    const target = {
+      id: 7, name: "재발행 고객", eDocId: "old-document",
+      latestContractDocumentId: "latest-document", documentStatus,
+    };
+    mockSearchParams = new URLSearchParams("id=7");
+    mockClientFromParam = target;
+    render(<ClientsPage />);
+
+    fireEvent.click(screen.getByText("서비스 일정 변경"));
+    fireEvent.click(await screen.findByText("일정 변경 적용"));
+    fireEvent.click(await screen.findByText("수정 전송"));
+
+    await waitFor(() => expect(screen.getByTestId("reissue-document")).toHaveTextContent(expected));
   });
 
   it("keeps the newly created detail selected through onSuccess then onClose", () => {

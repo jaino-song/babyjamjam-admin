@@ -658,8 +658,8 @@ export function ClientDetailContent({
     setContractResendClient(null);
     onIssueContract(target, {
       paymentDate,
-      supersedeDocumentId: target.eDocId && isCancellableContractStatus(target.documentStatus)
-        ? target.eDocId
+      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus)
+        ? target.latestContractDocumentId
         : undefined,
     });
   };

@@ -3343,6 +3343,27 @@ describe("ClientService", () => {
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
             });
 
+            it.each([
+                ["003", "completed"],
+                ["060", "requested"],
+            ])("pairs the latest contract ID with its %s status despite a stale pin", async (statusType, documentStatus) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "old-document"),
+                ]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, documentId: "latest-document", statusType },
+                    { clientId: 1, documentId: "old-document", statusType: "080" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result).toMatchObject({
+                    eDocId: "old-document",
+                    latestContractDocumentId: "latest-document",
+                    documentStatus,
+                });
+            });
+
             it("should use the latest contract instead of the pinned eDocId for the badge", async () => {
                 const client = createWaitingClient("2026-07-16", "old-rejected-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
@@ -3392,6 +3413,7 @@ describe("ClientService", () => {
                 const [result] = await service.findAll(branchId);
 
                 expect(result?.documentStatus).toBeNull();
+                expect(result).toHaveProperty("latestContractDocumentId", null);
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
             });
 
