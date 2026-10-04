@@ -1728,7 +1728,7 @@ describe("AdminServiceRecordEditService", () => {
             expect(builtinSaved.changes.sessions.map(({ serviceDate }) => serviceDate)).toEqual(["2026-09-03", "2026-09-04"]);
         });
 
-        it("previews with the fresh branch calendar and surfaces a branch holiday as a blocker", async () => {
+        it("previews with the fresh branch calendar without invalidating historical dates", async () => {
             const builtin = await previewWith();
             expect(builtin.preview.blockingReasons).toEqual([]);
             expect(builtin.harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
@@ -1736,7 +1736,8 @@ describe("AdminServiceRecordEditService", () => {
             // 2026-09-02 is inside the planned vector (09-01..09-03).
             const branch = await previewWith(branchCalendar("2026-09-02", "kr-db-branch-b"));
             expect(branch.preview.calendarVersion).toBe("kr-db-branch-b");
-            expect(branch.preview.blockingReasons.length).toBeGreaterThan(0);
+            expect(branch.preview.blockingReasons).toEqual([]);
+            expect(branch.preview.before.sessions).toEqual(builtin.preview.before.sessions);
             expect(branch.preview.previewId).not.toBe(builtin.preview.previewId);
         });
 

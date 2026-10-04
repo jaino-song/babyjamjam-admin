@@ -1072,7 +1072,7 @@ function buildContractCreationPrefillFromContract(
     }) ??
     employees.find((employee) => employee.name.trim() === provider);
 
-  return buildContractCreationPrefillFromClient({
+  return { ...buildContractCreationPrefillFromClient({
     clientPrefill,
     clientId: metadata?.clientId,
     employeeId: matchedEmployee?.id,
@@ -1082,7 +1082,7 @@ function buildContractCreationPrefillFromContract(
     startDate,
     endDate,
     paymentDate,
-  });
+  }), isContractReissue: true };
 }
 
 function notificationChannelLabel(log: NotificationLogRecord): "메시지" {

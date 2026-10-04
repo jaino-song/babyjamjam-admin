@@ -512,6 +512,17 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         const creationCalendar = params.canCreate && params.creationBranchId
             ? await this.holidayCalendar.forBranch(params.creationBranchId, { fresh: true })
             : null;
+        // Phone matching runs under the advisory lock, so without an explicit
+        // client id only its authorized branch is known before the transaction.
+        const existingClientCalendar = params.initializeLifecycle && this.serviceRecordLifecycleService
+            ? params.existingClientId !== undefined
+                ? await this.serviceRecordLifecycleService.resolveCalendarBeforeTransaction(params.existingClientId)
+                : params.existingClientBranchId
+                    ? params.existingClientBranchId === params.creationBranchId && creationCalendar
+                        ? creationCalendar
+                        : await this.holidayCalendar.forBranch(params.existingClientBranchId, { fresh: true })
+                    : undefined
+            : undefined;
         for (let attempt = 1; attempt <= MAX_TRANSACTION_ATTEMPTS; attempt += 1) {
             try {
                 return await this.prisma.$transaction(
@@ -678,7 +689,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     params.initializeLifecycle
                                     && (linked === "linked" || linked === "already_linked")
                                 ) {
-                                    await this.ensureServiceRecordLifecycle(matched.id, transaction, true);
+                                    await this.ensureServiceRecordLifecycle(
+                                        matched.id, transaction, true, existingClientCalendar,
+                                    );
                                 }
                                 return { status: linked };
                             }
@@ -695,6 +708,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     matches[0]!.id,
                                     transaction,
                                     true,
+                                    existingClientCalendar,
                                 );
                             }
                             return { status: linked };

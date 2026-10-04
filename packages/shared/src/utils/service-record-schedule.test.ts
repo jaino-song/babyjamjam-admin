@@ -73,7 +73,7 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         ]);
         expect(result.entries[5]!.originalDate).toBe("2026-09-14");
         // The stored vector, exception included, reads back as valid.
-        expect(() => validateServiceRecordScheduleVector(result.entries)).not.toThrow();
+        expect(() => validateServiceRecordScheduleVector(result.entries, undefined, undefined, { persisted: true })).not.toThrow();
     });
 
     it.each([
@@ -170,6 +170,49 @@ describe("calendar parameter", () => {
         employeeId: 20,
         provenanceVersion: "case-9",
     }));
+
+    it("preserves historical dates after a calendar revision but rejects new holiday input", () => {
+        const revised = createKrBusinessDayCalendar(["2028-01-04", "2028-01-07"], { supportedYears: [2028] });
+        expect(validateServiceRecordScheduleVector(vector, 3, revised, { persisted: true })).toEqual(vector);
+        expect(() => validateServiceRecordScheduleVector(vector, 3, revised)).toThrow("Korean business day");
+        expect(() => validateServiceRecordScheduleVector([
+            { ...vector[0]!, serviceDate: "2028-01-04" },
+        ], 1, revised)).toThrow("Korean business day");
+        expect(() => moveServiceRecordSessionDate(vector, 3, "2028-01-07", false, revised)).toThrow(
+            expect.objectContaining({ code: "NON_BUSINESS_DATE" }),
+        );
+    });
+
+    it("moves only session 1 while preserving session 2 on a newly declared holiday", () => {
+        const revised = createKrBusinessDayCalendar(["2028-01-05"], { supportedYears: [2028] });
+        const historical = [
+            { ...vector[0]!, serviceDate: "2028-01-04", originalDate: "2028-01-04" },
+            { ...vector[1]!, serviceDate: "2028-01-05", originalDate: "2028-01-05" },
+            vector[2]!,
+        ];
+
+        const moved = moveServiceRecordSessionDate(historical, 1, "2028-01-03", false, revised);
+
+        expect(moved.entries).toEqual([
+            { ...historical[0]!, serviceDate: "2028-01-03" },
+            ...historical.slice(1),
+        ]);
+    });
+
+    it("shifts historical vectors against the revised current calendar", () => {
+        const revised = createKrBusinessDayCalendar(["2028-01-04", "2028-01-07"], { supportedYears: [2028] });
+        const shifted = shiftServiceRecordScheduleSuffix(vector, 1, "2028-01-05", revised);
+        expect(shifted.entries.map(({ serviceDate }) => serviceDate)).toEqual(["2028-01-05", "2028-01-06", "2028-01-10"]);
+        expect(shifted.entries.map(({ originalDate }) => originalDate)).toEqual(vector.map(({ originalDate }) => originalDate));
+    });
+
+    it.each(["originalDate", "serviceDate"] as const)("still rejects malformed persisted %s values", (field) => {
+        for (const invalid of ["2028-02-30", "2028-1-03", "not-a-date"]) {
+            expect(() => validateServiceRecordScheduleVector([
+                { ...vector[0]!, [field]: invalid },
+            ], 1, calendar, { persisted: true })).toThrow(expect.objectContaining({ code: "INVALID_DATE" }));
+        }
+    });
 
     it("honours a custom calendar in year support and holiday checks", () => {
         expect(() => validateServiceRecordScheduleVector(vector)).toThrow(UnsupportedKoreanHolidayYearError);

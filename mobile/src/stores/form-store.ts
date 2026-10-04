@@ -23,6 +23,7 @@ export interface ContractCreationPrefill {
     grant?: string;
     actualPrice?: string;
     paymentDate?: string;
+    isContractReissue?: boolean;
     voucherType?: string;
     voucherDuration?: string;
     voucherYear?: number;
@@ -64,6 +65,7 @@ interface FormStore {
     grant: string;
     actualPrice: string;
     paymentDate: string;
+    isContractReissue: boolean;
     voucherType: string;
     voucherDuration: string;
     voucherYear: number;
@@ -159,6 +161,7 @@ export const useFormStore = create<FormStore>((set) => {
         grant: "",
         actualPrice: "",
         paymentDate: todayIsoDate(),
+        isContractReissue: false,
         voucherType: "",
         voucherDuration: "",
         voucherYear: currentYear,
@@ -167,7 +170,10 @@ export const useFormStore = create<FormStore>((set) => {
         supersede: null,
         clearSupersede: () => set({ supersede: null }),
         // Client selection setters
-        setClientId: (clientId: number | null) => set({ clientId }),
+        setClientId: (clientId: number | null) => set((state) => ({
+            clientId,
+            isContractReissue: clientId === state.clientId && state.isContractReissue,
+        })),
         setIsManualEntry: (isManualEntry: boolean) => set({ isManualEntry }),
         setName: (name: string) => set({ name }),
         setPhone: (phone: string) => set({ phone: formatKoreanPhoneNumber(phone) }),
@@ -232,6 +238,7 @@ export const useFormStore = create<FormStore>((set) => {
         setArea: (area: string) => set({ area }),
         setPreservePrefilledPrices: (preservePrefilledPrices: boolean) => set({ preservePrefilledPrices }),
         prefillFromClient: (client) => set({
+            isContractReissue: false,
             supersede: null,
             clientId: client.id,
             isManualEntry: false,
@@ -255,6 +262,7 @@ export const useFormStore = create<FormStore>((set) => {
             preservePrefilledPrices: false,
         }),
         prefillFromContract: (prefill) => set({
+            isContractReissue: prefill.isContractReissue ?? false,
             supersede: prefill.supersedeDocumentId && prefill.clientId != null
                 ? { clientId: prefill.clientId, documentId: prefill.supersedeDocumentId }
                 : null,
@@ -279,7 +287,7 @@ export const useFormStore = create<FormStore>((set) => {
             fullPrice: prefill.fullPrice ?? "",
             grant: prefill.grant ?? "",
             actualPrice: prefill.actualPrice ?? "",
-            paymentDate: prefill.paymentDate || todayIsoDate(),
+            paymentDate: prefill.paymentDate || (prefill.isContractReissue ? "" : todayIsoDate()),
             voucherType: prefill.voucherType ?? "",
             voucherDuration: prefill.voucherDuration ?? "",
             voucherYear: prefill.voucherYear ?? currentYear,
@@ -287,6 +295,7 @@ export const useFormStore = create<FormStore>((set) => {
             preservePrefilledPrices: true,
         }),
         resetAll: () => set({
+            isContractReissue: false,
             supersede: null,
             clientId: null,
             isManualEntry: false,

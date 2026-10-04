@@ -1490,15 +1490,15 @@ describe("ServiceRecordEntryService branch calendar", () => {
         expect(harness.upsert).toHaveBeenCalled();
     });
 
-    it("getContext refuses a persisted planned vector that lands on a branch holiday", async () => {
+    it("getContext preserves a persisted planned vector after a branch holiday is added", async () => {
         const record = createRecord({ plannedSessions: plannedThroughJuly6 });
 
         await expect(contextService(record, createHolidayCalendarStub()).getContext(context)).resolves.toBeDefined();
-        await expectException(
-            contextService(record, branchHolidayCalendar("2026-07-06")).getContext(context),
-            ConflictException,
-            "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
-        );
+        const result = await contextService(record, branchHolidayCalendar("2026-07-06")).getContext(context);
+        expect(result.plannedSessionDates).toEqual(plannedThroughJuly6.map(({ sessionIndex, serviceDate }) => ({
+            sessionIndex,
+            serviceDate,
+        })));
     });
 
     it("upsertSession reads the branch calendar fresh before its transaction and extends the end date over a branch holiday", async () => {
@@ -1627,9 +1627,7 @@ describe("ServiceRecordEntryService branch calendar", () => {
         });
     });
 
-    it("upsertSession fails closed when the persisted planned vector lands on a branch holiday", async () => {
-        // The vector's 07-06 session is only valid while 07-06 is a business day. After the
-        // branch closes that day the vector is unusable, so the write fails closed.
+    it("upsertSession preserves the existing vector after a branch holiday is added", async () => {
         const record = createRecord({ plannedSessions: plannedThroughJuly6 });
         const harness = createHarness({
             existing: null,
@@ -1637,11 +1635,8 @@ describe("ServiceRecordEntryService branch calendar", () => {
             holidayCalendar: branchHolidayCalendar("2026-07-06"),
         });
 
-        await expectException(
-            harness.service.upsertSession(context, 1, createDto(), false),
-            ConflictException,
-            "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
-        );
-        expect(harness.upsert).not.toHaveBeenCalled();
+        await expect(harness.service.upsertSession(context, 1, createDto(), false))
+            .resolves.toEqual(expect.objectContaining({ sessionIndex: 1 }));
+        expect(harness.upsert).toHaveBeenCalled();
     });
 });
