@@ -3,6 +3,7 @@ import { createProblemDetails } from "@babyjamjam/shared";
 import type { ChangeEvent, ReactNode } from "react";
 
 import type { Client } from "@/lib/client/types";
+import { todayIsoDate } from "@/lib/contracts/date-input";
 
 const mockPush = jest.fn();
 const mockStartNavigation = jest.fn();
@@ -582,6 +583,43 @@ describe("contract date validation", () => {
     fireEvent.click(submit);
     expect(document.activeElement).toBe(paymentDateInput);
     expectNoContractSideEffects();
+  });
+
+  it("blocks an unknown reissue payment date until the operator enters it", async () => {
+    const state = installFormState({ paymentDate: "", isContractReissue: true });
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-reissue", durationMs: 1 });
+    const submit = await renderReadyPage();
+    const paymentDateInput = getDateInput("본인부담금 수령 날짜");
+
+    expect(paymentDateInput).toHaveValue("");
+    expect(state.setPaymentDate).not.toHaveBeenCalled();
+    fireEvent.click(submit);
+    expect(paymentDateInput).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("수령 날짜를 입력해 주세요")).toBeInTheDocument();
+    expect(document.activeElement).toBe(paymentDateInput);
+    expectNoContractSideEffects();
+
+    fireEvent.change(paymentDateInput, { target: { value: "20260915" } });
+    fireEvent.click(submit);
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentYear: "26", paymentMonth: "09", paymentDay: "15" }),
+      7,
+      expect.any(String),
+    );
+  });
+
+  it("keeps a known reissue payment date prefilled", async () => {
+    installFormState({ paymentDate: "2026-09-15", isContractReissue: true });
+    await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue("2026-09-15");
+  });
+
+  it("still defaults a blank new-contract payment date to today", async () => {
+    const state = installFormState({ paymentDate: "", isContractReissue: false });
+    await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue(todayIsoDate());
+    expect(state.setPaymentDate).toHaveBeenCalledWith(todayIsoDate());
   });
 
   it("re-enables creation after correcting a reversed end date and uses the corrected identity", async () => {

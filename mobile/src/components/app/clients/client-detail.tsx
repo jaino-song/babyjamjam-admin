@@ -651,7 +651,7 @@ export function ClientDetailContent({
         paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
       }
     } catch {
-      // Without the old document the payment date falls back to the form's default.
+      // Without the old document the payment date is left for the user to fill.
     } finally {
       setIsPreparingContractReissue(false);
     }
