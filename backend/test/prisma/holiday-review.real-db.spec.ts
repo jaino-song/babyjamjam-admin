@@ -613,6 +613,58 @@ describeReal("holiday review (real PostgreSQL)", () => {
             reason: "no_sessions_after_date" as const,
         });
 
+        it("rechecks the committed end after waiting for a concurrent provider extension", async () => {
+            const clientId = await makeClient(branchA);
+            const eventId = await makeEvent("2026-11-10", "added");
+            let releaseSave!: () => void;
+            let saveReady!: () => void;
+            const release = new Promise<void>((resolve) => { releaseSave = resolve; });
+            const ready = new Promise<void>((resolve) => { saveReady = resolve; });
+            const save = prisma.$transaction(async (tx) => {
+                await tx.client.update({ where: { id: clientId, branchId: branchA }, data: { endDate: d("2026-11-16") } });
+                saveReady();
+                await release;
+            });
+            await ready;
+
+            const racingRepository = new SbHolidayReviewRepository({
+                $transaction: (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+                    prisma.$transaction(async (tx) => callback({
+                        ...tx,
+                        // Release the save when the processor attempts its client row lock.
+                        $queryRaw: ((query: Prisma.Sql) => {
+                            releaseSave();
+                            return tx.$queryRaw(query);
+                        }) as typeof tx.$queryRaw,
+                        client: {
+                            ...tx.client,
+                            // Negative control: the old non-locking path reads the old end,
+                            // then lets the save commit before inserting its stale draft.
+                            findMany: (async (args: Prisma.clientFindManyArgs) => {
+                                const rows = await tx.client.findMany(args);
+                                releaseSave();
+                                await save;
+                                return rows;
+                            }) as typeof tx.client.findMany,
+                        },
+                    })),
+            } as unknown as PrismaService);
+            try {
+                const result = await racingRepository.applyEventResult({
+                    eventId,
+                    drafts: [draft(clientId, branchA)],
+                    assumedOpenItemIds: {},
+                    expectedUnprocessedEventIds: [eventId],
+                });
+                expect(result).toEqual({ status: "items_changed" });
+                expect(await itemsOf(clientId)).toHaveLength(0);
+                expect((await prisma.holiday_change_event.findUnique({ where: { id: eventId } }))?.processedAt).toBeNull();
+            } finally {
+                releaseSave();
+                await save;
+            }
+        });
+
         it("reports an already processed event without writing", async () => {
             const clientId = await makeClient(branchA);
             const eventId = await makeEvent("2026-11-10", "added");

@@ -229,8 +229,8 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
-        // Display-only: the cached branch calendar is good enough here.
-        const calendar = await this.holidayCalendar.forBranch(ctx.branchId);
+        // Legacy session counts control entry/submission, so use the current calendar.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
             record.requiredSessionCount,
