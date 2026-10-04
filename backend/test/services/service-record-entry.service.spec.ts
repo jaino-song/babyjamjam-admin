@@ -1407,6 +1407,63 @@ describe("ServiceRecordEntryService.saveHeader", () => {
     });
 });
 
+describe("ServiceRecordEntryService transaction recompute calendar", () => {
+    it.each(["saveHeader", "upsertSession"] as const)("%s passes the preloaded calendar for a null legacy count", async (method) => {
+        const record = createRecord({
+            clientId: 1,
+            requiredSessionCount: null,
+            currentRevisionId: null,
+            assignments: [],
+            days: [],
+        });
+        let transactionOpen = false;
+        const readsWhileOpen: boolean[] = [];
+        const calendar = createKrBusinessDayCalendar([], { version: "test", supportedYears: [2026] });
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => {
+            readsWhileOpen.push(transactionOpen);
+            return calendar;
+        });
+        const harness = createHarness({ transactionRecord: record, holidayCalendar });
+        harness.prisma.service_record_case.findFirst.mockResolvedValue(record);
+        Object.assign(harness.prisma, {
+            client: { findUnique: jest.fn().mockResolvedValue({ ...record, employeeSchedules: [] }) },
+        });
+        Object.assign(harness.prisma.service_record_case, { findUnique: jest.fn().mockResolvedValue(record) });
+        Object.assign(harness.transactionClient.service_record_case, {
+            update: jest.fn().mockResolvedValue(record),
+        });
+        Object.assign(harness.transactionClient.service_record_day, { count: jest.fn().mockResolvedValue(0) });
+        Object.assign(harness.transactionClient, { service_record: { upsert: jest.fn().mockResolvedValue({}) } });
+        Object.assign(harness.prisma, { service_record_day: { count: jest.fn().mockResolvedValue(0) } });
+        harness.prisma.$transaction.mockImplementation(async (callback) => {
+            transactionOpen = true;
+            try {
+                return await callback(harness.transactionClient);
+            } finally {
+                transactionOpen = false;
+            }
+        });
+        const realLifecycle = new ServiceRecordLifecycleService(harness.prisma as unknown as PrismaService, holidayCalendar);
+        harness.lifecycle.recompute.mockImplementation(async (id, tx, passedCalendar) => {
+            if (!tx) return record;
+            return realLifecycle.recompute(id, tx, passedCalendar);
+        });
+
+        if (method === "saveHeader") {
+            await harness.service.saveHeader(context, {
+                momName: "산모", momBirth: "900101", babyName: "아기", babyBirth: "260701",
+                deliveryType: "자연분만", babyWeight: "3.2",
+            });
+        } else {
+            await harness.service.upsertSession(context, 1, createDto(), false);
+        }
+
+        expect(readsWhileOpen).toEqual([false]);
+        expect(harness.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, harness.transactionClient, calendar);
+    });
+});
+
 describe("ServiceRecordEntryService branch calendar", () => {
     const plannedThroughJuly6 = [
         "2026-07-01",
