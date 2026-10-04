@@ -59,6 +59,7 @@ import {
     normalizeEformsignStepType,
 } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
+import { hasCustomerSigned } from "domain/utils/eformsign-customer-signature";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
@@ -845,7 +846,10 @@ export class EformsignController {
             // client's document or a service-record snapshot.
             const document = await this.prisma.eformsign_doc.findUnique({
                 where: { documentId },
-                select: { clientId: true, documentKind: true },
+                select: {
+                    clientId: true, documentKind: true,
+                    statusType: true, stepType: true, stepName: true,
+                },
             });
             if (
                 !document
@@ -854,6 +858,7 @@ export class EformsignController {
                 // not this client's, so a caller must not be able to cancel and purge it
                 // just by knowing its id.
                 || document.clientId !== body.clientId
+                || hasCustomerSigned(document)
             ) {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }

@@ -807,7 +807,10 @@ describe("EformsignController (Integration)", () => {
             clientFindFirst.mockResolvedValue({ eDocId: "new-doc" });
             docFindUnique = (app.get(PrismaService) as unknown as { eformsign_doc: { findUnique: jest.Mock } }).eformsign_doc.findUnique;
             docFindUnique.mockReset();
-            docFindUnique.mockResolvedValue({ clientId: 7, documentKind: "contract" });
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "030",
+                stepType: "05", stepName: "고객 서명",
+            });
             eformsignDocService.findAll.mockResolvedValue([{ documentId: "old-doc" }] as never);
         });
 
@@ -831,6 +834,26 @@ describe("EformsignController (Integration)", () => {
             expect(response.status).toBe(409);
             expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
             expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["provider-review step type", "06", ""],
+            ["provider-review step name", "", "제공기관 확인"],
+        ])("rejects a requested customer-signed contract by %s", async (_label, stepType, stepName) => {
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "030", stepType, stepName,
+            });
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
         });
 
         it("refuses while the client still points at the old contract", async () => {
