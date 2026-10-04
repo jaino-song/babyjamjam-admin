@@ -27,8 +27,10 @@ export declare class ServiceRecordScheduleValidationError extends Error {
 /** The latest business day strictly before `iso`. */
 export declare function previousBusinessDay(iso: string, calendar: KrBusinessDayCalendar): string;
 /**
- * Validates a complete authoritative vector. New plans use the current calendar;
- * persisted dates retain their historical validity across calendar revisions.
+ * Validates a complete authoritative vector. Default mode checks vectors built
+ * from new input against the current calendar and has no current production caller.
+ * Persisted vectors, including admin-approved non-business exceptions, must pass
+ * `{ persisted: true }` to retain historical validity across calendar revisions.
  * The function intentionally requires ownership and original-date provenance;
  * callers with legacy rows must first resolve those fields from unique source
  * evidence rather than inventing placeholders.
