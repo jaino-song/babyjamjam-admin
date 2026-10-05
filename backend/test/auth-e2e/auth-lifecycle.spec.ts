@@ -119,27 +119,48 @@ describe("real auth and tenant lifecycle", () => {
             .expect(200);
     });
 
-    it("denies an existing access token immediately after membership removal", async () => {
-        const admin = await selectBranch((await login()).accessToken);
+    it("revokes the member's sessions immediately after membership removal", async () => {
+        const loginResult = await login();
+        const admin = await selectBranch(loginResult.accessToken);
         const owner = await selectBranch((await login("owner@auth-e2e.test")).accessToken);
-
-        await request(app.getHttpServer())
-            .delete(`/branches/${BRANCH_A}/users/${ADMIN_A}`)
-            .set("Authorization", `Bearer ${owner.accessToken}`)
-            .expect(200);
-
-        await request(app.getHttpServer())
-            .get(`/branches/${BRANCH_A}/users/${USER_A}`)
-            .set("Authorization", `Bearer ${admin.accessToken}`)
-            .expect(403);
-
-        await prisma.user_branch.create({
-            data: {
-                userId: ADMIN_A,
-                branchId: BRANCH_A,
-                role: "admin",
-            },
+        const activeSessions = await prisma.auth_session.findMany({
+            where: { userId: ADMIN_A, revokedAt: null },
+            select: { id: true },
         });
+        expect(activeSessions.length).toBeGreaterThan(0);
+
+        try {
+            await request(app.getHttpServer())
+                .delete(`/branches/${BRANCH_A}/users/${ADMIN_A}`)
+                .set("Authorization", `Bearer ${owner.accessToken}`)
+                .expect(200);
+
+            await request(app.getHttpServer())
+                .get(`/branches/${BRANCH_A}/users/${USER_A}`)
+                .set("Authorization", `Bearer ${admin.accessToken}`)
+                .expect(401);
+
+            const sessions = await prisma.auth_session.findMany({
+                where: { userId: ADMIN_A, id: { in: activeSessions.map(({ id }) => id) } },
+                select: { revokedAt: true, revokedReason: true },
+            });
+            expect(sessions).toHaveLength(activeSessions.length);
+            for (const session of sessions) {
+                expect(session.revokedAt).toEqual(expect.any(Date));
+                expect(session.revokedReason).toBe("membership_deleted");
+            }
+
+            await request(app.getHttpServer())
+                .post("/auth/refresh-token")
+                .send({ refreshToken: admin.refreshToken })
+                .expect(401);
+        } finally {
+            await prisma.user_branch.upsert({
+                where: { userId_branchId: { userId: ADMIN_A, branchId: BRANCH_A } },
+                update: { role: "admin" },
+                create: { userId: ADMIN_A, branchId: BRANCH_A, role: "admin" },
+            });
+        }
     });
 
     it("revokes the current session on logout", async () => {

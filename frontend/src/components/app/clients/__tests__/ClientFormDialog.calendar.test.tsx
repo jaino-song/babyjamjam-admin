@@ -69,7 +69,7 @@ const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어
 
 function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? KR_BUILTIN_CALENDAR;
-  return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+  return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
 }
 
 const basePrefill = {
@@ -97,6 +97,42 @@ function ui(prefill: typeof NOV_PREFILL | typeof MISMATCH_PREFILL) {
 }
 
 describe("ClientFormDialog — branch business-day calendar", () => {
+  it.each([true, false])("recalculates auto dates before save even when refresh changed is %s", async (changed) => {
+    const refreshForSave = jest.fn().mockResolvedValue({ ok: true, calendar: BRANCH_CALENDAR, changed });
+    mockedHook.mockImplementation(() => hookResult({ refreshForSave }));
+    render(ui(NOV_PREFILL));
+    await screen.findByText("등록 가능한 번호입니다.");
+    await waitFor(() => expect(screen.getByLabelText("종료일")).toHaveValue("2026-11-04"));
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(screen.getByLabelText("종료일")).toHaveValue("2026-11-05");
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    refreshForSave.mockResolvedValue({ ok: true, calendar: BRANCH_CALENDAR, changed: false });
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
+    expect(mockCreateClient.mock.calls[0][0].endDate).toBe("2026-11-05");
+  });
+
+  it("does not save on refresh failure and uses the existing load-failed notice", async () => {
+    mockedHook.mockImplementation(() => hookResult({ refreshForSave: async () => ({ ok: false }) }));
+    render(ui(NOV_PREFILL));
+    await screen.findByText("등록 가능한 번호입니다.");
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a manually typed end date on refresh", async () => {
+    mockedHook.mockImplementation(() => hookResult({ refreshForSave: async () => ({ ok: true, calendar: BRANCH_CALENDAR, changed: true }) }));
+    render(ui(NOV_PREFILL));
+    await screen.findByText("등록 가능한 번호입니다.");
+    fireEvent.change(screen.getByLabelText("종료일"), { target: { value: "2026-12-31" } });
+    fireEvent.click(screen.getByRole("button", { name: "생성" }));
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(screen.getByLabelText("종료일")).toHaveValue("2026-12-31");
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = jest.fn();
     mockApiGet.mockReset();

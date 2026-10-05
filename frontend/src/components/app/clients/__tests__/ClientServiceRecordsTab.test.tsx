@@ -678,6 +678,7 @@ describe("ClientServiceRecordsTab", () => {
             ready: true,
             error: null,
             retry: jest.fn(),
+            refreshForSave: async () => ({ ok: true, calendar: branchCalendar, changed: false }),
             version: branchCalendar.version,
         });
         try {

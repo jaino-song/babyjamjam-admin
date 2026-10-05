@@ -116,6 +116,7 @@ function calendarResult(overrides: Partial<UseBusinessDayCalendarResult>): UseBu
     ready: true,
     error: null,
     retry: jest.fn(),
+    refreshForSave: async () => ({ ok: true, calendar, changed: false }),
     version: calendar.version,
     ...overrides,
   };
@@ -168,6 +169,68 @@ const publicEnd = (start: string) => KR_BUILTIN_CALENDAR.calcEndDateBusinessDays
 const branchEnd = (start: string) => BRANCH_CALENDAR.calcEndDateBusinessDays(start, 15);
 
 describe("mobile client wizard on the branch holiday calendar", () => {
+  it.each([true, false])("blocks saving after refresh changed=%s", async (changed) => {
+    mockedCalendarHook.mockReturnValue(calendarResult({
+      calendar: BRANCH_CALENDAR,
+      refreshForSave: async () => changed
+        ? { ok: true, calendar: BRANCH_CALENDAR_REFETCHED, changed: true }
+        : { ok: false },
+    }));
+    renderCreate();
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    await screen.findByText(changed
+      ? "공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요."
+      : "공휴일 정보를 불러오지 못했어요.");
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it("saves after an unchanged refresh", async () => {
+    renderCreate();
+    act(() => useClientWizardStore.setState({ endDate: branchEnd(initialForm.startDate) }));
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    await waitFor(() => expect(mockCreateClient).toHaveBeenCalledTimes(1));
+  });
+
+  it("guards duplicate clicks while the save-time refresh is pending", async () => {
+    let release!: (value: { ok: true; calendar: typeof BRANCH_CALENDAR; changed: false }) => void;
+    const refreshForSave = jest.fn(() => new Promise<{ ok: true; calendar: typeof BRANCH_CALENDAR; changed: false }>((resolve) => { release = resolve; }));
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: BRANCH_CALENDAR, refreshForSave }));
+    renderCreate();
+    act(() => useClientWizardStore.setState({ endDate: branchEnd(initialForm.startDate) }));
+    const save = screen.getByRole("button", { name: "등록" });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    expect(refreshForSave).toHaveBeenCalledTimes(1);
+    expect(mockCreateClient).not.toHaveBeenCalled();
+    await act(async () => { release({ ok: true, calendar: BRANCH_CALENDAR, changed: false }); });
+    expect(mockCreateClient).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a manually typed end date during fresh-calendar validation", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: BRANCH_CALENDAR,
+      refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: true }),
+    }));
+    renderCreate();
+    fireEvent.change(screen.getByDisplayValue("2026-09-03"), { target: { value: "2026-09-04" } });
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe(branchEnd("2026-09-04")));
+    fireEvent.change(screen.getByDisplayValue(branchEnd("2026-09-04")), { target: { value: "2026-10-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(useClientWizardStore.getState().endDate).toBe("2026-10-01");
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
+  it("recomputes an auto date even when a background refresh already changed the rendered version", async () => {
+    const view = renderCreate();
+    fireEvent.change(screen.getByDisplayValue("2026-09-03"), { target: { value: "2026-09-04" } });
+    await waitFor(() => expect(useClientWizardStore.getState().endDate).toBe(branchEnd("2026-09-04")));
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+    view.rerender(<NewClientPage />);
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(useClientWizardStore.getState().endDate).toBe(publicEnd("2026-09-04"));
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });
     mockPush.mockReset();
