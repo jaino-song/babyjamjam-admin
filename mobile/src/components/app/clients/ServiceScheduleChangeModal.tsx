@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message";
 
@@ -9,6 +9,7 @@ import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CALENDAR_CHANGED_FOR_SAVE_MESSAGE } from "@/hooks/calendar-save-message";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useLocale } from "@/providers/LocaleProvider";
 import {
@@ -62,10 +63,14 @@ export function ServiceScheduleChangeModal({
         ready: isCalendarReady,
         error: calendarError,
         retry: retryCalendar,
+        refreshForSave,
     } = useBusinessDayCalendar({ extraYears: selectedYear });
     // Weekends and holidays are blocked by default; an admin may still pick one
     // for a special case after confirming it in a second step.
     const [isConfirmingNonBusinessDay, setIsConfirmingNonBusinessDay] = useState(false);
+    const submissionInFlightRef = useRef(false);
+    const [isRefreshingCalendar, setIsRefreshingCalendar] = useState(false);
+    const [saveMessage, setSaveMessage] = useState<SlotMessage | null>(null);
     const fieldMessages = useFieldMessages<"date">({
         values: { date: selectedDate },
         specs: { date: DATE_SPEC },
@@ -89,7 +94,7 @@ export function ServiceScheduleChangeModal({
         }
     }
     const isCalendarBlocking = !isCalendarReady || isUnsupportedYear;
-    const isCalendarFailed = !isCalendarReady && calendarError === "load-failed";
+    const isCalendarFailed = (!isCalendarReady && calendarError === "load-failed") || saveMessage === CALENDAR_FAILED;
     const calendarMessage: SlotMessage | null = isCalendarReady
         ? isUnsupportedYear
             ? CALENDAR_UNSUPPORTED_YEAR
@@ -107,22 +112,51 @@ export function ServiceScheduleChangeModal({
             ? { text: UNCHANGED_MESSAGE, tone: "err" }
             : null;
     // Always-on guidance comes last: any error or format hint replaces it, and it returns once they clear.
-    const slot = pickSlotMessage(fieldMessages.slot("date"), rangeMessage, calendarMessage, DATE_GUIDANCE);
+    const slot = pickSlotMessage(fieldMessages.slot("date"), rangeMessage, calendarMessage, saveMessage, DATE_GUIDANCE);
     const hasError = slot?.tone === "err";
     const dateBind = fieldMessages.bind("date");
 
-    const handleApprove = () => {
+    const handleApprove = async (confirmedNonBusinessDay = false) => {
         fieldMessages.markSubmitted();
         if (!isValidChange) {
             focusFirstInvalidField([DATE_INPUT_ID]);
             return;
         }
         if (isCalendarBlocking || isNonBusinessDay === null) return;
-        if (isNonBusinessDay) {
-            setIsConfirmingNonBusinessDay(true);
-            return;
+        if (submissionInFlightRef.current || isPending) return;
+        submissionInFlightRef.current = true;
+        setIsRefreshingCalendar(true);
+        try {
+            const fresh = await refreshForSave();
+            if (!fresh.ok) {
+                setIsConfirmingNonBusinessDay(false);
+                setSaveMessage(CALENDAR_FAILED);
+                return;
+            }
+            let freshNonBusinessDay: boolean;
+            try {
+                freshNonBusinessDay = !fresh.calendar.isBusinessDay(selectedDate);
+            } catch {
+                setIsConfirmingNonBusinessDay(false);
+                setSaveMessage(CALENDAR_UNSUPPORTED_YEAR);
+                return;
+            }
+            if (fresh.changed || freshNonBusinessDay !== isNonBusinessDay) {
+                setIsConfirmingNonBusinessDay(false);
+                setSaveMessage({ text: CALENDAR_CHANGED_FOR_SAVE_MESSAGE, tone: "muted" });
+                return;
+            }
+            setSaveMessage(null);
+            if (freshNonBusinessDay && !confirmedNonBusinessDay) {
+                setIsConfirmingNonBusinessDay(true);
+                return;
+            }
+            setIsConfirmingNonBusinessDay(false);
+            onSubmit(freshNonBusinessDay);
+        } finally {
+            submissionInFlightRef.current = false;
+            setIsRefreshingCalendar(false);
         }
-        onSubmit(false);
     };
 
     return (
@@ -144,9 +178,9 @@ export function ServiceScheduleChangeModal({
                 approvalLabel="일정 변경"
                 pendingLabel="변경 중..."
                 approvalDisabled={isCalendarBlocking}
-                isPending={isPending}
+                isPending={isPending || isRefreshingCalendar}
                 onOpenChange={(nextOpen) => {
-                    if (!nextOpen && !isPending) onClose();
+                    if (!nextOpen && !isPending && !isRefreshingCalendar) onClose();
                 }}
                 onApprove={handleApprove}
             >
@@ -167,7 +201,7 @@ export function ServiceScheduleChangeModal({
                                 size="sm"
                                 data-component={`${dataComponent}_calendar-retry`}
                                 className="h-auto shrink-0 p-0 text-xs"
-                                onClick={retryCalendar}
+                                onClick={() => { setSaveMessage(null); retryCalendar(); }}
                             >
                                 다시 시도
                             </Button>
@@ -182,7 +216,7 @@ export function ServiceScheduleChangeModal({
                         maxLength={10}
                         placeholder="2026-12-01"
                         value={selectedDate}
-                        disabled={isPending}
+                        disabled={isPending || isRefreshingCalendar}
                         className="h-12 rounded-2xl bg-white px-4 text-base"
                         error={hasError}
                         aria-invalid={hasError ? true : undefined}
@@ -193,6 +227,7 @@ export function ServiceScheduleChangeModal({
                             dateBind.onBlur();
                         }}
                         onChange={(event) => {
+                            setSaveMessage(null);
                             setEdited(true);
                             onDateChange(formatIsoDateInput(event.target.value));
                         }}
@@ -214,14 +249,11 @@ export function ServiceScheduleChangeModal({
                 cancelLabel="다시 고르기"
                 approvalLabel="이 날짜로 옮기기"
                 pendingLabel="변경 중..."
-                isPending={isPending}
+                isPending={isPending || isRefreshingCalendar}
                 onOpenChange={(nextOpen) => {
-                    if (!nextOpen && !isPending) setIsConfirmingNonBusinessDay(false);
+                    if (!nextOpen && !isPending && !isRefreshingCalendar) setIsConfirmingNonBusinessDay(false);
                 }}
-                onApprove={() => {
-                    setIsConfirmingNonBusinessDay(false);
-                    onSubmit(true);
-                }}
+                onApprove={() => handleApprove(true)}
             />
         </>
     );

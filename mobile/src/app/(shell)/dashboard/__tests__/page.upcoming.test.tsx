@@ -111,6 +111,7 @@ describe("due labels on the branch calendar", () => {
     ready: true,
     error: null,
     retry: jest.fn(),
+    refreshForSave: async () => ({ ok: true as const, calendar, changed: false }),
     version: calendar.version,
   });
 
