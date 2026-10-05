@@ -914,11 +914,25 @@ export class ScheduleChangeService {
                     calendar,
                 );
 
+                // 날짜 변경으로 재계산된 회차 수 대신 동기화 전의 필수 회차 수를 유지한다.
+                if (
+                    syncedRecord
+                    && record.requiredSessionCount != null
+                    && syncedRecord.requiredSessionCount !== record.requiredSessionCount
+                ) {
+                    await tx.service_record_case.update({
+                        where: { id: syncedRecord.id },
+                        data: { requiredSessionCount: record.requiredSessionCount },
+                    });
+                    await this.lifecycleService?.recompute(syncedRecord.id, tx, calendar);
+                }
+
                 if (syncedRecord) {
                     await this.tokenService.extendExpiryForCase(
                         syncedRecord.id,
                         getServiceRecordTokenExpiresAt(newEndDate),
                         tx,
+                        { onlyRaise: true },
                     );
                 } else {
                     await this.tokenService.extendExpiryForSchedule(
