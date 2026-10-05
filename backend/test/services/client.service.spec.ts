@@ -3954,6 +3954,44 @@ describe("ClientService", () => {
     // terminateService
     // ============================================
     describe("terminateService", () => {
+        describe("KST date-only end date", () => {
+            afterEach(() => jest.useRealTimers());
+
+            it.each([
+                ["future weekday", "2026-10-05T03:00:00Z", "2026-10-12", "2026-10-12"],
+                ["future weekend with zero business days", "2026-10-05T03:00:00Z", "2026-10-10", "2026-10-10"],
+                ["future holiday with zero business days", "2026-10-05T03:00:00Z", "2026-10-09", "2026-10-09"],
+                ["start day before 09:00 KST", "2026-10-05T15:30:00Z", "2026-10-06", "2026-10-06"],
+                ["normal KST day after UTC midnight boundary", "2026-10-05T15:30:00Z", "2026-10-01", "2026-10-06"],
+            ])("terminates on the correct date for %s and preserves contracted duration", async (_, now, start, expectedEnd) => {
+                jest.useFakeTimers().setSystemTime(new Date(now));
+                const client = createClientEntity();
+                client.startDate = new Date(start);
+                client.endDate = new Date("2026-11-30");
+                client.duration = 15;
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                clientRepository.findByIdForUpdate.mockResolvedValue(client);
+                clientRepository.update.mockImplementation(async (_branch, updated) => updated);
+                const realUpdate = new UpdateClientUsecase(clientRepository, holidayCalendar);
+                updateClientUsecase.execute.mockImplementation(realUpdate.execute.bind(realUpdate));
+
+                const result = await service.terminateService(branchId, 1);
+
+                expect(result.endDate).toEqual(new Date(expectedEnd));
+                expect(result.duration).toBe(15);
+                expect(result.serviceStatus).toBe("terminated");
+                expect(clientRepository.update).toHaveBeenCalledWith(branchId, result, prismaService);
+                expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith({
+                    clientId: 1, endDate: new Date(expectedEnd),
+                }, prismaService);
+                expect(prismaService.employee_schedule.updateMany).toHaveBeenCalledWith({
+                    where: { clientId: 1, branchId, replaced: false, terminatedAt: null },
+                    data: { terminatedAt: new Date(now) },
+                });
+                expect(serviceRecordLifecycleService.markTerminated).toHaveBeenCalledWith(1, prismaService);
+            });
+        });
+
         describe("given existing client", () => {
             it("should update client status to terminated", async () => {
                 // Arrange

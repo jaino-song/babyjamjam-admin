@@ -123,10 +123,6 @@ export class CreateClientDto {
 
     @IsOptional()
     @IsString()
-    eDocId?: string | null;
-
-    @IsOptional()
-    @IsString()
     areaId?: string | null;
 
     @IsOptional()
@@ -243,10 +239,6 @@ export class UpdateClientDto {
     @ValidateIf((_, value) => value !== undefined)
     @IsBoolean()
     breastPump?: boolean;
-
-    @IsOptional()
-    @IsString()
-    eDocId?: string | null;
 
     @IsOptional()
     @IsString()
