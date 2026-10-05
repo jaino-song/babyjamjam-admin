@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { isoDateInKorea, KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 import {
     buildCalendarFromHolidayYears,
@@ -20,15 +20,28 @@ export interface UseBusinessDayCalendarOptions {
 }
 
 export interface UseBusinessDayCalendarResult {
-    /** The branch calendar once `ready`; the built-in calendar (display-only) until then. */
+    /** Last successfully built branch calendar, or the built-in calendar; display-only when not ready. */
     calendar: KrBusinessDayCalendar;
-    /** True only when every requested year has loaded. SAVED computations must wait for this. */
+    /** True only when every requested year has loaded without error or invalid payload. */
     ready: boolean;
     error: BusinessDayCalendarError;
     /** Refetches failed years, or all requested years when the calendar payload is invalid. */
     retry: () => void;
+    /** Revalidates every year in the shared cache before a saved computation. */
+    refreshForSave: () => Promise<RefreshForSaveResult>;
     /** `calendar.version` — a cheap dependency for memoised consumers. */
     version: string;
+}
+
+export type RefreshForSaveResult =
+    | { ok: true; calendar: KrBusinessDayCalendar; changed: boolean }
+    | { ok: false };
+
+function buildVersionedCalendar(loaded: BranchHolidayYear[]): KrBusinessDayCalendar {
+    const calendar = buildCalendarFromHolidayYears(loaded);
+    const revisions = [...loaded].sort((a, b) => a.year - b.year)
+        .map(({ year, revision }) => `${year}:${revision}`).join(",");
+    return { ...calendar, version: `${calendar.version}-revisions-${revisions}` };
 }
 
 export const holidayYearQueryKey = (branchId: string, year: number) => ["holidays", branchId, year] as const;
@@ -47,14 +60,17 @@ function resolveYears(extraYears: readonly number[] | undefined): number[] {
  * year and combined into one object.
  *
  * Display-only callers may use `calendar` straight away. Callers whose result
- * is saved or sent to the server must wait for `ready` — before then `calendar`
- * is the built-in list, which does not know the branch's changes.
+ * is saved or sent to the server must wait for `ready` and refreshForSave,
+ * then compute with the fresh calendar. Cached calendars remain display-only on error.
  */
 export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): UseBusinessDayCalendarResult {
     const { data: user } = useGetAuthUser();
+    const queryClient = useQueryClient();
     const branchId = user?.branchId || null;
     const years = resolveYears(opts?.extraYears);
     const yearsKey = years.join(",");
+    const requestRef = useRef({ branchId, years });
+    requestRef.current = { branchId, years };
 
     const results = useQueries({
         queries: years.map((year) => ({
@@ -74,7 +90,7 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
             ? results.map((result) => result.data as BranchHolidayYear)
             : null;
     const dataStamp = results.map((result) => result.dataUpdatedAt).join(",");
-    const failed = branchId !== null && results.some((result) => result.isError && result.data === undefined);
+    const failed = branchId !== null && results.some((result) => result.isError);
 
     // Rebuilt when any year's data arrives (dataUpdatedAt), but the previous
     // calendar object is reused whenever the built version is unchanged, so
@@ -83,12 +99,7 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
     const built = useMemo<{ calendar: KrBusinessDayCalendar | null; invalid: boolean }>(() => {
         if (branchId === null || loaded === null) return { calendar: null, invalid: false };
         try {
-            const calendar = buildCalendarFromHolidayYears(loaded);
-            const revisions = [...loaded]
-                .sort((a, b) => a.year - b.year)
-                .map(({ year, revision }) => `${year}:${revision}`)
-                .join(",");
-            const next = { ...calendar, version: `${calendar.version}-revisions-${revisions}` };
+            const next = buildVersionedCalendar(loaded);
             const previous = lastBuilt.current;
             if (previous && previous.branchId === branchId && previous.calendar.version === next.version) {
                 return { calendar: previous.calendar, invalid: false };
@@ -107,10 +118,32 @@ export function useBusinessDayCalendar(opts?: UseBusinessDayCalendarOptions): Us
         }
     }, [built.invalid]);
 
-    const calendar = built.calendar ?? KR_BUILTIN_CALENDAR;
+    const calendar = built.calendar
+        ?? (lastBuilt.current?.branchId === branchId ? lastBuilt.current.calendar : KR_BUILTIN_CALENDAR);
+    const versionRef = useRef(calendar.version);
+    versionRef.current = calendar.version;
+    const refreshForSave = useCallback(async (): Promise<RefreshForSaveResult> => {
+        const { branchId, years } = requestRef.current;
+        const previousVersion = versionRef.current;
+        if (!branchId) return { ok: false };
+        try {
+            const loaded = await Promise.all(years.map((year) => queryClient.fetchQuery({
+                queryKey: holidayYearQueryKey(branchId, year),
+                queryFn: () => holidayCalendarApi.getYear(branchId, year),
+                staleTime: 0,
+            })));
+            if (requestRef.current.branchId !== branchId || requestRef.current.years.join(",") !== years.join(",")) {
+                return { ok: false };
+            }
+            const fresh = buildVersionedCalendar(loaded);
+            return { ok: true, calendar: fresh, changed: fresh.version !== previousVersion };
+        } catch {
+            return { ok: false };
+        }
+    }, [queryClient]);
     let error: BusinessDayCalendarError = null;
     if (branchId === null) error = "no-branch";
     else if (failed || built.invalid) error = "load-failed";
 
-    return { calendar, ready: built.calendar !== null, error, retry, version: calendar.version };
+    return { calendar, ready: built.calendar !== null && !failed && !built.invalid, error, retry, refreshForSave, version: calendar.version };
 }

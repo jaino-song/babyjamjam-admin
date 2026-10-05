@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { useBusinessDayCalendar, type UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
 import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
@@ -35,7 +35,7 @@ describe("ServiceScheduleChangeModal", () => {
         expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
     });
 
-    it("submits a date after the current service date", () => {
+    it("submits a date after the current service date", async () => {
         const onSubmit = jest.fn();
         const onDateChange = jest.fn();
         render(
@@ -58,11 +58,11 @@ describe("ServiceScheduleChangeModal", () => {
         expect(onDateChange).toHaveBeenCalledWith("2026-07-24");
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
-        expect(onSubmit).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
         expect(onSubmit).toHaveBeenCalledWith(false);
     });
 
-    it("asks before moving a session onto a weekend and submits only once confirmed", () => {
+    it("asks before moving a session onto a weekend and submits only once confirmed", async () => {
         const onSubmit = jest.fn();
         render(
             <ServiceScheduleChangeModal
@@ -80,13 +80,13 @@ describe("ServiceScheduleChangeModal", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
         expect(onSubmit).not.toHaveBeenCalled();
-        expect(screen.getByText("주말·공휴일이에요")).toBeInTheDocument();
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
-        expect(onSubmit).toHaveBeenCalledWith(true);
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(true));
     });
 
-    it("submits a date earlier than the current service date but not before the birth date", () => {
+    it("submits a date earlier than the current service date but not before the birth date", async () => {
         const onSubmit = jest.fn();
         render(
             <ServiceScheduleChangeModal
@@ -103,7 +103,7 @@ describe("ServiceScheduleChangeModal", () => {
         );
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
-        expect(onSubmit).toHaveBeenCalledTimes(1);
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     });
 
     it("blocks a date before the birth date", () => {
@@ -265,6 +265,7 @@ describe("branch calendar readiness", () => {
         ready: true,
         error: null,
         retry,
+        refreshForSave: async () => ({ ok: true, calendar: overrides.calendar ?? KR_BUILTIN_CALENDAR, changed: false }),
         version: KR_BUILTIN_CALENDAR.version,
         ...overrides,
     });
@@ -289,7 +290,30 @@ describe("branch calendar readiness", () => {
     beforeEach(() => retry.mockClear());
     afterEach(() => mockedCalendar.mockImplementation(() => result({})));
 
-    it("does not classify the date or submit while the calendar is loading, then asks once it is ready", () => {
+    it("blocks a changed fresh classification even if the hook version already advanced", async () => {
+        mockedCalendar.mockReturnValue(result({ refreshForSave: async () => ({ ok: true, calendar: branchCalendar, changed: false }) }));
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("blocks a refresh failure and prevents duplicate approvals while refreshing", async () => {
+        let release: (value: { ok: false }) => void = () => undefined;
+        const refreshForSave = jest.fn(() => new Promise<{ ok: false }>(resolve => { release = resolve; }));
+        mockedCalendar.mockReturnValue(result({ refreshForSave }));
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(refreshForSave).toHaveBeenCalledTimes(1);
+        await act(async () => release({ ok: false }));
+        expect(slot()).toHaveTextContent("공휴일 정보를 불러오지 못했어요");
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("does not classify the date or submit while the calendar is loading, then asks once it is ready", async () => {
         mockedCalendar.mockImplementation(() => notReady);
         const onSubmit = jest.fn();
         const { rerender } = render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
@@ -306,9 +330,9 @@ describe("branch calendar readiness", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
         expect(onSubmit).not.toHaveBeenCalled();
-        expect(screen.getByText("주말·공휴일이에요")).toBeInTheDocument();
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
-        expect(onSubmit).toHaveBeenCalledWith(true);
+        await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(true));
     });
 
     it("does not throw for a year outside the built-in range while the calendar is not ready", () => {
