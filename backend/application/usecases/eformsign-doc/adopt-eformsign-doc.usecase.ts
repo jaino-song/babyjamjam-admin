@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { documentCustomerNameValue } from "application/utils/eformsign-document-customer-name";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
@@ -40,6 +41,10 @@ export class AdoptEformsignDocUsecase {
             principal,
             "contract.adopt",
             async ({ accessToken }) => {
+                if (params.clientId !== undefined
+                    && !await this.clientRepository.findById(branchId, params.clientId)) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
                 const remote = await this.fetchEformsignDocFromApiUsecase.execute(
                     accessToken,
                     params.documentId,

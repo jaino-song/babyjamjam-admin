@@ -72,6 +72,21 @@ describe("CreateEformsignDocUsecase", () => {
         );
     });
 
+    it.each([true, false])("rejects a foreign client before saving (linkToClient=%s)", async (linkToClient) => {
+        clientRepository.findById.mockResolvedValue(null);
+        clientRepository.findByPhone.mockResolvedValue(null);
+
+        await expect(usecase.execute(branchId, createParams({ clientId: 999, linkToClient })))
+            .rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" }),
+            });
+
+        expect(clientRepository.findById).toHaveBeenCalledWith(branchId, 999);
+        expect(eformsignDocRepository.upsertByDocumentId).not.toHaveBeenCalled();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+    });
+
     it("links the explicit client when recipient phone matches that client", async () => {
         const client = createClient(7, "010-1234-5678");
         clientRepository.findById.mockResolvedValue(client);
@@ -212,6 +227,7 @@ describe("CreateEformsignDocUsecase", () => {
     });
 
     it("stores service-record snapshot linkage without updating the client contract pointer", async () => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "01012345678"));
         const result = await usecase.execute(branchId, createParams({
             documentId: "service-record-doc-1",
             documentName: "서비스 제공기록지 - 김고객",
@@ -225,6 +241,7 @@ describe("CreateEformsignDocUsecase", () => {
         expect(result.employeeScheduleId).toBe(33);
         expect(result.templateId).toBe("service-record-template-1");
         expect(result.documentName).toBe("서비스 제공기록지 - 김고객");
+        expect(clientRepository.findById).toHaveBeenCalledWith(branchId, 7);
         expect(clientRepository.update).not.toHaveBeenCalled();
     });
 
