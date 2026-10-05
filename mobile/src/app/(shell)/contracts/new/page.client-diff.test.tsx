@@ -769,7 +769,7 @@ describe("mobile contract form - branch holiday calendar", () => {
 
   const calendarResult = (overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult => {
     const calendar = overrides.calendar ?? BRANCH_CALENDAR;
-    return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+    return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
   };
   const endDateInput = () => input("period-card_end-date-input");
 
@@ -794,6 +794,40 @@ describe("mobile contract form - branch holiday calendar", () => {
   const EDITED_START = "2026-09-09";
   const BRANCH_EDITED_END = BRANCH_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5);
   const startDateInput = () => input("period-card_start-date-input");
+
+  it("rechecks the auto date after the rendered calendar was already refreshed", async () => {
+    const { rerender } = await renderOnPeriodStep();
+    fireEvent.change(startDateInput(), { target: { value: EDITED_START } });
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_EDITED_END));
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+    rerender();
+    submit();
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(endDateInput()).toHaveValue(KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5));
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a kept end date or submit when the refresh reports a change", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({
+      refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: true }),
+    }));
+    await renderOnPeriodStep();
+    submit();
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(endDateInput()).toHaveValue(STORED_END);
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("blocks before client persistence on a failed refresh", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ refreshForSave: async () => ({ ok: false }) }));
+    await renderOnPeriodStep();
+    submit();
+    await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
 
   it("moves the calculated end date by the branch-added holiday once the start date is edited", async () => {
     expect(BRANCH_EDITED_END).not.toBe(KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5));
@@ -948,7 +982,7 @@ describe("mobile contract form - a picked client keeps its stored end date", () 
   const KEEP_END = "2026-09-29";
   const calendarResult = (overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult => {
     const calendar = overrides.calendar ?? BRANCH_CALENDAR;
-    return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+    return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
   };
   const endDateInput = () => input("period-card_end-date-input");
   const setDuration = (value: string) => act(() => useFormStore.getState().setVoucherDuration(value));

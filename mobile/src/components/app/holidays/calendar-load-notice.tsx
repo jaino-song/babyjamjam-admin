@@ -24,6 +24,8 @@ export interface CalendarLoadNoticeProps {
   onRetry?: () => void;
   /** Show the muted "loading" line while the calendar is still loading (and there is no error). */
   loading?: boolean;
+  /** Save-time revision notice in the existing inline message slot. */
+  message?: string | null;
   /** Override when the notice sits inside a differently named parent, per the data-component caller-context rule. */
   dataComponent?: string;
 }
@@ -37,9 +39,10 @@ export function CalendarLoadNotice({
   error,
   onRetry,
   loading = false,
+  message = null,
   dataComponent = DEFAULT_DATA_COMPONENT,
 }: CalendarLoadNoticeProps) {
-  if (error === null && !loading) return null;
+  if (error === null && !loading && !message) return null;
 
   const failed = error === "load-failed";
   const text =
@@ -49,7 +52,7 @@ export function CalendarLoadNotice({
         ? UNSUPPORTED_YEAR_NOTICE_TEXT
         : failed
           ? "공휴일 정보를 불러오지 못했어요."
-          : "공휴일 정보를 불러오는 중이에요…";
+          : message ?? "공휴일 정보를 불러오는 중이에요…";
 
   return (
     <div

@@ -8,6 +8,7 @@ const READY_BUILTIN_RESULT: UseBusinessDayCalendarResult = {
     ready: true,
     error: null,
     retry: jest.fn(),
+    refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: false }),
     version: KR_BUILTIN_CALENDAR.version,
 };
 
