@@ -1490,7 +1490,7 @@ describe("ServiceRecordEntryService branch calendar", () => {
         );
     }
 
-    it("getContext counts a legacy case's sessions against the branch calendar (cached read)", async () => {
+    it("getContext counts a legacy case's sessions against a fresh branch calendar", async () => {
         // No N is stored yet, so it derives from the period: 2026-07-01..07-06
         // holds 4 business days; a branch holiday on 07-06 leaves 3.
         const record = createRecord({
@@ -1504,7 +1504,7 @@ describe("ServiceRecordEntryService branch calendar", () => {
 
         expect((await builtin.getContext(context)).totalSessions).toBe(4);
         expect((await branch.getContext(context)).totalSessions).toBe(3);
-        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID);
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
     });
 
     // Legacy case 2026-09-07..2026-09-29 stores N = 15 (추석 closes 09-24 and 09-25).

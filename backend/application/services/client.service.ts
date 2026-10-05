@@ -65,10 +65,14 @@ import {
     SERVICE_STATUS,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
-    isProviderReviewWorkflowStep,
-    normalizeEformsignStatusCode,
-} from "domain/utils/eformsign-status-code";
+    COMPLETED_DOCUMENT_STATUS_TYPES,
+    CREATED_DOCUMENT_STATUS_TYPES,
+    hasCustomerSigned,
+    OPENED_DOCUMENT_STATUS_TYPES,
+    REQUESTED_DOCUMENT_STATUS_TYPES,
+} from "domain/utils/eformsign-customer-signature";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
@@ -86,13 +90,9 @@ const FILTER_DAYS_THRESHOLD = 7;
 // which a client with no active contract document is flagged as needing one sent.
 // The badge and the action-required feeds all read this number.
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
-const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
 const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
 const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
-const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
-const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
-const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
@@ -202,37 +202,6 @@ interface LatestContractSignal {
     stepType: string | null;
     stepName: string | null;
     detailPayload: unknown;
-}
-
-/**
- * Derive whether the customer has completed their signing step from the
- * latest contract mirror. An eDocId only proves that a document was created;
- * it says nothing about which workflow participant has acted. Completed
- * documents are authoritative on their status code. For an in-progress
- * document, the provider review step is the only trusted signal that the
- * customer has signed. Dead, unknown, and missing documents fail closed.
- */
-function hasCustomerSigned(latestContract: LatestContractSignal | undefined): boolean {
-    if (!latestContract || latestContract.permanentPurgeRequestedAt != null) {
-        return false;
-    }
-
-    const statusType = normalizeEformsignStatusCode(latestContract.statusType);
-    if (COMPLETED_DOCUMENT_STATUS_TYPES.has(statusType)) {
-        return true;
-    }
-
-    const isInProgress = CREATED_DOCUMENT_STATUS_TYPES.has(statusType)
-        || OPENED_DOCUMENT_STATUS_TYPES.has(statusType)
-        || REQUESTED_DOCUMENT_STATUS_TYPES.has(statusType);
-    if (!isInProgress) {
-        return false;
-    }
-
-    return isProviderReviewWorkflowStep({
-        stepType: latestContract.stepType,
-        stepName: latestContract.stepName,
-    });
 }
 
 export interface ClientActionRequiredAlert extends ClientActionRequired {
@@ -1585,7 +1554,8 @@ export class ClientService {
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
-                    hasSigned: hasCustomerSigned(latestContract),
+                    hasSigned: latestContract?.permanentPurgeRequestedAt == null
+                        && hasCustomerSigned(latestContract),
                     documentStatus,
                     latestContractDocumentId: latestContract?.documentId ?? null,
                     badges,
