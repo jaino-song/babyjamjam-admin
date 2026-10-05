@@ -107,7 +107,6 @@ describe("UserController (Integration)", () => {
             const users = [
                 {
                     id: "directory-user-1",
-                    kakaoId: "kakao-1",
                     email: "owner@example.com",
                     name: "Owner User",
                     phone: "010-1111-2222",
@@ -132,6 +131,8 @@ describe("UserController (Integration)", () => {
                 includeUnassigned: true,
             });
             expect(response.body).toHaveLength(1);
+            expect(response.body[0]).not.toHaveProperty("kakaoId");
+            expect(response.body[0]).not.toHaveProperty("passwordHash");
         });
 
         it("should scope directory by branch for owner users with a branch selected", async () => {

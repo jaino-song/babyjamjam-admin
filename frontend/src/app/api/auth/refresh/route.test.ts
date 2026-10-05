@@ -75,6 +75,24 @@ describe("POST /api/auth/refresh", () => {
         expect(mockServerPost).not.toHaveBeenCalled();
     });
 
+    it("preserves cookies and returns a retryable 409 for concurrent refresh replay", async () => {
+        mockServerPost.mockRejectedValue({
+            response: { status: 401, data: { code: "AUTH_REFRESH_REPLAY_CONCURRENT" } },
+        });
+
+        const response = await POST(createRequest());
+
+        expect(response.status).toBe(409);
+        expect(response.headers.get("Retry-After")).toBe("1");
+        expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+        await expect(response.json()).resolves.toMatchObject({
+            code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+        });
+        expect(cookieStore.delete).not.toHaveBeenCalled();
+        expect(cookieStore.set).not.toHaveBeenCalled();
+        expect(response.headers.get("Set-Cookie")).toBeNull();
+    });
+
     it("clears the local session with a registered 401 problem body when the refresh token is rejected", async () => {
         mockServerPost.mockRejectedValue({ response: { status: 401, data: { error: "Unauthorized" } } });
 

@@ -65,10 +65,14 @@ import {
     SERVICE_STATUS,
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import {
-    isProviderReviewWorkflowStep,
-    normalizeEformsignStatusCode,
-} from "domain/utils/eformsign-status-code";
+    COMPLETED_DOCUMENT_STATUS_TYPES,
+    CREATED_DOCUMENT_STATUS_TYPES,
+    hasCustomerSigned,
+    OPENED_DOCUMENT_STATUS_TYPES,
+    REQUESTED_DOCUMENT_STATUS_TYPES,
+} from "domain/utils/eformsign-customer-signature";
 import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
@@ -79,19 +83,16 @@ import { AgentAutomationRecordStoreService } from "../agent/agent-automation-rec
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
 // Contract attention window, in KR business days before service start, within
 // which a client with no active contract document is flagged as needing one sent.
 // The badge and the action-required feeds all read this number.
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
-const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
 const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
 const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
-const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
-const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
-const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
@@ -201,37 +202,6 @@ interface LatestContractSignal {
     stepType: string | null;
     stepName: string | null;
     detailPayload: unknown;
-}
-
-/**
- * Derive whether the customer has completed their signing step from the
- * latest contract mirror. An eDocId only proves that a document was created;
- * it says nothing about which workflow participant has acted. Completed
- * documents are authoritative on their status code. For an in-progress
- * document, the provider review step is the only trusted signal that the
- * customer has signed. Dead, unknown, and missing documents fail closed.
- */
-function hasCustomerSigned(latestContract: LatestContractSignal | undefined): boolean {
-    if (!latestContract || latestContract.permanentPurgeRequestedAt != null) {
-        return false;
-    }
-
-    const statusType = normalizeEformsignStatusCode(latestContract.statusType);
-    if (COMPLETED_DOCUMENT_STATUS_TYPES.has(statusType)) {
-        return true;
-    }
-
-    const isInProgress = CREATED_DOCUMENT_STATUS_TYPES.has(statusType)
-        || OPENED_DOCUMENT_STATUS_TYPES.has(statusType)
-        || REQUESTED_DOCUMENT_STATUS_TYPES.has(statusType);
-    if (!isInProgress) {
-        return false;
-    }
-
-    return isProviderReviewWorkflowStep({
-        stepType: latestContract.stepType,
-        stepName: latestContract.stepName,
-    });
 }
 
 export interface ClientActionRequiredAlert extends ClientActionRequired {
@@ -1584,7 +1554,8 @@ export class ClientService {
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
-                    hasSigned: hasCustomerSigned(latestContract),
+                    hasSigned: latestContract?.permanentPurgeRequestedAt == null
+                        && hasCustomerSigned(latestContract),
                     documentStatus,
                     latestContractDocumentId: latestContract?.documentId ?? null,
                     badges,
@@ -2260,6 +2231,9 @@ export class ClientService {
         // case in one owning transaction. Passing the transaction through the
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
+        const kstToday = getKstCalendarDate(terminationAt, 0);
+        const startDate = client.startDate?.toISOString().slice(0, 10);
+        const terminationEndDate = new Date(startDate && startDate > kstToday ? startDate : kstToday);
         const ordinaryMutationId = randomUUID();
         // SAVED computation (the update re-derives the persisted duration):
         // read the branch calendar before the transaction opens, never inside
@@ -2307,11 +2281,11 @@ export class ClientService {
             // initial existence lookup is only a fast preflight.
             await this.serviceRecordLifecycleService?.validatePeriodChange({
                 clientId,
-                endDate: terminationAt,
+                endDate: terminationEndDate,
             }, transaction);
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
-                endDate: terminationAt,
+                endDate: terminationEndDate,
             }, transaction, calendar);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },

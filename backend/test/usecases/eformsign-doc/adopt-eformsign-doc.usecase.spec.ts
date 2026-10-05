@@ -24,6 +24,58 @@ describe("AdoptEformsignDocUsecase", () => {
         jest.restoreAllMocks();
     });
 
+    it("rejects an explicit foreign client before creating or mirroring", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-foreign" }) };
+        const mirror = { syncDocumentWithToken: jest.fn() };
+        const clients = { findById: jest.fn().mockResolvedValue(null), findByPhone: jest.fn() };
+        const usecase = new AdoptEformsignDocUsecase(
+            createCredentialBoundary() as never,
+            { execute: jest.fn().mockResolvedValue({
+                id: "doc-foreign",
+                current_status: { status_type: "060", expired_date: 0, step_recipients: [] },
+            }) } as never,
+            create as never,
+            clients as never,
+            mirror as never,
+        );
+
+        await expect(usecase.execute("branch-1", { documentId: "doc-foreign", clientId: 999 }, TEST_PRINCIPAL))
+            .rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" }),
+            });
+        expect(clients.findById).toHaveBeenCalledWith("branch-1", 999);
+        expect(create.execute).not.toHaveBeenCalled();
+        expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+    });
+
+    it("adopts a branch-scoped phone match when no explicit client is supplied", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-phone" }) };
+        const clients = {
+            findById: jest.fn(),
+            findByPhone: jest.fn().mockResolvedValue({ id: 7 }),
+        };
+        const usecase = new AdoptEformsignDocUsecase(
+            createCredentialBoundary() as never,
+            { execute: jest.fn().mockResolvedValue({
+                id: "doc-phone",
+                current_status: {
+                    status_type: "060", expired_date: 0,
+                    step_recipients: [{ id: "01012345678", name: "고객", recipient_type: "01" }],
+                },
+            }) } as never,
+            create as never,
+            clients as never,
+            { syncDocumentWithToken: jest.fn() } as never,
+        );
+
+        await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+        expect(clients.findByPhone).toHaveBeenCalledWith("branch-1", "01012345678");
+        expect(clients.findById).not.toHaveBeenCalled();
+        expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+    });
+
     it("uses document-id upsert semantics on repeated adoption", async () => {
         const now = Date.parse("2026-07-03T00:00:00.000Z");
         jest.spyOn(Date, "now").mockReturnValue(now);
@@ -53,7 +105,7 @@ describe("AdoptEformsignDocUsecase", () => {
                 },
             }) } as never,
             create as never,
-            { findByPhone: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
         );
 
@@ -106,7 +158,7 @@ describe("AdoptEformsignDocUsecase", () => {
                 },
             }) } as never,
             create as never,
-            { findByPhone: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
         );
 
@@ -139,7 +191,7 @@ describe("AdoptEformsignDocUsecase", () => {
                 },
             }) } as never,
             create as never,
-            { findByPhone: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             mirror as never,
         );
 
@@ -178,7 +230,7 @@ describe("AdoptEformsignDocUsecase", () => {
                 },
             }) } as never,
             { execute: jest.fn().mockResolvedValue(createResult) } as never,
-            { findByPhone: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
             { syncDocumentWithToken: jest.fn().mockRejectedValue(mirrorError) } as never,
         );
 
