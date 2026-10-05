@@ -365,7 +365,7 @@ export default function ServiceRecordPage() {
                     navigateTo("overview", { mode: "replace" });
                     return;
                 }
-                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, calendar)));
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, calendar), ctx.plannedSessionDates !== undefined));
             }
             navigateTo("day", {
                 mode: "none",
@@ -496,7 +496,7 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, calendar)));
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, calendar), ctx?.plannedSessionDates !== undefined));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
@@ -609,6 +609,7 @@ export default function ServiceRecordPage() {
     }, [calendarReady, pendingOpenDay]);
 
     function handleServiceDateChange(next: string) {
+        if (ctx?.plannedSessionDates !== undefined) return;
         const expected = defaultDate(day);
         if (next === expected) {
             setField("_date", next);
@@ -629,7 +630,7 @@ export default function ServiceRecordPage() {
     }
 
     function confirmServiceDateChange() {
-        if (pendingServiceDate && calendarReady && pendingShift !== null) setField("_date", pendingServiceDate.next);
+        if (ctx?.plannedSessionDates === undefined && pendingServiceDate && calendarReady && pendingShift !== null) setField("_date", pendingServiceDate.next);
         setPendingServiceDate(null);
     }
 
@@ -751,7 +752,7 @@ export default function ServiceRecordPage() {
                 serviceDateChangeModal: (
                     <MobileTwoButtonModal
                         data-component="mobile_service-record_service-date-change-modal"
-                        open={pendingServiceDate !== null}
+                        open={ctx?.plannedSessionDates === undefined && pendingServiceDate !== null}
                         title={`${day}회차 제공일을 변경할까요?`}
                         description={serviceDateChangeDescription}
                         cancelLabel="취소"
@@ -834,6 +835,7 @@ function initializeUnlockedDraft(
     day: number,
     sessions: ServiceRecordContext["sessions"],
     defaultDate: string,
+    hasPlannedDate = false,
 ): Record<string, unknown> {
     const session = sessions.find((row) => row.sessionIndex === day);
     const serverDraft: Record<string, unknown> = {
@@ -854,5 +856,8 @@ function initializeUnlockedDraft(
     };
     const stored = readStoredFormState(token);
     if (stored?.day !== day || !stored.draft) return serverDraft;
-    return { ...serverDraft, ...stored.draft };
+    const restoredDraft = { ...serverDraft, ...stored.draft };
+    // The server plan is authoritative; keep the answers, not a stale date override.
+    if (hasPlannedDate && restoredDraft._date !== defaultDate) restoredDraft._date = defaultDate;
+    return restoredDraft;
 }

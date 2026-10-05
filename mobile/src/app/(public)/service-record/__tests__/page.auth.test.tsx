@@ -780,7 +780,7 @@ describe("ServiceRecordPage authentication restoration", () => {
             ));
         });
 
-        it("keeps the date-change confirm disabled until the calendar loads, then uses the branch holidays for the shift", async () => {
+        it("keeps a planned date locked before and after the branch calendar loads", async () => {
             const user = userEvent.setup();
             branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
             const hold = holdHolidays();
@@ -790,25 +790,21 @@ describe("ServiceRecordPage authentication restoration", () => {
             render(<ServiceRecordPage />);
 
             const dateInput = await openDayOne(user);
+            expect(dateInput).toBeDisabled();
             fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
-
-            const dialog = await screen.findByRole("dialog");
-            expect(within(dialog).getByRole("button", { name: "확인" })).toBeDisabled();
-            expect(within(dialog).getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
-            expect(dialog).not.toHaveTextContent("영업일 만큼");
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
             await act(async () => { hold.release(); });
 
-            // 2026-08-10 -> 2026-08-13 spans 4 weekdays, one of which is the branch-added holiday.
-            await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "확인" })).toBeEnabled());
-            expect(screen.getByRole("dialog")).toHaveTextContent("2 영업일 만큼");
+            expect(dateInput).toBeDisabled();
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         });
 
         it("counts the same shift without the branch holiday when the branch has none", async () => {
             const user = userEvent.setup();
             fetchMock
                 .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse(plannedContext));
+                .mockResolvedValueOnce(jsonResponse({ ...plannedContext, plannedSessionDates: undefined }));
             render(<ServiceRecordPage />);
 
             const dateInput = await openDayOne(user);
@@ -818,7 +814,7 @@ describe("ServiceRecordPage authentication restoration", () => {
             await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("3 영업일 만큼"));
         });
 
-        it("shows a retryable notice and keeps the confirm disabled when the calendar fails to load", async () => {
+        it("shows a retryable notice without allowing a planned date change when the calendar fails", async () => {
             const user = userEvent.setup();
             holidayResponse = () => jsonResponse({ message: "boom" }, 500);
             fetchMock
@@ -827,15 +823,15 @@ describe("ServiceRecordPage authentication restoration", () => {
             render(<ServiceRecordPage />);
 
             const dateInput = await openDayOne(user);
+            expect(dateInput).toBeDisabled();
             fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
-
-            const dialog = await screen.findByRole("dialog");
-            await waitFor(() => expect(within(dialog).getByText("공휴일 정보를 불러오지 못했어요.")).toBeInTheDocument());
-            expect(within(dialog).getByRole("button", { name: "확인" })).toBeDisabled();
+            await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
             holidayResponse = null;
-            await user.click(within(dialog).getByRole("button", { name: "다시 시도" }));
-            await waitFor(() => expect(within(screen.getByRole("dialog")).getByRole("button", { name: "확인" })).toBeEnabled());
+            await user.click(screen.getByRole("button", { name: "다시 시도" }));
+            await waitFor(() => expect(screen.queryByText("공휴일 정보를 불러오지 못했어요.")).not.toBeInTheDocument());
+            expect(dateInput).toBeDisabled();
         });
 
         it("does not seed a legacy day's default date from the built-in list while the calendar loads", async () => {

@@ -194,6 +194,56 @@ describe("api client app-session refresh", () => {
         expect(mockAxios).toHaveBeenCalledWith(originalRequest);
     });
 
+    it.each([
+        ["2", 2000],
+        [undefined, 1000],
+        ["invalid", 1000],
+        ["0", 1000],
+    ])("waits on concurrent refresh 409 then replays without logout (Retry-After %s)", async (retryAfter, delay) => {
+        jest.useFakeTimers();
+        window.history.replaceState({}, "", "/dashboard");
+        mockAxios.__mockApi.barePost.mockRejectedValue({
+            response: {
+                status: 409,
+                data: { code: "AUTH_REFRESH_REPLAY_CONCURRENT" },
+                headers: { "retry-after": retryAfter },
+            },
+        });
+        const success = { data: { success: true } };
+        mockAxios.mockResolvedValueOnce(success);
+        const originalRequest: RetryableRequestConfig = { method: "GET", url: "/clients" };
+        const request = getResponseRejectedHandler()(createUnauthorizedError(originalRequest));
+        // Attach a rejection handler immediately so the RED run is deterministic.
+        const outcome = request.then(value => ({ value }), error => ({ error }));
+
+        try {
+            await jest.advanceTimersByTimeAsync(delay - 1);
+            expect(mockAxios).not.toHaveBeenCalled();
+            await jest.advanceTimersByTimeAsync(1);
+            await expect(outcome).resolves.toEqual({ value: success });
+            expect(mockAxios.__mockApi.barePost).toHaveBeenCalledTimes(1);
+            expect(mockAxios).toHaveBeenCalledTimes(1);
+            expect(mockAxios).toHaveBeenCalledWith(originalRequest);
+            expect(originalRequest._appAuthRetry).toBe(true);
+            expect(mockResetAuthorityState).not.toHaveBeenCalled();
+            expect(window.location.pathname).toBe("/dashboard");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("does not replay for an unrelated refresh 409", async () => {
+        mockAxios.__mockApi.barePost.mockRejectedValue({
+            response: { status: 409, data: { code: "OTHER_CONFLICT" } },
+        });
+        const error = createUnauthorizedError({ method: "GET", url: "/clients" });
+
+        await expect(getResponseRejectedHandler()(error)).rejects.toBe(error);
+
+        expect(mockAxios).not.toHaveBeenCalled();
+        expect(mockResetAuthorityState).not.toHaveBeenCalled();
+    });
+
     it("shares one refresh across concurrent 401 responses and retries both originals", async () => {
         let resolveRefresh: (() => void) | undefined;
         mockAxios.__mockApi.barePost.mockImplementation(

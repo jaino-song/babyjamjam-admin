@@ -316,6 +316,7 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
     function makeTxRepository(currentEnd: Date | null | "missing") {
         const tx = {
             $executeRaw: jest.fn<Promise<number>, [Prisma.Sql]>(async () => 1),
+            $queryRaw: jest.fn<Promise<unknown[]>, [Prisma.Sql]>(async () => [{ id: CLIENT }]),
             holiday_change_event: {
                 findFirst: jest.fn(async () => ({ id: EVENT })),
                 findMany: jest.fn(async () => [{ id: EVENT }]),
@@ -347,6 +348,34 @@ describe("SbHolidayReviewRepository.applyEventResult", () => {
         });
         expect(tx.end_date_review_item.upsert).toHaveBeenCalledTimes(1);
         expect(tx.holiday_change_event.update).toHaveBeenCalledTimes(1);
+    });
+
+    it("locks clients after the advisory lock and before reading open items or end dates", async () => {
+        const { tx, repository } = makeTxRepository(day("2026-11-13"));
+
+        await repository.applyEventResult(input);
+
+        const query = tx.$queryRaw.mock.calls[0]?.[0];
+        expect(query?.text).toMatch(/FROM "client"/);
+        expect(query?.text).toMatch(/ORDER BY "id" ASC\s+FOR UPDATE/);
+        expect(query?.values).toEqual([CLIENT, BRANCH]);
+        const clientLockOrder = tx.$queryRaw.mock.invocationCallOrder[0]!;
+        expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(clientLockOrder);
+        expect(clientLockOrder).toBeLessThan(tx.end_date_review_item.findMany.mock.invocationCallOrder[0]!);
+        expect(clientLockOrder).toBeLessThan(tx.client.findMany.mock.invocationCallOrder[0]!);
+    });
+
+    it("does not insert a stale item when a save commits while the client lock is waiting", async () => {
+        const { tx, repository } = makeTxRepository(day("2026-11-13"));
+        tx.$queryRaw.mockImplementation(async () => {
+            // The row-lock wait ends only after the provider's extension commits.
+            tx.client.findMany.mockResolvedValue([{ id: CLIENT, endDate: day("2026-11-16") }]);
+            return [{ id: CLIENT }];
+        });
+
+        await expect(repository.applyEventResult(input)).resolves.toEqual({ status: "items_changed" });
+        expect(tx.end_date_review_item.upsert).not.toHaveBeenCalled();
+        expect(tx.holiday_change_event.update).not.toHaveBeenCalled();
     });
 
     it.each([

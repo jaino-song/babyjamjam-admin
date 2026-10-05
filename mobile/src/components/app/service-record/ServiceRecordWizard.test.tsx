@@ -81,6 +81,38 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
 }
 
 describe("shared service-record UI contract", () => {
+    it("locks a planned provider date and uses the existing schedule-change action", () => {
+        const onServiceDateChange = jest.fn();
+        const onOpenServiceDateEditor = jest.fn();
+        const onOpenScheduleChangePreview = jest.fn();
+        const { container } = render(<ServiceRecordWizard {...makeProps({
+            context: { ...context, plannedSessionDates: [
+                { sessionIndex: 1, serviceDate: "2026-07-17" },
+                { sessionIndex: 2, serviceDate: "2026-07-23" },
+            ] },
+            draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-07-24" },
+            onServiceDateChange,
+            onOpenServiceDateEditor,
+            onOpenScheduleChangePreview,
+        })} />);
+        expect(screen.getByLabelText("제공일자")).toBeDisabled();
+        expect(screen.getByLabelText("제공일자")).toHaveValue("2026-07-17");
+        expect(container).toHaveTextContent("제공일자를 바꾸려면 일정 변경을 요청해 주세요.");
+        fireEvent.click(screen.getByRole("button", { name: "서비스 일정 변경" }));
+        expect(onOpenScheduleChangePreview).toHaveBeenCalledTimes(1);
+        expect(onServiceDateChange).not.toHaveBeenCalled();
+        expect(onOpenServiceDateEditor).not.toHaveBeenCalled();
+    });
+
+    it("keeps an unplanned provider date editable", () => {
+        const onServiceDateChange = jest.fn();
+        render(<ServiceRecordWizard {...makeProps({ onServiceDateChange })} />);
+        const input = screen.getByLabelText("제공일자");
+        expect(input).not.toBeDisabled();
+        fireEvent.change(input, { target: { value: "2026-07-24" } });
+        expect(onServiceDateChange).toHaveBeenCalledWith("2026-07-24");
+    });
+
     it("keeps all 14 daily items, their subinputs, and four wizard pages", () => {
         expect(DAILY_ITEMS).toHaveLength(14);
         expect(DAILY_ITEMS.map((item) => item.key)).toEqual([
