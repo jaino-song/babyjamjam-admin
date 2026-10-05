@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { extractPhoneCandidates } from "application/utils/normalize-phone";
 import {
     EFORMSIGN_DOCUMENT_KIND,
@@ -65,6 +66,9 @@ export class CreateEformsignDocUsecase {
             ? await this.resolveLinkedClient(branchid, params)
             : null;
         const clientId = linkedClient?.id ?? params.clientId;
+        if (!linkedClient && !await this.clientRepository.findById(branchid, clientId)) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
 
         const entity = EformsignDocEntity.create({
             documentId: params.documentId,

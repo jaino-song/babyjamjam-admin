@@ -2129,6 +2129,39 @@ describe("SbEformsignDocRepository", () => {
         });
     });
 
+    it("does not expose foreign client names or phones from an existing document reference", async () => {
+        const clients = [
+            { id: 55, branchId: "branch-1", name: "Local client", phone: "01011111111" },
+            { id: 99, branchId: "branch-2", name: "Foreign client", phone: "01099999999" },
+        ];
+        const clientFindMany = jest.fn(async ({ where }: { where: { branchId?: string; id: { in: number[] } } }) =>
+            clients.filter((client) => where.id.in.includes(client.id)
+                && (!where.branchId || client.branchId === where.branchId)));
+        eformsignDocModel.findMany.mockResolvedValue(clients.map((client) => ({
+            documentId: `doc-${client.id}`,
+            clientId: client.id,
+            stepRecipientName: "",
+            documentKind: "contract",
+            serviceRecordCase: null,
+        })));
+        repository = new SbEformsignDocRepository({
+            eformsign_doc: eformsignDocModel,
+            client: { findMany: clientFindMany },
+            employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+        } as unknown as PrismaService);
+
+        const result = await repository.findClientNamesByBranch("branch-1");
+
+        expect(result).toEqual([
+            { documentId: "doc-55", clientId: 55, clientName: "Local client", clientPhone: "01011111111", providerName: null },
+            { documentId: "doc-99", clientId: 99, clientName: "삭제된 고객", clientPhone: null, providerName: null },
+        ]);
+        expect(clientFindMany).toHaveBeenCalledWith({
+            where: { branchId: "branch-1", id: { in: [55, 99] } },
+            select: { id: true, name: true, phone: true },
+        });
+    });
+
     it("uses the service record mom name for snapshot document client summaries", async () => {
         const clientFindMany = jest.fn().mockResolvedValue([
             { id: 55, name: "고객 원본명", phone: "01066211878" },
