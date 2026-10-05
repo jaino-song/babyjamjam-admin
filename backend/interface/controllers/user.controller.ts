@@ -26,6 +26,7 @@ import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { OwnerOnlyGuard } from "infrastructure/auth/owner-only.guard";
 import { runWithAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { toPublicUser } from "interface/dto/public-user.mapper";
 
 type AuthenticatedRequest = { user: { userId: string; role: string; branchId?: string; branchRole?: string } };
 
@@ -61,35 +62,37 @@ export class UserController {
     }
 
     @Post()
-    create(@Body() createUserDto: CreateUserDto) {
-        return this.userService.create(createUserDto);
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    async create(@Body() createUserDto: CreateUserDto) {
+        return toPublicUser(await this.userService.create(createUserDto));
     }
 
     @Get("kakao")
-    findByKakaoId(@Query("kakaoId") kakaoId: string) {
-        return this.userService.findByKakaoId(kakaoId);
+    @UseGuards(JwtGuard, OwnerOnlyGuard)
+    async findByKakaoId(@Query("kakaoId") kakaoId: string) {
+        return toPublicUser(await this.userService.findByKakaoId(kakaoId));
     }
 
     @Get("id")
     @UseGuards(JwtGuard, OwnerOnlyGuard)
-    findById(
+    async findById(
         @Query("id") id: string,
         @Res({ passthrough: true }) response: Response,
     ) {
         this.markLegacyUserApi(response);
-        return this.userService.findById(id);
+        return toPublicUser(await this.userService.findById(id));
     }
     
     @Patch()
     @UseGuards(JwtGuard, OwnerOnlyGuard)
-    update(
+    async update(
         @Req() req: AuthenticatedRequest,
         @Query("id") id: string,
         @Body() updateUserDto: UpdateUserDto,
         @Res({ passthrough: true }) response: Response,
     ) {
         this.markLegacyUserApi(response);
-        return runWithAdminAuditActor({
+        return toPublicUser(await runWithAdminAuditActor({
             userId: req.user.userId,
             globalRole: req.user.role,
             branchRole: req.user.branchRole,
@@ -99,7 +102,7 @@ export class UserController {
             profileImage: updateUserDto.profileImage ?? undefined,
             role: updateUserDto.role,
             callerRole: req.user.role,
-        }));
+        })));
     }
 
     @Delete()
@@ -119,18 +122,18 @@ export class UserController {
 
     @Get(":id")
     @UseGuards(JwtGuard, OwnerOnlyGuard)
-    findGlobalUserById(@Param("id") id: string) {
-        return this.userService.findById(id);
+    async findGlobalUserById(@Param("id") id: string) {
+        return toPublicUser(await this.userService.findById(id));
     }
 
     @Patch(":id")
     @UseGuards(JwtGuard, OwnerOnlyGuard)
-    updateGlobalUser(
+    async updateGlobalUser(
         @Req() req: AuthenticatedRequest,
         @Param("id") id: string,
         @Body() updateUserDto: UpdateUserDto,
     ) {
-        return runWithAdminAuditActor({
+        return toPublicUser(await runWithAdminAuditActor({
             userId: req.user.userId,
             globalRole: req.user.role,
             branchRole: req.user.branchRole,
@@ -140,7 +143,7 @@ export class UserController {
             profileImage: updateUserDto.profileImage ?? undefined,
             role: updateUserDto.role,
             callerRole: req.user.role,
-        }));
+        })));
     }
 
     @Patch(":id/account-assignment")

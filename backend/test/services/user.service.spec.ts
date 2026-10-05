@@ -79,6 +79,28 @@ describe("UserService", () => {
     // findDirectory
     // ============================================
     describe("findDirectory", () => {
+        it("does not select or return sensitive identifiers", async () => {
+            prismaService.user.findMany.mockResolvedValue([{
+                id: "u1", kakaoId: "private-kakao", passwordHash: "private-hash", userBranches: [],
+            }]);
+            const result = await service.findDirectory();
+            const select = prismaService.user.findMany.mock.calls[0][0].select;
+            expect(select).not.toHaveProperty("kakaoId");
+            expect(select).not.toHaveProperty("passwordHash");
+            expect(result[0]).not.toHaveProperty("kakaoId");
+            expect(result[0]).not.toHaveProperty("passwordHash");
+        });
+        it("revokes active sessions after deleting a branch membership", async () => {
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "other" });
+            prismaService.user_branch.deleteMany.mockResolvedValue({ count: 1 });
+            await service.delete("u1", "branch-1");
+            expect(prismaService.auth_session.updateMany).toHaveBeenCalledWith({
+                where: { userId: "u1", revokedAt: null },
+                data: { revokedAt: expect.any(Date), revokedReason: "membership_deleted" },
+            });
+            expect(prismaService.auth_session.updateMany.mock.invocationCallOrder[0])
+                .toBeGreaterThan(prismaService.user_branch.deleteMany.mock.invocationCallOrder[0] ?? Infinity);
+        });
         it("should query without a where clause when no filters are provided", async () => {
             await service.findDirectory();
 
