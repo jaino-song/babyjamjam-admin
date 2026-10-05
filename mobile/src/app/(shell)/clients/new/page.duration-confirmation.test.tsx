@@ -516,7 +516,7 @@ describe("mobile client service date confirmation", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
 
-    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient).toHaveBeenCalledWith({
       id: 7,
       dto: expect.objectContaining({

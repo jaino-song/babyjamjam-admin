@@ -34,6 +34,7 @@ import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocompl
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { isStrictIsoDate, normalizeIsoDate, toIsoDate, todayIsoDate } from "@/lib/contracts/date-input";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CALENDAR_CHANGED_FOR_SAVE_MESSAGE } from "@/hooks/calendar-save-message";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import { buildInitialSignRequestDocRecord } from "@/lib/eformsign/document-record";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneDigits } from "@/lib/phone";
@@ -305,10 +306,14 @@ export default function ContractCreationPage() {
     ready: calendarReady,
     error: calendarError,
     retry: retryCalendar,
+    refreshForSave,
   } = useBusinessDayCalendar({ extraYears: calendarYears });
   const calendarRef = useRef(calendar);
   calendarRef.current = calendar;
   const endDateCalcSkippedRef = useRef(false);
+  const autoEndDateRef = useRef<string | null>(null);
+  const [calendarSaveFailed, setCalendarSaveFailed] = useState(false);
+  const [calendarSaveMessage, setCalendarSaveMessage] = useState<string | null>(null);
   // The auto calculation reached a year the branch calendar does not cover. The end date is
   // cleared (never left stale), a notice is shown and submitting is blocked until it is resolved.
   const [endDateUnsupported, setEndDateUnsupported] = useState(false);
@@ -665,7 +670,10 @@ export default function ContractCreationPage() {
     try {
       const endIso = calendarRef.current.calcEndDateBusinessDays(startDate, n);
       setEndDateUnsupported(false);
-      if (endIso) setEndDate(endIso);
+      if (endIso) {
+        autoEndDateRef.current = endIso;
+        setEndDate(endIso);
+      }
     } catch {
       // A year the branch calendar does not cover: clear the end date instead of keeping the
       // previous one, and leave it to the user (the server validates a typed date).
@@ -1171,6 +1179,29 @@ export default function ContractCreationPage() {
 
     let keepSubmittingUntilIframeCloses = false;
     try {
+      const fresh = await refreshForSave();
+      setCalendarSaveFailed(!fresh.ok);
+      if (!fresh.ok) return;
+      const kept = keptEndDateInputsRef.current;
+      const isKept = kept?.startDate === startDate && kept.voucherDuration === voucherDuration;
+      let recalculatedEnd = effectiveEndDate;
+      if (!isKept && autoEndDateRef.current === effectiveEndDate && startDate && Number(voucherDuration) > 0) {
+        try {
+          recalculatedEnd = fresh.calendar.calcEndDateBusinessDays(startDate, Number(voucherDuration)) ?? effectiveEndDate;
+        } catch {
+          setEndDateUnsupported(true);
+          return;
+        }
+      }
+      if (fresh.changed || recalculatedEnd !== effectiveEndDate) {
+        if (recalculatedEnd !== effectiveEndDate) {
+          autoEndDateRef.current = recalculatedEnd;
+          setEndDate(recalculatedEnd);
+        }
+        setCalendarSaveMessage(CALENDAR_CHANGED_FOR_SAVE_MESSAGE);
+        return;
+      }
+      setCalendarSaveMessage(null);
       // 1. Manual-entry client creation. The confirmed id is retained in the
       // form store so an uncertain dispatch never suggests deleting it.
       const reusePersistedClient = retryWithPersistedClientRef.current;
@@ -2068,8 +2099,9 @@ export default function ContractCreationPage() {
                       서비스 기간
                     </div>
                     <CalendarLoadNotice
-                      error={calendarError ?? (endDateUnsupported ? "unsupported-year" : null)}
-                      onRetry={retryCalendar}
+                      error={calendarError ?? (calendarSaveFailed ? "load-failed" : endDateUnsupported ? "unsupported-year" : null)}
+                      onRetry={() => { setCalendarSaveFailed(false); retryCalendar(); }}
+                      message={calendarSaveMessage}
                       loading={!calendarReady && !calendarError}
                       dataComponent="mobile_contracts-new_screen_root_page_root_form-scroll_period-card_calendar-notice"
                     />
@@ -2112,6 +2144,7 @@ export default function ContractCreationPage() {
                         value={endDateInput}
                         onChange={(e) => {
                           // A manual end date wins over a calculation that was waiting for the calendar.
+                          autoEndDateRef.current = null;
                           endDateCalcSkippedRef.current = false;
                           setEndDateUnsupported(false);
                           fieldInteractions.onChange("endDate", endDateInput, formatIsoDateInput(e.target.value));

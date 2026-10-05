@@ -56,6 +56,7 @@ import { eformsignApi } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CALENDAR_CHANGED_FOR_SAVE_MESSAGE } from "@/hooks/calendar-save-message";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
 import {
   focusFirstInvalidField,
@@ -300,10 +301,14 @@ export default function NewClientPage() {
     ready: calendarReady,
     error: calendarError,
     retry: retryCalendar,
+    refreshForSave,
   } = useBusinessDayCalendar({ extraYears: calendarYears });
   const calendarRef = useRef(calendar);
   calendarRef.current = calendar;
   const endDateCalcSkippedRef = useRef(false);
+  const autoEndDateRef = useRef<string | null>(null);
+  const [calendarSaveFailed, setCalendarSaveFailed] = useState(false);
+  const [calendarSaveMessage, setCalendarSaveMessage] = useState<string | null>(null);
   // The auto calculation reached a year the branch calendar does not cover. The end date is
   // cleared (never left stale), a notice is shown and saving is blocked until it is resolved.
   const [endDateUnsupported, setEndDateUnsupported] = useState(false);
@@ -853,6 +858,7 @@ export default function NewClientPage() {
     }
     setEndDateUnsupported(false);
     if (!endIso) return;
+    autoEndDateRef.current = endIso;
     if (store.endDate === endIso) return;
     setField("endDate", endIso);
   }, [calendarReady, effectiveDuration, setField, store.endDate, store.startDate]);
@@ -972,20 +978,42 @@ export default function NewClientPage() {
     if (!calendarReady || endDateUnsupported) return;
     if (!validateStep(currentStep)) return;
 
-    const { hasMismatch, periodKey } = serviceDateDurationCheck;
-    if (hasMismatch && confirmedPeriod !== periodKey) {
-      setPendingDurationConfirmation(periodKey);
-      return;
-    }
-    setPendingDurationConfirmation(null);
-
-    const durationConfirmation = hasMismatch && confirmedPeriod === periodKey
-      ? { allowBusinessDayMismatch: true }
-      : {};
     setPendingUnavailableEmployeeConfirmation(null);
     submissionInFlightRef.current = true;
 
     try {
+      const fresh = await refreshForSave();
+      setCalendarSaveFailed(!fresh.ok);
+      if (!fresh.ok) return;
+      let recalculatedEnd = store.endDate;
+      if (autoEndDateRef.current === store.endDate && hasUserEditedServicePeriodRef.current
+        && store.startDate && effectiveDuration) {
+        try {
+          recalculatedEnd = fresh.calendar.calcEndDateBusinessDays(store.startDate, effectiveDuration) ?? store.endDate;
+        } catch {
+          setEndDateUnsupported(true);
+          return;
+        }
+      }
+      if (fresh.changed || recalculatedEnd !== store.endDate) {
+        if (recalculatedEnd !== store.endDate) {
+          autoEndDateRef.current = recalculatedEnd;
+          setField("endDate", recalculatedEnd);
+        }
+        setCalendarSaveMessage(CALENDAR_CHANGED_FOR_SAVE_MESSAGE);
+        return;
+      }
+      setCalendarSaveMessage(null);
+      const { hasMismatch, periodKey } = getServiceDateDurationCheck(
+        isoOrNull(store.startDate), isoOrNull(store.endDate), chosenDuration, fresh.calendar,
+      );
+      if (hasMismatch && confirmedPeriod !== periodKey) {
+        setPendingDurationConfirmation(periodKey);
+        return;
+      }
+      setPendingDurationConfirmation(null);
+      const durationConfirmation = hasMismatch && confirmedPeriod === periodKey
+        ? { allowBusinessDayMismatch: true } : {};
       const dto: CreateClientDto = {
         name: store.name,
         birthday: store.birthday || null,
@@ -1060,7 +1088,6 @@ export default function NewClientPage() {
       }
     } finally {
       submissionInFlightRef.current = false;
-      setPendingDurationConfirmation(null);
     }
   };
 
@@ -1611,8 +1638,9 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
                     <CalendarLoadNotice
-                      error={calendarError ?? (endDateUnsupported ? "unsupported-year" : null)}
-                      onRetry={retryCalendar}
+                      error={calendarError ?? (calendarSaveFailed ? "load-failed" : endDateUnsupported ? "unsupported-year" : null)}
+                      onRetry={() => { setCalendarSaveFailed(false); retryCalendar(); }}
+                      message={calendarSaveMessage}
                       loading={!calendarReady && !calendarError}
                       dataComponent="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_calendar-notice"
                     />
@@ -1642,6 +1670,7 @@ export default function NewClientPage() {
                         onChange={(e) => {
                           hasUserEditedServicePeriodRef.current = true;
                           // A manual end date wins over a calculation that was waiting for the calendar.
+                          autoEndDateRef.current = null;
                           endDateCalcSkippedRef.current = false;
                           setEndDateUnsupported(false);
                           setField("endDate", formatIsoDateInput(e.target.value));

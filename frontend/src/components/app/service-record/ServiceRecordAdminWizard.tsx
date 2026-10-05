@@ -478,6 +478,7 @@ export function ServiceRecordAdminWizard({
         ready: calendarReady,
         error: calendarError,
         retry: retryCalendar,
+        refreshForSave,
     } = useBusinessDayCalendar({ extraYears: calendarYears });
     const [draftState, setDraftState] = useState(initialDraftState);
     const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
@@ -494,6 +495,7 @@ export function ServiceRecordAdminWizard({
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
+    const dateMoveEntriesRef = useRef<ReturnType<typeof moveServiceRecordSessionDate>["entries"] | null>(null);
     const [collision, setCollision] = useState<{ date: string; delta: number } | null>(null);
     const [dateDialogOpen, setDateDialogOpen] = useState(false);
     const [discardModalOpen, setDiscardModalOpen] = useState(false);
@@ -589,6 +591,7 @@ export function ServiceRecordAdminWizard({
         if (!calendarReady) return null;
         try {
             const result = moveServiceRecordSessionDate(vector, day, next, shiftFollowing, calendar);
+            dateMoveEntriesRef.current = result.entries;
             setDateMove(next === sourceDate ? null : { sessionIndex: day, toDate: next, shiftFollowing });
             setDraft((current) => ({ ...current, _date: next }));
             setCollision(null);
@@ -637,6 +640,32 @@ export function ServiceRecordAdminWizard({
         setError(null);
         setSaveStarted(true);
         try {
+            let saveCalendar = calendar;
+            if (dateMove && !recover && !prepared.current) {
+                const fresh = await refreshForSave();
+                if (!fresh.ok) {
+                    setError("공휴일 정보를 불러오지 못했어요.");
+                    setSaveStarted(false);
+                    return;
+                }
+                saveCalendar = fresh.calendar;
+                try {
+                    const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), fresh.calendar).entries;
+                    const previous = dateMoveEntriesRef.current;
+                    const recalculated = !previous || next.some((entry) =>
+                        previous.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
+                    dateMoveEntriesRef.current = next;
+                    if (fresh.changed || recalculated) {
+                        setError("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+                        setSaveStarted(false);
+                        return;
+                    }
+                } catch {
+                    setError("앞 회차보다 늦은 영업일을 선택해 주세요. 회차 순서와 예정일을 확인해 주세요.");
+                    setSaveStarted(false);
+                    return;
+                }
+            }
             let request = prepared.current;
             if (!request) {
                 if (recover) throw new Error("이전 수정사항을 다시 검토해 주세요.");
@@ -687,7 +716,7 @@ export function ServiceRecordAdminWizard({
                     throw new Error("다른 회차의 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
                 }
                 const expectedDates = dateMove
-                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), calendar).entries
+                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), saveCalendar).entries
                     : preview.before.sessions;
                 const unexpectedDates = preview.after.sessions.length !== expectedDates.length
                     || new Set(preview.after.sessions.map((entry) => entry.sessionIndex)).size !== expectedDates.length
