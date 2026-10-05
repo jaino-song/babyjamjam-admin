@@ -7,6 +7,7 @@ import {
   Bell,
   Calculator,
   Calendar,
+  CalendarDays,
   FileText,
   MessageCircle,
   MessageSquareText,
@@ -166,6 +167,9 @@ export default function AllMenuPage() {
             valueLoading: pushNotification.isLoading,
             valueSkeletonWidth: "38px",
           },
+          ...(canManageBranchFeatures
+            ? [{ label: "공휴일", href: "/holidays", icon: CalendarDays, tone: "burgundy" as const }]
+            : []),
           ...(isOwner
             ? [
                 {
