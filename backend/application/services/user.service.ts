@@ -81,7 +81,6 @@ export interface UserDirectoryBranch {
 
 export interface UserDirectoryItem {
     id: string;
-    kakaoId: string | null;
     email: string | null;
     name: string | null;
     phone: string | null;
@@ -493,7 +492,6 @@ export class UserService {
             orderBy: { createdAt: "desc" },
             select: {
                 id: true,
-                kakaoId: true,
                 email: true,
                 name: true,
                 phone: true,
@@ -529,7 +527,6 @@ export class UserService {
 
             return {
                 id: user.id,
-                kakaoId: user.kakaoId,
                 email: user.email,
                 name: user.name,
                 phone: user.phone,
@@ -783,6 +780,10 @@ export class UserService {
             }
             const deleted = await tx.user_branch.deleteMany({ where: { userId: id, branchId } });
             if (deleted.count !== 1) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            await tx.auth_session.updateMany({
+                where: { userId: id, revokedAt: null },
+                data: { revokedAt: new Date(), revokedReason: "membership_deleted" },
+            });
             await this.appendAudit(tx, actor ?? currentAdminAuditActor(), {
                 action: "user.membership.deleted",
                 branchId,
