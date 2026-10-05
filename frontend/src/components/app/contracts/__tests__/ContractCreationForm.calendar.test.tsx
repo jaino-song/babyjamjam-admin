@@ -81,12 +81,12 @@ function invokeReactClick(element: HTMLElement): void {
   const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
   const onClick = (element as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
   if (!onClick) throw new Error("element has no React onClick");
-  act(() => onClick());
+  act(() => { void onClick(); });
 }
 
 function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? KR_BUILTIN_CALENDAR;
-  return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+  return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
 }
 
 function seedStore(overrides: { startDate: string; endDate?: string; voucherDuration: string }): void {
@@ -325,6 +325,35 @@ describe("ContractCreationForm — branch business-day calendar", () => {
   });
 
   describe("submit handler guard", () => {
+    it.each([true, false])("recomputes auto dates and stops creation when refresh changed is %s", async (changed) => {
+      seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
+      mockedHook.mockImplementation(() => hookResult({ refreshForSave: async () => ({ ok: true, calendar: BRANCH_CALENDAR, changed }) }));
+      render(buildUi());
+      invokeReactClick(screen.getByTestId("contract-creation-submit"));
+      await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+      expect(useFormStore.getState().endDate).toBe("2026-11-05");
+      expect(onActiveStepChange).not.toHaveBeenCalled();
+    });
+
+    it("preserves a manually typed end date on a changed refresh", async () => {
+      seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
+      mockedHook.mockImplementation(() => hookResult({ refreshForSave: async () => ({ ok: true, calendar: BRANCH_CALENDAR, changed: true }) }));
+      render(buildUi());
+      fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: "2026-12-31" } });
+      invokeReactClick(screen.getByTestId("contract-creation-submit"));
+      await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+      expect(useFormStore.getState().endDate).toBe("2026-12-31");
+      expect(onActiveStepChange).not.toHaveBeenCalled();
+    });
+
+    it("stops creation on refresh failure", async () => {
+      seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
+      mockedHook.mockImplementation(() => hookResult({ refreshForSave: async () => ({ ok: false }) }));
+      render(buildUi());
+      invokeReactClick(screen.getByTestId("contract-creation-submit"));
+      await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+      expect(onActiveStepChange).not.toHaveBeenCalled();
+    });
     it("refuses to start creation while the calendar is not ready, even if the button is bypassed", () => {
       seedStore({ startDate: "2026-11-02", voucherDuration: "3" });
       mockedHook.mockImplementation(() => hookResult({ ready: false }));

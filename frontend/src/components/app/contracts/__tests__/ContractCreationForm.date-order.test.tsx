@@ -149,9 +149,7 @@ function renderRetryableForm() {
 }
 
 function overrideEndDate(endDate: string): void {
-  act(() => {
-    useFormStore.setState({ endDate });
-  });
+  fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: endDate } });
 }
 
 describe("ContractCreationForm — contract date ordering", () => {

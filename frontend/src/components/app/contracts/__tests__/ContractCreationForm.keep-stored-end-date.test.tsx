@@ -127,7 +127,7 @@ const mockedHook = useBusinessDayCalendar as jest.MockedFunction<typeof useBusin
 
 function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult {
   const calendar = overrides.calendar ?? BRANCH_CALENDAR;
-  return { calendar, ready: true, error: null, retry: jest.fn(), version: calendar.version, ...overrides };
+  return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
 }
 
 const STORED_CLIENT: Client = {

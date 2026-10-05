@@ -190,6 +190,7 @@ describe("branch calendar readiness", () => {
         ready: true,
         error: null,
         retry,
+        refreshForSave: async () => ({ ok: true, calendar: overrides.calendar ?? KR_BUILTIN_CALENDAR, changed: false }),
         version: KR_BUILTIN_CALENDAR.version,
         ...overrides,
     });
@@ -214,7 +215,22 @@ describe("branch calendar readiness", () => {
     beforeEach(() => retry.mockClear());
     afterEach(() => mockedCalendar.mockImplementation(() => result({})));
 
-    it("does not classify the date or submit while the calendar is loading, then asks once it is ready", () => {
+    it.each([true, false])("does not submit when save-time refresh changed=%s", async (changed) => {
+        const onSubmit = jest.fn();
+        mockedCalendar.mockReturnValue(result({
+            refreshForSave: async () => changed
+                ? { ok: true, calendar: branchCalendar, changed: true }
+                : { ok: false },
+        }));
+        render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
+        await userEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(slotOf(screen.getByLabelText("3회차 서비스 제공 날짜"))).toHaveTextContent(changed
+            ? "공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요."
+            : "공휴일 정보를 불러오지 못했어요");
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
+    it("does not classify the date or submit while the calendar is loading, then asks once it is ready", async () => {
         mockedCalendar.mockImplementation(() => notReady);
         const onSubmit = jest.fn();
         const { rerender } = render(<ServiceScheduleChangeModal {...baseProps} onSubmit={onSubmit} />);
@@ -231,8 +247,8 @@ describe("branch calendar readiness", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
         expect(onSubmit).not.toHaveBeenCalled();
-        expect(screen.getByText("주말·공휴일이에요")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
+        await userEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
         expect(onSubmit).toHaveBeenCalledWith(true);
     });
 

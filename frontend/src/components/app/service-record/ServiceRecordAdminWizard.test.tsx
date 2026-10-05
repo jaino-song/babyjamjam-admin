@@ -761,12 +761,45 @@ describe("per-session administrator editing", () => {
                 ready: true,
                 error: null,
                 retry: jest.fn(),
+                refreshForSave: async () => ({ ok: true, calendar: branchCalendar, changed: false }),
                 version: branchCalendar.version,
                 ...overrides,
             });
         };
         afterEach(() => {
             jest.mocked(useBusinessDayCalendar).mockImplementation(defaultImplementation!);
+        });
+
+        it.each([true, false])("blocks a freshly changed suffix before writing a draft (changed=%s)", async (changed) => {
+            const refreshForSave = jest.fn().mockResolvedValue({ ok: true, calendar: branchCalendar, changed });
+            mockCalendarResult({ calendar: KR_BUILTIN_CALENDAR_FOR_TEST, refreshForSave });
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            fireEvent.click(screen.getByRole("option", { name: "8일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+            await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        });
+
+        it("blocks a date move when save refresh fails without locking the editor", async () => {
+            mockCalendarResult({ refreshForSave: async () => ({ ok: false }) });
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            fireEvent.click(screen.getByRole("option", { name: "8일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+            await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
         });
 
         it("applies a branch-added holiday to the date choices and to the following-session shift", () => {

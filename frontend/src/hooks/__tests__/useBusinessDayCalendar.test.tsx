@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { useBusinessDayCalendar } from "../useBusinessDayCalendar";
+import { useBusinessDayCalendar, type RefreshForSaveResult } from "../useBusinessDayCalendar";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { holidayCalendarApi, type BranchHolidayYear } from "@/services/holidays";
 import { isoDateInKorea, KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
@@ -60,6 +60,85 @@ function setup(opts?: Parameters<typeof useBusinessDayCalendar>[0]) {
 }
 
 describe("useBusinessDayCalendar", () => {
+    it("fails closed after a cached year fails to refetch, retaining the display calendar and retrying", async () => {
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        const { result, queryClient } = setup();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        const calendar = result.current.calendar;
+        mockGetYear.mockRejectedValue(new Error("offline"));
+        await act(async () => {
+            await queryClient.refetchQueries({ queryKey: ["holidays", "branch-1", THIS_YEAR], exact: true });
+        });
+        await waitFor(() => expect(result.current.ready).toBe(false));
+        expect(result.current.error).toBe("load-failed");
+        expect(result.current.calendar).toBe(calendar);
+        const calls = mockGetYear.mock.calls.length;
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        act(() => result.current.retry());
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        expect(mockGetYear).toHaveBeenCalledTimes(calls + 1);
+    });
+
+    it("refreshes for save with unchanged and changed revisions and updates the shared cache", async () => {
+        let revision = 1;
+        const holiday = ordinaryWednesday(THIS_YEAR);
+        mockGetYear.mockImplementation(async (_branch: string, year: number) =>
+            payload(year, revision === 2 && year === THIS_YEAR ? [holiday] : [], revision));
+        const { result } = setup();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        let fresh: RefreshForSaveResult = { ok: false };
+        await act(async () => { fresh = await result.current.refreshForSave(); });
+        expect(fresh).toMatchObject({ ok: true, calendar: { version: result.current.version }, changed: false });
+        revision = 2;
+        await act(async () => { fresh = await result.current.refreshForSave(); });
+        await waitFor(() => expect(result.current.calendar.isBusinessDay(holiday)).toBe(false));
+        expect(fresh).toMatchObject({ ok: true, calendar: { version: result.current.version }, changed: true });
+        expect(result.current.calendar.isBusinessDay(holiday)).toBe(false);
+        expect(mockGetYear).toHaveBeenCalledTimes(9);
+    });
+
+    it("refuses save on fetch failure, invalid payload or no branch", async () => {
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        const { result, rerender } = setup();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        mockGetYear.mockRejectedValue(new Error("offline"));
+        await act(async () => { expect(await result.current.refreshForSave()).toEqual({ ok: false }); });
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year, [`${year + 1}-03-03`]));
+        await act(async () => { expect(await result.current.refreshForSave()).toEqual({ ok: false }); });
+        mockUseGetAuthUser.mockReturnValue({ data: { branchId: null } });
+        rerender();
+        await act(async () => { expect(await result.current.refreshForSave()).toEqual({ ok: false }); });
+    });
+
+    it("keeps the last branch calendar display-only after a malformed refetch", async () => {
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        const { result, queryClient } = setup();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        const calendar = result.current.calendar;
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year, [`${year + 1}-03-03`]));
+        await act(async () => { await queryClient.refetchQueries({ queryKey: ["holidays"] }); });
+        await waitFor(() => expect(result.current.error).toBe("load-failed"));
+        expect(result.current.ready).toBe(false);
+        expect(result.current.calendar).toBe(calendar);
+    });
+
+    it("keeps refresh stable while reading the latest branch and requested years", async () => {
+        mockGetYear.mockImplementation(async (_branch: string, year: number) => payload(year));
+        const opts = { extraYears: [] as number[] };
+        const { result, rerender } = setup(opts);
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        const refresh = result.current.refreshForSave;
+        opts.extraYears = [THIS_YEAR - 2];
+        mockUseGetAuthUser.mockReturnValue({ data: { branchId: "branch-2" } });
+        rerender();
+        await waitFor(() => expect(result.current.ready).toBe(true));
+        expect(result.current.refreshForSave).toBe(refresh);
+        mockGetYear.mockClear();
+        await act(async () => { await refresh(); });
+        expect(mockGetYear.mock.calls).toEqual([THIS_YEAR - 2, THIS_YEAR - 1, THIS_YEAR, THIS_YEAR + 1]
+            .map(year => ["branch-2", year]));
+    });
+
     beforeEach(() => {
         mockGetYear.mockReset();
         mockUseGetAuthUser.mockReset();
