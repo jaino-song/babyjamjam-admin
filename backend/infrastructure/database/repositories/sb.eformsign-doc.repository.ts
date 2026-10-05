@@ -520,7 +520,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         );
         const clients = clientIds.length > 0
             ? await this.prismaService.client.findMany({
-                where: { id: { in: clientIds } },
+                where: { branchId: branchid, id: { in: clientIds } },
                 select: { id: true, name: true, phone: true },
             })
             : [];

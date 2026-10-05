@@ -83,6 +83,7 @@ import { AgentAutomationRecordStoreService } from "../agent/agent-automation-rec
 import { CLIENT_AUTOMATION_IMPACT, type ClientAutomationImpactPort } from "domain/ports/client-automation-impact.port";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
 // Contract attention window, in KR business days before service start, within
@@ -2230,6 +2231,9 @@ export class ClientService {
         // case in one owning transaction. Passing the transaction through the
         // update usecase avoids a nested root transaction while locks are held.
         const terminationAt = new Date();
+        const kstToday = getKstCalendarDate(terminationAt, 0);
+        const startDate = client.startDate?.toISOString().slice(0, 10);
+        const terminationEndDate = new Date(startDate && startDate > kstToday ? startDate : kstToday);
         const ordinaryMutationId = randomUUID();
         // SAVED computation (the update re-derives the persisted duration):
         // read the branch calendar before the transaction opens, never inside
@@ -2277,11 +2281,11 @@ export class ClientService {
             // initial existence lookup is only a fast preflight.
             await this.serviceRecordLifecycleService?.validatePeriodChange({
                 clientId,
-                endDate: terminationAt,
+                endDate: terminationEndDate,
             }, transaction);
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: SERVICE_STATUS.TERMINATED,
-                endDate: terminationAt,
+                endDate: terminationEndDate,
             }, transaction, calendar);
             await transaction.employee_schedule.updateMany({
                 where: { clientId, branchId: branchid, replaced: false, terminatedAt: null },

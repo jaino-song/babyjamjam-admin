@@ -60,6 +60,22 @@ export async function POST(request: NextRequest) {
             : getUpstreamErrorStatus(error, 502);
         logUpstreamError("refresh app session", error);
 
+        const upstreamCode = (error as { response?: { data?: { code?: unknown } } } | null)
+            ?.response?.data?.code;
+        // 다른 요청이 회전한 세션 쿠키를 재사용하도록 동시 재생만 잠시 기다린다.
+        if (status === 401 && upstreamCode === "AUTH_REFRESH_REPLAY_CONCURRENT") {
+            const result = NextResponse.json(
+                {
+                    code: "AUTH_REFRESH_REPLAY_CONCURRENT",
+                    error: "Authentication refresh already in progress",
+                },
+                { status: 409 },
+            );
+            result.headers.set("Retry-After", "1");
+            result.headers.set("Cache-Control", "no-store, max-age=0");
+            return result;
+        }
+
         if (status === 401) {
             const cookieStore = await cookies();
             clearAuthSessionCookies(cookieStore);

@@ -935,6 +935,56 @@ describe("ScheduleChangeService", () => {
     });
 
     describe("approve", () => {
+        it("keeps ten required sessions after approving a legacy weekend schedule", async () => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest({
+                sessionIndex: 4,
+                fromDate: toDbDate("2026-11-09"),
+                toDate: toDbDate("2026-11-10"),
+                oldEndDate: toDbDate("2026-11-17"),
+                newEndDate: toDbDate("2026-11-18"),
+            }));
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+                startDate: toDbDate("2026-11-06"),
+                endDate: toDbDate("2026-11-17"),
+            }));
+            txPrismaService.service_record_case.findUnique.mockResolvedValue({
+                id: "case-1",
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                formVersion: 1,
+                requiredSessionCount: 10,
+            });
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([
+                    createDay(1, "2026-11-06", true),
+                    createDay(2, "2026-11-07", true),
+                    createDay(3, "2026-11-08", true),
+                    createDay(4, "2026-11-09", false),
+                ])
+                .mockResolvedValueOnce([]);
+            const syncedRecord = { id: "case-1", formVersion: 1, requiredSessionCount: 9 };
+            lifecycleService.ensureForClient.mockResolvedValueOnce(syncedRecord);
+            txPrismaService.service_record_case.update.mockImplementation(async ({ data }) => {
+                Object.assign(syncedRecord, data);
+                return syncedRecord;
+            });
+            txPrismaService.schedule_change_request.update.mockResolvedValue(createRequest({
+                status: "approved",
+                newEndDate: toDbDate("2026-11-18"),
+            }));
+
+            await service.approve("request-1", tenant);
+
+            expect(syncedRecord.requiredSessionCount).toBe(10);
+            expect(lifecycleService.recompute).toHaveBeenCalledWith("case-1", txPrismaService, expect.anything());
+            expect(txPrismaService.service_record_case.update.mock.invocationCallOrder[0])
+                .toBeLessThan(lifecycleService.recompute.mock.invocationCallOrder[0]!);
+            expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                where: { id: SCHEDULE_ID },
+                data: { endDate: toDbDate("2026-11-18") },
+            });
+        });
+
         it("should apply the target date, cascade unlocked rows, extend expiry, and sync after commit", async () => {
             txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest());
             txPrismaService.employee_schedule.findUnique.mockResolvedValue(createSchedule());
@@ -999,6 +1049,7 @@ describe("ScheduleChangeService", () => {
                 "case-1",
                 new Date("2026-07-22T11:00:00.000Z"),
                 txPrismaService,
+                { onlyRaise: true },
             );
             expect(txPrismaService.schedule_change_request.update).toHaveBeenCalledWith({
                 where: { id: "request-1" },

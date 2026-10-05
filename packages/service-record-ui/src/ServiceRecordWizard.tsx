@@ -647,7 +647,9 @@ export function ServiceRecordWizard({
         ? new Map(plannedDateVector?.map((session) => [session.sessionIndex, session.serviceDate]))
         : null;
     const plannedServiceDate = plannedDateBySession?.get(day);
-    const currentServiceDate = (draft._date as string | undefined)
+    const providerDateLocked = !adminMode && plannedDateVectorProvided;
+    const currentServiceDate = (providerDateLocked ? plannedServiceDate : undefined)
+        || (draft._date as string | undefined)
         || currentSession?.serviceDate?.slice(0, 10)
         || plannedServiceDate
         || (plannedDateVectorProvided ? "" : defaultDate(day));
@@ -738,6 +740,7 @@ export function ServiceRecordWizard({
         onHeaderChange(key, HEADER_DATE_KEYS.includes(key) ? formatIsoDateInput(raw) : raw);
     };
     const handleServiceDateInput = (raw: string) => {
+        if (providerDateLocked) return;
         const next = formatIsoDateInput(raw);
         setServiceDateEdit({ text: next, base: currentServiceDate, day });
         if (next.length === 10 && serviceDateIsReportable(next)) onServiceDateChange(next);
@@ -1029,11 +1032,29 @@ export function ServiceRecordWizard({
                                     maxLength={10}
                                     placeholder={SERVICE_DATE_PLACEHOLDER}
                                     className="dateinput"
+                                    disabled={providerDateLocked}
                                     value={serviceDateValue}
                                     onFocus={() => setServiceDateFocused(true)}
                                     onBlur={handleServiceDateBlur}
                                     onChange={(event) => handleServiceDateInput(event.target.value)}
                                 />
+                                {providerDateLocked ? (
+                                    <>
+                                        <p data-component={child("body_service-date-field_schedule-help")} data-slot="muted" className="muted">
+                                            제공일자를 바꾸려면 일정 변경을 요청해 주세요.
+                                        </p>
+                                        <button
+                                            data-component={child("body_service-date-field_schedule-change")}
+                                            data-slot="btn"
+                                            className="btn ghost"
+                                            type="button"
+                                            disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context?.pendingScheduleChange)}
+                                            onClick={() => onOpenScheduleChangePreview()}
+                                        >
+                                            {context?.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
+                                        </button>
+                                    </>
+                                ) : null}
                             </div>
                         )}
                         {/* Where no date field is on the page (later pages, admin edit) the date's caution still lives in a field slot: a compact read-only row. */}
