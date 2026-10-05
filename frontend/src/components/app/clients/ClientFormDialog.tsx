@@ -744,11 +744,14 @@ function ClientFormContent({
         ready: isCalendarReady,
         error: calendarError,
         retry: retryCalendar,
+        refreshForSave,
     } = useBusinessDayCalendar({
         extraYears: getClientCalendarYears(formData.startDate ?? "", formData.endDate ?? ""),
     });
     // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요(달력 객체가 바뀌어도 다시 계산하지 않아요).
     const pendingAutoEndDateRef = useRef(false);
+    const autoEndDateOwnedRef = useRef(false);
+    const [calendarRefreshFailed, setCalendarRefreshFailed] = useState(false);
     const businessDayCalendarRef = useRef(businessDayCalendar);
     businessDayCalendarRef.current = businessDayCalendar;
 
@@ -760,6 +763,7 @@ function ClientFormContent({
     const recalculateEndDate = useCallback(() => {
         const calendar = businessDayCalendarRef.current;
         const { duration, startDate } = autoEndDateInputsRef.current;
+        autoEndDateOwnedRef.current = Boolean(duration) && isRealIsoDate(startDate);
         queueMicrotask(() => {
             setIsEndDateUnsupported(resolveAutoEndDate(duration, startDate, calendar).unsupported);
             setFormData(prev => withAutoEndDate(prev, calendar));
@@ -768,6 +772,7 @@ function ClientFormContent({
 
     useEffect(() => {
         if (skipNextEndDateRecalculationRef.current) {
+            autoEndDateOwnedRef.current = false;
             skipNextEndDateRecalculationRef.current = false;
             pendingAutoEndDateRef.current = false;
             return;
@@ -844,6 +849,8 @@ function ClientFormContent({
         if (formSessionRef.current.open && formSessionRef.current.clientId === sessionClientId) return;
         formSessionRef.current = { open: true, clientId: sessionClientId };
         if (open) {
+            autoEndDateOwnedRef.current = false;
+            setCalendarRefreshFailed(false);
             skipNextEndDateRecalculationRef.current = true;
             let nextFormData: ClientFormData | null = null;
             let nextPricesManuallyEdited = false;
@@ -952,6 +959,7 @@ function ClientFormContent({
             Object.entries(prefill).filter(([, value]) => value !== undefined),
         ) as Partial<ClientFormData>;
         skipNextEndDateRecalculationRef.current = true;
+        autoEndDateOwnedRef.current = false;
         queueMicrotask(() => {
             setIsEndDateUnsupported(false);
             setFormData((current) => {
@@ -996,6 +1004,7 @@ function ClientFormContent({
 
     const handleInputChange = (field: ClientInputField, value: string) => {
         if (field === "endDate") {
+            autoEndDateOwnedRef.current = false;
             pendingAutoEndDateRef.current = false;
             setIsEndDateUnsupported(false);
         }
@@ -1264,12 +1273,29 @@ function ClientFormContent({
             }
         }
         try {
+            submissionInFlightRef.current = true;
+            const fresh = await refreshForSave();
+            setCalendarRefreshFailed(!fresh.ok);
+            if (!fresh.ok) return;
+            let recalculated = false;
+            if (autoEndDateOwnedRef.current || pendingAutoEndDateRef.current) {
+                const next = resolveAutoEndDate(formData.duration, formData.startDate ?? "", fresh.calendar);
+                setIsEndDateUnsupported(next.unsupported);
+                recalculated = next.endDate !== (formData.endDate ?? "");
+                if (recalculated) setFormData(previous => ({ ...previous, endDate: next.endDate }));
+                if (next.unsupported) return;
+            }
+            if (fresh.changed || recalculated) {
+                setPendingDurationConfirmation(null);
+                setErrorAndScroll(t(locale, "common.calendar-changed-before-save"));
+                return;
+            }
             const normalizedDueDate = formData.dueDate ?? "";
             const normalizedBirthDate = formData.birthDate ?? "";
             const normalizedStartDate = formData.startDate ?? "";
             const normalizedEndDate = formData.endDate ?? "";
             const businessDays = normalizedStartDate && normalizedEndDate
-                ? businessDayCalendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
+                ? fresh.calendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
                 : null;
             const hasDurationMismatch = businessDays !== null
                 && Number.isSafeInteger(formData.duration)
@@ -1286,7 +1312,6 @@ function ClientFormContent({
                 ? { allowBusinessDayMismatch: true }
                 : {};
             setPendingDurationConfirmation(null);
-            submissionInFlightRef.current = true;
 
             if (isEditMode && client) {
                 // Build update DTO, excluding null employee IDs to avoid validation errors
@@ -1375,10 +1400,10 @@ function ClientFormContent({
         || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit);
     // 달력은 마지막 단계의 저장 버튼만 막아요. 다음 단계로 가는 것은 달력과 무관해요.
     const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit;
-    const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported ? null : (
+    const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported && !calendarRefreshFailed ? null : (
         <CalendarLoadNotice
-            error={calendarError ?? (isEndDateUnsupported ? "unsupported-year" : null)}
-            onRetry={retryCalendar}
+            error={calendarError ?? (calendarRefreshFailed ? "load-failed" : isEndDateUnsupported ? "unsupported-year" : null)}
+            onRetry={() => { setCalendarRefreshFailed(false); retryCalendar(); }}
             loading={!isCalendarReady && !calendarError}
             dataComponent={`${base}_calendar-load-notice`}
         />
