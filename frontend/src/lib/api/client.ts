@@ -107,6 +107,19 @@ export function refreshAppAuthSession(): Promise<void> {
         appAuthRefreshPromise = axios
             .post("/api/auth/refresh", undefined, { withCredentials: true })
             .then(() => undefined)
+            .catch(async (error: AxiosError) => {
+                if (
+                    error.response?.status !== 409
+                    || readProblemCode(error.response.data) !== "AUTH_REFRESH_REPLAY_CONCURRENT"
+                ) {
+                    throw error;
+                }
+
+                // 다른 요청의 회전 결과를 기다린 뒤 원래 요청만 한 번 재시도한다.
+                const seconds = Number(error.response.headers?.["retry-after"]);
+                const delay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000;
+                await new Promise((resolve) => setTimeout(resolve, delay));
+            })
             .finally(() => {
                 appAuthRefreshPromise = null;
             });
