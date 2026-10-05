@@ -7,6 +7,7 @@ import { AnimatedSlotListItemContent, StatusBadge } from "@/components/app/v3";
 import { contractStatusBadgeType, getStatusCategory, mapDocStatusLabel } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
+import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 interface ContractsListItemProps {
   "data-component": string;
@@ -14,6 +15,8 @@ interface ContractsListItemProps {
   customerName: string | null;
   subtitle?: string;
   isLoading: boolean;
+  /** Branch calendar for the review-window label; the built-in one when omitted. */
+  calendar?: KrBusinessDayCalendar;
 }
 
 const CONTRACT_STATUS_AVATAR_CLASSES = {
@@ -52,6 +55,7 @@ function ContractsListItemComponent({
   customerName,
   subtitle,
   isLoading,
+  calendar,
 }: ContractsListItemProps) {
   if (isLoading || !document) {
     return (
@@ -80,6 +84,7 @@ function ContractsListItemComponent({
     document.current_status,
     document.contract_end_date,
     document.display_status,
+    calendar,
   );
   const statusType = contractStatusBadgeType(statusLabel);
   const avatarClasses = CONTRACT_STATUS_AVATAR_CLASSES[statusType];

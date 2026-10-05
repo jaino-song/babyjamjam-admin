@@ -17,9 +17,10 @@ import {
 } from "application/policies/service-record-write-lock.policy";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
-import { addBusinessDaysKr, isBusinessDayKr, nextBusinessDayKr } from "domain/utils/business-days";
+import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
+    previousBusinessDay,
     shiftServiceRecordScheduleSuffix,
     validateServiceRecordScheduleVector,
     type ServiceRecordPlannedSession,
@@ -31,6 +32,14 @@ import {
 } from "./service-record-token.service";
 import { ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+
+/** The calendar day after `iso` (YYYY-MM-DD). */
+function nextCalendarDay(iso: string): string {
+    const date = new Date(`${iso}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString().slice(0, 10);
+}
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -49,6 +58,7 @@ interface ServiceRecordForChange {
 function plannedSessionVector(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): ServiceRecordPlannedSession[] | null {
     if (raw === null || raw === undefined) return null;
     const values = Array.isArray(raw)
@@ -102,29 +112,34 @@ function plannedSessionVector(
     }
 
     try {
-        return validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined);
+        return validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined, calendar, { persisted: true });
     } catch {
         return null;
     }
 }
 
-function canonicalPlannedSessions(record: ServiceRecordForChange): ServiceRecordPlannedSession[] | null {
-    return plannedSessionVector(record.plannedSessions, record.requiredSessionCount);
+function canonicalPlannedSessions(
+    record: ServiceRecordForChange,
+    calendar: KrBusinessDayCalendar,
+): ServiceRecordPlannedSession[] | null {
+    return plannedSessionVector(record.plannedSessions, record.requiredSessionCount, calendar);
 }
 
 function shiftCanonicalPlan(
     record: ServiceRecordForChange,
     sessionIndex: number,
     newDate: string,
+    calendar: KrBusinessDayCalendar,
+    allowNonBusinessDay = false,
 ): ServiceRecordPlannedSession[] | null {
     const hasPersistedPlan = record.plannedSessions !== null && record.plannedSessions !== undefined;
-    const planned = canonicalPlannedSessions(record);
+    const planned = canonicalPlannedSessions(record, calendar);
     if (!hasPersistedPlan) return null;
     if (!planned) {
         throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
     }
     try {
-        return shiftServiceRecordScheduleSuffix(planned, sessionIndex, newDate).entries;
+        return shiftServiceRecordScheduleSuffix(planned, sessionIndex, newDate, calendar, { allowNonBusinessDay }).entries;
     } catch {
         throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
     }
@@ -147,6 +162,8 @@ interface ScheduleForChange {
 
 interface ClientForChange {
     duration: number | null;
+    birthDate?: Date | null;
+    startDate?: Date | null;
 }
 
 interface ServiceRecordDayForChange {
@@ -179,6 +196,7 @@ export class ScheduleChangeService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly tokenService: ServiceRecordTokenService,
+        private readonly holidayCalendar: HolidayCalendarService,
         @Optional() private readonly triggerService?: MessageTriggerService,
         @Optional() private readonly lifecycleService?: ServiceRecordLifecycleService,
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
@@ -188,10 +206,11 @@ export class ScheduleChangeService {
         schedule: ScheduleForChange,
         client: ClientForChange,
         days: ServiceRecordDayForChange[],
+        calendar: KrBusinessDayCalendar,
         record?: ServiceRecordForChange,
-    ): { sessionIndex: number; fromDate: string; toDate: string; newEndDate: string } {
+    ): { sessionIndex: number; fromDate: string; toDate: string; newEndDate: string; minimumDate: string | null } {
         const hasPersistedPlan = record?.plannedSessions !== null && record?.plannedSessions !== undefined;
-        const planned = record ? canonicalPlannedSessions(record) : null;
+        const planned = record ? canonicalPlannedSessions(record, calendar) : null;
         if (hasPersistedPlan && !planned) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
         }
@@ -219,19 +238,35 @@ export class ScheduleChangeService {
         } else {
             const previousRow = days.find((row) => row.sessionIndex === sessionIndex - 1);
             if (previousRow) {
-                fromDate = nextBusinessDayKr(toIso(previousRow.serviceDate));
+                fromDate = calendar.nextBusinessDay(toIso(previousRow.serviceDate));
             } else if (schedule.startDate) {
                 const startDate = toIso(schedule.startDate);
-                fromDate = isBusinessDayKr(startDate) ? startDate : nextBusinessDayKr(startDate);
+                fromDate = calendar.isBusinessDay(startDate) ? startDate : calendar.nextBusinessDay(startDate);
             } else {
                 throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
             }
         }
 
-        const toDate = nextBusinessDayKr(fromDate);
-        const newEndDate = addBusinessDaysKr(toDate, totalSessions - sessionIndex);
+        const toDate = calendar.nextBusinessDay(fromDate);
+        const newEndDate = calendar.addBusinessDays(toDate, totalSessions - sessionIndex);
 
-        return { sessionIndex, fromDate, toDate, newEndDate };
+        // An admin may move the session earlier as well as later, but never
+        // before the birth date (출산일) and never onto or before the previous
+        // session, so sessions keep their order. Session 1 has no previous one.
+        const previousDate = sessionIndex > 1
+            ? planned?.find((row) => row.sessionIndex === sessionIndex - 1)?.serviceDate
+                ?? (() => {
+                    const row = days.find((day) => day.sessionIndex === sessionIndex - 1);
+                    return row ? toIso(row.serviceDate) : undefined;
+                })()
+            : undefined;
+        const bounds = [
+            client.birthDate ? toIso(client.birthDate) : null,
+            previousDate ? nextCalendarDay(previousDate) : null,
+        ].filter((value): value is string => value !== null).sort();
+        const minimumDate = bounds.length > 0 ? bounds[bounds.length - 1]! : null;
+
+        return { sessionIndex, fromDate, toDate, newEndDate, minimumDate };
     }
 
     private serializeRequest(row: ScheduleChangeRequestForSerialization) {
@@ -254,6 +289,8 @@ export class ScheduleChangeService {
     }
 
     async preview(ctx: ServiceRecordTokenContext): Promise<{ sessionIndex: number; fromDate: string; toDate: string }> {
+        // Display-only: the cached branch calendar is enough.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId);
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -272,7 +309,7 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })), record);
+        })), calendar, record);
 
         return {
             sessionIndex: target.sessionIndex,
@@ -282,6 +319,8 @@ export class ScheduleChangeService {
     }
 
     async createRequest(ctx: ServiceRecordTokenContext): Promise<{ id: string; sessionIndex: number; fromDate: string; toDate: string }> {
+        // Saved: the proposed dates are persisted, so read the calendar fresh.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const record = ctx.serviceRecordCaseId
             ? await this.prisma.service_record_case.findUnique({ where: { id: ctx.serviceRecordCaseId } })
             : await this.lifecycleService?.ensureForSchedule(ctx.scheduleId);
@@ -307,7 +346,7 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })), record);
+        })), calendar, record);
         if (!schedule.endDate) {
             throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
         }
@@ -344,7 +383,9 @@ export class ScheduleChangeService {
     async previewAdminChange(
         branchId: string,
         scheduleId: number,
-    ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string }> {
+    ): Promise<{ sessionIndex: number; fromDate: string; minimumDate: string | null }> {
+        // Display-only: the cached branch calendar is enough.
+        const calendar = await this.holidayCalendar.forBranch(branchId);
         const schedule = await this.prisma.employee_schedule.findFirst({
             where: { id: scheduleId, branchId },
             include: { client: true },
@@ -364,12 +405,12 @@ export class ScheduleChangeService {
             sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             serviceDate: day.serviceDate,
             locked: day.locked,
-        })), record);
+        })), calendar, record);
 
         return {
             sessionIndex: target.sessionIndex,
             fromDate: target.fromDate,
-            minimumDate: target.fromDate,
+            minimumDate: target.minimumDate,
         };
     }
 
@@ -377,16 +418,25 @@ export class ScheduleChangeService {
         scheduleId: number,
         selectedDate: string,
         tenant: { branchId?: string; userId?: string },
+        options: { allowNonBusinessDay?: boolean } = {},
     ) {
         const branchId = tenant.branchId ?? "";
+        // Saved: the date is validated and the shifted plan persisted against
+        // the branch calendar, read fresh before the transaction opens.
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         const selectedDateValue = toDbDate(selectedDate);
         if (
             Number.isNaN(selectedDateValue.getTime())
             || toIso(selectedDateValue) !== selectedDate
-            || !isBusinessDayKr(selectedDate)
+            || (!calendar.isBusinessDay(selectedDate) && !options.allowNonBusinessDay)
         ) {
             throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
         }
+        // A confirmed weekend/holiday exception counts as the business day before
+        // it, so later sessions are pulled onto the following business days.
+        const cascadeAnchor = calendar.isBusinessDay(selectedDate)
+            ? selectedDate
+            : previousBusinessDay(selectedDate, calendar);
 
         let scheduleIdForSync: number | null = null;
         let clientIdForSync: number | null = null;
@@ -448,15 +498,29 @@ export class ScheduleChangeService {
                     sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
                     serviceDate: day.serviceDate,
                     locked: day.locked,
-                })), record);
-                if (selectedDate <= target.fromDate) {
+                })), calendar, record);
+                if (selectedDate === target.fromDate) {
                     throw new ConflictException(codeOnlyProblemBody("SCHEDULE_DATE_NOT_POSTPONED"));
                 }
+                if (target.minimumDate && selectedDate < target.minimumDate) {
+                    throw new BadRequestException(codeOnlyProblemBody("INVALID_SCHEDULE_DATE"));
+                }
+                // The first session is the service start: moving it, either way, moves the
+                // start date. A later session moved before a start pulls that start back.
+                // Client period and assignment are judged separately (a replacement
+                // assignment starts after the client's period does).
+                const moveStart = (start: Date | null): boolean =>
+                    target.sessionIndex === 1 || Boolean(start && selectedDate < toIso(start));
+                const clientStartMoved = moveStart(schedule.client.startDate);
+                const startMoved = moveStart(schedule.startDate);
+                const newStartDate = startMoved ? selectedDateValue : schedule.startDate;
 
                 const shiftedPlannedSessions = shiftCanonicalPlan(
                     record,
                     target.sessionIndex,
                     selectedDate,
+                    calendar,
+                    options.allowNonBusinessDay,
                 );
                 const totalSessions = record.requiredSessionCount ?? schedule.client.duration;
                 if (!totalSessions || totalSessions <= 0) {
@@ -464,7 +528,9 @@ export class ScheduleChangeService {
                 }
                 const newEndDateIso = shiftedPlannedSessions
                     ? shiftedPlannedSessions[shiftedPlannedSessions.length - 1]!.serviceDate
-                    : addBusinessDaysKr(selectedDate, totalSessions - target.sessionIndex);
+                    : target.sessionIndex === totalSessions
+                        ? selectedDate
+                        : calendar.addBusinessDays(cascadeAnchor, totalSessions - target.sessionIndex);
                 const newEndDate = toDbDate(newEndDateIso);
 
                 if (shiftedPlannedSessions) {
@@ -523,21 +589,21 @@ export class ScheduleChangeService {
                     await tx.service_record_day.update({
                         where: { id: row.id },
                         data: {
-                            serviceDate: toDbDate(plannedRow?.serviceDate ?? addBusinessDaysKr(
-                                selectedDate,
+                            serviceDate: toDbDate(plannedRow?.serviceDate ?? calendar.addBusinessDays(
+                                cascadeAnchor,
                                 rowSessionIndex - target.sessionIndex,
                             )),
                         },
                     });
                 }
 
-                if (schedule.startDate) {
+                if (newStartDate) {
                     await assertNoActiveEmployeeScheduleOverlap(tx, {
                         branchId,
                         clientId: schedule.clientId,
                         primaryEmployeeId: schedule.primaryEmployeeId,
                         secondaryEmployeeId: schedule.secondaryEmployeeId,
-                        startDate: schedule.startDate,
+                        startDate: newStartDate,
                         endDate: newEndDate,
                         replaced: schedule.replaced,
                         excludeScheduleId: schedule.id,
@@ -551,21 +617,40 @@ export class ScheduleChangeService {
                 });
                 await tx.employee_schedule.update({
                     where: { id: scheduleId },
-                    data: { endDate: newEndDate },
+                    data: { ...(startMoved ? { startDate: newStartDate } : {}), endDate: newEndDate },
                 });
                 await tx.client.update({
                     where: { id: schedule.clientId },
-                    data: { endDate: newEndDate },
+                    data: { ...(clientStartMoved ? { startDate: selectedDateValue } : {}), endDate: newEndDate },
                 });
 
                 const syncedRecord = await this.lifecycleService?.ensureForClient(
                     schedule.clientId,
                     tx,
+                    calendar,
                 );
+                // A date move never changes how many sessions the case owes. The
+                // lifecycle sync re-caps a legacy case's N from the new period's
+                // business days, which an earlier move or a weekend exception can
+                // shrink, so restore the N the case had before the move.
+                if (
+                    syncedRecord
+                    && record.requiredSessionCount != null
+                    && syncedRecord.requiredSessionCount !== record.requiredSessionCount
+                ) {
+                    await tx.service_record_case.update({
+                        where: { id: syncedRecord.id },
+                        data: { requiredSessionCount: record.requiredSessionCount },
+                    });
+                    // The sync derived status and completedAt from the capped N;
+                    // derive them again from the restored one.
+                    await this.lifecycleService?.recompute(syncedRecord.id, tx, calendar);
+                }
                 await this.tokenService.extendExpiryForCase(
                     syncedRecord?.id ?? record.id,
                     getServiceRecordTokenExpiresAt(newEndDate),
                     tx,
+                    { onlyRaise: true },
                 );
 
                 const decidedAt = new Date();
@@ -580,7 +665,7 @@ export class ScheduleChangeService {
                     });
                 }
 
-                return tx.schedule_change_request.create({
+                const request = await tx.schedule_change_request.create({
                     data: {
                         branchId,
                         scheduleId,
@@ -595,11 +680,13 @@ export class ScheduleChangeService {
                         decidedAt,
                     },
                 });
+                const clientStart = clientStartMoved ? selectedDateValue : schedule.client.startDate;
+                return { request, clientStartDate: clientStart ? toIso(clientStart) : null };
             });
 
-            scheduleIdForSync = result.scheduleId;
-            clientIdForSync = result.clientId;
-            return this.serializeRequest(result);
+            scheduleIdForSync = result.request.scheduleId;
+            clientIdForSync = result.request.clientId;
+            return { ...this.serializeRequest(result.request), startDate: result.clientStartDate };
         } finally {
             if (scheduleIdForSync && branchId) {
                 await this.triggerService
@@ -623,6 +710,15 @@ export class ScheduleChangeService {
         let scheduleIdForSync: number | null = null;
         let branchIdForSync: string | null = null;
         let clientIdForSync: number | null = null;
+
+        // A caller without a branch can match no request: answer with the
+        // same 404 the lookup gives, before any calendar is loaded.
+        if (!tenant.branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+
+        // Saved: approval persists shifted dates, so read the calendar fresh
+        // before the transaction opens. The request lookup below is pinned to
+        // this same branch.
+        const calendar = await this.holidayCalendar.forBranch(tenant.branchId, { fresh: true });
 
         try {
             const result = await this.prisma.$transaction(async (tx) => {
@@ -699,8 +795,13 @@ export class ScheduleChangeService {
                     sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
                     serviceDate: day.serviceDate,
                     locked: day.locked,
-                })), record);
-                if (target.sessionIndex !== request.sessionIndex || target.fromDate !== toIso(request.fromDate)) {
+                })), calendar, record);
+                if (
+                    target.sessionIndex !== request.sessionIndex
+                    || target.fromDate !== toIso(request.fromDate)
+                    || target.toDate !== toIso(request.toDate)
+                    || target.newEndDate !== toIso(request.newEndDate)
+                ) {
                     throw new StaleRequestError(request.id, request.branchId);
                 }
 
@@ -709,6 +810,7 @@ export class ScheduleChangeService {
                     record,
                     target.sessionIndex,
                     target.toDate,
+                    calendar,
                 );
                 if (shiftedPlannedSessions) {
                     await tx.service_record_case.update({
@@ -766,7 +868,7 @@ export class ScheduleChangeService {
                     await tx.service_record_day.update({
                         where: { id: row.id },
                         data: {
-                            serviceDate: toDbDate(plannedRow?.serviceDate ?? addBusinessDaysKr(
+                            serviceDate: toDbDate(plannedRow?.serviceDate ?? calendar.addBusinessDays(
                                 target.toDate,
                                 rowSessionIndex - target.sessionIndex,
                             )),
@@ -806,13 +908,31 @@ export class ScheduleChangeService {
                     data: { endDate: newEndDate },
                 });
 
-                const syncedRecord = await this.lifecycleService?.ensureForClient(request.clientId, tx);
+                const syncedRecord = await this.lifecycleService?.ensureForClient(
+                    request.clientId,
+                    tx,
+                    calendar,
+                );
+
+                // 날짜 변경으로 재계산된 회차 수 대신 동기화 전의 필수 회차 수를 유지한다.
+                if (
+                    syncedRecord
+                    && record.requiredSessionCount != null
+                    && syncedRecord.requiredSessionCount !== record.requiredSessionCount
+                ) {
+                    await tx.service_record_case.update({
+                        where: { id: syncedRecord.id },
+                        data: { requiredSessionCount: record.requiredSessionCount },
+                    });
+                    await this.lifecycleService?.recompute(syncedRecord.id, tx, calendar);
+                }
 
                 if (syncedRecord) {
                     await this.tokenService.extendExpiryForCase(
                         syncedRecord.id,
                         getServiceRecordTokenExpiresAt(newEndDate),
                         tx,
+                        { onlyRaise: true },
                     );
                 } else {
                     await this.tokenService.extendExpiryForSchedule(

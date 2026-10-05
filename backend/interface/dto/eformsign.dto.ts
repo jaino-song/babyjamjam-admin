@@ -2,6 +2,7 @@ import { Type } from "class-transformer";
 import {
     ArrayNotEmpty,
     IsArray,
+    IsInt,
     IsNotEmpty,
     IsNumber,
     IsOptional,
@@ -16,6 +17,13 @@ export class GenerateSignatureRequestDto {
     @IsNumber()
     @Min(0)
     executionTime!: number;
+}
+
+export class SupersedeDocumentRequestDto {
+    /** The client whose replacement contract was just sent. */
+    @IsInt()
+    @Min(1)
+    clientId!: number;
 }
 
 export class DeleteDocumentsRequestDto {

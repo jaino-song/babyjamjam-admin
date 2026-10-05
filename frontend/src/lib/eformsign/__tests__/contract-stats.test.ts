@@ -1,3 +1,4 @@
+import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import { foldContractStats } from "@/lib/eformsign/status-codes";
 
 // Pins the StatsBar bucket semantics currently in contracts/page.tsx:516-557.
@@ -95,6 +96,34 @@ describe("foldContractStats", () => {
         { status_type: "doc_request_participant", step_type: "05", step_name: "이용자", step_recipient_types: ["02"] },
       ]).sendRequired,
     ).toBe(1);
+  });
+
+  it("opens the review window by the branch calendar when one is passed", () => {
+    // TEST_NOW is Sat 2026-08-01 (KST). Tue 08-04 opens on Mon 08-03 with the
+    // built-in list, but on Fri 07-31 when the branch closed Mon 08-03.
+    const doc = {
+      status_type: "060",
+      step_type: "06",
+      step_name: "제공기관 검토",
+      step_recipient_types: ["01"],
+      contract_end_date: "2026-08-04",
+    };
+    const branchCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-03"], {
+      version: "kr-db-test",
+      supportedYears: [2025, 2026, 2027],
+    });
+    expect(foldContractStats([doc])).toMatchObject({ reviewNeeded: 0, signed: 1 });
+    expect(foldContractStats([doc], branchCalendar)).toMatchObject({ reviewNeeded: 1, signed: 0 });
+  });
+
+  it("falls back to the built-in calendar for an end date outside the branch calendar's years", () => {
+    const narrowCalendar = createKrBusinessDayCalendar([], { version: "kr-db-test", supportedYears: [2026] });
+    expect(
+      foldContractStats(
+        [{ status_type: "060", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: "2024-12-31" }],
+        narrowCalendar,
+      ),
+    ).toMatchObject({ reviewNeeded: 1 });
   });
 
   it("tallies a mixed batch", () => {

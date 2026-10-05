@@ -9,6 +9,7 @@ import {
     ORIGINAL_THIRTEEN_DATES,
     SHIFTED_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -30,7 +31,7 @@ describeE2E("admin confirmation draft source (real disposable PostgreSQL)", () =
         // Instantiate only the production repository/service. No application
         // module, scheduler, external provider, or default database client runs.
         const repository = new ServiceRecordEditRepository(prisma as PrismaService);
-        const service = new AdminServiceRecordEditService(repository);
+        const service = new AdminServiceRecordEditService(repository, createHolidayCalendarStub());
         const started = await service.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         expect(started.draft).not.toBeNull();
         const draft = started.draft!;
@@ -67,7 +68,7 @@ describeE2E("admin confirmation draft source (real disposable PostgreSQL)", () =
     it("keeps draft and source in one snapshot when a concurrent transaction changes both", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         const ordinaryRepository = new ServiceRecordEditRepository(prisma as PrismaService);
-        const service = new AdminServiceRecordEditService(ordinaryRepository);
+        const service = new AdminServiceRecordEditService(ordinaryRepository, createHolidayCalendarStub());
         const started = await service.startDraft(fixture.branch.id, fixture.client.id, fixture.actorUserId, {});
         const draft = started.draft!;
         const firstRead = serviceRecordConfirmBarrier();

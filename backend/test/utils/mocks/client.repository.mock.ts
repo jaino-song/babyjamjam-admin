@@ -10,6 +10,7 @@ import {
     InitialClientSchedule,
     PaginatedResult,
 } from "domain/repositories/client.repository.interface";
+import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 import { clientAgentTargetVersion } from "application/usecases/client/client-agent-target";
 import {
@@ -233,7 +234,7 @@ export class MockClientRepository implements IClientRepository {
             return "stale";
         }
 
-        client.update({ serviceStatus: newServiceStatus });
+        client.update({ serviceStatus: newServiceStatus }, KR_BUILTIN_CALENDAR);
         return "updated";
     }
 
@@ -242,12 +243,13 @@ export class MockClientRepository implements IClientRepository {
         id: number,
         expectedTargetVersion: string,
         updates: Parameters<IClientRepository["updateIfTargetVersion"]>[3],
+        calendar: KrBusinessDayCalendar,
         _transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null> {
         void _transaction;
         const client = await this.findById(branchid, id);
         if (!client || clientAgentTargetVersion(client) !== expectedTargetVersion) return null;
-        client.update(updates);
+        client.update(updates, calendar);
         return client;
     }
 

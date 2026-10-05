@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import type {
     ServiceRecordAssignment,
     ServiceRecordOverview,
@@ -23,6 +25,8 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
 jest.mock("@/hooks/use-toast", () => ({
     useToast: () => ({ toast }),
 }));
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
     useGetAuthUser: () => mockUseGetAuthUser(),
@@ -661,6 +665,44 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("예정일 2026.09.23")).toBeInTheDocument();
         expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(["예정일 2026.09.23", "예정일 2026.09.28"]);
         expect(screen.queryByText("예정일 2026.09.24")).not.toBeInTheDocument();
+    });
+
+    it("uses the branch calendar for empty session placeholders", () => {
+        const branchCalendar = createKrBusinessDayCalendar(
+            [...KR_BUILTIN_HOLIDAYS, "2026-09-28"],
+            { version: "kr-db-test", supportedYears: [2025, 2026, 2027] },
+        );
+        const defaultImplementation = jest.mocked(useBusinessDayCalendar).getMockImplementation();
+        jest.mocked(useBusinessDayCalendar).mockReturnValue({
+            calendar: branchCalendar,
+            ready: true,
+            error: null,
+            retry: jest.fn(),
+            refreshForSave: async () => ({ ok: true, calendar: branchCalendar, changed: false }),
+            version: branchCalendar.version,
+        });
+        try {
+            const assignment = {
+                ...createAssignment(1, "none"),
+                startDate: "2026-09-23T00:00:00.000Z",
+                endDate: "2026-09-30T00:00:00.000Z",
+                totalSessions: 2,
+            };
+
+            render(
+                <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                    overview={{ assignments: [assignment] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            // 09-28 is a branch holiday, so session 2 moves from 09-28 to 09-29.
+            expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(["예정일 2026.09.23", "예정일 2026.09.29"]);
+        } finally {
+            jest.mocked(useBusinessDayCalendar).mockImplementation(defaultImplementation!);
+        }
     });
 
     it("chains an unwritten slot's 예정일 from the last written session's actual date", () => {

@@ -23,7 +23,9 @@ export class ScheduleChangeController {
         @Param("scheduleId", ParseIntPipe) scheduleId: number,
         @Body() dto: ApplyScheduleChangeDto,
     ) {
-        return this.service.applyAdminChange(scheduleId, dto.toDate, tenant);
+        return this.service.applyAdminChange(scheduleId, dto.toDate, tenant, {
+            allowNonBusinessDay: dto.allowNonBusinessDay === true,
+        });
     }
 
     @Post(":id/approve")

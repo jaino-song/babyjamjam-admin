@@ -1,4 +1,6 @@
 import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-service-record-edit.api";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR as KR_BUILTIN_CALENDAR_FOR_TEST, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import { AdminServiceRecordEditApiError } from "@/features/service-records/types";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
@@ -16,6 +18,8 @@ import {
     type AdminServiceRecordEditorOverview,
 } from "./ServiceRecordAdminWizard";
 import type { AdminServiceRecordEditState } from "@/features/service-records/types";
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 function makeSession(
     sessionIndex: number,
@@ -743,6 +747,95 @@ describe("per-session administrator editing", () => {
         expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.08");
         expect(screen.getByRole("button", { name: "수정 확인" })).toBeInTheDocument();
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+    });
+
+    describe("branch calendar", () => {
+        const defaultImplementation = jest.mocked(useBusinessDayCalendar).getMockImplementation();
+        const branchCalendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-09-10"], {
+            version: "kr-db-test",
+            supportedYears: [2025, 2026, 2027],
+        });
+        const mockCalendarResult = (overrides: Partial<ReturnType<typeof useBusinessDayCalendar>>) => {
+            jest.mocked(useBusinessDayCalendar).mockReturnValue({
+                calendar: branchCalendar,
+                ready: true,
+                error: null,
+                retry: jest.fn(),
+                refreshForSave: async () => ({ ok: true, calendar: branchCalendar, changed: false }),
+                version: branchCalendar.version,
+                ...overrides,
+            });
+        };
+        afterEach(() => {
+            jest.mocked(useBusinessDayCalendar).mockImplementation(defaultImplementation!);
+        });
+
+        it.each([true, false])("blocks a freshly changed suffix before writing a draft (changed=%s)", async (changed) => {
+            const refreshForSave = jest.fn().mockResolvedValue({ ok: true, calendar: branchCalendar, changed });
+            mockCalendarResult({ calendar: KR_BUILTIN_CALENDAR_FOR_TEST, refreshForSave });
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            fireEvent.click(screen.getByRole("option", { name: "8일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+            await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        });
+
+        it("blocks a date move when save refresh fails without locking the editor", async () => {
+            mockCalendarResult({ refreshForSave: async () => ({ ok: false }) });
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            fireEvent.click(screen.getByRole("option", { name: "8일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+            await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        });
+
+        it("applies a branch-added holiday to the date choices and to the following-session shift", () => {
+            mockCalendarResult({});
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            expect(screen.queryByRole("option", { name: "10일" })).not.toBeInTheDocument();
+            fireEvent.click(screen.getByRole("option", { name: "11일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            // 09-07 -> 09-11 skips the 09-10 branch holiday: 3 business days (4 with the built-in list).
+            expect(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).toHaveTextContent("뒷 회차들의 서비스 제공일도 3 영업일씩 수정할까요?");
+        });
+
+        it("keeps the confirm action disabled and explains why until the calendar is ready", () => {
+            mockCalendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR_FOR_TEST });
+            const result = open();
+            expect(result.container.querySelector('[data-component$="_body_date-edit"]')).toBeDisabled();
+            expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+            editNote(result.container);
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeDisabled();
+            fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+
+            mockCalendarResult({});
+            result.rerender(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        });
+
+        it("offers a retry when the calendar failed to load", () => {
+            const retry = jest.fn();
+            mockCalendarResult({ ready: false, error: "load-failed", retry, calendar: KR_BUILTIN_CALENDAR_FOR_TEST });
+            open();
+            fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+            expect(retry).toHaveBeenCalledTimes(1);
+        });
     });
 
     it("retries an unknown confirmation result with exactly the same request", async () => {

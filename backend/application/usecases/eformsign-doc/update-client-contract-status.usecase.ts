@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
 /**
  * Contract status values for client entity
@@ -61,7 +62,9 @@ export class UpdateClientContractStatusUsecase {
             updateData.eDocId = documentId;
         }
 
-        client.update(updateData);
+        // Deprecated and unwired (no module provides this usecase), so it has no
+        // HolidayCalendarService; the patch here never touches the service dates.
+        client.update(updateData, KR_BUILTIN_CALENDAR);
         await this.clientRepository.update(branchid, client);
 
         this.logger.log(

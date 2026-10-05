@@ -17,6 +17,7 @@ import {
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
+import { eformsignApi } from "@/services/api";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -50,6 +51,14 @@ import { ClientMessageHistoryDetail } from "@/components/app/clients/client-mess
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
 import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
+import {
+  ServiceScheduleContractResendModal,
+  type ContractReissueOptions,
+} from "@/components/app/clients/ServiceScheduleContractResendModal";
+import {
+  contractPaymentDateFromFields,
+  isCancellableContractStatus,
+} from "@babyjamjam/shared/eformsign/contract-reissue";
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -60,15 +69,7 @@ interface ServiceScheduleChangeTarget {
   scheduleId: number;
   sessionIndex: number;
   currentDate: string;
-  minimumDate: string;
-}
-
-function getTodayIsoDate(): string {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, "0");
-  const day = String(today.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  minimumDate: string | null;
 }
 
 function formatScheduleChangeMonthDay(value: string): string {
@@ -616,7 +617,7 @@ export function ClientDetailContent({
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
   onMessage: () => void;
-  onIssueContract: (client: Client) => void;
+  onIssueContract: (client: Client, reissue?: ContractReissueOptions) => void;
   onEdit: (client: Client) => void;
   onDelete: (id: number) => void;
   onClientUpdated: (client: Client) => void;
@@ -636,6 +637,33 @@ export function ClientDetailContent({
   const [isResettingLink, setIsResettingLink] = useState(false);
   const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
   const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
+  const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
+  const [isPreparingContractReissue, setIsPreparingContractReissue] = useState(false);
+
+  // 수정 전송: reopen contract creation with the new period, keeping the old payment date.
+  // An unsigned old contract is cancelled once the new one is sent.
+  const handleContractReissue = async (target: Client) => {
+    setIsPreparingContractReissue(true);
+    let paymentDate: string | undefined;
+    try {
+      const previousDocumentId = target.latestContractDocumentId ?? target.eDocId;
+      if (previousDocumentId) {
+        const previous = await eformsignApi.getDocument(previousDocumentId);
+        paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
+      }
+    } catch {
+      // Without the old document the payment date is left for the user to fill.
+    } finally {
+      setIsPreparingContractReissue(false);
+    }
+    setContractResendClient(null);
+    onIssueContract(target, {
+      paymentDate,
+      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus)
+        ? target.latestContractDocumentId
+        : undefined,
+    });
+  };
   const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
   const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
@@ -688,14 +716,12 @@ export function ClientDetailContent({
       }
 
       const preview = await previewServiceScheduleChange(activeAssignment.scheduleId);
-      const today = getTodayIsoDate();
-      const minimumDate = preview.minimumDate > today ? preview.minimumDate : today;
-      setSelectedScheduleChangeDate(minimumDate);
+      setSelectedScheduleChangeDate(preview.fromDate);
       setScheduleChangeTarget({
         scheduleId: activeAssignment.scheduleId,
         sessionIndex: preview.sessionIndex,
         currentDate: preview.fromDate,
-        minimumDate,
+        minimumDate: preview.minimumDate,
       });
     } catch {
       toast({
@@ -707,19 +733,24 @@ export function ClientDetailContent({
     }
   };
 
-  const handleApplyServiceScheduleChange = async () => {
+  const handleApplyServiceScheduleChange = async (allowNonBusinessDay: boolean) => {
     if (!scheduleChangeTarget) return;
 
     setIsApplyingScheduleChange(true);
     try {
       const changed = await applyServiceScheduleChange(scheduleChangeTarget.scheduleId, {
         toDate: selectedScheduleChangeDate,
+        ...(allowNonBusinessDay ? { allowNonBusinessDay: true } : {}),
       });
-      onClientUpdated({
+      // The server decides whether the move also moved the service start.
+      const updatedClient: Client = {
         ...client,
+        ...(changed.startDate ? { startDate: changed.startDate } : {}),
         endDate: changed.newEndDate,
         pendingScheduleChange: null,
-      });
+      };
+      onClientUpdated(updatedClient);
+      setContractResendClient(updatedClient);
       setScheduleChangeTarget(null);
       setSelectedScheduleChangeDate("");
       toast({ variant: "success", description: `서비스 일정과 종료일(${changed.newEndDate})을 변경했어요` });
@@ -1182,7 +1213,17 @@ export function ClientDetailContent({
             setScheduleChangeTarget(null);
             setSelectedScheduleChangeDate("");
           }}
-          onSubmit={() => void handleApplyServiceScheduleChange()}
+          onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
+        />
+      ) : null}
+
+      {contractResendClient ? (
+        <ServiceScheduleContractResendModal
+          data-component={`${dataComponent}_schedule-contract-resend-modal`}
+          open
+          onKeep={() => setContractResendClient(null)}
+          isPending={isPreparingContractReissue}
+          onResend={() => void handleContractReissue(contractResendClient)}
         />
       ) : null}
 

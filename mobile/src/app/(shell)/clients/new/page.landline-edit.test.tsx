@@ -16,6 +16,8 @@ let mockVoucherPricesError = false;
 let mockSearchParams = new URLSearchParams();
 let mockEditingClient: Client | undefined;
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => mockSearchParams,

@@ -3,7 +3,12 @@ import {
     resolveEformsignDocDisplayStatus,
 } from "application/utils/eformsign-doc-display-status";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
-import { UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import {
+    createKrBusinessDayCalendar,
+    KR_BUILTIN_CALENDAR,
+    KR_BUILTIN_HOLIDAYS,
+    UnsupportedKoreanHolidayYearError,
+} from "domain/utils/business-days";
 
 /**
  * Parity pin: these fixtures mirror
@@ -24,70 +29,132 @@ function reviewStepDoc(contractEndDate?: string | null) {
 
 describe("isContractReviewWindowOpen (backend copy)", () => {
     it("opens exactly 1 business day before the end date (Friday end → Thursday)", () => {
-        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"))).toBe(false);
-        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-06"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-07"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"), KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-07"), KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("skips the weekend (Monday end → Friday)", () => {
-        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-06"))).toBe(false);
-        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-07"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-08"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-09"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-07"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-08"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-09"), KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("stays open after the end date and for weekend end dates", () => {
-        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-20"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-06"))).toBe(false);
-        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-07"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-09", kstNoon("2026-08-07"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-20"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-07"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-09", kstNoon("2026-08-07"), KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("skips Korean holidays like weekends (Tuesday end after 광복절 대체휴일 → preceding Friday)", () => {
-        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-13"))).toBe(false);
-        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-17"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-13"), KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-17"), KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("uses the KST calendar day, not the UTC one", () => {
-        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T16:00:00.000Z"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T14:00:00.000Z"))).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T16:00:00.000Z"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T14:00:00.000Z"), KR_BUILTIN_CALENDAR)).toBe(false);
     });
 
     it("treats a missing or malformed end date as an open window", () => {
-        expect(isContractReviewWindowOpen(null, kstNoon("2026-08-01"))).toBe(true);
-        expect(isContractReviewWindowOpen(undefined, kstNoon("2026-08-01"))).toBe(true);
-        expect(isContractReviewWindowOpen("", kstNoon("2026-08-01"))).toBe(true);
-        expect(isContractReviewWindowOpen("nonsense", kstNoon("2026-08-01"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-02-31", kstNoon("2026-02-01"))).toBe(true);
-        expect(isContractReviewWindowOpen("2026-13-01", kstNoon("2026-02-01"))).toBe(true);
+        expect(isContractReviewWindowOpen(null, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen(undefined, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("", kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("nonsense", kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-02-31", kstNoon("2026-02-01"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-13-01", kstNoon("2026-02-01"), KR_BUILTIN_CALENDAR)).toBe(true);
     });
 
     it("fails closed when a valid end date uses an unsupported holiday year", () => {
-        expect(() => isContractReviewWindowOpen("2028-01-03", kstNoon("2028-01-01")))
+        expect(() => isContractReviewWindowOpen("2028-01-03", kstNoon("2028-01-01"), KR_BUILTIN_CALENDAR))
             .toThrow(UnsupportedKoreanHolidayYearError);
-        expect(() => isContractReviewWindowOpen("2028-01-01", kstNoon("2027-12-31")))
+        expect(() => isContractReviewWindowOpen("2028-01-01", kstNoon("2027-12-31"), KR_BUILTIN_CALENDAR))
             .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+});
+
+/**
+ * Mirrors "isContractReviewWindowOpen with an explicit calendar" in
+ * packages/shared/src/constants/eformsign-doc-status.test.ts.
+ */
+describe("isContractReviewWindowOpen with an explicit calendar (backend copy)", () => {
+    const builtinCalendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+        supportedYears: [2024, 2025, 2026, 2027],
+    });
+
+    it("gives the same results as the default for the built-in calendar, incl. right after a holiday", () => {
+        const cases: Array<[string, string]> = [
+            ["2026-08-18", "2026-08-13"],
+            ["2026-08-18", "2026-08-14"],
+            ["2026-03-03", "2026-02-27"],
+            ["2026-03-03", "2026-03-02"],
+            ["2026-08-07", "2026-08-05"],
+            ["2026-08-07", "2026-08-06"],
+            ["2026-08-08", "2026-08-07"],
+        ];
+        for (const [end, today] of cases) {
+            expect(isContractReviewWindowOpen(end, kstNoon(today), builtinCalendar))
+                .toBe(isContractReviewWindowOpen(end, kstNoon(today), KR_BUILTIN_CALENDAR));
+        }
+    });
+
+    it("moves the window when the calendar has an extra holiday", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        // 2026-08-07 (Fri) end: default opens Thu 8/6; with 8/6 a holiday it opens Wed 8/5.
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"), KR_BUILTIN_CALENDAR)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"), custom)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-04"), custom)).toBe(false);
+    });
+
+    it("moves the window the other way when the branch removed a built-in holiday", () => {
+        // Branch excluded 광복절 대체휴일 (2026-08-17): Tuesday 8/18 now opens on Monday 8/17.
+        const withoutHoliday = createKrBusinessDayCalendar(
+            KR_BUILTIN_HOLIDAYS.filter((date) => date !== "2026-08-17"),
+            { supportedYears: [2026] },
+        );
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"), KR_BUILTIN_CALENDAR)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"), withoutHoliday)).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-17"), withoutHoliday)).toBe(true);
+    });
+
+    it("fails closed when the calendar does not support the end-date year", () => {
+        const only2026 = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, { supportedYears: [2026] });
+        expect(() => isContractReviewWindowOpen("2027-03-02", kstNoon("2027-03-01"), only2026))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+
+    it("passes the calendar through resolveEformsignDocDisplayStatus", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        const doc = reviewStepDoc("2026-08-07");
+        expect(resolveEformsignDocDisplayStatus(doc, kstNoon("2026-08-05"), KR_BUILTIN_CALENDAR)).toBe("signed");
+        expect(resolveEformsignDocDisplayStatus(doc, kstNoon("2026-08-05"), custom)).toBe("review");
     });
 });
 
 describe("resolveEformsignDocDisplayStatus", () => {
     it("maps terminal categories regardless of dates", () => {
         expect(resolveEformsignDocDisplayStatus(
-            { id: "d", current_status: { status_type: "003" } }, kstNoon("2026-08-01"),
+            { id: "d", current_status: { status_type: "003" } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("completed");
         expect(resolveEformsignDocDisplayStatus(
-            { id: "d", current_status: { status_type: "080" } }, kstNoon("2026-08-01"),
+            { id: "d", current_status: { status_type: "080" } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("expired");
         expect(resolveEformsignDocDisplayStatus(
-            { id: "d", current_status: { status_type: "049" } }, kstNoon("2026-08-01"),
+            { id: "d", current_status: { status_type: "049" } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("unknown");
     });
 
     it("splits provider-review docs on the review window", () => {
-        expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-01"))).toBe("signed");
-        expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-06"))).toBe("review");
-        expect(resolveEformsignDocDisplayStatus(reviewStepDoc(null), kstNoon("2026-08-01"))).toBe("review");
+        expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("signed");
+        expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR)).toBe("review");
+        expect(resolveEformsignDocDisplayStatus(reviewStepDoc(null), kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("review");
     });
 
     it("labels docs before the customer signature pending", () => {
@@ -97,7 +164,7 @@ describe("resolveEformsignDocDisplayStatus", () => {
                 current_status: { status_type: "060", step_type: "05", step_name: "이용자 서명" },
                 contract_end_date: "2026-08-07",
             },
-            kstNoon("2026-08-06"),
+            kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
         )).toBe("pending");
     });
 });
@@ -113,11 +180,11 @@ describe("resolveEformsignDocDisplayStatus (unassigned rows)", () => {
         // review that a row with no client attached cannot receive.
         expect(resolveEformsignDocDisplayStatus(
             { ...reviewStepDoc("2026-08-07"), [MIRROR_UNASSIGNED_KEY]: true },
-            kstNoon("2026-08-06"),
+            kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
         )).toBe("unassigned");
         expect(resolveEformsignDocDisplayStatus(
             { ...reviewStepDoc("2026-08-07"), [MIRROR_UNASSIGNED_KEY]: true },
-            kstNoon("2026-08-01"),
+            kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("unassigned");
     });
 
@@ -131,18 +198,18 @@ describe("resolveEformsignDocDisplayStatus (unassigned rows)", () => {
                 contract_end_date: "2026-08-07",
                 [MIRROR_UNASSIGNED_KEY]: true,
             },
-            kstNoon("2026-08-06"),
+            kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
         )).toBe("pending");
     });
 
     it("leaves terminal unclaimed rows terminal", () => {
         expect(resolveEformsignDocDisplayStatus(
             { id: "d", current_status: { status_type: "003" }, [MIRROR_UNASSIGNED_KEY]: true },
-            kstNoon("2026-08-01"),
+            kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("completed");
         expect(resolveEformsignDocDisplayStatus(
             { id: "d", current_status: { status_type: "080" }, [MIRROR_UNASSIGNED_KEY]: true },
-            kstNoon("2026-08-01"),
+            kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
         )).toBe("expired");
     });
 
@@ -151,11 +218,11 @@ describe("resolveEformsignDocDisplayStatus (unassigned rows)", () => {
         // value must not be able to relabel a row the operator can act on.
         expect(resolveEformsignDocDisplayStatus(
             { ...reviewStepDoc("2026-08-07"), [MIRROR_UNASSIGNED_KEY]: "true" },
-            kstNoon("2026-08-06"),
+            kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
         )).toBe("review");
         expect(resolveEformsignDocDisplayStatus(
             { ...reviewStepDoc("2026-08-07"), [MIRROR_UNASSIGNED_KEY]: false },
-            kstNoon("2026-08-06"),
+            kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR,
         )).toBe("review");
     });
 });

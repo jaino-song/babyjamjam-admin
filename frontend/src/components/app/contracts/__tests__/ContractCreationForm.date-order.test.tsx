@@ -12,6 +12,7 @@ const mockCreateClientMutateAsync = jest.fn();
 const mockUpdateClientMutateAsync = jest.fn();
 const mockDeleteClientMutateAsync = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));
@@ -148,9 +149,7 @@ function renderRetryableForm() {
 }
 
 function overrideEndDate(endDate: string): void {
-  act(() => {
-    useFormStore.setState({ endDate });
-  });
+  fireEvent.change(screen.getByLabelText("계약 종료일"), { target: { value: endDate } });
 }
 
 describe("ContractCreationForm — contract date ordering", () => {

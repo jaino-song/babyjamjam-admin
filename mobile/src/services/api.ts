@@ -520,6 +520,11 @@ export const eformsignApi = {
     ): Promise<EformsignDeleteDocumentsResponse> => {
         return eformsignApi.deleteDocuments([documentId]);
     },
+    // Cancels a contract a re-issue replaced. The server refuses a signed contract
+    // and refuses until the client is linked to the replacement.
+    supersedeDocument: async (documentId: string, clientId: number): Promise<void> => {
+        await api.post(`/eformsign/documents/${encodeURIComponent(documentId)}/supersede`, { clientId });
+    },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {
         const { data } = await api.get('/eformsign/documents');

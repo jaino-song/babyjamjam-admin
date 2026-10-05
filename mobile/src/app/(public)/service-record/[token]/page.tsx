@@ -2,7 +2,7 @@
 
 import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 
 import {
@@ -10,6 +10,7 @@ import {
     DEFAULT_DAILY_ANSWERS,
     formatMonthDayKo,
 } from "@babyjamjam/service-record-ui";
+import type { HolidayYearPayload } from "@babyjamjam/shared/utils/holiday-calendar";
 import type {
     ScheduleChangePreview,
     ServiceRecordContext,
@@ -19,10 +20,15 @@ import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonMod
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
-import { isBusinessDayKr, isoDateInKorea, nextBusinessDayKr } from "@/lib/date/business-days";
+import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
+import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
+import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
+import { type KrBusinessDayCalendar } from "@/lib/date/business-days";
 import {
     getServiceDateShiftBusinessDays,
     isServiceDateMismatch,
+    legacyDefaultServiceDate,
+    serviceRecordCalendarYears,
 } from "@/lib/service-records/page-helpers";
 import {
     captureServiceRecordError,
@@ -189,7 +195,8 @@ export default function ServiceRecordPage() {
     const [scheduleChangeModalOpen, setScheduleChangeModalOpen] = useState(false);
     const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
-    const [pendingServiceDate, setPendingServiceDate] = useState<{ next: string; shift: number } | null>(null);
+    const [pendingServiceDate, setPendingServiceDate] = useState<{ next: string } | null>(null);
+    const [pendingOpenDay, setPendingOpenDay] = useState<{ day: number; editExisting: boolean } | null>(null);
     const navigateTo = useCallback((
         nextScreen: Screen,
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
@@ -241,6 +248,24 @@ export default function ServiceRecordPage() {
         },
         [token],
     );
+
+    // Branch calendar for this token. The access cookie only exists once the
+    // context has loaded, so loading starts then (not on the first link check).
+    const calendarYears = useMemo(() => serviceRecordCalendarYears(ctx), [ctx]);
+    const fetchHolidayYear = useCallback(async (year: number): Promise<HolidayYearPayload> => {
+        const res = await api(`/holidays?year=${year}`, {}, false);
+        if (!res.ok) throw new Error(`holidays ${res.status}`);
+        return res.json();
+    }, [api]);
+    const {
+        calendar,
+        ready: calendarReady,
+        error: calendarError,
+        retry: retryCalendar,
+    } = useTokenBusinessDayCalendar({ enabled: ctx !== null, years: calendarYears, fetchYear: fetchHolidayYear });
+    // Legacy contexts (no planned date vector) derive the default session dates
+    // from the calendar, and those dates are submitted: wait for the branch calendar.
+    const defaultsGated = ctx !== null && ctx.plannedSessionDates === undefined && !calendarReady;
 
     const loadContext = useCallback(async (historyMode: HistoryMode = "replace") => {
         const res = await api("/context");
@@ -334,7 +359,13 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay)));
+                if (defaultsGated) {
+                    // The default date would come from the built-in calendar; open the day once the branch calendar is ready.
+                    setPendingOpenDay({ day: targetDay, editExisting: false });
+                    navigateTo("overview", { mode: "replace" });
+                    return;
+                }
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, calendar), ctx.plannedSessionDates !== undefined));
             }
             navigateTo("day", {
                 mode: "none",
@@ -345,7 +376,7 @@ export default function ServiceRecordPage() {
 
         window.addEventListener("popstate", handlePopState);
         return () => window.removeEventListener("popstate", handlePopState);
-    }, [ctx, navigateTo, token]);
+    }, [calendar, ctx, defaultsGated, navigateTo, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
     const nextOpenDay = useCallback(() => {
@@ -381,20 +412,9 @@ export default function ServiceRecordPage() {
                 if (!plannedDateVectorValid) return "";
                 return ctx.plannedSessionDates.find((session) => session.sessionIndex === d)?.serviceDate ?? "";
             }
-            const sessions = ctx?.sessions ?? [];
-            const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
-            const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
-            // Row-first recursive chain: an existing row's date (e.g. an approved
-            // postpone) shifts every later default, not just the next session.
-            const chain = (k: number): string => {
-                const row = sessions.find((s) => s.sessionIndex === k);
-                if (row) return row.serviceDate.slice(0, 10);
-                if (k <= 1) return start;
-                return nextBusinessDayKr(chain(k - 1));
-            };
-            return chain(d);
+            return legacyDefaultServiceDate(ctx, d, calendar);
         },
-        [ctx?.plannedSessionDates, ctx?.sessions, ctx?.startDate, plannedDateVectorValid],
+        [calendar, ctx, plannedDateVectorValid],
     );
     async function submitPhone() {
         if (phone.replace(/\D/g, "").length < 10) { setPhoneError("휴대폰 번호를 입력해 주세요."); return; }
@@ -453,6 +473,10 @@ export default function ServiceRecordPage() {
         const shouldEdit = editExisting || Boolean(session?.locked);
         if (shouldEdit && !session?.locked) return;
         if (!shouldEdit && d !== nextOpenDay()) return;
+        if (!shouldEdit && defaultsGated) {
+            setPendingOpenDay({ day: d, editExisting });
+            return;
+        }
 
         setEditing(shouldEdit);
         setMomSignature(null);
@@ -472,12 +496,13 @@ export default function ServiceRecordPage() {
             initialPageIdx = canRestoreDraft
                 ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d)));
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, calendar), ctx?.plannedSessionDates !== undefined));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
 
     async function submitDay() {
+        if (defaultsGated) return;
         const serviceDate = (draft["_date"] as string) ?? defaultDate(day);
         setBusy(true);
         try {
@@ -563,7 +588,28 @@ export default function ServiceRecordPage() {
         }
     }
 
+    // The shift decides the schedule-shift confirmation, so it is only computed
+    // from the loaded branch calendar (never the built-in list).
+    const pendingShift = useMemo(
+        () => (pendingServiceDate && calendarReady
+            ? getServiceDateShiftBusinessDays(defaultDate(day), pendingServiceDate.next, calendar)
+            : null),
+        [calendar, calendarReady, day, defaultDate, pendingServiceDate],
+    );
+
+    // A day opened while the calendar was loading runs once when it becomes ready.
+    const openDayRef = useRef(openDay);
+    useEffect(() => {
+        openDayRef.current = openDay;
+    });
+    useEffect(() => {
+        if (!calendarReady || pendingOpenDay === null) return;
+        setPendingOpenDay(null);
+        openDayRef.current(pendingOpenDay.day, pendingOpenDay.editExisting);
+    }, [calendarReady, pendingOpenDay]);
+
     function handleServiceDateChange(next: string) {
+        if (ctx?.plannedSessionDates !== undefined) return;
         const expected = defaultDate(day);
         if (next === expected) {
             setField("_date", next);
@@ -574,21 +620,17 @@ export default function ServiceRecordPage() {
             // already blocks the date picker from offering an earlier date.
             return;
         }
-        // Compute the shift here, outside render, so an unsupported year (or
-        // any other throw from the business-days calendar) can be caught and
-        // the change simply ignored instead of crashing the wizard mid-render.
-        let shift: number | null;
-        try {
-            shift = getServiceDateShiftBusinessDays(expected, next);
-        } catch {
-            shift = null;
+        // While the branch calendar loads the change is held open with the
+        // confirm action disabled; the shift is computed once it is ready.
+        if (calendarReady && getServiceDateShiftBusinessDays(expected, next, calendar) === null) {
+            // An unsupported year (or invalid date) cannot be shifted: ignore the change.
+            return;
         }
-        if (shift === null) return;
-        setPendingServiceDate({ next, shift });
+        setPendingServiceDate({ next });
     }
 
     function confirmServiceDateChange() {
-        if (pendingServiceDate) setField("_date", pendingServiceDate.next);
+        if (ctx?.plannedSessionDates === undefined && pendingServiceDate && calendarReady && pendingShift !== null) setField("_date", pendingServiceDate.next);
         setPendingServiceDate(null);
     }
 
@@ -605,11 +647,27 @@ export default function ServiceRecordPage() {
             return { ...d, [k]: arr };
         });
 
+    let serviceDateChangeDescription = "";
+    if (pendingServiceDate) {
+        if (pendingShift !== null) {
+            serviceDateChangeDescription = `${day}회차의 서비스 제공일을 ${formatMonthDayKo(defaultDate(day))}에서 ${formatMonthDayKo(pendingServiceDate.next)}로 변경하시겠어요? ${pendingShift} 영업일 만큼 서비스 종료 날짜가 미뤄집니다.`;
+        } else if (!calendarReady) {
+            serviceDateChangeDescription = "공휴일 정보를 확인한 뒤 제공일을 변경할 수 있어요.";
+        } else {
+            serviceDateChangeDescription = "선택한 날짜의 영업일 수를 계산할 수 없어요.";
+        }
+    }
+
     const currentServiceDate = (draft["_date"] as string | undefined) || defaultDate(day);
     const hasServiceDateMismatch = isServiceDateMismatch(currentServiceDate);
     const isRecordFinalized = isRecordFinalizedStatus(ctx?.recordStatus);
 
+    const showCalendarNotice = ctx !== null
+        && (screen === "overview" || screen === "day")
+        && (calendarError !== null || pendingOpenDay !== null);
+
     return (
+        <>
         <MobileServiceRecordWizard
             data-component="mobile_service-record_wizard"
             screen={screen}
@@ -623,7 +681,7 @@ export default function ServiceRecordPage() {
             draft={draft}
             editing={editing}
             clientSignature={clientSignature}
-            busy={busy}
+            busy={busy || (screen === "day" && defaultsGated)}
             isRecordFinalized={isRecordFinalized}
             lockedDays={lockedDays}
             nextOpenDay={nextOpenDay}
@@ -694,19 +752,25 @@ export default function ServiceRecordPage() {
                 serviceDateChangeModal: (
                     <MobileTwoButtonModal
                         data-component="mobile_service-record_service-date-change-modal"
-                        open={pendingServiceDate !== null}
+                        open={ctx?.plannedSessionDates === undefined && pendingServiceDate !== null}
                         title={`${day}회차 제공일을 변경할까요?`}
-                        description={pendingServiceDate
-                            ? `${day}회차의 서비스 제공일을 ${formatMonthDayKo(defaultDate(day))}에서 ${formatMonthDayKo(pendingServiceDate.next)}로 변경하시겠어요? ${pendingServiceDate.shift} 영업일 만큼 서비스 종료 날짜가 미뤄집니다.`
-                            : ""}
+                        description={serviceDateChangeDescription}
                         cancelLabel="취소"
                         confirmLabel="확인"
+                        confirmDisabled={!calendarReady || pendingShift === null}
                         onOpenChange={(open) => {
                             if (!open) cancelServiceDateChange();
                         }}
                         onCancel={cancelServiceDateChange}
                         onConfirm={confirmServiceDateChange}
-                    />
+                    >
+                        <CalendarLoadNotice
+                            error={calendarError}
+                            onRetry={retryCalendar}
+                            loading={!calendarReady && calendarError === null}
+                            dataComponent="mobile_service-record_service-date-change-modal_calendar-notice"
+                        />
+                    </MobileTwoButtonModal>
                 ),
                 errorNotification: (
                     <NotificationOneButtonModal
@@ -723,10 +787,23 @@ export default function ServiceRecordPage() {
                 ),
             }}
         />
+        {showCalendarNotice ? (
+            <ServiceRecordCalendarBanner
+                data-component="mobile_service-record_calendar-notice"
+                error={calendarError}
+                loading={!calendarReady && calendarError === null}
+                onRetry={retryCalendar}
+            />
+        ) : null}
+        </>
     );
 }
 
-function defaultDateFromContext(ctx: ServiceRecordContext | null, day: number): string {
+function defaultDateFromContext(
+    ctx: ServiceRecordContext | null,
+    day: number,
+    calendar: KrBusinessDayCalendar,
+): string {
     const plannedDates = ctx?.plannedSessionDates;
     if (plannedDates !== undefined) {
         const isValidDateOnly = (value: string) => {
@@ -750,16 +827,7 @@ function defaultDateFromContext(ctx: ServiceRecordContext | null, day: number): 
         if (!plannedDateVectorValid) return "";
         return plannedDates.find((session) => session.sessionIndex === day)?.serviceDate ?? "";
     }
-    const sessions = ctx?.sessions ?? [];
-    const rawStart = ctx?.startDate ? ctx.startDate.slice(0, 10) : isoDateInKorea();
-    const start = isBusinessDayKr(rawStart) ? rawStart : nextBusinessDayKr(rawStart);
-    const chain = (sessionIndex: number): string => {
-        const row = sessions.find((session) => session.sessionIndex === sessionIndex);
-        if (row) return row.serviceDate.slice(0, 10);
-        if (sessionIndex <= 1) return start;
-        return nextBusinessDayKr(chain(sessionIndex - 1));
-    };
-    return chain(day);
+    return legacyDefaultServiceDate(ctx, day, calendar);
 }
 
 function initializeUnlockedDraft(
@@ -767,6 +835,7 @@ function initializeUnlockedDraft(
     day: number,
     sessions: ServiceRecordContext["sessions"],
     defaultDate: string,
+    hasPlannedDate = false,
 ): Record<string, unknown> {
     const session = sessions.find((row) => row.sessionIndex === day);
     const serverDraft: Record<string, unknown> = {
@@ -787,5 +856,8 @@ function initializeUnlockedDraft(
     };
     const stored = readStoredFormState(token);
     if (stored?.day !== day || !stored.draft) return serverDraft;
-    return { ...serverDraft, ...stored.draft };
+    const restoredDraft = { ...serverDraft, ...stored.draft };
+    // The server plan is authoritative; keep the answers, not a stale date override.
+    if (hasPlannedDate && restoredDraft._date !== defaultDate) restoredDraft._date = defaultDate;
+    return restoredDraft;
 }

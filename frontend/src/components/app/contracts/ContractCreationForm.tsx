@@ -8,7 +8,6 @@ import "dayjs/locale/ko";
 import { useRouter } from "next/navigation";
 import { Check, X } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
-import { calcEndDateBusinessDays } from "@babyjamjam/shared/utils/business-days";
 import { cn } from "@/lib/utils";
 import { t } from "@/lib/i18n/translations";
 import { createReconnectingEventSource } from "@/lib/sse/reconnecting-event-source";
@@ -48,6 +47,8 @@ import { useEformsign } from "@/hooks/useEformsign";
 import { useToast } from "@/hooks/use-toast";
 import { useEnqueueEformsignDocumentCreation } from "@/hooks/useEformsignDocumentJobs";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import type { EformsignDocumentOption } from "@/lib/eformsign/types";
 import { readHeadlessOutcome } from "@/lib/eformsign/headless-outcome";
 import {
@@ -236,6 +237,10 @@ export interface ContractCreationFormProps {
   footerClassName?: string;
   renderLayout?: (parts: ContractCreationFormLayoutParts) => ReactNode;
   initialClient?: Client;
+  /** Payment date (YYYY-MM-DD) to prefill for initialClient instead of leaving it empty. */
+  initialPaymentDate?: string;
+  /** Unsigned contract to cancel once the new one has been sent (contract re-issue). */
+  supersedeDocumentId?: string;
 }
 
 const CONTRACT_CREATION_PROGRESS_STEPS: readonly HeadlessProgressStep[] = [
@@ -596,6 +601,18 @@ function getVoucherTypeLabel(type: string): string {
   return type;
 }
 
+// 영업일 달력에 미리 받아 둘 연도예요. 시작일·종료일이 속한 해와, 시작일 다음 해(종료일이 해를 넘길 수 있어요)를 포함해요.
+function getContractCalendarYears(startDate: string, endDate: string): number[] {
+  const years = new Set<number>();
+  if (isRealIsoDate(startDate)) {
+    const startYear = Number.parseInt(startDate.slice(0, 4), 10);
+    years.add(startYear);
+    years.add(startYear + 1);
+  }
+  if (isRealIsoDate(endDate)) years.add(Number.parseInt(endDate.slice(0, 4), 10));
+  return [...years];
+}
+
 export const ContractCreationForm = ({
   onClose,
   onSuccess,
@@ -609,6 +626,8 @@ export const ContractCreationForm = ({
   footerClassName,
   renderLayout,
   initialClient,
+  initialPaymentDate,
+  supersedeDocumentId,
 }: ContractCreationFormProps = {}) => {
   const router = useRouter();
   const locale = useLocale();
@@ -750,6 +769,23 @@ export const ContractCreationForm = ({
     resetAll,
   } = useFormStore();
 
+  // 종료일은 계약서와 고객 정보에 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
+  const {
+    calendar: businessDayCalendar,
+    ready: isCalendarReady,
+    error: calendarError,
+    retry: retryCalendar,
+    refreshForSave,
+  } = useBusinessDayCalendar({ extraYears: getContractCalendarYears(startDate, endDate) });
+  // 달력을 기다리는 동안 건너뛴 자동 계산이 있는지. 달력이 준비되면 한 번만 다시 계산해요.
+  const pendingAutoEndDateRef = useRef(false);
+  const autoEndDateOwnedRef = useRef(false);
+  const [calendarRefreshFailed, setCalendarRefreshFailed] = useState(false);
+  // 기존 고객을 골라 저장된 종료일을 그대로 채웠을 때의 (시작일, 기간). 이 값이 그대로인 동안에는 종료일을 다시 계산하지 않아요.
+  const keptEndDateInputsRef = useRef<{ startDate: string; voucherDuration: string } | null>(null);
+  // 자동 계산이 달력이 지원하지 않는 연도에 닿아 종료일을 계산하지 못했는지. 이전 종료일을 남기지 않고 비운 채 안내해요.
+  const [isEndDateUnsupported, setIsEndDateUnsupported] = useState(false);
+
   // Sync display inputs when external date state changes (e.g., client autofill).
   useEffect(() => { setDueDateInput(toIsoDateOnly(dueDate)); }, [dueDate]);
   useEffect(() => { setBirthDateInput(toIsoDateOnly(birthDate)); }, [birthDate]);
@@ -782,15 +818,59 @@ export const ContractCreationForm = ({
     }
   }, [birthDateInput, onFieldInputChange, setBirthDate]);
 
-  // 시작일과 서비스 기간이 모두 정해지면 평일(주말+한국 공휴일 제외) 기준으로 종료일 자동 계산.
+  // 시작일과 서비스 기간이 모두 정해지면 평일(주말+지점 공휴일 제외) 기준으로 종료일 자동 계산.
   // 사용자가 종료일을 수동 편집해도 startDate/voucherDuration이 다시 바뀌어야만 덮어쓴다.
-  useEffect(() => {
+  // 달력이 아직 없으면 건너뛰고, 준비되는 순간 한 번만 다시 계산한다(달력 객체가 바뀌어도 다시 계산하지 않는다).
+  const applyAutoEndDate = useCallback(() => {
     if (!startDate || !voucherDuration) return;
     const n = parseInt(voucherDuration, 10);
     if (!Number.isFinite(n) || n <= 0) return;
-    const computed = calcEndDateBusinessDays(startDate, n);
-    if (computed) setEndDate(computed);
-  }, [startDate, voucherDuration, setEndDate]);
+    autoEndDateOwnedRef.current = true;
+    try {
+      const computed = businessDayCalendar.calcEndDateBusinessDays(startDate, n);
+      if (computed) setEndDate(computed);
+      setIsEndDateUnsupported(false);
+    } catch {
+      // 달력이 지원하지 않는 연도면 이전 종료일이 남지 않게 비우고, 직접 입력하거나 기간을 바꾸도록 안내해요.
+      setEndDate("");
+      setIsEndDateUnsupported(true);
+    }
+  }, [businessDayCalendar, startDate, voucherDuration, setEndDate]);
+  const applyAutoEndDateRef = useRef(applyAutoEndDate);
+  applyAutoEndDateRef.current = applyAutoEndDate;
+
+  useEffect(() => {
+    // 저장된 종료일을 채운 직후에는 그 시작일·기간 그대로이므로 계산하지 않아요. 둘 중 하나를 고치면 그때부터 다시 계산해요.
+    const kept = keptEndDateInputsRef.current;
+    if (kept) {
+      if (kept.startDate === startDate && kept.voucherDuration === voucherDuration) {
+        autoEndDateOwnedRef.current = false;
+        pendingAutoEndDateRef.current = false;
+        setIsEndDateUnsupported(false);
+        return;
+      }
+      keptEndDateInputsRef.current = null;
+    }
+    if (!startDate || !voucherDuration) {
+      autoEndDateOwnedRef.current = false;
+      setIsEndDateUnsupported(false);
+      return;
+    }
+    if (!isCalendarReady) {
+      pendingAutoEndDateRef.current = true;
+      return;
+    }
+    pendingAutoEndDateRef.current = false;
+    applyAutoEndDateRef.current();
+    // 입력(시작일·기간)이 바뀔 때만 다시 계산한다. 달력 준비 여부는 아래 effect가 따로 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, voucherDuration]);
+
+  useEffect(() => {
+    if (!isCalendarReady || !pendingAutoEndDateRef.current) return;
+    pendingAutoEndDateRef.current = false;
+    applyAutoEndDateRef.current();
+  }, [isCalendarReady]);
 
   const isProcessingStep = activeStep === CONTRACT_CREATION_PROCESSING_STEP_INDEX;
   const hasCreationSession = isProcessingStep && creationProgress.step !== null;
@@ -917,6 +997,7 @@ export const ContractCreationForm = ({
       }
       : null;
     loadedClientBaselineRef.current = nextBaseline;
+    keptEndDateInputsRef.current = null;
     setRegisteredBaseline(nextBaseline);
     setClientId(selectedClientId);
     resetEmployeeFields();
@@ -955,6 +1036,12 @@ export const ContractCreationForm = ({
       const clientEndDate = toIsoDateOnly(client.endDate ?? "");
       if (clientEndDate) {
         setEndDate(clientEndDate);
+        setIsEndDateUnsupported(false);
+        if (clientStartDate && client.duration) {
+          // 저장된 종료일을 그대로 보여줘요. 시작일이나 기간을 고칠 때만 다시 계산해요.
+          keptEndDateInputsRef.current = { startDate: clientStartDate, voucherDuration: client.duration.toString() };
+          pendingAutoEndDateRef.current = false;
+        }
       }
 
       if (client.primaryEmployee && employees) {
@@ -1007,9 +1094,27 @@ export const ContractCreationForm = ({
 
     handleClientSelect(initialClient.id, initialClient);
     setArea(initialClient.areaId ?? "");
-    setPaymentDate("");
-    setPaymentDateInput("");
+    setPaymentDate(initialPaymentDate ?? "");
+    setPaymentDateInput(initialPaymentDate ?? "");
   }, [initialClient]);
+
+  // Re-issue: the replaced contract is cancelled only after the new one was sent,
+  // so abandoning or failing the send leaves the client's current contract intact.
+  const supersededRef = useRef(false);
+  useEffect(() => {
+    if (!isCreationSuccessOpen || !supersedeDocumentId || supersededRef.current) return;
+    // Only when the contract just sent is for the re-issued client.
+    if (!initialClient || clientId !== initialClient.id) return;
+    supersededRef.current = true;
+    eformsignApi.supersedeDocument(supersedeDocumentId, clientId)
+      .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
+      .catch(() => {
+        toast({
+          variant: "destructive",
+          description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
+        });
+      });
+  }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, queryClient, toast]);
 
   const initialClientEmployeePrefillAppliedRef = useRef(false);
 
@@ -1103,7 +1208,12 @@ export const ContractCreationForm = ({
     isSubmittingRef.current = true;
     onSubmissionStateChange?.(true);
     try {
-      const shouldEnqueueDocumentJob = mode !== "manual" && isFeatureEnabled("eformsignDocumentJobs");
+      // A re-issue must cancel the contract it replaces once this one is sent, which
+      // only the synchronous paths observe (they open the success modal), so a
+      // re-issue never goes to the background job queue.
+      const shouldEnqueueDocumentJob = mode !== "manual"
+        && !supersedeDocumentId
+        && isFeatureEnabled("eformsignDocumentJobs");
       const shouldAttemptHeadless = !shouldEnqueueDocumentJob
         && mode !== "manual"
         && isFeatureEnabled("headlessDispatch");
@@ -1128,7 +1238,14 @@ export const ContractCreationForm = ({
       // genuinely fresh attempt clears it.
       if (mode !== "manual") setUnverifiedDispatchNotice(null);
       setIsDialogOpen(false);
-      setCreationProgress(INITIAL_CREATION_PROGRESS);
+      // A manual run is the same creation session re-entering after the automatic run
+      // failed, so progress must never drop to "no session" in between: that would
+      // end the session (and the page's 전자문서 생성 step) while the editor opens.
+      setCreationProgress(
+        mode === "manual"
+          ? { step: "client-started", completed: false, failed: false }
+          : INITIAL_CREATION_PROGRESS,
+      );
 
       let autoRegisteredClientId: number | null = null;
       let keepSubmittingUntilDialogCloses = false;
@@ -1925,7 +2042,8 @@ export const ContractCreationForm = ({
     || (step === 1 && !isStep2Valid)
     || (step === 2 && !isStep3Valid);
 
-  const handleWizardComplete = () => {
+  const handleWizardComplete = async () => {
+    if (isSubmittingRef.current || !isCalendarReady || isEndDateUnsupported) return;
     const problemTarget = getFirstProblemTarget(CONTRACT_INFO_STEP_INDEX);
     if (problemTarget) {
       requestFieldFocus(problemTarget, CONTRACT_INFO_STEP_INDEX);
@@ -1934,6 +2052,38 @@ export const ContractCreationForm = ({
     if (isStepIncomplete(CONTRACT_INFO_STEP_INDEX)) {
       markStepAttempted(CONTRACT_INFO_STEP_INDEX);
       return;
+    }
+    if (retryWithPersistedClientRef.current) {
+      setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
+      void handleContractCreation();
+      return;
+    }
+    isSubmittingRef.current = true;
+    onSubmissionStateChange?.(true);
+    try {
+      const fresh = await refreshForSave();
+      setCalendarRefreshFailed(!fresh.ok);
+      if (!fresh.ok) return;
+      let recalculated = false;
+      if (!keptEndDateInputsRef.current && (autoEndDateOwnedRef.current || pendingAutoEndDateRef.current)) {
+        try {
+          const next = fresh.calendar.calcEndDateBusinessDays(startDate, parseInt(voucherDuration, 10));
+          recalculated = next !== endDate;
+          if (recalculated) setEndDate(next);
+          setIsEndDateUnsupported(false);
+        } catch {
+          setEndDate("");
+          setIsEndDateUnsupported(true);
+          return;
+        }
+      }
+      if (fresh.changed || recalculated) {
+        setSubmitError(t(locale, "common.calendar-changed-before-save"));
+        return;
+      }
+    } finally {
+      isSubmittingRef.current = false;
+      onSubmissionStateChange?.(false);
     }
     setActiveStep(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
     void handleContractCreation();
@@ -2384,6 +2534,9 @@ export const ContractCreationForm = ({
                 onChange={(e) => {
                   const formatted = formatIsoDateInput(e.target.value);
                   fields.onChange("endDate", endDateInput, formatted);
+                  pendingAutoEndDateRef.current = false;
+                  autoEndDateOwnedRef.current = false;
+                  setIsEndDateUnsupported(false);
                   setEndDateInput(formatted);
                   if (formatted.length === 10) setEndDate(formatted);
                   else if (formatted.length === 0) setEndDate("");
@@ -2422,6 +2575,12 @@ export const ContractCreationForm = ({
               />
             </div>
           </div>
+          <CalendarLoadNotice
+            error={calendarError ?? (calendarRefreshFailed ? "load-failed" : isEndDateUnsupported ? "unsupported-year" : null)}
+            onRetry={() => { setCalendarRefreshFailed(false); retryCalendar(); }}
+            loading={!isCalendarReady && !calendarError}
+            dataComponent="desktop_contracts_creation_form_calendar-load-notice"
+          />
         </div>
       ),
       summary: (
@@ -2542,7 +2701,7 @@ export const ContractCreationForm = ({
             size="sm"
             data-testid="contract-creation-submit"
             onClick={handleWizardComplete}
-            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting}
+            disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady || isEndDateUnsupported}
             className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
           >
             {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}

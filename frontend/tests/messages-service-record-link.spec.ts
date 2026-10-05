@@ -1,4 +1,5 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
+import { enableE2EAuth, fulfillShellDefaults } from "./helpers/e2e-shell";
 
 const SERVICE_RECORD_URL = "https://mobile.test/service-record/efl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PREPARED_LINK_TOKEN = SERVICE_RECORD_URL.split("/").at(-1)!;
@@ -8,22 +9,26 @@ const serviceRecordTemplate = `송진호 관리사님, 송진호 산모님의 {{
 제공기록지 링크
 {{serviceRecordUrl}}`;
 
-async function enableE2EAuth(page: Page) {
-    const baseURL = process.env.BASE_URL ?? "http://localhost:3000";
-    await page.context().addCookies([{
-        name: "e2e_auth",
-        value: "1",
-        url: baseURL,
-        sameSite: "Lax",
-    }]);
-    await page.addInitScript(() => {
-        (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
-        sessionStorage.clear();
-    });
-}
+const serviceRecordSystemTemplate = {
+    id: "tpl-service-record-link",
+    templateKey: "SERVICE_RECORD_LINK",
+    name: "제공기록지 작성 링크",
+    description: "제공기록지 작성 링크",
+    content: serviceRecordTemplate,
+    customVariables: [],
+    requiredVariables: [],
+    updatedAt: "2026-01-01T00:00:00.000Z",
+};
 
 test("shows the exact prepared service-record URL and sends the same token", async ({ page }) => {
     await enableE2EAuth(page);
+    // Branch-scoped template queries only run once the branch cookie matches the active branch.
+    await page.context().addCookies([{
+        name: "selected_branch_id",
+        value: "e2e-branch",
+        url: process.env.BASE_URL ?? "http://localhost:3000",
+        sameSite: "Lax",
+    }]);
     let sendBody: unknown = null;
 
     await page.route("**/api/**", async (route: Route) => {
@@ -52,15 +57,19 @@ test("shows the exact prepared service-record URL and sends the same token", asy
         if (pathname === "/api/message-templates" || pathname === "/api/message-logs") {
             return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
         }
-        if (pathname === "/api/system-templates/SERVICE_RECORD_LINK") {
+        // The 전송하기 list comes from the branch-scoped template endpoints.
+        if (pathname === "/api/branch-system-templates") {
             return route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({
-                    key: "SERVICE_RECORD_LINK",
-                    content: serviceRecordTemplate,
-                    description: "제공기록지 작성 링크",
-                }),
+                body: JSON.stringify([serviceRecordSystemTemplate]),
+            });
+        }
+        if (pathname === "/api/branch-system-templates/SERVICE_RECORD_LINK") {
+            return route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify(serviceRecordSystemTemplate),
             });
         }
         if (pathname === "/api/employees") {
@@ -141,25 +150,21 @@ test("shows the exact prepared service-record URL and sends the same token", asy
             });
         }
 
+        if (await fulfillShellDefaults(route)) return;
         return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
 
     await page.goto("/messages");
-    await page.getByRole("button", { name: "제공기록지 작성 링크", exact: true }).click();
+    await page.getByRole("button", { name: /^제공기록지 작성 링크/ }).click();
 
     await page.getByRole("combobox", { name: "관리사님 성함" }).click();
     await page.getByRole("combobox", { name: "관리사님 성함 검색" }).fill("송진호");
-    await page
-        .locator('[data-component="employee-autocomplete-dropdown"]')
-        .getByText("송진호", { exact: true })
-        .click();
+    await page.getByRole("option", { name: /송진호/ }).click();
 
     await page.getByRole("combobox", { name: "산모님 성함" }).click();
     await page.getByRole("combobox", { name: "산모님 성함 검색" }).fill("송진호");
-    await page
-        .locator('[data-component="clients-autocomplete-dropdown"]')
-        .getByText("송진호", { exact: true })
-        .click();
+    // The employee has the same name, so pick the client row by its phone number.
+    await page.getByRole("option", { name: /010-3333-4444/ }).click();
 
     const messageField = page.locator('[data-component="desktop_messages_sections_msg-field"]');
     await expect(messageField).toBeVisible();

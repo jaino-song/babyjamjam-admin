@@ -15,12 +15,15 @@ import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import { EformsignListShadowCompareService } from "application/services/eformsign-list-shadow-compare.service";
 import { EformsignMirrorListService } from "application/services/eformsign-mirror-list.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { EformsignCredentialBoundary } from "application/services/eformsign-credential-boundary.service";
 import { EformsignTemplateScopeService } from "application/services/eformsign-template-scope.service";
 import { EFORMSIGN_DOC_REPOSITORY } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_DOCUMENT_MIRROR_REPOSITORY } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createKrBusinessDayCalendar, isoDateInKorea } from "domain/utils/business-days";
 import {
     EformsignApiError,
     extractEformsignVendorCode,
@@ -130,6 +133,7 @@ describe("EformsignController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
+                { provide: HolidayCalendarService, useValue: createHolidayCalendarStub() },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                 {
                     provide: EformsignService,
@@ -168,6 +172,8 @@ describe("EformsignController (Integration)", () => {
                     provide: PrismaService,
                     useValue: {
                         branch: { findUnique: jest.fn() },
+                        client: { findFirst: jest.fn() },
+                        eformsign_doc: { findUnique: jest.fn() },
                     },
                 },
                 {
@@ -788,6 +794,242 @@ describe("EformsignController (Integration)", () => {
         });
     });
 
+    describe("superseding a re-issued contract", () => {
+        let clientFindFirst: jest.Mock;
+        let docFindUnique: jest.Mock;
+        const supersede = () => request(app.getHttpServer())
+            .post("/api/documents/old-doc/supersede")
+            .send({ clientId: 7 });
+
+        beforeEach(() => {
+            clientFindFirst = (app.get(PrismaService) as unknown as { client: { findFirst: jest.Mock } }).client.findFirst;
+            clientFindFirst.mockReset();
+            clientFindFirst.mockResolvedValue({ eDocId: "new-doc" });
+            docFindUnique = (app.get(PrismaService) as unknown as { eformsign_doc: { findUnique: jest.Mock } }).eformsign_doc.findUnique;
+            docFindUnique.mockReset();
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "030",
+                stepType: "05", stepName: "고객 서명",
+            });
+            eformsignDocService.findAll.mockResolvedValue([{ documentId: "old-doc" }] as never);
+            eformsignService.getDocumentById.mockResolvedValue({
+                current_status: { status_type: "030", step_type: "05", step_name: "고객 서명" },
+            });
+        });
+
+        it("cancels and purges the replaced contract once the replacement is linked", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(201);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledWith("server-access-token", ["old-doc"]);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+            expect(eformsignService.getDocumentById).toHaveBeenCalledWith("server-access-token", "old-doc");
+            expect(eformsignService.getDocumentById.mock.invocationCallOrder[0])
+                .toBeLessThan(eformsignService.cancelDocuments.mock.invocationCallOrder[0] ?? 0);
+            expect(eformsignService.cancelDocuments.mock.invocationCallOrder[0])
+                .toBeLessThan(documentMirrorService.purgeDocuments.mock.invocationCallOrder[0] ?? 0);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("never touches a signed contract", async () => {
+            documentMirrorService.findTerminalDocumentIds.mockResolvedValue(["old-doc"]);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["provider-review step type", "06", ""],
+            ["provider-review step name", "", "제공기관 확인"],
+        ])("rejects a requested customer-signed contract by %s", async (_label, stepType, stepName) => {
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "030", stepType, stepName,
+            });
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        });
+
+        it("refuses while the client still points at the old contract", async () => {
+            clientFindFirst.mockResolvedValue({ eDocId: "old-doc" });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+
+        it("keeps the record without any purge intent on any refusal", async () => {
+            // e.g. the customer signed it after the local mirror last synced: a kept
+            // intent would let the nightly sync purge the signed contract.
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: [], fail_result: [{ document_id: "old-doc" }] },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        // An ambiguous supersede must leave the old contract visible, without a retry intent.
+        it.each([
+            ["a socket failure", new Error("socket exploded")],
+            ["a timeout", Object.assign(new Error("The operation timed out"), { name: "TimeoutError" })],
+            ["an HTTP 500", new EformsignApiError("boom", 500)],
+            ["an HTTP 503", new EformsignApiError("unavailable", 503)],
+            ["an HTTP 408", new EformsignApiError("request timeout", 408)],
+            ["an HTTP 429", new EformsignApiError("slow down", 429)],
+            ["a confirmed absence (HTTP 404)", new EformsignApiError("not found", 404)],
+        ])("never records a purge intent and returns 500 after %s", async (_label, failure) => {
+            eformsignService.cancelDocuments.mockRejectedValue(failure);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["HTTP 400", new EformsignApiError("rejected", 400)],
+            ["HTTP 403", new EformsignApiError("forbidden", 403)],
+        ])("never records a purge intent when eformsign refuses with %s", async (_label, failure) => {
+            eformsignService.cancelDocuments.mockRejectedValue(failure);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(eformsignService.cancelDocuments).toHaveBeenCalledTimes(1);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("returns 500 without a purge intent when cancelled but the local purge failed", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: { success_result: ["old-doc"], fail_result: [] },
+            });
+            documentMirrorService.purgeDocuments.mockRejectedValue(new Error("db down"));
+
+            const response = await supersede();
+
+            expect(response.status).toBe(500);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledTimes(1);
+            expect(documentMirrorService.purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("never records a purge intent when eformsign definitively refuses", async () => {
+            eformsignService.cancelDocuments.mockResolvedValue({
+                result: {
+                    success_result: [],
+                    fail_result: [{ document_id: "old-doc", code: "4000164", message: "not authorized" }],
+                },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["completed", "003", "05", "고객 서명"],
+            ["provider review", "070", "06", "제공기관 확인"],
+            ["unknown status", "999", "05", "고객 서명"],
+            ["missing status", undefined, null, null],
+        ])("rejects fresh %s data even when the local row is unsigned", async (_label, statusType, stepType, stepName) => {
+            eformsignService.getDocumentById.mockResolvedValue({
+                current_status: { status_type: statusType, step_type: stepType, step_name: stepName },
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["HTTP 404", new EformsignApiError("absent", 404), 409, "REQUEST_CONFLICT"],
+            ["vendor absence", new EformsignApiError("absent", 400, "4000006"), 409, "REQUEST_CONFLICT"],
+            ["HTTP 500", new EformsignApiError("unavailable", 500), 503, "DEPENDENCY_UNAVAILABLE"],
+            ["timeout", Object.assign(new Error("timeout"), { name: "TimeoutError" }), 503, "DEPENDENCY_UNAVAILABLE"],
+        ])("does not cancel after a fresh read fails with %s", async (_label, failure, status, code) => {
+            eformsignService.getDocumentById.mockRejectedValue(failure);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(status);
+            expect(response.body.code).toBe(code);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+            expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        });
+
+        it("rejects a locally completed contract even when fresh data would be unsigned", async () => {
+            docFindUnique.mockResolvedValue({
+                clientId: 7, documentKind: "contract", statusType: "003", stepType: "05", stepName: "고객 서명",
+            });
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+            expect(documentMirrorService.requestPermanentPurge).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["another client's document", { clientId: 99, documentKind: "contract" }],
+            ["an unowned legacy document", { clientId: null, documentKind: "contract" }],
+            ["a service-record snapshot", { clientId: 7, documentKind: "service_record_snapshot" }],
+        ])("refuses to supersede %s", async (_label, document) => {
+            docFindUnique.mockResolvedValue(document);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(409);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+
+        it("refuses a contract outside the caller's branch", async () => {
+            eformsignDocService.findAll.mockResolvedValue([] as never);
+
+            const response = await supersede();
+
+            expect(response.status).toBe(403);
+            expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
+        });
+    });
+
     describe("re_request_outsider rejections", () => {
         const tenant = { userId: "user-1", branchId: "branch-1" } as never;
 
@@ -1329,8 +1571,10 @@ describe("EformsignController (Integration)", () => {
         // 제공기록지 티어 설정(ConfigService). 테스트가 두 값을 직접 제어한다.
         let areaTemplateFindAll: jest.Mock;
         let templateScopeConfigGet: jest.Mock;
+        let mirrorCalendarStub: ReturnType<typeof createHolidayCalendarStub>;
 
         beforeEach(async () => {
+            mirrorCalendarStub = createHolidayCalendarStub();
             mirrorRepository.findAllVisibleInMirror.mockResolvedValue([]);
             mirrorRepository.findAllVisibleInMirrorForHeadquarters.mockResolvedValue([]);
             areaTemplateFindAll = jest.fn().mockResolvedValue([]);
@@ -1338,6 +1582,7 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
+                    { provide: HolidayCalendarService, useValue: mirrorCalendarStub },
                 { provide: PdfPageRasterizerService, useValue: { renderPageToPng: jest.fn() } },
                     { provide: EformsignService, useValue: eformsignService },
                     {
@@ -1657,6 +1902,51 @@ describe("EformsignController (Integration)", () => {
                 ["claimed-review", "review"],
                 ["unclaimed-review", "unassigned"],
             ]);
+        });
+
+        it("stamps and filters display_status on the request branch's calendar, fetched once per request", async () => {
+            // No dependence on the real date: both calendars are weekends-only and cover the
+            // current and next year. T is today (KST), D1/D2 the next two business days.
+            const kstToday = isoDateInKorea();
+            const thisYear = Number(kstToday.slice(0, 4));
+            const supportedYears = [thisYear, thisYear + 1, thisYear + 2];
+            const plain = createKrBusinessDayCalendar([], { supportedYears });
+            const d1 = plain.shiftBusinessDays(kstToday, 1);
+            const d2 = plain.shiftBusinessDays(kstToday, 2);
+            // End date D2: without a holiday the review window opens on D1 (still closed today,
+            // 서명 완료); the branch closes on D1, so it opens on the business day before — today
+            // or earlier — and the same document reads 검토 필요 for that branch.
+            const branchCalendar = createKrBusinessDayCalendar([d1], { supportedYears });
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "doc-window",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+            ]);
+            mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map([["doc-window", d2]]));
+
+            (mirrorCalendarStub.forBranch as jest.Mock).mockResolvedValue(plain);
+            const closed = await request(mirrorApp.getHttpServer()).get("/api/documents");
+            (mirrorCalendarStub.forBranch as jest.Mock).mockClear();
+            (mirrorCalendarStub.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
+            const open = await request(mirrorApp.getHttpServer()).get("/api/documents");
+            const openFiltered = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=review");
+            const closedFilteredOut = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=signed");
+
+            expect(closed.body.documents.map((doc: { display_status: string }) => doc.display_status))
+                .toEqual(["signed"]);
+            expect(open.body.documents.map((doc: { display_status: string }) => doc.display_status))
+                .toEqual(["review"]);
+            expect(openFiltered.body.documents.map((doc: { id: string }) => doc.id)).toEqual(["doc-window"]);
+            expect(closedFilteredOut.body.documents).toEqual([]);
+            // One calendar read per request, never per row.
+            expect(mirrorCalendarStub.forBranch).toHaveBeenCalledTimes(3);
+            expect(mirrorCalendarStub.forBranch).toHaveBeenCalledWith("branch-1");
+            mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map());
         });
 
         it("rejects unsupported display-status filters", async () => {

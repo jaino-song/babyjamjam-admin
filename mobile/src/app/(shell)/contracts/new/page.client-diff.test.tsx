@@ -1,8 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChangeEvent } from "react";
 
 import type { Client } from "@/lib/client/types";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { useBusinessDayCalendar, type UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
+import {
+  calcEndDateBusinessDays,
+  createKrBusinessDayCalendar,
+  getKoreanHolidays,
+  KR_BUILTIN_CALENDAR,
+} from "@/lib/date/business-days";
 import { useFormStore } from "@/stores/form-store";
 
 const mockPush = jest.fn();
@@ -49,6 +55,8 @@ function makeClient(overrides: Partial<Client> = {}): Client {
     ...overrides,
   } as Client;
 }
+
+jest.mock("@/hooks/useBusinessDayCalendar");
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -232,6 +240,15 @@ async function renderOnStep(step: 0 | 3, options: { pickClient?: boolean } = {})
   await renderPage();
   if (options.pickClient !== false) selectStoredClient();
   for (let i = 0; i < step; i += 1) next();
+}
+
+// Calls the element's React onClick directly, so the test reaches the handler even though the
+// (disabled) button would swallow a real click.
+function invokeReactClick(element: HTMLElement): void {
+  const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps$"));
+  const onClick = (element as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+  if (!onClick) throw new Error("element has no React onClick");
+  act(() => onClick());
 }
 
 function submit() {
@@ -736,5 +753,346 @@ describe("mobile contract form - entering with a prefilled store (client detail)
     await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("mobile contract form - branch holiday calendar", () => {
+  const mockedCalendarHook = jest.mocked(useBusinessDayCalendar);
+  // The branch closes Friday 2026-09-11, inside the stored client's 5-business-day period.
+  const branchCalendar = (version: string) =>
+    createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-09-11"], {
+      version,
+      supportedYears: [2026],
+    });
+  const BRANCH_CALENDAR = branchCalendar("kr-db-branch");
+  const BRANCH_END = BRANCH_CALENDAR.calcEndDateBusinessDays(STORED_START, 5);
+
+  const calendarResult = (overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult => {
+    const calendar = overrides.calendar ?? BRANCH_CALENDAR;
+    return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
+  };
+  const endDateInput = () => input("period-card_end-date-input");
+
+  async function renderOnPeriodStep() {
+    const { default: ContractCreationPage } = await import("./page");
+    const view = render(<ContractCreationPage />);
+    const rerender = () => view.rerender(<ContractCreationPage />);
+    selectStoredClient();
+    for (let i = 0; i < 3; i += 1) next();
+    return { rerender };
+  }
+
+  beforeEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult());
+  });
+
+  afterEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+  });
+
+  // A start date inside the branch-closed week, so the branch result differs from the built-in one.
+  const EDITED_START = "2026-09-09";
+  const BRANCH_EDITED_END = BRANCH_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5);
+  const startDateInput = () => input("period-card_start-date-input");
+
+  it("rechecks the auto date after the rendered calendar was already refreshed", async () => {
+    const { rerender } = await renderOnPeriodStep();
+    fireEvent.change(startDateInput(), { target: { value: EDITED_START } });
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_EDITED_END));
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+    rerender();
+    submit();
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(endDateInput()).toHaveValue(KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5));
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a kept end date or submit when the refresh reports a change", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({
+      refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: true }),
+    }));
+    await renderOnPeriodStep();
+    submit();
+    await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
+    expect(endDateInput()).toHaveValue(STORED_END);
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("blocks before client persistence on a failed refresh", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ refreshForSave: async () => ({ ok: false }) }));
+    await renderOnPeriodStep();
+    submit();
+    await screen.findByText("공휴일 정보를 불러오지 못했어요.");
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("moves the calculated end date by the branch-added holiday once the start date is edited", async () => {
+    expect(BRANCH_EDITED_END).not.toBe(KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(EDITED_START, 5));
+
+    await renderOnPeriodStep();
+    fireEvent.change(startDateInput(), { target: { value: EDITED_START } });
+
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_EDITED_END));
+  });
+
+  it("calculates an edit made while the calendar loads once when it becomes ready, not while it loads", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR }));
+    const { rerender } = await renderOnPeriodStep();
+    fireEvent.change(startDateInput(), { target: { value: EDITED_START } });
+
+    expect(endDateInput()).toHaveValue(STORED_END);
+    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+
+    mockedCalendarHook.mockReturnValue(calendarResult());
+    rerender();
+
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_EDITED_END));
+  });
+
+  it("keeps a manual end date when the calendar reloads without the dates changing", async () => {
+    const { rerender } = await renderOnPeriodStep();
+    expect(endDateInput()).toHaveValue(STORED_END);
+
+    fireEvent.change(endDateInput(), { target: { value: "2026-10-30" } });
+    expect(endDateInput()).toHaveValue("2026-10-30");
+
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false }));
+    rerender();
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: branchCalendar("kr-db-branch-2") }));
+    rerender();
+
+    expect(endDateInput()).toHaveValue("2026-10-30");
+  });
+
+  it("disables 계약서 생성 and does not submit until the calendar is ready", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR }));
+    const { rerender } = await renderOnPeriodStep();
+
+    const submitButton = screen.getByRole("button", { name: "계약서 생성" });
+    expect(submitButton).toBeDisabled();
+    fireEvent.click(submitButton);
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+
+    mockedCalendarHook.mockReturnValue(calendarResult());
+    rerender();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+  });
+
+  it("shows the no-branch notice next to the period and blocks submitting", async () => {
+    mockedCalendarHook.mockReturnValue(
+      calendarResult({ ready: false, error: "no-branch", calendar: KR_BUILTIN_CALENDAR }),
+    );
+    await renderOnPeriodStep();
+
+    expect(screen.getByText("지점을 선택한 뒤 다시 시도해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeDisabled();
+  });
+
+  it("asks the calendar hook for the years of the form dates", async () => {
+    await renderOnPeriodStep();
+
+    const lastCall = mockedCalendarHook.mock.calls.at(-1)?.[0];
+    expect(lastCall?.extraYears).toEqual(expect.arrayContaining([2026, 2027]));
+  });
+
+  describe("a period that reaches a year the calendar does not support", () => {
+    const UNSUPPORTED_YEAR_NOTICE = "이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.";
+    // 2028 has not been synced for the branch yet: any calculation reaching it throws.
+    const UNSUPPORTED_2028_CALENDAR = createKrBusinessDayCalendar(
+      [...getKoreanHolidays(2026), ...getKoreanHolidays(2027)],
+      { version: "kr-db-unsupported-2028", supportedYears: [2026, 2027] },
+    );
+
+    beforeEach(() => {
+      mockedCalendarHook.mockReturnValue(calendarResult({ calendar: UNSUPPORTED_2028_CALENDAR }));
+    });
+
+    it("clears the stale end date, shows the notice and blocks submit, then recovers on a supported start date", async () => {
+      await renderOnPeriodStep();
+      await waitFor(() => expect(endDateInput()).toHaveValue(STORED_END));
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+
+      // 5 business days from 2027-12-30 reach 2028.
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+
+      await waitFor(() => expect(endDateInput()).toHaveValue(""));
+      expect(screen.getByText(UNSUPPORTED_YEAR_NOTICE)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "계약서 생성" })).toBeDisabled();
+      submit();
+      expect(mockDispatchHeadless).not.toHaveBeenCalled();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+
+      fireEvent.change(startDateInput(), { target: { value: STORED_START } });
+
+      await waitFor(() => expect(endDateInput()).toHaveValue(STORED_END));
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+    });
+
+    it("keeps the submit handler itself closed for an unsupported year, even with an end date present", async () => {
+      await renderOnPeriodStep();
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+      await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+      // A complete end date that did not come from the end-date input keeps the unsupported flag set.
+      act(() => {
+        useFormStore.getState().setEndDate("2028-01-07");
+      });
+      const submitButton = screen.getByRole("button", { name: "계약서 생성" });
+      expect(submitButton).toBeDisabled();
+
+      // The button is disabled, so a real click never reaches the handler; call it directly.
+      invokeReactClick(submitButton);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      // Past the guard the form would open the "고객 정보와 다른 내용이 있어요" confirmation (or dispatch).
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(mockDispatchHeadless).not.toHaveBeenCalled();
+      expect(mockUpdateClient).not.toHaveBeenCalled();
+    });
+
+    it("drops the notice once the user types an end date", async () => {
+      await renderOnPeriodStep();
+      fireEvent.change(startDateInput(), { target: { value: "2027-12-30" } });
+      await screen.findByText(UNSUPPORTED_YEAR_NOTICE);
+
+      fireEvent.change(endDateInput(), { target: { value: "2028-01-07" } });
+
+      expect(endDateInput()).toHaveValue("2028-01-07");
+      expect(screen.queryByText(UNSUPPORTED_YEAR_NOTICE)).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe("mobile contract form - a picked client keeps its stored end date", () => {
+  const mockedCalendarHook = jest.mocked(useBusinessDayCalendar);
+  // The branch closes Monday 2026-09-14, so 2026-09-07 + 15 business days is 2026-09-30 here
+  // while the stored client says 2026-09-29.
+  const BRANCH_CALENDAR = createKrBusinessDayCalendar([...getKoreanHolidays(2026), "2026-09-14"], {
+    version: "kr-db-keep-end",
+    supportedYears: [2026, 2027],
+  });
+  const KEEP_START = "2026-09-07";
+  const KEEP_END = "2026-09-29";
+  const calendarResult = (overrides: Partial<UseBusinessDayCalendarResult> = {}): UseBusinessDayCalendarResult => {
+    const calendar = overrides.calendar ?? BRANCH_CALENDAR;
+    return { calendar, ready: true, error: null, retry: jest.fn(), refreshForSave: async () => ({ ok: true, calendar, changed: false }), version: calendar.version, ...overrides };
+  };
+  const endDateInput = () => input("period-card_end-date-input");
+  const setDuration = (value: string) => act(() => useFormStore.getState().setVoucherDuration(value));
+  const startDateInput = () => input("period-card_start-date-input");
+  const keepClient = (overrides: Partial<Client> = {}) =>
+    makeClient({ duration: 15, startDate: KEEP_START, endDate: KEEP_END, ...overrides });
+
+  beforeEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult());
+  });
+
+  afterEach(() => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ calendar: KR_BUILTIN_CALENDAR }));
+  });
+
+  it("guards the fixture: the branch calendar would calculate a different end date than the stored one", () => {
+    expect(BRANCH_CALENDAR.calcEndDateBusinessDays(KEEP_START, 15)).toBe("2026-09-30");
+  });
+
+  it("shows the stored end date, submits it, and raises no end-date diff", async () => {
+    mockClients = [keepClient()];
+    await renderOnStep(3);
+
+    expect(endDateInput()).toHaveValue(KEEP_END);
+    submit();
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mockDispatchHeadless.mock.calls[0]?.[0]).toEqual(expect.objectContaining({ endDate: KEEP_END }));
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+  });
+
+  it("recalculates on the branch calendar once the duration is edited, and shows the end-date diff", async () => {
+    mockClients = [keepClient()];
+    await renderOnStep(3);
+    expect(endDateInput()).toHaveValue(KEEP_END);
+
+    setDuration("16");
+
+    const recalculated = BRANCH_CALENDAR.calcEndDateBusinessDays(KEEP_START, 16);
+    expect(recalculated).not.toBe(KEEP_END);
+    await waitFor(() => expect(endDateInput()).toHaveValue(recalculated));
+    submit();
+    const dialog = await screen.findByRole("dialog", { name: DIFF_TITLE });
+    expect(within(dialog).getByText("종료일")).toBeInTheDocument();
+  });
+
+  it("recalculates when the start date is edited, and does not restore the stored end date on returning to it", async () => {
+    mockClients = [keepClient()];
+    await renderOnStep(3);
+
+    fireEvent.change(startDateInput(), { target: { value: "2026-09-08" } });
+    await waitFor(() => expect(endDateInput()).toHaveValue(BRANCH_CALENDAR.calcEndDateBusinessDays("2026-09-08", 15)));
+
+    fireEvent.change(startDateInput(), { target: { value: KEEP_START } });
+    await waitFor(() => expect(endDateInput()).toHaveValue("2026-09-30"));
+  });
+
+  it("keeps the stored end date when the client is picked while the calendar loads and it becomes ready", async () => {
+    mockedCalendarHook.mockReturnValue(calendarResult({ ready: false, calendar: KR_BUILTIN_CALENDAR }));
+    mockClients = [keepClient()];
+    const { default: ContractCreationPage } = await import("./page");
+    const view = render(<ContractCreationPage />);
+    selectStoredClient();
+    next(); next(); next();
+    expect(endDateInput()).toHaveValue(KEEP_END);
+
+    mockedCalendarHook.mockReturnValue(calendarResult());
+    view.rerender(<ContractCreationPage />);
+
+    expect(endDateInput()).toHaveValue(KEEP_END);
+  });
+
+  it("keeps a stored end date in a year the calendar does not cover, with no notice and submit allowed", async () => {
+    mockClients = [keepClient({ duration: 40, startDate: "2027-12-01", endDate: "2028-01-26" })];
+    await renderOnStep(3);
+
+    expect(endDateInput()).toHaveValue("2028-01-26");
+    expect(screen.queryByText("이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeEnabled();
+  });
+
+  it("still clears the end date and blocks submit when an edit makes the calculation reach an unsupported year", async () => {
+    mockClients = [keepClient({ duration: 40, startDate: "2027-12-01", endDate: "2028-01-26" })];
+    await renderOnStep(3);
+
+    setDuration("41");
+
+    await waitFor(() => expect(endDateInput()).toHaveValue(""));
+    expect(screen.getByText("이 기간의 공휴일 정보가 아직 없어요. 종료일을 계산할 수 없어요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 생성" })).toBeDisabled();
+  });
+
+  it("auto-calculates for a client with no stored end date", async () => {
+    mockClients = [keepClient({ endDate: null })];
+    await renderOnStep(3);
+
+    await waitFor(() => expect(endDateInput()).toHaveValue("2026-09-30"));
+  });
+
+  it("shows the next client's stored end date after switching to another client", async () => {
+    mockClients = [keepClient()];
+    await renderOnStep(3);
+    expect(endDateInput()).toHaveValue(KEEP_END);
+
+    for (let i = 0; i < 3; i += 1) fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    mockClients = [keepClient({ id: 8, duration: 10, startDate: "2026-10-05", endDate: "2026-10-16" })];
+    selectStoredClient();
+    next(); next(); next();
+
+    expect(endDateInput()).toHaveValue("2026-10-16");
   });
 });

@@ -22,6 +22,7 @@ const mockOutOfPocketPriceInfos = [
   { id: 4, duration: 20, fullPrice: "3240000" },
 ];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),

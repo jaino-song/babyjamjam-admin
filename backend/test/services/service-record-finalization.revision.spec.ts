@@ -1,6 +1,13 @@
 import { ConflictException } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import {
+    KOREAN_HOLIDAY_CALENDAR,
+    KR_BUILTIN_CALENDAR,
+    createKrBusinessDayCalendar,
+    type KrBusinessDayCalendar,
+} from "domain/utils/business-days";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const branchId = "00000000-0000-4000-8000-000000000010";
 const caseId = "00000000-0000-4000-8000-000000000020";
@@ -99,10 +106,82 @@ function buildService(jobService: Record<string, jest.Mock>) {
         {} as never,
         {} as never,
         {} as never,
-        jobService as never,
+        createHolidayCalendarStub(), jobService as never,
         editRepository as never,
     );
 }
+
+describe("ServiceRecordFinalizationService revised claim and the branch calendar", () => {
+    const referenceDate = new Date("2026-09-30T00:00:00.000Z");
+
+    function claimHarness(holidayCalendar: ReturnType<typeof createHolidayCalendarStub>, record = source()) {
+        const tx = {
+            service_record_case: {
+                findUnique: jest.fn(async (args: { where: Record<string, unknown>; select?: Record<string, unknown> }) => {
+                    if (args.select && "branch" in args.select) return { ...record, branch: { name: record.branchName } };
+                    return { id: caseId, branchId, clientId, status: "READY_TO_FINALIZE", nextAttemptAt: null, finalizationAttempts: 0 };
+                }),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+        };
+        const prisma = {
+            $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)),
+        };
+        const lifecycle = { recompute: jest.fn().mockResolvedValue(undefined) };
+        const service = new ServiceRecordFinalizationService(
+            prisma as never,
+            lifecycle as never,
+            {} as never,
+            holidayCalendar,
+        );
+        const claim = () => (service as unknown as {
+            claimFinalizationCase: (id: string, branch: string, reference: Date) => Promise<unknown>;
+        }).claimFinalizationCase(caseId, branchId, referenceDate);
+        return { claim, prisma, lifecycle, tx };
+    }
+
+    it("passes the calendar loaded before the claim transaction to an ineligible source recompute", async () => {
+        const holidayCalendar = createHolidayCalendarStub();
+        const calendar = createKrBusinessDayCalendar([], { version: "test", supportedYears: [2026] });
+        (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+        const { claim, prisma, lifecycle, tx } = claimHarness(holidayCalendar, { ...source(), days: [] });
+
+        await expect(claim()).resolves.toMatchObject({ claimed: false, blockedGeneration: true });
+
+        // Claim always opens its owning transaction before returning this result.
+        expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0])
+            .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(lifecycle.recompute).toHaveBeenCalledWith(caseId, tx, calendar);
+    });
+
+    it("treats a revised source as eligible under the built-in calendar", async () => {
+        // Eligible sources proceed to freezing, which needs the job service this harness omits.
+        const { claim } = claimHarness(createHolidayCalendarStub());
+
+        await expect(claim()).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
+        });
+    });
+
+    it("keeps a READY revised source eligible after its planned date becomes a holiday", async () => {
+        const holidayCalendar = createHolidayCalendarStub();
+        (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => createKrBusinessDayCalendar(
+            [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), "2026-09-07"],
+            { version: "kr-db-test", supportedYears: Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number) },
+        ));
+        const { claim, prisma, lifecycle } = claimHarness(holidayCalendar);
+
+        // Like the built-in case, it reaches freezing (the harness omits the job service).
+        await expect(claim()).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" },
+        });
+
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+        expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+            .toBeLessThan(prisma.$transaction.mock.invocationCallOrder[0]!);
+        expect(lifecycle.recompute).not.toHaveBeenCalled();
+    });
+});
 
 describe("ServiceRecordFinalizationService revised generation", () => {
     it("freezes a complete current source once with signatures and provenance", async () => {
@@ -129,8 +208,12 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         const service = buildService(jobService);
 
         await (service as unknown as {
-            freezeInitialFinalizationGeneration: (tx: unknown, source: unknown) => Promise<void>;
-        }).freezeInitialFinalizationGeneration(tx, source());
+            freezeInitialFinalizationGeneration: (
+                tx: unknown,
+                source: unknown,
+                calendar: KrBusinessDayCalendar,
+            ) => Promise<void>;
+        }).freezeInitialFinalizationGeneration(tx, source(), KR_BUILTIN_CALENDAR);
 
         const [, input] = jobService.enqueueInTransaction.mock.calls[0]!;
         expect(input).toMatchObject({
@@ -197,8 +280,12 @@ describe("ServiceRecordFinalizationService revised generation", () => {
 
         try {
             await (service as unknown as {
-                freezeInitialFinalizationGeneration: (tx: unknown, source: unknown) => Promise<void>;
-            }).freezeInitialFinalizationGeneration(tx, sourceWith(overrides));
+                freezeInitialFinalizationGeneration: (
+                tx: unknown,
+                source: unknown,
+                calendar: KrBusinessDayCalendar,
+            ) => Promise<void>;
+            }).freezeInitialFinalizationGeneration(tx, sourceWith(overrides), KR_BUILTIN_CALENDAR);
             throw new Error("Expected revised source validation to fail");
         } catch (error) {
             expect(error).toBeInstanceOf(ConflictException);
@@ -207,6 +294,31 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             });
         }
         expect(jobService.findByRequestKeyInTransaction).not.toHaveBeenCalled();
+        expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when the branch calendar made a planned date a holiday", async () => {
+        // 2026-09-07 is a business day in the built-in calendar, so the vector validates there.
+        const branchCalendar = createKrBusinessDayCalendar(
+            [...Object.values(KOREAN_HOLIDAY_CALENDAR).flat(), "2026-09-07"],
+            { version: "kr-db-test", supportedYears: Object.keys(KOREAN_HOLIDAY_CALENDAR).map(Number) },
+        );
+        const jobService = {
+            findByRequestKeyInTransaction: jest.fn(),
+            enqueueInTransaction: jest.fn(),
+        };
+        const service = buildService(jobService);
+        const freeze = (calendar: KrBusinessDayCalendar) => (service as unknown as {
+            freezeInitialFinalizationGeneration: (
+                tx: unknown,
+                source: unknown,
+                calendar: KrBusinessDayCalendar,
+            ) => Promise<void>;
+        }).freezeInitialFinalizationGeneration({ service_record_revision: { findUnique: jest.fn() } }, source(), calendar);
+
+        await expect(freeze(branchCalendar)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
+        });
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
@@ -247,8 +359,12 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         const service = buildService(jobService);
 
         await (service as unknown as {
-            freezeInitialFinalizationGeneration: (tx: unknown, source: unknown) => Promise<void>;
-        }).freezeInitialFinalizationGeneration({}, source());
+            freezeInitialFinalizationGeneration: (
+                tx: unknown,
+                source: unknown,
+                calendar: KrBusinessDayCalendar,
+            ) => Promise<void>;
+        }).freezeInitialFinalizationGeneration({}, source(), KR_BUILTIN_CALENDAR);
 
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });

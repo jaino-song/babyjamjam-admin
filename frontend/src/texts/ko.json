@@ -7,6 +7,7 @@
     "unknown": "사용자"
   },
   "common": {
+    "calendar-changed-before-save": "공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.",
     "title": "아가잼잼 관리자 앱",
     "subtitle": "아날로그에서 디지털로",
     "start": "시작하기",

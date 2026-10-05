@@ -22,7 +22,7 @@ import {
 } from "@/hooks/useCallInbox";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
-import { formatIsoDateInput } from "@/lib/contracts/date-input";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import {
   focusFirstInvalidField,
   pickSlotMessage,

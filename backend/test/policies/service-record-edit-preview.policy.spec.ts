@@ -3,6 +3,7 @@ import {
     normalizeServiceRecordEditChanges,
     resolveServiceRecordScheduleProjection,
 } from "application/policies/service-record-edit-preview.policy";
+import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import type {
     ServiceRecordEditSource,
     ServiceRecordEditJsonValue,
@@ -99,9 +100,9 @@ function source(overrides: Partial<ServiceRecordEditSource> = {}): ServiceRecord
 
 describe("service-record-edit-preview.policy", () => {
     it("preserves later dates for an explicitly single-session correction", () => {
-        const normalized = normalizeServiceRecordEditChanges(source(), {}, {}, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false });
+        const normalized = normalizeServiceRecordEditChanges(source(), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false });
         expect(normalized.entries?.map((entry) => entry.serviceDate)).toEqual(["2026-09-04", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11"]);
-        expect(() => normalizeServiceRecordEditChanges(source(), {}, {}, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: false })).toThrow();
+        expect(() => normalizeServiceRecordEditChanges(source(), {}, {}, KR_BUILTIN_CALENDAR, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: false })).toThrow();
     });
 
     it("keeps nominal duration separate and shifts only the selected suffix", () => {
@@ -109,6 +110,7 @@ describe("service-record-edit-preview.policy", () => {
             source(),
             {},
             { sessions: [{ sessionIndex: 3, notes: "변경" }] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-11" },
         );
         expect(normalized.entries?.map(({ serviceDate }) => serviceDate)).toEqual([
@@ -117,6 +119,7 @@ describe("service-record-edit-preview.policy", () => {
         expect(source().client.duration).toBe(15);
 
         const preview = buildServiceRecordEditPreview({
+            calendar: KR_BUILTIN_CALENDAR,
             draftId: "33333333-3333-4333-8333-333333333333",
             draftVersion: 2,
             sourceCaseVersion: 7,
@@ -140,12 +143,14 @@ describe("service-record-edit-preview.policy", () => {
             source(),
             {},
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-11" },
         );
         const second = normalizeServiceRecordEditChanges(
             source(),
             first.changes,
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-09" },
         );
         expect(second.entries?.map(({ serviceDate }) => serviceDate)).toEqual([
@@ -158,12 +163,14 @@ describe("service-record-edit-preview.policy", () => {
             source(),
             {},
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-11" },
         );
         const second = normalizeServiceRecordEditChanges(
             source(),
             first.changes,
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 5, toDate: "2026-09-18" },
         );
 
@@ -185,6 +192,7 @@ describe("service-record-edit-preview.policy", () => {
             source(),
             {},
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-11" },
         );
         const second = normalizeServiceRecordEditChanges(
@@ -194,6 +202,7 @@ describe("service-record-edit-preview.policy", () => {
                 header: { momName: "수정 산모" },
                 sessions: first.changes["sessions"] as ServiceRecordEditJsonValue,
             },
+            KR_BUILTIN_CALENDAR,
         );
         expect(second.entries?.map(({ serviceDate }) => serviceDate)).toEqual([
             "2026-09-07", "2026-09-08", "2026-09-11", "2026-09-14", "2026-09-15",
@@ -207,9 +216,11 @@ describe("service-record-edit-preview.policy", () => {
             sparse,
             {},
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-09-11" },
         );
         const preview = buildServiceRecordEditPreview({
+            calendar: KR_BUILTIN_CALENDAR,
             draftId: "33333333-3333-4333-8333-333333333333",
             draftVersion: 1,
             sourceCaseVersion: 7,
@@ -222,6 +233,7 @@ describe("service-record-edit-preview.policy", () => {
         expect(preview.contentChanges.headerChanged).toBe(false);
 
         const noOp = buildServiceRecordEditPreview({
+            calendar: KR_BUILTIN_CALENDAR,
             draftId: "33333333-3333-4333-8333-333333333333",
             draftVersion: 1,
             sourceCaseVersion: 7,
@@ -243,10 +255,11 @@ describe("service-record-edit-preview.policy", () => {
                 employeeId: assignment.employeeId,
             }] as unknown as ServiceRecordEditJsonValue,
         });
-        const projection = resolveServiceRecordScheduleProjection(incomplete);
+        const projection = resolveServiceRecordScheduleProjection(incomplete, KR_BUILTIN_CALENDAR);
         expect(projection.entries).toEqual([]);
         expect(projection.blockingReasons.map(({ code }) => code)).toContain("INCOMPLETE_VECTOR");
         const preview = buildServiceRecordEditPreview({
+            calendar: KR_BUILTIN_CALENDAR,
             draftId: "33333333-3333-4333-8333-333333333333",
             draftVersion: 1,
             sourceCaseVersion: 7,
@@ -265,7 +278,7 @@ describe("service-record-edit-preview.policy", () => {
                 ? { ...session, serviceDate: "2026-09-08" }
                 : session),
         });
-        const projection = resolveServiceRecordScheduleProjection(contradictory);
+        const projection = resolveServiceRecordScheduleProjection(contradictory, KR_BUILTIN_CALENDAR);
         expect(projection.blockingReasons.map(({ code }) => code)).toContain("ACTUAL_DAY_CONTRADICTION");
     });
 
@@ -274,6 +287,7 @@ describe("service-record-edit-preview.policy", () => {
             source(),
             {},
             { sessions: [{ sessionIndex: 3, serviceDate: "2026-09-11" }] },
+            KR_BUILTIN_CALENDAR,
         )).toThrow(/dateMove/);
     });
 
@@ -284,7 +298,7 @@ describe("service-record-edit-preview.policy", () => {
                 ? { ...session, ambiguous: true }
                 : session),
         });
-        const projection = resolveServiceRecordScheduleProjection(legacy);
+        const projection = resolveServiceRecordScheduleProjection(legacy, KR_BUILTIN_CALENDAR);
         expect(projection.blockingReasons.map(({ code }) => code)).toContain("AMBIGUOUS_LEGACY_PROVENANCE");
     });
 
@@ -297,9 +311,11 @@ describe("service-record-edit-preview.policy", () => {
             bounded,
             {},
             { sessions: [] },
+            KR_BUILTIN_CALENDAR,
             { sessionIndex: 3, toDate: "2026-10-01" },
         );
         const preview = buildServiceRecordEditPreview({
+            calendar: KR_BUILTIN_CALENDAR,
             draftId: "33333333-3333-4333-8333-333333333333",
             draftVersion: 1,
             sourceCaseVersion: 7,
@@ -310,5 +326,71 @@ describe("service-record-edit-preview.policy", () => {
         });
         expect(preview.blockingReasons).toEqual([]);
         expect(preview.provenance).toEqual([expect.objectContaining({ endDate: "2026-10-06" })]);
+    });
+
+    describe("branch calendar", () => {
+        const withBranchHoliday = (date: string, version: string) => createKrBusinessDayCalendar(
+            [...KOREAN_HOLIDAY_CALENDAR[2026]!, date],
+            { version, supportedYears: [2026] },
+        );
+        const baseInput = {
+            draftId: "33333333-3333-4333-8333-333333333333",
+            draftVersion: 1,
+            sourceCaseVersion: 7,
+            sourceFingerprint: "source-fingerprint",
+            previewId: "preview-1",
+        };
+
+        it("skips a branch-only holiday when the suffix is shifted", () => {
+            // 2026-09-16 is a Wednesday that only this branch closes.
+            const branchCalendar = withBranchHoliday("2026-09-16", "kr-db-branch-a");
+            const move = { sessionIndex: 4, toDate: "2026-09-15" };
+            const builtin = normalizeServiceRecordEditChanges(source(), {}, {}, KR_BUILTIN_CALENDAR, move);
+            expect(builtin.entries?.map(({ serviceDate }) => serviceDate)).toEqual([
+                "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-15", "2026-09-16",
+            ]);
+            const branch = normalizeServiceRecordEditChanges(source(), {}, {}, branchCalendar, move);
+            expect(branch.entries?.map(({ serviceDate }) => serviceDate)).toEqual([
+                "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-15", "2026-09-17",
+            ]);
+        });
+
+        it("preserves legacy session dates after a branch holiday is added", () => {
+            const legacy = source({ plannedSessions: null });
+            const preview = buildServiceRecordEditPreview({
+                ...baseInput,
+                calendar: withBranchHoliday("2026-09-09", "kr-db-legacy-revised"),
+                source: legacy,
+                changes: {},
+            });
+
+            expect(preview.blockingReasons.map(({ code }) => code)).not.toContain("NON_BUSINESS_DATE");
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.before.sessions.map(({ serviceDate }) => serviceDate))
+                .toEqual(legacy.sessions.map(({ serviceDate }) => serviceDate));
+            expect(preview.after.sessions).toEqual(preview.before.sessions);
+        });
+
+        it("preserves a persisted vector after a branch holiday is added and reports the calendar version", () => {
+            const builtinPreview = buildServiceRecordEditPreview({
+                ...baseInput,
+                calendar: KR_BUILTIN_CALENDAR,
+                source: source(),
+                changes: {},
+            });
+            expect(builtinPreview.blockingReasons).toEqual([]);
+            expect(builtinPreview.calendarVersion).toBe(KR_BUILTIN_CALENDAR.version);
+
+            // 2026-09-09 is a Wednesday inside the existing vector.
+            const branchPreview = buildServiceRecordEditPreview({
+                ...baseInput,
+                calendar: withBranchHoliday("2026-09-09", "kr-db-branch-b"),
+                source: source(),
+                changes: {},
+            });
+            expect(branchPreview.calendarVersion).toBe("kr-db-branch-b");
+            expect(branchPreview.blockingReasons).toEqual([]);
+            expect(branchPreview.before.sessions).toEqual(builtinPreview.before.sessions);
+        });
     });
 });

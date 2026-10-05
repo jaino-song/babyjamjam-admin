@@ -1,4 +1,4 @@
-import { KOREAN_HOLIDAY_CALENDAR_VERSION } from "@babyjamjam/shared/utils/business-days";
+import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
 import {
     getExpectedSessionDateFromRecords,
     ServiceRecordScheduleValidationError,
@@ -58,6 +58,7 @@ export interface ServiceRecordEditPreviewBuildInput {
     source: ServiceRecordEditSource;
     changes: ServiceRecordEditJsonValue;
     previewId: string;
+    calendar: KrBusinessDayCalendar;
 }
 
 function isRecord(value: ServiceRecordEditJsonValue | unknown): value is Record<string, unknown> {
@@ -298,7 +299,11 @@ function plannedArray(source: ServiceRecordEditSource): ServiceRecordEditJsonVal
         ?? [];
 }
 
-function projectPersisted(source: ServiceRecordEditSource, rawEntries: ServiceRecordEditJsonValue[]): CanonicalProjection {
+function projectPersisted(
+    source: ServiceRecordEditSource,
+    rawEntries: ServiceRecordEditJsonValue[],
+    calendar: KrBusinessDayCalendar,
+): CanonicalProjection {
     const expected = source.requiredSessionCount;
     if (typeof expected !== "number" || !Number.isInteger(expected) || expected <= 0) {
         return {
@@ -348,7 +353,7 @@ function projectPersisted(source: ServiceRecordEditSource, rawEntries: ServiceRe
     }
     if (blockingReasons.length > 0) return { entries: [], source: "planned", blockingReasons };
     try {
-        const validated = validateServiceRecordScheduleVector(entries, expected);
+        const validated = validateServiceRecordScheduleVector(entries, expected, calendar, { persisted: true });
         const rangeBlockingReasons = [
             ...persistedDayReasons(source, validated),
             ...assignmentRangeReasons(source, validated),
@@ -363,7 +368,7 @@ function projectPersisted(source: ServiceRecordEditSource, rawEntries: ServiceRe
     }
 }
 
-function projectLegacy(source: ServiceRecordEditSource): CanonicalProjection {
+function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayCalendar): CanonicalProjection {
     const expected = source.requiredSessionCount;
     if (typeof expected !== "number" || !Number.isInteger(expected) || expected <= 0) {
         return {
@@ -410,7 +415,7 @@ function projectLegacy(source: ServiceRecordEditSource): CanonicalProjection {
                 continue;
             }
             try {
-                serviceDate = getExpectedSessionDateFromRecords(source.startDate, sessionIndex, records);
+                serviceDate = getExpectedSessionDateFromRecords(source.startDate, sessionIndex, records, calendar);
             } catch (error) {
                 blockingReasons.push(reasonFromError(error, sessionIndex));
                 continue;
@@ -430,7 +435,7 @@ function projectLegacy(source: ServiceRecordEditSource): CanonicalProjection {
     }
     if (blockingReasons.length > 0) return { entries: [], source: "legacy", blockingReasons };
     try {
-        const validated = validateServiceRecordScheduleVector(entries, expected);
+        const validated = validateServiceRecordScheduleVector(entries, expected, calendar, { persisted: true });
         const rangeBlockingReasons = assignmentRangeReasons(source, validated);
         return {
             entries: rangeBlockingReasons.length > 0 ? [] : validated,
@@ -443,10 +448,13 @@ function projectLegacy(source: ServiceRecordEditSource): CanonicalProjection {
 }
 
 /** Resolve the source's persisted vector, or a complete uniquely-owned legacy projection. */
-export function resolveServiceRecordScheduleProjection(source: ServiceRecordEditSource): CanonicalProjection {
+export function resolveServiceRecordScheduleProjection(
+    source: ServiceRecordEditSource,
+    calendar: KrBusinessDayCalendar,
+): CanonicalProjection {
     const persisted = plannedArray(source);
-    if (persisted !== null) return projectPersisted(source, persisted);
-    return projectLegacy(source);
+    if (persisted !== null) return projectPersisted(source, persisted, calendar);
+    return projectLegacy(source, calendar);
 }
 
 function sessionChanges(value: ServiceRecordEditJsonValue | undefined): DraftSessionChange[] {
@@ -493,6 +501,7 @@ function normalizedSessionChanges(
     sourceEntries: SharedPlannedSession[],
     previous: DraftSessionChange[],
     incoming: DraftSessionChange[],
+    calendar: KrBusinessDayCalendar,
 ): DraftSessionChange[] {
     const content = mergedContentChanges(previous, incoming);
     const dateOverrides = new Map<number, string>();
@@ -502,7 +511,12 @@ function normalizedSessionChanges(
     let vector = currentDateOverrides(sourceEntries, previous);
     for (const change of incoming) {
         if (typeof change["serviceDate"] !== "string") continue;
-        const shifted = shiftServiceRecordScheduleSuffix(vector, change.sessionIndex, change["serviceDate"] as string);
+        const shifted = shiftServiceRecordScheduleSuffix(
+            vector,
+            change.sessionIndex,
+            change["serviceDate"] as string,
+            calendar,
+        );
         vector = shifted.entries;
         for (const entry of vector) {
             if (entry.sessionIndex >= change.sessionIndex) dateOverrides.set(entry.sessionIndex, entry.serviceDate);
@@ -535,6 +549,7 @@ export function normalizeServiceRecordEditChanges(
     source: ServiceRecordEditSource,
     previousValue: ServiceRecordEditJsonValue | undefined,
     incomingValue: ServiceRecordEditJsonValue,
+    calendar: KrBusinessDayCalendar,
     dateMove?: ServiceRecordEditDateMove,
 ): DraftNormalizationResult {
     const previous = asRecord(previousValue) ?? {};
@@ -558,7 +573,7 @@ export function normalizeServiceRecordEditChanges(
         return { changes: output, entries: null };
     }
 
-    const projection = resolveServiceRecordScheduleProjection(source);
+    const projection = resolveServiceRecordScheduleProjection(source, calendar);
     if (projection.blockingReasons.length > 0) {
         throw new ServiceRecordScheduleValidationError(
             projection.blockingReasons[0]!.code,
@@ -582,9 +597,15 @@ export function normalizeServiceRecordEditChanges(
             }
         }
     }
-    let sessions = normalizedSessionChanges(projection.entries, previousSessions, dateMove ? [] : incomingSessions);
+    let sessions = normalizedSessionChanges(projection.entries, previousSessions, dateMove ? [] : incomingSessions, calendar);
     if (dateMove) {
-        const shifted = moveServiceRecordSessionDate(current, dateMove.sessionIndex, dateMove.toDate, dateMove.shiftFollowing ?? true);
+        const shifted = moveServiceRecordSessionDate(
+            current,
+            dateMove.sessionIndex,
+            dateMove.toDate,
+            dateMove.shiftFollowing ?? true,
+            calendar,
+        );
         const content = mergedContentChanges(previousSessions, incomingSessions);
         const normalizedByIndex = new Map<number, DraftSessionChange>();
         const previousDateIndexes = new Set(previousSessions
@@ -748,7 +769,7 @@ function contentChanges(
 export function buildServiceRecordEditPreview(
     input: ServiceRecordEditPreviewBuildInput,
 ): ServiceRecordEditPreviewResponse {
-    const projection = resolveServiceRecordScheduleProjection(input.source);
+    const projection = resolveServiceRecordScheduleProjection(input.source, input.calendar);
     const blockingReasons = [...projection.blockingReasons];
     const sourceChanges = asRecord(input.changes) ?? {};
     const draftSessions = sessionChanges(sourceChanges["sessions"]);
@@ -759,9 +780,11 @@ export function buildServiceRecordEditPreview(
             before = validateServiceRecordScheduleVector(
                 projection.entries,
                 input.source.requiredSessionCount ?? undefined,
+                input.calendar,
+                { persisted: true },
             );
             after = applyStoredDates(before, draftSessions);
-            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined);
+            after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, input.calendar, { persisted: true });
             blockingReasons.push(...assignmentRangeReasons(input.source, after));
         } catch (error) {
             blockingReasons.push(reasonFromError(error));
@@ -791,7 +814,7 @@ export function buildServiceRecordEditPreview(
         sourceCaseVersion: input.sourceCaseVersion,
         sourceFingerprint: input.sourceFingerprint,
         requiredSessionCount: input.source.requiredSessionCount,
-        calendarVersion: KOREAN_HOLIDAY_CALENDAR_VERSION,
+        calendarVersion: input.calendar.version,
         before: vectorDates(before),
         after: vectorDates(after),
         provenance: previewRanges(after),

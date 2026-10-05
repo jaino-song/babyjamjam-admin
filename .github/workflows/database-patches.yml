@@ -408,6 +408,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260917000000_add_schedule_incarnation_identity/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -988,6 +989,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260917000000_add_schedule_incarnation_identity/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -1546,6 +1548,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260917000000_add_schedule_incarnation_identity/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20260921230000_expand_service_record_birthdays_to_iso/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend

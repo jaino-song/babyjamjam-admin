@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UnsupportedKoreanHolidayYearError = exports.KR_HOLIDAYS = exports.KOREAN_HOLIDAYS = exports.KOREAN_HOLIDAY_CALENDAR = exports.KOREAN_HOLIDAY_CALENDAR_VERSION = void 0;
+exports.KR_BUILTIN_CALENDAR = exports.UnsupportedKoreanHolidayYearError = exports.KR_BUILTIN_HOLIDAYS = exports.KR_HOLIDAYS = exports.KOREAN_HOLIDAYS = exports.KOREAN_HOLIDAY_CALENDAR = exports.KOREAN_HOLIDAY_CALENDAR_VERSION = void 0;
 exports.getKoreanHolidays = getKoreanHolidays;
 exports.assertSupportedKoreanHolidayYear = assertSupportedKoreanHolidayYear;
-exports.isBusinessDayKr = isBusinessDayKr;
 exports.isoDateInKorea = isoDateInKorea;
+exports.createKrBusinessDayCalendar = createKrBusinessDayCalendar;
+exports.isBusinessDayKr = isBusinessDayKr;
 exports.diffBusinessDaysKr = diffBusinessDaysKr;
 exports.calcEndDateBusinessDays = calcEndDateBusinessDays;
 exports.nextBusinessDayKr = nextBusinessDayKr;
@@ -104,9 +105,13 @@ exports.KR_HOLIDAYS = new Set([
     ...exports.KOREAN_HOLIDAY_CALENDAR[2026],
     ...exports.KOREAN_HOLIDAY_CALENDAR[2027],
 ]);
+/** Sorted ISO dates of the built-in calendar, for building derived calendars. */
+exports.KR_BUILTIN_HOLIDAYS = Object.values(exports.KOREAN_HOLIDAY_CALENDAR)
+    .flat()
+    .sort();
 class UnsupportedKoreanHolidayYearError extends Error {
-    constructor(year) {
-        super(`Korean holiday calendar does not support year ${year} (version ${exports.KOREAN_HOLIDAY_CALENDAR_VERSION})`);
+    constructor(year, version = exports.KOREAN_HOLIDAY_CALENDAR_VERSION) {
+        super(`Korean holiday calendar does not support year ${year} (version ${version})`);
         this.name = "UnsupportedKoreanHolidayYearError";
         this.year = year;
     }
@@ -148,24 +153,6 @@ function parseIsoDate(iso) {
 function isoFromUtcDate(date) {
     return date.toISOString().slice(0, 10);
 }
-function assertSupportedIsoYear(iso) {
-    assertSupportedKoreanHolidayYear(Number(iso.slice(0, 4)));
-}
-function isBusinessDayKr(iso) {
-    if (!iso)
-        return false;
-    const date = parseIsoDate(iso);
-    if (!date)
-        return false;
-    // Fail closed for a valid date in an unpopulated year. This is intentionally
-    // before the weekday check: an unsupported Saturday must not look safe merely
-    // because it is a weekend.
-    assertSupportedIsoYear(iso);
-    const dayOfWeek = date.getUTCDay();
-    if (dayOfWeek === 0 || dayOfWeek === 6)
-        return false;
-    return !exports.KOREAN_HOLIDAYS.has(iso);
-}
 function isoDateInKorea(date = new Date()) {
     const parts = KOREA_DATE_FORMATTER.formatToParts(date);
     const year = parts.find((part) => part.type === "year")?.value ?? "";
@@ -173,86 +160,195 @@ function isoDateInKorea(date = new Date()) {
     const day = parts.find((part) => part.type === "day")?.value ?? "";
     return `${year}-${month}-${day}`;
 }
-function diffBusinessDaysKr(targetISO, baseISO = isoDateInKorea()) {
-    const target = parseIsoDate(targetISO);
-    const base = parseIsoDate(baseISO);
-    if (!target || !base)
-        return null;
-    assertSupportedIsoYear(targetISO);
-    assertSupportedIsoYear(baseISO);
-    const targetTime = target.getTime();
-    const baseTime = base.getTime();
-    if (targetTime === baseTime)
-        return 0;
-    const cursor = new Date(base);
-    let count = 0;
-    if (targetTime > baseTime) {
-        while (cursor.getTime() < targetTime) {
-            cursor.setUTCDate(cursor.getUTCDate() + 1);
-            if (isBusinessDayKr(isoFromUtcDate(cursor)))
-                count++;
-        }
-        return count;
-    }
-    while (cursor.getTime() > targetTime) {
-        if (isBusinessDayKr(isoFromUtcDate(cursor)))
-            count++;
-        cursor.setUTCDate(cursor.getUTCDate() - 1);
-    }
-    return -count;
-}
-// Counts startISO as day 1. If startISO is not a business day, the next
-// Korean business day becomes day 1.
-function calcEndDateBusinessDays(startISO, numberOfBusinessDays) {
-    if (!startISO || !Number.isFinite(numberOfBusinessDays) || numberOfBusinessDays <= 0)
-        return "";
-    const start = parseIsoDate(startISO);
-    if (!start)
-        return "";
-    assertSupportedIsoYear(startISO);
-    const cursor = new Date(start);
-    let counted = 0;
-    for (let i = 0; i < 365 && counted < numberOfBusinessDays; i += 1) {
-        const iso = isoFromUtcDate(cursor);
-        if (isBusinessDayKr(iso)) {
-            counted += 1;
-            if (counted === numberOfBusinessDays)
-                return iso;
-        }
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return "";
-}
 // Ported from mobile/src/lib/date/business-days.ts, which has these two
 // helpers but frontend does not. Kept here so this module is a complete
 // superset of both call sites' business-day needs.
 const NEXT_BUSINESS_DAY_SEARCH_LIMIT = 30;
-function nextBusinessDayKr(iso) {
-    const start = parseIsoDate(iso);
-    if (!start)
-        throw new Error(`Invalid Korean calendar date: ${iso}`);
-    assertSupportedIsoYear(iso);
-    const cursor = new Date(start);
-    for (let i = 0; i < NEXT_BUSINESS_DAY_SEARCH_LIMIT; i += 1) {
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-        const cursorIso = isoFromUtcDate(cursor);
-        if (isBusinessDayKr(cursorIso))
-            return cursorIso;
+function createKrBusinessDayCalendar(holidayDates, opts = {}) {
+    const version = opts.version ?? "custom";
+    const holidays = new Set();
+    const datedYears = new Set();
+    for (const date of holidayDates) {
+        if (!parseIsoDate(date))
+            throw new Error(`Invalid holiday date (expected YYYY-MM-DD): ${date}`);
+        holidays.add(date);
+        datedYears.add(Number(date.slice(0, 4)));
     }
-    throw new Error(`Unable to find next Korean business day within ${NEXT_BUSINESS_DAY_SEARCH_LIMIT} days after ${iso}`);
+    const supportedYears = new Set();
+    for (const year of opts.supportedYears ?? datedYears) {
+        if (!Number.isInteger(year))
+            throw new Error(`Invalid supported year: ${year}`);
+        supportedYears.add(year);
+    }
+    function assertSupportedYear(year) {
+        if (!supportedYears.has(year)) {
+            throw new UnsupportedKoreanHolidayYearError(year, version);
+        }
+    }
+    function assertSupportedIsoYear(iso) {
+        assertSupportedYear(Number(iso.slice(0, 4)));
+    }
+    function isBusinessDay(iso) {
+        if (!iso)
+            return false;
+        const date = parseIsoDate(iso);
+        if (!date)
+            return false;
+        // Fail closed for a valid date in an unpopulated year. This is intentionally
+        // before the weekday check: an unsupported Saturday must not look safe merely
+        // because it is a weekend.
+        assertSupportedIsoYear(iso);
+        const dayOfWeek = date.getUTCDay();
+        if (dayOfWeek === 0 || dayOfWeek === 6)
+            return false;
+        return !holidays.has(iso);
+    }
+    function diffBusinessDays(targetISO, baseISO = isoDateInKorea()) {
+        const target = parseIsoDate(targetISO);
+        const base = parseIsoDate(baseISO);
+        if (!target || !base)
+            return null;
+        assertSupportedIsoYear(targetISO);
+        assertSupportedIsoYear(baseISO);
+        const targetTime = target.getTime();
+        const baseTime = base.getTime();
+        if (targetTime === baseTime)
+            return 0;
+        const cursor = new Date(base);
+        let count = 0;
+        if (targetTime > baseTime) {
+            while (cursor.getTime() < targetTime) {
+                cursor.setUTCDate(cursor.getUTCDate() + 1);
+                if (isBusinessDay(isoFromUtcDate(cursor)))
+                    count++;
+            }
+            return count;
+        }
+        while (cursor.getTime() > targetTime) {
+            if (isBusinessDay(isoFromUtcDate(cursor)))
+                count++;
+            cursor.setUTCDate(cursor.getUTCDate() - 1);
+        }
+        return -count;
+    }
+    // Counts startISO as day 1. If startISO is not a business day, the next
+    // Korean business day becomes day 1.
+    function calcEndDateBusinessDays(startISO, numberOfBusinessDays) {
+        if (!startISO || !Number.isFinite(numberOfBusinessDays) || numberOfBusinessDays <= 0)
+            return "";
+        const start = parseIsoDate(startISO);
+        if (!start)
+            return "";
+        assertSupportedIsoYear(startISO);
+        const cursor = new Date(start);
+        let counted = 0;
+        for (let i = 0; i < 365 && counted < numberOfBusinessDays; i += 1) {
+            const iso = isoFromUtcDate(cursor);
+            if (isBusinessDay(iso)) {
+                counted += 1;
+                if (counted === numberOfBusinessDays)
+                    return iso;
+            }
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        return "";
+    }
+    function nextBusinessDay(iso) {
+        const start = parseIsoDate(iso);
+        if (!start)
+            throw new Error(`Invalid Korean calendar date: ${iso}`);
+        assertSupportedIsoYear(iso);
+        const cursor = new Date(start);
+        for (let i = 0; i < NEXT_BUSINESS_DAY_SEARCH_LIMIT; i += 1) {
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+            const cursorIso = isoFromUtcDate(cursor);
+            if (isBusinessDay(cursorIso))
+                return cursorIso;
+        }
+        throw new Error(`Unable to find next Korean business day within ${NEXT_BUSINESS_DAY_SEARCH_LIMIT} days after ${iso}`);
+    }
+    function addBusinessDays(iso, n) {
+        const parsed = parseIsoDate(iso);
+        if (!parsed)
+            throw new Error(`Invalid Korean calendar date: ${iso}`);
+        assertSupportedIsoYear(iso);
+        if (n <= 0)
+            return iso;
+        let cursor = iso;
+        for (let i = 0; i < n; i += 1) {
+            cursor = nextBusinessDay(cursor);
+        }
+        return cursor;
+    }
+    function shiftBusinessDays(iso, offset) {
+        const parsed = parseIsoDate(iso);
+        if (!parsed)
+            throw new Error(`Invalid Korean calendar date: ${iso}`);
+        assertSupportedIsoYear(iso);
+        if (!Number.isInteger(offset)) {
+            throw new Error(`Business-day offset must be an integer: ${offset}`);
+        }
+        if (offset === 0)
+            return iso;
+        const direction = offset > 0 ? 1 : -1;
+        let remaining = Math.abs(offset);
+        const cursor = new Date(parsed);
+        while (remaining > 0) {
+            cursor.setUTCDate(cursor.getUTCDate() + direction);
+            const cursorIso = isoFromUtcDate(cursor);
+            if (isBusinessDay(cursorIso))
+                remaining -= 1;
+        }
+        return isoFromUtcDate(cursor);
+    }
+    function countBusinessDays(startISO, endISO) {
+        const start = parseIsoDate(startISO);
+        const end = parseIsoDate(endISO);
+        if (!start || !end || start.getTime() > end.getTime())
+            return null;
+        assertSupportedIsoYear(startISO);
+        assertSupportedIsoYear(endISO);
+        const cursor = new Date(start);
+        let count = 0;
+        while (cursor.getTime() <= end.getTime()) {
+            if (isBusinessDay(isoFromUtcDate(cursor)))
+                count += 1;
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        return count;
+    }
+    return {
+        version,
+        assertSupportedYear,
+        isBusinessDay,
+        calcEndDateBusinessDays,
+        addBusinessDays,
+        shiftBusinessDays,
+        countBusinessDays,
+        diffBusinessDays,
+        nextBusinessDay,
+    };
+}
+exports.KR_BUILTIN_CALENDAR = createKrBusinessDayCalendar(exports.KR_BUILTIN_HOLIDAYS, {
+    version: exports.KOREAN_HOLIDAY_CALENDAR_VERSION,
+    supportedYears: Object.keys(exports.KOREAN_HOLIDAY_CALENDAR).map(Number),
+});
+function isBusinessDayKr(iso) {
+    return exports.KR_BUILTIN_CALENDAR.isBusinessDay(iso);
+}
+function diffBusinessDaysKr(targetISO, baseISO = isoDateInKorea()) {
+    return exports.KR_BUILTIN_CALENDAR.diffBusinessDays(targetISO, baseISO);
+}
+// Counts startISO as day 1. If startISO is not a business day, the next
+// Korean business day becomes day 1.
+function calcEndDateBusinessDays(startISO, numberOfBusinessDays) {
+    return exports.KR_BUILTIN_CALENDAR.calcEndDateBusinessDays(startISO, numberOfBusinessDays);
+}
+function nextBusinessDayKr(iso) {
+    return exports.KR_BUILTIN_CALENDAR.nextBusinessDay(iso);
 }
 function addBusinessDaysKr(iso, n) {
-    const parsed = parseIsoDate(iso);
-    if (!parsed)
-        throw new Error(`Invalid Korean calendar date: ${iso}`);
-    assertSupportedIsoYear(iso);
-    if (n <= 0)
-        return iso;
-    let cursor = iso;
-    for (let i = 0; i < n; i += 1) {
-        cursor = nextBusinessDayKr(cursor);
-    }
-    return cursor;
+    return exports.KR_BUILTIN_CALENDAR.addBusinessDays(iso, n);
 }
 /**
  * Applies a signed business-day offset using the authoritative Korean
@@ -260,39 +356,8 @@ function addBusinessDaysKr(iso, n) {
  * suffix moves, where a reverse move must restore the original vector.
  */
 function shiftBusinessDaysKr(iso, offset) {
-    const parsed = parseIsoDate(iso);
-    if (!parsed)
-        throw new Error(`Invalid Korean calendar date: ${iso}`);
-    assertSupportedIsoYear(iso);
-    if (!Number.isInteger(offset)) {
-        throw new Error(`Business-day offset must be an integer: ${offset}`);
-    }
-    if (offset === 0)
-        return iso;
-    const direction = offset > 0 ? 1 : -1;
-    let remaining = Math.abs(offset);
-    const cursor = new Date(parsed);
-    while (remaining > 0) {
-        cursor.setUTCDate(cursor.getUTCDate() + direction);
-        const cursorIso = isoFromUtcDate(cursor);
-        if (isBusinessDayKr(cursorIso))
-            remaining -= 1;
-    }
-    return isoFromUtcDate(cursor);
+    return exports.KR_BUILTIN_CALENDAR.shiftBusinessDays(iso, offset);
 }
 function countBusinessDaysKr(startISO, endISO) {
-    const start = parseIsoDate(startISO);
-    const end = parseIsoDate(endISO);
-    if (!start || !end || start.getTime() > end.getTime())
-        return null;
-    assertSupportedIsoYear(startISO);
-    assertSupportedIsoYear(endISO);
-    const cursor = new Date(start);
-    let count = 0;
-    while (cursor.getTime() <= end.getTime()) {
-        if (isBusinessDayKr(isoFromUtcDate(cursor)))
-            count += 1;
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return count;
+    return exports.KR_BUILTIN_CALENDAR.countBusinessDays(startISO, endISO);
 }

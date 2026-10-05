@@ -248,6 +248,13 @@ spec:
                 secretKeyRef:
                   name: EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID_20
                   key: latest
+            # 공공데이터포털 특일 정보 (KASI) key for the nightly holiday sync. Preview is
+            # the only hosted server on the shared dev/preview database, so it syncs there.
+            - name: DATA_GO_KR_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: DATA_GO_KR_SERVICE_KEY
+                  key: latest
             # Intentionally NOT deployed (operator decision 2026-09-23, BJJ-341):
             # SENTRY_DSN and AUTH_EMAIL_TOKEN_HMAC_SECRET. Production's backend
             # env contains neither (verified by key listing on the production

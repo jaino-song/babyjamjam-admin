@@ -20,6 +20,7 @@ import {
 import { UpdateBranchUserDto } from "interface/dto/user.dto";
 import { runWithAdminAuditActor } from "application/services/admin-audit-context";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { toPublicUser } from "interface/dto/public-user.mapper";
 
 @Controller("branches/:branchId/users")
 @UseGuards(JwtGuard, TenantGuard, OwnerOrAdminGuard)
@@ -37,18 +38,18 @@ export class BranchUserController {
         if (!user) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
-        return user;
+        return toPublicUser(user);
     }
 
     @Patch(":userId")
-    update(
+    async update(
         @Param("branchId") branchId: string,
         @Param("userId") userId: string,
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
         @Body() dto: UpdateBranchUserDto,
     ) {
         this.assertSelectedBranch(branchId, tenant);
-        return runWithAdminAuditActor({
+        return toPublicUser(await runWithAdminAuditActor({
             userId: tenant.userId,
             globalRole: tenant.globalRole,
             branchRole: tenant.branchRole,
@@ -56,7 +57,7 @@ export class BranchUserController {
             branchRole: dto.branchRole,
             callerRole: tenant.globalRole,
             branchId,
-        }));
+        })));
     }
 
     @Delete(":userId")

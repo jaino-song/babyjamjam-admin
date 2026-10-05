@@ -20,6 +20,7 @@
         "src/agent/task-types.ts",
         "src/constants/service-record-form-layout.ts",
         "src/utils/business-days.ts",
+        "src/utils/holiday-calendar.ts",
         "src/utils/birthday.ts",
         "src/utils/service-record-input.ts",
         "src/utils/service-record-schedule.ts",

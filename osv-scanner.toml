@@ -1,2 +1,14 @@
 # osv-scanner suppressions — reviewed entries only. Each entry needs an id, a
 # reason, and (where applicable) the conditions under which it must be revisited.
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2027-01-31T00:00:00Z
+# braces <=3.0.3 stack-exhaustion DoS via deeply nested patterns (CVE-2026-93687,
+# published 2026-09-18). No patched release exists (last_affected 3.0.3).
+# Exposure review (2026-10-03): `pnpm why braces -r --prod` finds no production
+# path; braces arrives only through micromatch/fast-glob in jest and
+# eslint-config-next, whose patterns are developer-authored globs. No untrusted
+# input reaches brace expansion. Revisit when braces ships a fix (then bump and
+# drop this entry), or when the expiry above lapses.
+reason = "No patched braces release exists; only reachable via developer-authored globs in jest/eslint tooling, not production runtime or untrusted input."

@@ -13,6 +13,7 @@ import {
     assertApprovedServiceRecordWriteLockDatabaseTarget,
     createApprovedServiceRecordWriteLockClient,
 } from "./helpers/service-record-write-lock-order.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const E2E_ENABLED = process.env["SERVICE_RECORD_WRITE_LOCK_E2E"] === "1";
 const describeE2E = E2E_ENABLED ? describe : describe.skip;
@@ -355,7 +356,7 @@ describeE2E("service-record write-lock order (real PostgreSQL)", () => {
         });
         await writerLocked;
 
-        const lifecycle = new ServiceRecordLifecycleService(mirror as unknown as PrismaService);
+        const lifecycle = new ServiceRecordLifecycleService(mirror as unknown as PrismaService, createHolidayCalendarStub());
         const mirroredSync = lifecycle.syncEndDateFromMirroredContract({
             branchId,
             clientId,

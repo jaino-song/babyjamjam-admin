@@ -1,11 +1,4 @@
-import {
-    addBusinessDaysKr,
-    assertSupportedKoreanHolidayYear,
-    calcEndDateBusinessDays,
-    diffBusinessDaysKr,
-    isBusinessDayKr,
-    shiftBusinessDaysKr,
-} from "./business-days";
+import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "./business-days";
 
 export interface ServiceRecordScheduleEntry {
     sessionIndex: number;
@@ -45,7 +38,7 @@ export class ServiceRecordScheduleValidationError extends Error {
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
-function assertDateOnly(value: string, sessionIndex: number | null): void {
+function assertDateOnly(value: string, sessionIndex: number | null, calendar?: KrBusinessDayCalendar): void {
     if (!DATE_ONLY_PATTERN.test(value)) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_DATE",
@@ -67,12 +60,12 @@ function assertDateOnly(value: string, sessionIndex: number | null): void {
             sessionIndex,
         );
     }
-    assertSupportedKoreanHolidayYear(year!);
+    calendar?.assertSupportedYear(year!);
 }
 
-function assertBusinessDate(value: string, sessionIndex: number | null): void {
-    assertDateOnly(value, sessionIndex);
-    if (!isBusinessDayKr(value)) {
+function assertBusinessDate(value: string, sessionIndex: number | null, calendar: KrBusinessDayCalendar): void {
+    assertDateOnly(value, sessionIndex, calendar);
+    if (!calendar.isBusinessDay(value)) {
         throw new ServiceRecordScheduleValidationError(
             "NON_BUSINESS_DATE",
             `Session ${sessionIndex ?? "?"} must use a Korean business day`,
@@ -81,12 +74,24 @@ function assertBusinessDate(value: string, sessionIndex: number | null): void {
     }
 }
 
+/** The latest business day strictly before `iso`. */
+export function previousBusinessDay(iso: string, calendar: KrBusinessDayCalendar): string {
+    const date = new Date(`${iso}T00:00:00.000Z`);
+    do {
+        date.setUTCDate(date.getUTCDate() - 1);
+    } while (!calendar.isBusinessDay(date.toISOString().slice(0, 10)));
+    return date.toISOString().slice(0, 10);
+}
+
 function cloneEntry(entry: ServiceRecordPlannedSession): ServiceRecordPlannedSession {
     return { ...entry };
 }
 
 /**
- * Validates a complete authoritative vector before it is persisted or shifted.
+ * Validates a complete authoritative vector. Default mode checks vectors built
+ * from new input against the current calendar and has no current production caller.
+ * Persisted vectors, including admin-approved non-business exceptions, must pass
+ * `{ persisted: true }` to retain historical validity across calendar revisions.
  * The function intentionally requires ownership and original-date provenance;
  * callers with legacy rows must first resolve those fields from unique source
  * evidence rather than inventing placeholders.
@@ -94,6 +99,8 @@ function cloneEntry(entry: ServiceRecordPlannedSession): ServiceRecordPlannedSes
 export function validateServiceRecordScheduleVector(
     entries: ReadonlyArray<ServiceRecordPlannedSession>,
     requiredSessionCount?: number,
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    options: { persisted?: boolean } = {},
 ): ServiceRecordPlannedSession[] {
     const expectedCount = requiredSessionCount ?? entries.length;
     if (!Number.isInteger(expectedCount) || expectedCount <= 0) {
@@ -130,8 +137,14 @@ export function validateServiceRecordScheduleVector(
         }
         indices.add(entry.sessionIndex);
 
-        assertBusinessDate(entry.serviceDate, entry.sessionIndex);
-        assertBusinessDate(entry.originalDate, entry.sessionIndex);
+        // 저장된 날짜와 승인된 예외는 이후 달력 변경으로 무효화하지 않는다.
+        if (options.persisted) {
+            assertDateOnly(entry.serviceDate, entry.sessionIndex);
+            assertDateOnly(entry.originalDate, entry.sessionIndex);
+        } else {
+            assertBusinessDate(entry.serviceDate, entry.sessionIndex, calendar);
+            assertBusinessDate(entry.originalDate, entry.sessionIndex, calendar);
+        }
         if (dates.has(entry.serviceDate)) {
             throw new ServiceRecordScheduleValidationError(
                 "DUPLICATE_SERVICE_DATE",
@@ -194,8 +207,10 @@ export function shiftServiceRecordScheduleSuffix(
     entries: ReadonlyArray<ServiceRecordPlannedSession>,
     sessionIndex: number,
     newDate: string,
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
+    options: { allowNonBusinessDay?: boolean } = {},
 ): ServiceRecordScheduleShiftResult {
-    const vector = validateServiceRecordScheduleVector(entries);
+    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar, { persisted: true });
     if (!Number.isInteger(sessionIndex) || sessionIndex < 1 || sessionIndex > vector.length) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_SESSION_INDEX",
@@ -203,9 +218,16 @@ export function shiftServiceRecordScheduleSuffix(
             sessionIndex,
         );
     }
-    assertBusinessDate(newDate, sessionIndex);
+    const isException = Boolean(options.allowNonBusinessDay) && !calendar.isBusinessDay(newDate);
+    if (isException) assertDateOnly(newDate, sessionIndex, calendar);
+    else assertBusinessDate(newDate, sessionIndex, calendar);
     const currentDate = vector[sessionIndex - 1]!.serviceDate;
-    const deltaBusinessDays = diffBusinessDaysKr(newDate, currentDate);
+    // A weekend/holiday exception counts as the business day before it, so the
+    // sessions after it are pulled to the next business days (Mon→Sun pulls Tue→Mon).
+    const deltaBusinessDays = calendar.diffBusinessDays(
+        isException ? previousBusinessDay(newDate, calendar) : newDate,
+        currentDate,
+    );
     if (deltaBusinessDays === null) {
         throw new ServiceRecordScheduleValidationError(
             "INVALID_DATE",
@@ -214,14 +236,30 @@ export function shiftServiceRecordScheduleSuffix(
         );
     }
 
-    const shifted = vector.map((entry) => {
-        if (entry.sessionIndex < sessionIndex) return cloneEntry(entry);
-        return {
-            ...entry,
-            serviceDate: shiftBusinessDaysKr(entry.serviceDate, deltaBusinessDays),
-        };
-    });
-    return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length) };
+    const shifted: ServiceRecordPlannedSession[] = [];
+    for (const entry of vector) {
+        if (entry.sessionIndex < sessionIndex) {
+            shifted.push(cloneEntry(entry));
+            continue;
+        }
+        if (entry.sessionIndex === sessionIndex && isException) {
+            shifted.push({ ...entry, serviceDate: newDate });
+            continue;
+        }
+        // An earlier approved weekend/holiday exception carried by this shift
+        // returns to business-day scheduling: it shifts from the business day it
+        // stood for and never lands on or before the session before it.
+        const base = calendar.isBusinessDay(entry.serviceDate)
+            ? entry.serviceDate
+            : previousBusinessDay(entry.serviceDate, calendar);
+        let serviceDate = calendar.shiftBusinessDays(base, deltaBusinessDays);
+        const previous = shifted[shifted.length - 1];
+        if (entry.sessionIndex > sessionIndex && previous && serviceDate <= previous.serviceDate) {
+            serviceDate = calendar.nextBusinessDay(previous.serviceDate);
+        }
+        shifted.push({ ...entry, serviceDate });
+    }
+    return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length, calendar, { persisted: true }) };
 }
 
 /** A per-session correction moves later dates only with explicit approval. */
@@ -230,19 +268,20 @@ export function moveServiceRecordSessionDate(
     sessionIndex: number,
     newDate: string,
     shiftFollowing: boolean,
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
 ): ServiceRecordScheduleShiftResult {
-    if (shiftFollowing) return shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate);
-    const vector = validateServiceRecordScheduleVector(entries);
+    if (shiftFollowing) return shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate, calendar);
+    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar, { persisted: true });
     const selected = vector.find((entry) => entry.sessionIndex === sessionIndex);
     if (!selected) throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", "수정할 회차를 찾을 수 없습니다.", sessionIndex);
-    assertBusinessDate(newDate, sessionIndex);
-    const deltaBusinessDays = diffBusinessDaysKr(newDate, selected.serviceDate);
+    assertBusinessDate(newDate, sessionIndex, calendar);
+    const deltaBusinessDays = calendar.diffBusinessDays(newDate, selected.serviceDate);
     return {
         deltaBusinessDays: deltaBusinessDays ?? 0,
         entries: validateServiceRecordScheduleVector(vector.map((entry) => ({
             ...entry,
             serviceDate: entry.sessionIndex === sessionIndex ? newDate : entry.serviceDate,
-        })), vector.length),
+        })), vector.length, calendar, { persisted: true }),
     };
 }
 
@@ -286,16 +325,17 @@ export function getExpectedSessionDateFromRecords(
     startDate: string | null,
     sessionIndex: number,
     records: ReadonlyArray<ServiceRecordScheduleEntry>,
+    calendar: KrBusinessDayCalendar = KR_BUILTIN_CALENDAR,
 ): string | null {
     const precedingRecord = findPrecedingRecord(sessionIndex, records);
     if (precedingRecord) {
         const precedingDatePart = datePartOf(precedingRecord.serviceDate);
         if (precedingDatePart) {
-            return addBusinessDaysKr(precedingDatePart, sessionIndex - precedingRecord.sessionIndex) || null;
+            return calendar.addBusinessDays(precedingDatePart, sessionIndex - precedingRecord.sessionIndex) || null;
         }
     }
 
     const startDatePart = datePartOf(startDate);
     if (!startDatePart) return null;
-    return calcEndDateBusinessDays(startDatePart, sessionIndex) || null;
+    return calendar.calcEndDateBusinessDays(startDatePart, sessionIndex) || null;
 }

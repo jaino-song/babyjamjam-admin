@@ -38,6 +38,7 @@ import { createAgentAutomationQuestion } from "application/agent/agent-automatio
 import type { AgentTaskAutomationPort } from "application/agent/agent-task-automation.service";
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 /**
  * These are real database and HTTP checks. They are opt-in through the same
@@ -138,7 +139,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
     }) };
 
     function service(automationPort?: AgentTaskAutomationPort): AgentTaskService {
-        return new AgentTaskService(repository as never, policyStub() as never, clients as never, undefined, automationPort);
+        return new AgentTaskService(repository as never, policyStub() as never, clients as never, createHolidayCalendarStub(), undefined, automationPort);
     }
 
     /**
@@ -177,7 +178,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
             });
             return operation(wrapped);
         })) as PrismaAgentTaskRepository["withTransaction"];
-        return new AgentTaskService(injected as never, policyStub() as never, clients as never);
+        return new AgentTaskService(injected as never, policyStub() as never, clients as never, createHolidayCalendarStub());
     }
 
     function scope(forSession = sessionId) {
@@ -394,7 +395,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
 
     it("replays the original conversation intake after another task becomes active and after service recreation", async () => {
         const policy = policyStub();
-        const firstService = new AgentTaskService(repository as never, policy as never, clients as never);
+        const firstService = new AgentTaskService(repository as never, policy as never, clients as never, createHolidayCalendarStub());
         const firstOrchestrator = new ConversationTaskOrchestratorService(firstService, policy as never);
         const original = {
             principal,
@@ -426,7 +427,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(continuation.task?.taskId).not.toBe(created.task.taskId);
 
         const restartedPolicy = policyStub();
-        const restarted = new AgentTaskService(repository as never, restartedPolicy as never, clients as never);
+        const restarted = new AgentTaskService(repository as never, restartedPolicy as never, clients as never, createHolidayCalendarStub());
         const restartedOrchestrator = new ConversationTaskOrchestratorService(restarted, restartedPolicy as never);
         const replay = await restartedOrchestrator.handleUserTurn(original);
         expect(replay.replayed).toBe(true);
@@ -527,7 +528,7 @@ describeAgentE2E("conversation task runtime against the guarded local database",
         expect(continuation.task?.taskId).not.toBe(created.task.taskId);
 
         const restartedPolicy = policyStub();
-        const restartedService = new AgentTaskService(repository as never, restartedPolicy as never, clients as never);
+        const restartedService = new AgentTaskService(repository as never, restartedPolicy as never, clients as never, createHolidayCalendarStub());
         const restartedOrchestrator = new ConversationTaskOrchestratorService(restartedService, restartedPolicy as never);
         const replayAfterRestart = await restartedOrchestrator.handleUserTurn(question);
         expect(replayAfterRestart.replayed).toBe(true);

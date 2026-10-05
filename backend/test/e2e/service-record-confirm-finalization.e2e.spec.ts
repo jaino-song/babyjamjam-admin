@@ -23,6 +23,7 @@ import {
     ORIGINAL_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
 import { completeServiceRecordFinalizationCase } from "./helpers/service-record-finalization.helper";
+import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const describeE2E = process.env["SERVICE_RECORD_CONFIRM_E2E"] === "1" ? describe : describe.skip;
 
@@ -71,7 +72,7 @@ async function claimFinalizationCase(
 }
 
 function createFinalizer(prisma: PrismaClient) {
-    const lifecycle = new ServiceRecordLifecycleService(prisma as unknown as PrismaService);
+    const lifecycle = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
     const executeCase = jest.fn().mockRejectedValue(
         new Error("Unverified finalization must not call the document provider"),
     );
@@ -85,7 +86,7 @@ function createFinalizer(prisma: PrismaClient) {
         prisma as unknown as PrismaService,
         lifecycle,
         snapshot,
-        documentJobs,
+        createHolidayCalendarStub(), documentJobs,
         new ServiceRecordEditRepository(prisma as unknown as PrismaService),
     );
     return { finalizer, lifecycle, executeCase };
@@ -97,7 +98,7 @@ async function confirmAdminDateMove(
     notes = "admin partial revision",
 ) {
     const editor = new AdminServiceRecordEditService(
-        new ServiceRecordEditRepository(prisma as unknown as PrismaService),
+        new ServiceRecordEditRepository(prisma as unknown as PrismaService), createHolidayCalendarStub(),
     );
     const started = await editor.startDraft(
         fixture.branch.id,

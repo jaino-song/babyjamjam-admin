@@ -30,6 +30,7 @@ const mockAreaTemplates = [{
     templateName: "인천 산모 계약서",
 }];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
     useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
 }));
@@ -84,6 +85,7 @@ jest.mock("@/lib/sse/reconnecting-event-source", () => ({
 }));
 
 const CONTRACT_INFO_STEP_INDEX = 3;
+const CONTRACT_CREATION_PROCESSING_STEP_INDEX = 4;
 
 function seedValidContractForm(): void {
     useFormStore.setState({
@@ -111,17 +113,23 @@ function seedValidContractForm(): void {
     });
 }
 
-function renderForm(props: { onProcessingFailureChange?: (failed: boolean) => void } = {}) {
+function renderForm(props: {
+    onProcessingFailureChange?: (failed: boolean) => void;
+    onSessionStateChange?: (hasSession: boolean) => void;
+    onActiveStepObserved?: (step: number) => void;
+} = {}) {
     const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
     function Harness() {
         const [activeStep, setActiveStep] = useState(CONTRACT_INFO_STEP_INDEX);
+        props.onActiveStepObserved?.(activeStep);
         return (
             <ContractCreationForm
                 activeStep={activeStep}
                 onActiveStepChange={setActiveStep}
                 onProcessingFailureChange={props.onProcessingFailureChange}
+                onSessionStateChange={props.onSessionStateChange}
             />
         );
     }
@@ -271,6 +279,79 @@ describe("ContractCreationForm — eformsign iframe fallback on headless failure
 
         await waitFor(() => {
             expect(onProcessingFailureChange).toHaveBeenLastCalledWith(true);
+        });
+    });
+    describe("creation session across the fallback restart", () => {
+        const fallbackDispatchResult = {
+            ok: false,
+            reason: "Timed out after 100000ms while advancing eformsign creation gates",
+            fallbackHint: "iframe",
+            failedStep: "client-started",
+            durationMs: 100000,
+        };
+
+        it("keeps the session alive while the fallback run is starting", async () => {
+            mockDispatchHeadless.mockResolvedValue(fallbackDispatchResult);
+            let releaseGenerate: (value: unknown) => void = () => undefined;
+            mockGenerateDocument.mockReturnValue(
+                new Promise((resolve) => {
+                    releaseGenerate = resolve;
+                }),
+            );
+            const sessionChanges: boolean[] = [];
+            const observedSteps: number[] = [];
+
+            renderForm({
+                onSessionStateChange: (hasSession) => sessionChanges.push(hasSession),
+                onActiveStepObserved: (step) => observedSteps.push(step),
+            });
+            fireEvent.click(screen.getByTestId("contract-creation-submit"));
+
+            // The manual re-entry is in flight (generate-document has not answered), which is
+            // exactly where the progress used to be reset to "no session".
+            await waitFor(() => expect(mockGenerateDocument).toHaveBeenCalled(), { timeout: 5000 });
+            // The leading false is the mount-time report; the session then opens and stays open.
+            expect(sessionChanges).toEqual([false, true]);
+            expect(observedSteps[observedSteps.length - 1]).toBe(CONTRACT_CREATION_PROCESSING_STEP_INDEX);
+            expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                releaseGenerate({ document: { id: "tpl-1" }, user_data: {} });
+            });
+            await waitFor(() => expect(mockOpenDocument).toHaveBeenCalled(), { timeout: 5000 });
+            expect(sessionChanges).toEqual([false, true]);
+            expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
+        });
+
+        it("lands on 계약 정보 when the fallback run fails", async () => {
+            mockDispatchHeadless.mockResolvedValue(fallbackDispatchResult);
+            let rejectGenerate: (reason: unknown) => void = () => undefined;
+            mockGenerateDocument.mockReturnValue(
+                new Promise((_resolve, reject) => {
+                    rejectGenerate = reject;
+                }),
+            );
+            const sessionChanges: boolean[] = [];
+            const observedSteps: number[] = [];
+
+            renderForm({
+                onSessionStateChange: (hasSession) => sessionChanges.push(hasSession),
+                onActiveStepObserved: (step) => observedSteps.push(step),
+            });
+            fireEvent.click(screen.getByTestId("contract-creation-submit"));
+            await waitFor(() => expect(mockGenerateDocument).toHaveBeenCalled(), { timeout: 5000 });
+            expect(sessionChanges).toEqual([false, true]);
+
+            await act(async () => {
+                rejectGenerate(new Error("boom"));
+            });
+
+            await waitFor(() => expect(screen.getByTestId("contract-creation-submit")).toBeInTheDocument());
+            expect(observedSteps[observedSteps.length - 1]).toBe(CONTRACT_INFO_STEP_INDEX);
+            expect(mockOpenDocument).not.toHaveBeenCalled();
+            // Only the real end of the session reports it, and only after the step moved.
+            expect(sessionChanges).toEqual([false, true, false]);
+            expect(mockDispatchHeadless).toHaveBeenCalledTimes(1);
         });
     });
 });

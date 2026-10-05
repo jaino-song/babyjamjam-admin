@@ -7,6 +7,7 @@ import {
 import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 @Injectable()
 export class LinkDocumentToClientUsecase {
@@ -17,6 +18,7 @@ export class LinkDocumentToClientUsecase {
         private readonly eformsignDocRepository: IEformsignDocRepository,
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     async execute(branchid: string, documentId: string): Promise<void> {
@@ -61,7 +63,10 @@ export class LinkDocumentToClientUsecase {
         }
 
         if (needsClientPointerUpdate) {
-            client.update({ eDocId: documentId });
+            // SAVED computation: update() re-derives the duration from the
+            // client's dates, so use the branch calendar fresh.
+            const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+            client.update({ eDocId: documentId }, calendar);
             this.logger.log(`Linked document ${documentId} to client ${client.id}`);
         }
     }

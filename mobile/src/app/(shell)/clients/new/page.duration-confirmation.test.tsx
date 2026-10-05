@@ -23,6 +23,8 @@ let mockEmployees: Array<{
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
+jest.mock("@/hooks/useBusinessDayCalendar");
+
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   useSearchParams: () => mockSearchParams,
@@ -514,7 +516,7 @@ describe("mobile client service date confirmation", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
 
-    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient).toHaveBeenCalledWith({
       id: 7,
       dto: expect.objectContaining({

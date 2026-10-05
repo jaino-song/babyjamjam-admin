@@ -56,4 +56,12 @@ export const systemScopeImportAllowlist = [
     // a request with no branchId to scope it to — the same shape as
     // SbReceiptLinkTokenRepository's bypass above.
     "infrastructure/database/repositories/sb.message-trigger-rule.repository.ts",
+    // SbHolidaySyncRepository writes the global KASI public-holiday calendar. The
+    // public holiday_change_event rows it emits carry branchId null, which an
+    // HTTP-origin branch scope rejects (branch_mutation), and the manual
+    // `POST /branches/:branchId/holidays/sync` runs in exactly such a scope. The
+    // whole sync transaction (advisory lock, revision row lock, diff events, row
+    // replacement, snapshot) therefore runs in system scope on every trigger; it
+    // touches no branch-owned data.
+    "infrastructure/database/repositories/sb.holiday-sync.repository.ts",
 ];

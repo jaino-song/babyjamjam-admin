@@ -19,7 +19,7 @@ import {
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
-import { addBusinessDaysKr, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
+import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -38,6 +38,7 @@ import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "./service-record-lifecycle.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
@@ -57,6 +58,7 @@ type PlannedSessionVectorResult = {
 function plannedSessionVector(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): PlannedSessionVectorResult {
     if (raw === null || raw === undefined) return { state: "absent", entries: null };
     const values = Array.isArray(raw)
@@ -113,7 +115,7 @@ function plannedSessionVector(
     try {
         return {
             state: "valid",
-            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined),
+            entries: validateServiceRecordScheduleVector(entries, requiredSessionCount ?? undefined, calendar, { persisted: true }),
         };
     } catch {
         return { state: "invalid", entries: null };
@@ -123,8 +125,9 @@ function plannedSessionVector(
 function persistedPlannedSessionDates(
     raw: Prisma.JsonValue | null | undefined,
     requiredSessionCount: number | null | undefined,
+    calendar: KrBusinessDayCalendar,
 ): PlannedSessionVectorResult {
-    return plannedSessionVector(raw, requiredSessionCount);
+    return plannedSessionVector(raw, requiredSessionCount, calendar);
 }
 
 function hasAuthoritativeRevision(record: {
@@ -147,16 +150,22 @@ function entrySessionCount(record: {
     currentUsableRevisionId?: string | null;
     currentUsableDocumentVersion?: number | null;
     plannedSessions?: Prisma.JsonValue | null;
-}): number {
-    // A confirmed revision stores the actual N independently of the current
-    // calendar span. Legacy transfers retain the provider flow's in-period
-    // cap, while unsupported legacy years remain viewable with their stored N.
-    if (hasAuthoritativeRevision(record)) return record.requiredSessionCount ?? 0;
+}, calendar: KrBusinessDayCalendar): number {
+    // A stored N is the authoritative count: a confirmed revision stores it
+    // independently of the calendar span, and a legacy case keeps the N its
+    // lifecycle ensure path capped when the period last changed. A holiday
+    // calendar edit must not shrink it (it would reject a session the caregiver
+    // may still write). The calendar only derives N when none is stored;
+    // unsupported legacy years remain viewable with their stored N.
+    if (hasAuthoritativeRevision(record) || record.requiredSessionCount !== null) {
+        return record.requiredSessionCount ?? 0;
+    }
     try {
         return serviceRecordSessionCount(
             record.startDate,
             record.endDate,
             record.requiredSessionCount,
+            calendar,
         ) ?? 0;
     } catch (error) {
         if (error instanceof UnsupportedKoreanHolidayYearError) {
@@ -182,6 +191,7 @@ export class ServiceRecordEntryService {
         private readonly prisma: PrismaService,
         private readonly tokenService: ServiceRecordTokenService,
         private readonly lifecycleService: ServiceRecordLifecycleService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     /** Is this SMS link still usable (before asking for the phone number)? No PII returned. */
@@ -219,9 +229,12 @@ export class ServiceRecordEntryService {
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
 
+        // Legacy session counts control entry/submission, so use the current calendar.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const persistedDates = persistedPlannedSessionDates(
             record.plannedSessions,
             record.requiredSessionCount,
+            calendar,
         );
         if (
             persistedDates.state === "invalid"
@@ -236,7 +249,7 @@ export class ServiceRecordEntryService {
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
-            totalSessions: entrySessionCount(record),
+            totalSessions: entrySessionCount(record, calendar),
             startDate: record.startDate,
             endDate: record.endDate,
             recordStatus: record.status,
@@ -278,6 +291,11 @@ export class ServiceRecordEntryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
+        // The in-transaction recompute derives a legacy null N from the branch
+        // calendar. Read it fresh here, before the transaction opens, so that
+        // recompute never reads it through the root client while this
+        // transaction holds a pooled connection and the service-record locks.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const updated = await this.prisma.$transaction(async (tx) => {
             const schedule = tx.employee_schedule?.findUnique
                 ? await tx.employee_schedule.findUnique({
@@ -379,7 +397,7 @@ export class ServiceRecordEntryService {
                 },
                 update: { serviceRecordCaseId: record.id, ...dto },
             });
-            await this.lifecycleService.recompute(record.id, tx);
+            await this.lifecycleService.recompute(record.id, tx, calendar);
             return aggregate;
         });
         return this.headerFromCase(updated);
@@ -401,6 +419,9 @@ export class ServiceRecordEntryService {
                 .filter(([key]) => !["etcService", "notes", "paymentConfirmed"].includes(key)),
         );
         const answers = validateServiceRecordAnswers(answerInput);
+        // Saved computation: read the branch calendar fresh, before the
+        // transaction opens, so a holiday edit is honoured at once.
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
         const saved = await this.prisma.$transaction(async (tx) => {
             // Discover the assignment before locking. Production rows carry a
             // client id, so the common policy then locks client -> employees ->
@@ -461,7 +482,7 @@ export class ServiceRecordEntryService {
                 throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
-            const total = entrySessionCount(record);
+            const total = entrySessionCount(record, calendar);
             if (sessionIndex < 1 || sessionIndex > total) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/sessionIndex",
@@ -493,7 +514,7 @@ export class ServiceRecordEntryService {
             // Check the persisted vector after the common lock/reread and
             // before any schedule/client extension so stale provider input can
             // never mutate derived periods first.
-            const persistedDates = plannedSessionVector(record.plannedSessions, total);
+            const persistedDates = plannedSessionVector(record.plannedSessions, total, calendar);
             if (
                 persistedDates.state === "invalid"
                 || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
@@ -519,7 +540,7 @@ export class ServiceRecordEntryService {
             const currentEndIso = record.endDate ? toIso(record.endDate) : null;
             let requiredEndIso: string;
             try {
-                requiredEndIso = addBusinessDaysKr(serviceDateIso, total - sessionIndex);
+                requiredEndIso = calendar.addBusinessDays(serviceDateIso, total - sessionIndex);
             } catch {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/serviceDate",
@@ -573,7 +594,35 @@ export class ServiceRecordEntryService {
                     where: { id: schedule.clientId, branchId: ctx.branchId },
                     data: { endDate: newEndDate },
                 });
-                await this.lifecycleService.ensureForClient(schedule.clientId, tx);
+                // The client's end date just moved, so its open holiday review
+                // item (at most one per client) no longer describes the stored
+                // end date. Close it in this same transaction so the review
+                // card stays accurate: "fixed" when the auto-extend landed on
+                // the date the review recommended (resolvedBy stays null: the
+                // system did it), otherwise "obsolete" because the item's
+                // recommendation is now stale. branchId is pinned for tenant
+                // isolation; the item id never leaves the transaction.
+                const openReviewItem = await tx.end_date_review_item.findFirst({
+                    where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
+                    select: { id: true, recalculatedEnd: true },
+                });
+                if (openReviewItem) {
+                    await tx.end_date_review_item.updateMany({
+                        where: {
+                            id: openReviewItem.id,
+                            clientId: schedule.clientId,
+                            branchId: ctx.branchId,
+                            status: "open",
+                        },
+                        data: {
+                            status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
+                            resolvedAt: new Date(),
+                        },
+                    });
+                }
+                // Hand over the calendar this auto-extend already holds: without it ensureForClient
+                // loads its own, on a second pooled connection while these locks are held.
+                await this.lifecycleService.ensureForClient(schedule.clientId, tx, calendar);
                 await this.tokenService.extendExpiryForCase(
                     record.id,
                     getServiceRecordTokenExpiresAt(newEndDate),
@@ -712,7 +761,7 @@ export class ServiceRecordEntryService {
                     row = { ...row, clientSignature: dto.clientSignature, clientSignedAt };
                 }
             }
-            await this.lifecycleService.recompute(record.id, tx);
+            await this.lifecycleService.recompute(record.id, tx, calendar);
             return row;
         });
         if (lock) {

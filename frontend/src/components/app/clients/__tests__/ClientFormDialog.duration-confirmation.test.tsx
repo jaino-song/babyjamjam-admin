@@ -9,6 +9,7 @@ import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 
+jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
@@ -149,7 +150,7 @@ describe("client duration confirmation", () => {
     const confirm = within(modal).getByRole("button", { name: "확인" });
     fireEvent.click(confirm);
     fireEvent.click(confirm);
-    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient).toHaveBeenCalledWith({ id: 2, dto: expect.objectContaining({
       duration: 15, startDate: "2026-08-26", endDate: "2026-09-14", allowBusinessDayMismatch: true,
     }) });

@@ -46,6 +46,10 @@ export class EmployeeScheduleService {
     }): Promise<EmployeeScheduleEntity> {
         const intentAt = new Date();
         const ordinaryMutationId = randomUUID();
+        // The lifecycle sync reads the branch calendar through the root client,
+        // so it is resolved before the owning transaction takes a connection.
+        const calendar = await this.serviceRecordLifecycleService
+            ?.resolveCalendarBeforeTransaction(params.clientId);
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Acquire the branch automation lock before the schedule write.
             // The zero-scope call intentionally performs no append; the second
@@ -85,6 +89,7 @@ export class EmployeeScheduleService {
             await this.serviceRecordLifecycleService?.ensureForClient(
                 created.clientId,
                 transaction,
+                created.clientId === params.clientId ? calendar : undefined,
             );
             return created;
         });
@@ -140,6 +145,12 @@ export class EmployeeScheduleService {
     }): Promise<EmployeeScheduleEntity> {
         const intentAt = new Date();
         const ordinaryMutationId = randomUUID();
+        // The lifecycle sync reads the branch calendar through the root client,
+        // so it is resolved before the owning transaction takes a connection.
+        const preRead = await this.findEmployeeScheduleByIdUsecase.execute(branchid, id);
+        const calendar = preRead
+            ? await this.serviceRecordLifecycleService?.resolveCalendarBeforeTransaction(preRead.clientId)
+            : undefined;
         const schedule = await this.prisma.$transaction(async (transaction) => {
             // Keep the same owning transaction and advisory lock for the
             // source fence and schedule mutation. The fence is intentionally
@@ -185,6 +196,7 @@ export class EmployeeScheduleService {
             await this.serviceRecordLifecycleService?.ensureForClient(
                 updated.clientId,
                 transaction,
+                updated.clientId === preRead?.clientId ? calendar : undefined,
             );
             return updated;
         });
@@ -228,6 +240,10 @@ export class EmployeeScheduleService {
             return;
         }
         const ordinaryMutationId = randomUUID();
+        // The lifecycle sync reads the branch calendar through the root client,
+        // so it is resolved before the owning transaction takes a connection.
+        const calendar = await this.serviceRecordLifecycleService
+            ?.resolveCalendarBeforeTransaction(schedule.clientId);
         await this.prisma.$transaction(async (transaction) => {
             await this.agentAutomationRecordStore?.appendScheduleWriteFence(transaction, {
                 branchId: branchid,
@@ -239,6 +255,7 @@ export class EmployeeScheduleService {
             await this.serviceRecordLifecycleService?.ensureForClient(
                 schedule.clientId,
                 transaction,
+                calendar,
             );
         });
     }

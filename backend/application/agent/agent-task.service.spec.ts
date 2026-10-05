@@ -9,6 +9,7 @@ import { agentBindingHash } from "domain/repositories/agent-linked-action.types"
 import type { AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import type { AgentTaskAutomationPort } from "./agent-task-automation.service";
 import { createAgentAutomationQuestion } from "./agent-automation-question";
+import { createHolidayCalendarStub } from "../../test/utils/holiday-calendar.stub";
 
 const owner = {
     userId: randomUUID(),
@@ -326,7 +327,7 @@ function buildService(repository: FakeTaskRepository, client = { findByPhone: je
         assertCanPatch: jest.fn().mockReturnValue(capability),
         assertCanPrepareReview: jest.fn().mockResolvedValue(capability),
     };
-    const service = new AgentTaskService(repository as never, policy as never, client as never);
+    const service = new AgentTaskService(repository as never, policy as never, client as never, createHolidayCalendarStub());
     return { service, policy, client };
 }
 
@@ -352,7 +353,7 @@ function automationService(repository: FakeTaskRepository, providedClient?: Para
         return { version: 1 as const, noSendAtPresentation: task.draft.constraints.noSend, effects,
             question: createAgentAutomationQuestion({ effects, availability: "available", previous: task.draft.server.automation?.question }) };
     }) };
-    return { service: new AgentTaskService(repository as never, policy as never, client as never, undefined, automation), automation, policy };
+    return { service: new AgentTaskService(repository as never, policy as never, client as never, createHolidayCalendarStub(), undefined, automation), automation, policy };
 }
 
 describe("task automation answers", () => {

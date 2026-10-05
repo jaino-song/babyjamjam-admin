@@ -7,6 +7,7 @@
     "unknown": "User"
   },
   "common": {
+    "calendar-changed-before-save": "Holiday information changed, so the dates were recalculated. Please review and save again.",
     "title": "BabyJamJam Admin",
     "subtitle": "Analog to Digital",
     "start": "Get Started",
