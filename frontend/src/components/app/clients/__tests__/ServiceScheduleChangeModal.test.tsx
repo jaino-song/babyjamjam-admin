@@ -336,6 +336,25 @@ describe("branch calendar readiness", () => {
         expect(onSubmit).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ["not ready", { ready: false, error: null }],
+        ["load-failed", { ready: false, error: "load-failed" }],
+    ] as const)("closes the weekend confirm dialog when the calendar becomes blocking (%s) and confirm is clicked", async (_label, blocking) => {
+        mockedCalendar.mockReturnValue(result({}));
+        const onSubmit = jest.fn();
+        const { rerender } = render(<ServiceScheduleChangeModal {...baseProps} selectedDate="2026-07-19" onSubmit={onSubmit} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
+
+        mockedCalendar.mockReturnValue(result({ ...blocking }));
+        rerender(<ServiceScheduleChangeModal {...baseProps} selectedDate="2026-07-19" onSubmit={onSubmit} />);
+        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+
+        await waitFor(() => expect(screen.queryByText("주말·공휴일이에요")).not.toBeInTheDocument());
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
     it("does not classify the date or submit while the calendar is loading, then asks once it is ready", async () => {
         mockedCalendar.mockImplementation(() => notReady);
         const onSubmit = jest.fn();
