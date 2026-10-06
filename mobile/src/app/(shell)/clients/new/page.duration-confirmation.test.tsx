@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import type { UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
 import type { Client } from "@/lib/client/types";
-import { calcEndDateBusinessDays } from "@/lib/date/business-days";
+import { KR_BUILTIN_CALENDAR, calcEndDateBusinessDays } from "@/lib/date/business-days";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import { useClientWizardStore } from "@/stores/client-wizard-store";
 
@@ -20,6 +22,8 @@ let mockEmployees: Array<{
   phone: string;
   openToNextWork?: boolean;
 }> = [];
+const mockedCalendarHook = useBusinessDayCalendar as jest.MockedFunction<typeof useBusinessDayCalendar>;
+const defaultCalendarHook = mockedCalendarHook.getMockImplementation();
 const mockOutOfPocketPrices = [{ id: 1, duration: 15, fullPrice: "1" }];
 const mockEmptyPrices: never[] = [];
 
@@ -165,6 +169,8 @@ function editingClient(): Client {
 
 describe("mobile client service date confirmation", () => {
   beforeEach(() => {
+    mockedCalendarHook.mockReset();
+    if (defaultCalendarHook) mockedCalendarHook.mockImplementation(defaultCalendarHook);
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });
     mockUpdateClient.mockReset().mockResolvedValue({ id: 7 });
     mockPush.mockReset();
@@ -199,6 +205,33 @@ describe("mobile client service date confirmation", () => {
       endDate: "2026-09-08",
       allowBusinessDayMismatch: true,
     }));
+  });
+
+  it.each([
+    ["the holiday calendar changed", { ok: true, calendar: KR_BUILTIN_CALENDAR, changed: true }, "공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요."],
+    ["the holiday calendar could not be refreshed", { ok: false }, "공휴일 정보를 불러오지 못했어요."],
+  ] as const)("closes the duration dialog and shows the notice when %s on confirm", async (_label, blockedRefresh, notice) => {
+    const refreshForSave = jest.fn<ReturnType<UseBusinessDayCalendarResult["refreshForSave"]>, []>()
+      .mockResolvedValueOnce({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: false })
+      .mockResolvedValue(blockedRefresh);
+    mockedCalendarHook.mockReturnValue({
+      calendar: KR_BUILTIN_CALENDAR,
+      ready: true,
+      error: null,
+      retry: jest.fn(),
+      refreshForSave,
+      version: KR_BUILTIN_CALENDAR.version,
+    });
+    renderCreate();
+
+    fireEvent.click(screen.getByRole("button", { name: "등록" }));
+    const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
+    fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+    await waitFor(() => expect(refreshForSave).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument());
+    expect(screen.getByText(notice)).toBeInTheDocument();
+    expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
   it("saves a matching create period without carrying confirmation", async () => {

@@ -984,7 +984,11 @@ export default function NewClientPage() {
     try {
       const fresh = await refreshForSave();
       setCalendarSaveFailed(!fresh.ok);
-      if (!fresh.ok) return;
+      if (!fresh.ok) {
+        // Close the duration dialog so it does not hide the calendar notice.
+        setPendingDurationConfirmation(null);
+        return;
+      }
       let recalculatedEnd = store.endDate;
       if (autoEndDateRef.current === store.endDate && hasUserEditedServicePeriodRef.current
         && store.startDate && effectiveDuration) {
@@ -992,6 +996,7 @@ export default function NewClientPage() {
           recalculatedEnd = fresh.calendar.calcEndDateBusinessDays(store.startDate, effectiveDuration) ?? store.endDate;
         } catch {
           setEndDateUnsupported(true);
+          setPendingDurationConfirmation(null);
           return;
         }
       }
@@ -1001,6 +1006,7 @@ export default function NewClientPage() {
           setField("endDate", recalculatedEnd);
         }
         setCalendarSaveMessage(CALENDAR_CHANGED_FOR_SAVE_MESSAGE);
+        setPendingDurationConfirmation(null);
         return;
       }
       setCalendarSaveMessage(null);
