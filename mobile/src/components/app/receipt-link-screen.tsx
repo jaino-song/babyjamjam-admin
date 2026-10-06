@@ -600,7 +600,7 @@ function Styles() {
 .srec .rcpt-desc{margin:0 0 16px;color:var(--muted)}
 .srec .rcpt-card .rcpt-btn{display:block;width:100%;margin-top:16px;border:0;border-radius:12px;padding:14px 16px;background:var(--primary);color:#fff;font-size:15px;font-weight:700;text-align:center;text-decoration:none}
 .srec .in[aria-invalid="true"]{border-color:#9f234c}
-.srec .rcpt-btn-icon{display:flex;align-items:center;justify-content:center;gap:6px}
+.srec .rcpt-card .rcpt-btn-icon{display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
 .srec .rcpt-icon{width:18px;height:18px;flex-shrink:0}
 .srec .rcpt-icon-clock{width:28px;height:28px;color:var(--muted);margin-bottom:8px}
 .srec .rcpt-img-frame{position:relative;width:100%;min-width:100%;min-height:min(568px,calc((100vw - 76px)*297/210));aspect-ratio:210/297;margin-top:12px;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:#f7f8fa}
