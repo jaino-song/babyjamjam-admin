@@ -1070,7 +1070,7 @@ export function ClientDetailContent({
         title={client.name}
         badges={clientBadges.map((badge) => ({ label: badge.label, tone: badge.tone }))}
         menu={
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
