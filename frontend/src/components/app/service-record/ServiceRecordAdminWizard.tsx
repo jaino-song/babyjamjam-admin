@@ -496,7 +496,7 @@ export function ServiceRecordAdminWizard({
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
     const dateMoveEntriesRef = useRef<ReturnType<typeof moveServiceRecordSessionDate>["entries"] | null>(null);
-    const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean } | null>(null);
+    const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean; canShift: boolean } | null>(null);
     const [dateDialogOpen, setDateDialogOpen] = useState(false);
     const [discardModalOpen, setDiscardModalOpen] = useState(false);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
@@ -609,15 +609,16 @@ export function ServiceRecordAdminWizard({
         const nextSession = vector.find((item) => item.sessionIndex === day + 1);
         const currentDate = vector.find((item) => item.sessionIndex === day)?.serviceDate;
         if (!nextSession || next === currentDate) { applyDate(next, false); return; }
-        let delta: number;
-        try {
-            delta = Math.abs(moveServiceRecordSessionDate(vector, day, next, true, calendar).deltaBusinessDays);
-        } catch { setDateError("회차 순서와 제공일을 확인해 주세요."); return; }
-        let canKeep = next < nextSession.serviceDate;
-        if (canKeep) {
-            try { moveServiceRecordSessionDate(vector, day, next, false, calendar); } catch { canKeep = false; }
-        }
-        setFollowPrompt({ date: next, delta, canKeep });
+        // Probe each option on its own: a suffix shift can fail (e.g. into an unloaded calendar year)
+        // while keeping later sessions is still valid, and vice versa.
+        const probe = (shiftFollowing: boolean) => {
+            try { return moveServiceRecordSessionDate(vector, day, next, shiftFollowing, calendar); } catch { return null; }
+        };
+        const shifted = probe(true);
+        const kept = next < nextSession.serviceDate ? probe(false) : null;
+        const result = shifted ?? kept;
+        if (!result) { setDateError("회차 순서와 제공일을 확인해 주세요."); return; }
+        setFollowPrompt({ date: next, delta: Math.abs(result.deltaBusinessDays), canKeep: Boolean(kept), canShift: Boolean(shifted) });
         setDateDialogOpen(false);
     };
     const confirm = async (recover = false) => {
@@ -921,6 +922,7 @@ export function ServiceRecordAdminWizard({
                             data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_actions_keep`}
                             onClick={() => { if (!followPrompt) return; const applied = applyDate(followPrompt.date, false); setFollowPrompt(null); if (!applied) setDateDialogOpen(true); }}>그대로 두기</Button>
                         <Button type="button" variant="positive" className="h-[52px] rounded-xl text-base"
+                            disabled={!followPrompt?.canShift}
                             data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_actions_apply`}
                             onClick={() => { if (!followPrompt) return; const applied = applyDate(followPrompt.date, true); setFollowPrompt(null); if (!applied) setDateDialogOpen(true); }}>변경하기</Button>
                     </>}>
@@ -930,6 +932,11 @@ export function ServiceRecordAdminWizard({
                     {followPrompt && !followPrompt.canKeep ? (
                         <p className="mt-2 text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_content_keep-blocked`}>
                             다음 회차와 날짜가 겹쳐 뒷 회차들을 그대로 둘 수 없어요.
+                        </p>
+                    ) : null}
+                    {followPrompt && !followPrompt.canShift ? (
+                        <p className="mt-2 text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_content_shift-blocked`}>
+                            뒷 회차들의 제공일을 계산할 수 없어 함께 변경할 수 없어요.
                         </p>
                     ) : null}
                 </FormDialogShell>
