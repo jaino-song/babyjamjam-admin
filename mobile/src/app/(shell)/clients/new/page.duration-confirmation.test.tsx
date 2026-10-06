@@ -234,6 +234,66 @@ describe("mobile client service date confirmation", () => {
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
+  describe("when the calendar stops being ready while a confirmation is open", () => {
+    const notReadyCalendar: UseBusinessDayCalendarResult = {
+      calendar: KR_BUILTIN_CALENDAR,
+      ready: false,
+      error: "load-failed",
+      retry: jest.fn(),
+      refreshForSave: jest.fn(),
+      version: KR_BUILTIN_CALENDAR.version,
+    };
+
+    function makeCalendarFail() {
+      mockedCalendarHook.mockReturnValue(notReadyCalendar);
+      // Any store change re-renders the page so it picks up the failed calendar.
+      act(() => {
+        useClientWizardStore.getState().setField("address", "인천시 연수구");
+      });
+    }
+
+    it("closes the duration dialog on confirm without saving", async () => {
+      renderCreate();
+
+      fireEvent.click(screen.getByRole("button", { name: "등록" }));
+      const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
+
+      makeCalendarFail();
+      fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "서비스 기간 확인" })).not.toBeInTheDocument());
+      expect(mockCreateClient).not.toHaveBeenCalled();
+    });
+
+    it("closes the unavailable-employee dialog on confirm without saving again", async () => {
+      mockEmployees = [{ id: 17, name: "김관리", phone: "010-1111-2222", openToNextWork: false }];
+      mockCreateClient.mockRejectedValueOnce({
+        response: {
+          status: 409,
+          data: {
+            code: "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED",
+            unavailableEmployees: [{ id: 17, name: "김관리" }],
+          },
+        },
+      });
+      renderCreate();
+      act(() => {
+        useClientWizardStore.getState().setField("primaryEmployeeId", 17);
+        useClientWizardStore.getState().setField("endDate", "2026-09-23");
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "등록" }));
+      const modal = await screen.findByRole("dialog", { name: "제공인력 배정 확인" });
+      expect(mockCreateClient).toHaveBeenCalledTimes(1);
+
+      makeCalendarFail();
+      fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "제공인력 배정 확인" })).not.toBeInTheDocument());
+      expect(mockCreateClient).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("saves a matching create period without carrying confirmation", async () => {
     renderCreate();
     act(() => {

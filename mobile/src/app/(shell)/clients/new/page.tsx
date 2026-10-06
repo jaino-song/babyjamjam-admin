@@ -975,7 +975,12 @@ export default function NewClientPage() {
   ) => {
     if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
     // The saved period and its duration check depend on the branch calendar.
-    if (!calendarReady || endDateUnsupported) return;
+    if (!calendarReady || endDateUnsupported) {
+      // Close the confirmations so they do not hide the calendar notice.
+      setPendingDurationConfirmation(null);
+      setPendingUnavailableEmployeeConfirmation(null);
+      return;
+    }
     if (!validateStep(currentStep)) return;
 
     setPendingUnavailableEmployeeConfirmation(null);
