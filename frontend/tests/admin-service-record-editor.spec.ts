@@ -549,10 +549,10 @@ async function applyDateMove(page: Page, day: string): Promise<void> {
     await dialog.getByRole("combobox", { name: "일" }).click();
     await page.getByRole("option", { name: `${Number(day)}일` }).click();
     await dialog.getByRole("button", { name: "수정", exact: true }).click();
-    const collision = page.locator('[data-component$="_date-collision-modal"]');
-    await expect(collision).toBeVisible();
-    await collision.getByRole("button", { name: "수정", exact: true }).click();
-    await expect(collision).toBeHidden();
+    const followModal = page.locator('[data-component$="_date-follow-modal"]');
+    await expect(followModal).toBeVisible();
+    await followModal.getByRole("button", { name: "변경하기", exact: true }).click();
+    await expect(followModal).toBeHidden();
 }
 
 test.beforeEach(async ({ page }) => {
