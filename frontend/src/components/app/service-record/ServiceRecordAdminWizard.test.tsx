@@ -20,6 +20,10 @@ import {
 import type { AdminServiceRecordEditState } from "@/features/service-records/types";
 
 jest.mock("@/hooks/useBusinessDayCalendar");
+jest.mock("@babyjamjam/shared/utils/service-record-schedule", () => {
+    const actual = jest.requireActual("@babyjamjam/shared/utils/service-record-schedule");
+    return { ...actual, moveServiceRecordSessionDate: jest.fn(actual.moveServiceRecordSessionDate) };
+});
 
 function makeSession(
     sessionIndex: number,
@@ -899,6 +903,29 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1 }] }, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing });
+    });
+
+    it("still offers 그대로 두기 when shifting the later sessions cannot be computed", () => {
+        const schedule = jest.requireMock("@babyjamjam/shared/utils/service-record-schedule");
+        const actual = jest.requireActual("@babyjamjam/shared/utils/service-record-schedule");
+        jest.mocked(schedule.moveServiceRecordSessionDate).mockImplementation((...args: Parameters<typeof actual.moveServiceRecordSessionDate>) => {
+            if (args[3]) throw new Error("suffix crosses an unloaded calendar year");
+            return actual.moveServiceRecordSessionDate(...args);
+        });
+        try {
+            const { container } = open();
+            fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+            fireEvent.click(screen.getAllByRole("combobox")[2]);
+            fireEvent.click(screen.getByRole("option", { name: "4일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            const modal = screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" });
+            expect(within(modal).getByRole("button", { name: "변경하기" })).toBeDisabled();
+            expect(modal).toHaveTextContent("뒷 회차들의 제공일을 계산할 수 없어 함께 변경할 수 없어요.");
+            fireEvent.click(within(modal).getByRole("button", { name: "그대로 두기" }));
+            expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.04");
+        } finally {
+            jest.mocked(schedule.moveServiceRecordSessionDate).mockImplementation(actual.moveServiceRecordSessionDate);
+        }
     });
 
     it("closing the follow prompt returns to the date picker without moving anything", () => {
