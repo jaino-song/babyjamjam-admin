@@ -305,7 +305,7 @@ export function ServiceRecordDateSelectionDialog({
                 size="compact"
                 mobileSheet
                 title={<>{sessionLabel} 서비스 제공일 수정</>}
-                description="서비스 제공일을 선택해 주세요. 다음 회차와 겹치면 뒤 회차의 이동 여부를 확인합니다. 변경사항은 회차 화면에서 수정 확인을 눌러야 저장됩니다."
+                description="서비스 제공일을 선택해 주세요. 날짜를 바꾸면 뒷 회차들도 함께 변경할지 확인합니다. 변경사항은 회차 화면에서 수정 확인을 눌러야 저장됩니다."
                 contentClassName="flex flex-col gap-4 max-sm:px-[22px] max-sm:pt-1 max-sm:pb-[22px]"
                 footerClassName="grid grid-cols-[1fr_2fr] gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
                 footer={(

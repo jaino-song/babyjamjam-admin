@@ -496,8 +496,7 @@ export function ServiceRecordAdminWizard({
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
     const dateMoveEntriesRef = useRef<ReturnType<typeof moveServiceRecordSessionDate>["entries"] | null>(null);
-    const [collision, setCollision] = useState<{ date: string; delta: number } | null>(null);
-    const [pullPrompt, setPullPrompt] = useState<{ date: string; delta: number } | null>(null);
+    const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean } | null>(null);
     const [dateDialogOpen, setDateDialogOpen] = useState(false);
     const [discardModalOpen, setDiscardModalOpen] = useState(false);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
@@ -543,8 +542,7 @@ export function ServiceRecordAdminWizard({
     const resetLocal = () => {
         setScreen("overview");
         setDateMove(null);
-        setCollision(null);
-        setPullPrompt(null);
+        setFollowPrompt(null);
         setError(null);
         setDateError(null);
         setDraft({});
@@ -596,37 +594,31 @@ export function ServiceRecordAdminWizard({
             dateMoveEntriesRef.current = result.entries;
             setDateMove(next === sourceDate ? null : { sessionIndex: day, toDate: next, shiftFollowing });
             setDraft((current) => ({ ...current, _date: next }));
-            setCollision(null);
+            setFollowPrompt(null);
             setDateDialogOpen(false);
             setDateError(null);
             return result;
         } catch {
             setDateError("앞 회차보다 늦은 영업일을 선택해 주세요. 회차 순서와 예정일을 확인해 주세요.");
-            setCollision(null);
+            setFollowPrompt(null);
             return null;
         }
     };
     const selectDate = (next: string) => {
         if (locked || !calendarReady || baseView.scheduleProjectionBlockingReasons.length) return;
         const nextSession = vector.find((item) => item.sessionIndex === day + 1);
-        if (nextSession && next >= nextSession.serviceDate) {
-            try {
-                const result = moveServiceRecordSessionDate(vector, day, next, true, calendar);
-                setCollision({ date: next, delta: result.deltaBusinessDays });
-                setDateDialogOpen(false);
-            } catch { setDateError("회차 순서와 제공일을 확인해 주세요."); }
-            return;
-        }
         const currentDate = vector.find((item) => item.sessionIndex === day)?.serviceDate;
-        if (nextSession && currentDate && next < currentDate) {
-            try {
-                const result = moveServiceRecordSessionDate(vector, day, next, true, calendar);
-                setPullPrompt({ date: next, delta: Math.abs(result.deltaBusinessDays) });
-                setDateDialogOpen(false);
-                return;
-            } catch { /* the suffix cannot move earlier; fall back to moving this session only */ }
+        if (!nextSession || next === currentDate) { applyDate(next, false); return; }
+        let delta: number;
+        try {
+            delta = Math.abs(moveServiceRecordSessionDate(vector, day, next, true, calendar).deltaBusinessDays);
+        } catch { setDateError("회차 순서와 제공일을 확인해 주세요."); return; }
+        let canKeep = next < nextSession.serviceDate;
+        if (canKeep) {
+            try { moveServiceRecordSessionDate(vector, day, next, false, calendar); } catch { canKeep = false; }
         }
-        applyDate(next, false);
+        setFollowPrompt({ date: next, delta, canKeep });
+        setDateDialogOpen(false);
     };
     const confirm = async (recover = false) => {
         if (saving.current || supplemental || (priorChanges && saveStarted && !recover)) return;
@@ -918,41 +910,28 @@ export function ServiceRecordAdminWizard({
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
-            <Dialog open={Boolean(collision)} onOpenChange={(open) => { if (!open) { setCollision(null); setDateDialogOpen(true); } }}>
-                <FormDialogShell mobileSheet size="compact" title={`${day}회차 서비스 제공일 수정`}
-                    description="다음 회차와 겹치는 서비스 제공일의 변경 여부를 확인합니다."
-                    data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal`}
-                    footerClassName="grid grid-cols-[1fr_2fr] gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
-                    footer={<>
-                        <Button type="button" variant="neutral" className="h-[52px] rounded-xl text-base"
-                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_actions_cancel`}
-                            onClick={() => { setCollision(null); setDateDialogOpen(true); }}>취소</Button>
-                        <Button type="button" variant="positive" className="h-[52px] rounded-xl text-base"
-                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_actions_apply`}
-                            onClick={() => { if (collision) applyDate(collision.date, true); }}>수정</Button>
-                    </>}>
-                    <Alert variant="warning" data-component={`${ADMIN_WIZARD_COMPONENT}_date-collision-modal_content_warning`}>
-                        <AlertTitle>다음 회차와 날짜가 겹쳐요</AlertTitle>
-                        <AlertDescription>{collision ? `${day}회차 서비스 제공일을 ${Number(collision.date.slice(5, 7))}월 ${Number(collision.date.slice(8, 10))}일로 수정하면 다음 회차와 날짜가 겹칩니다. 뒷 회차들의 서비스 제공일도 ${collision.delta} 영업일씩 수정할까요?` : ""}</AlertDescription>
-                    </Alert>
-                </FormDialogShell>
-            </Dialog>
-            <Dialog open={Boolean(pullPrompt)} onOpenChange={(open) => { if (!open) { setPullPrompt(null); setDateDialogOpen(true); } }}>
-                <FormDialogShell mobileSheet size="compact" title="뒷 회차들의 제공일을 당길까요?"
-                    description="앞당긴 서비스 제공일에 맞춰 뒷 회차들도 함께 당길지 확인합니다."
-                    data-component={`${ADMIN_WIZARD_COMPONENT}_date-pull-modal`}
+            <Dialog open={Boolean(followPrompt)} onOpenChange={(open) => { if (!open) { setFollowPrompt(null); setDateDialogOpen(true); } }}>
+                <FormDialogShell mobileSheet size="compact" title="뒷 회차들도 변경할까요?"
+                    description="변경한 서비스 제공일에 맞춰 뒷 회차들도 함께 변경할지 확인합니다."
+                    data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal`}
                     footerClassName="grid grid-cols-2 gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
                     footer={<>
                         <Button type="button" variant="neutral" className="h-[52px] rounded-xl text-base"
-                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-pull-modal_actions_keep`}
-                            onClick={() => { if (!pullPrompt) return; const applied = applyDate(pullPrompt.date, false); setPullPrompt(null); if (!applied) setDateDialogOpen(true); }}>그대로 두기</Button>
+                            disabled={!followPrompt?.canKeep}
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_actions_keep`}
+                            onClick={() => { if (!followPrompt) return; const applied = applyDate(followPrompt.date, false); setFollowPrompt(null); if (!applied) setDateDialogOpen(true); }}>그대로 두기</Button>
                         <Button type="button" variant="positive" className="h-[52px] rounded-xl text-base"
-                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-pull-modal_actions_apply`}
-                            onClick={() => { if (!pullPrompt) return; const applied = applyDate(pullPrompt.date, true); setPullPrompt(null); if (!applied) setDateDialogOpen(true); }}>당기기</Button>
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_actions_apply`}
+                            onClick={() => { if (!followPrompt) return; const applied = applyDate(followPrompt.date, true); setFollowPrompt(null); if (!applied) setDateDialogOpen(true); }}>변경하기</Button>
                     </>}>
-                    <p className="text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_date-pull-modal_content_description`}>
-                        {pullPrompt ? `${day}회차 서비스 제공일을 ${Number(pullPrompt.date.slice(5, 7))}월 ${Number(pullPrompt.date.slice(8, 10))}일로 앞당깁니다. 당기기를 누르면 뒷 회차들의 서비스 제공일도 ${pullPrompt.delta} 영업일씩 앞당겨집니다.` : ""}
+                    <p className="text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_content_description`}>
+                        {followPrompt ? `${day}회차의 서비스 제공일을 ${followPrompt.delta}영업일만큼 변경합니다. 뒷 회차들도 동일하게 변경할까요?` : ""}
                     </p>
+                    {followPrompt && !followPrompt.canKeep ? (
+                        <p className="mt-2 text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_date-follow-modal_content_keep-blocked`}>
+                            다음 회차와 날짜가 겹쳐 뒷 회차들을 그대로 둘 수 없어요.
+                        </p>
+                    ) : null}
                 </FormDialogShell>
             </Dialog>
             <TwoButtonModal open={leaveModalOpen} onOpenChange={setLeaveModalOpen}
