@@ -111,7 +111,11 @@ export function ServiceScheduleChangeModal({
     const hasError = message?.tone === "error";
 
     const handleApprove = async (confirmed = false) => {
-        if (approving.current || isPending || isCalendarBlocking || isNonBusinessDay === null) return;
+        if (approving.current || isPending) return;
+        if (isCalendarBlocking || isNonBusinessDay === null) {
+            setIsConfirmingNonBusinessDay(false);
+            return;
+        }
         approving.current = true;
         try {
             const fresh = await refreshForSave();
@@ -124,6 +128,7 @@ export function ServiceScheduleChangeModal({
             try { nonBusinessDay = !fresh.calendar.isBusinessDay(selectedDate); }
             catch {
                 setCalendarSaveMessage({ tone: "error", text: CALENDAR_UNSUPPORTED_YEAR_MESSAGE });
+                setIsConfirmingNonBusinessDay(false);
                 return;
             }
             if (fresh.changed || nonBusinessDay !== isNonBusinessDay) {
