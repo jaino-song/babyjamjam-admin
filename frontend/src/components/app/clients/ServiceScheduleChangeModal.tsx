@@ -124,6 +124,7 @@ export function ServiceScheduleChangeModal({
             try { nonBusinessDay = !fresh.calendar.isBusinessDay(selectedDate); }
             catch {
                 setCalendarSaveMessage({ tone: "error", text: CALENDAR_UNSUPPORTED_YEAR_MESSAGE });
+                setIsConfirmingNonBusinessDay(false);
                 return;
             }
             if (fresh.changed || nonBusinessDay !== isNonBusinessDay) {

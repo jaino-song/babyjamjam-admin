@@ -313,6 +313,29 @@ describe("branch calendar readiness", () => {
         expect(onSubmit).not.toHaveBeenCalled();
     });
 
+    it("closes the weekend confirm dialog when the fresh calendar turns out to lack the year", async () => {
+        const unsupportedCalendar = {
+            ...KR_BUILTIN_CALENDAR,
+            isBusinessDay: () => { throw new Error("unsupported year"); },
+        };
+        const refreshForSave = jest
+            .fn()
+            .mockResolvedValueOnce({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: false })
+            .mockResolvedValueOnce({ ok: true, calendar: unsupportedCalendar, changed: false });
+        mockedCalendar.mockReturnValue(result({ refreshForSave }));
+        const onSubmit = jest.fn();
+        render(<ServiceScheduleChangeModal {...baseProps} selectedDate="2026-07-19" onSubmit={onSubmit} />);
+
+        fireEvent.click(screen.getByRole("button", { name: "일정 변경" }));
+        expect(await screen.findByText("주말·공휴일이에요")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "이 날짜로 옮기기" }));
+        await waitFor(() => expect(refreshForSave).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(slot()).toHaveTextContent("이 날짜의 공휴일 정보가 아직 없어요"));
+        expect(screen.queryByText("주말·공휴일이에요")).not.toBeInTheDocument();
+        expect(onSubmit).not.toHaveBeenCalled();
+    });
+
     it("does not classify the date or submit while the calendar is loading, then asks once it is ready", async () => {
         mockedCalendar.mockImplementation(() => notReady);
         const onSubmit = jest.fn();
