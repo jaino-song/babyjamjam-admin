@@ -715,7 +715,7 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getAllByRole("combobox")[2]);
         fireEvent.click(screen.getByRole("option", { name: "8일" }));
         fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
         fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
         await waitFor(() => expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeInTheDocument());
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
@@ -736,14 +736,16 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getAllByRole("combobox")[2]);
         fireEvent.click(screen.getByRole("option", { name: "8일" }));
         fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-        const modal = screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" });
-        expect(modal).toHaveTextContent("1회차 서비스 제공일을 9월 8일로 수정하면 다음 회차와 날짜가 겹칩니다. 뒷 회차들의 서비스 제공일도 1 영업일씩 수정할까요?");
-        fireEvent.click(within(modal).getByRole("button", { name: "취소" }));
+        const modal = screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" });
+        expect(modal).toHaveTextContent("1회차의 서비스 제공일을 1영업일만큼 변경합니다. 뒷 회차들도 동일하게 변경할까요?");
+        expect(modal).toHaveTextContent("다음 회차와 날짜가 겹쳐 뒷 회차들을 그대로 둘 수 없어요.");
+        expect(within(modal).getByRole("button", { name: "그대로 두기" })).toBeDisabled();
+        fireEvent.keyDown(modal, { key: "Escape" });
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         fireEvent.click(screen.getAllByRole("combobox")[2]);
         fireEvent.click(screen.getByRole("option", { name: "8일" }));
         fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
         expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.08");
         expect(screen.getByRole("button", { name: "수정 확인" })).toBeInTheDocument();
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
@@ -778,7 +780,7 @@ describe("per-session administrator editing", () => {
             fireEvent.click(screen.getAllByRole("combobox")[2]);
             fireEvent.click(screen.getByRole("option", { name: "8일" }));
             fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
             fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
             await screen.findByText("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
@@ -794,7 +796,7 @@ describe("per-session administrator editing", () => {
             fireEvent.click(screen.getAllByRole("combobox")[2]);
             fireEvent.click(screen.getByRole("option", { name: "8일" }));
             fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-            fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
             fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
             await screen.findByText("공휴일 정보를 불러오지 못했어요.");
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
@@ -811,7 +813,7 @@ describe("per-session administrator editing", () => {
             fireEvent.click(screen.getByRole("option", { name: "11일" }));
             fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
             // 09-07 -> 09-11 skips the 09-10 branch holiday: 3 business days (4 with the built-in list).
-            expect(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).toHaveTextContent("뒷 회차들의 서비스 제공일도 3 영업일씩 수정할까요?");
+            expect(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).toHaveTextContent("1회차의 서비스 제공일을 3영업일만큼 변경합니다.");
         });
 
         it("keeps the confirm action disabled and explains why until the calendar is ready", () => {
@@ -866,10 +868,49 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getAllByRole("combobox")[2]);
         fireEvent.click(screen.getByRole("option", { name: "8일" }));
         fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
-        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: "변경하기" }));
         fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1 }] }, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: true });
+    });
+
+    it.each([
+        ["변경하기", true, ["2026-09-04", "2026-09-07", "2026-09-08"]],
+        ["그대로 두기", false, ["2026-09-04", "2026-09-08", "2026-09-09"]],
+    ] as const)("asks whether to move later sessions when a date moves earlier (%s)", async (label, shiftFollowing, afterDates) => {
+        const after = sessionOverview.scheduleProjection!.entries.map((entry, index) => ({ ...entry, serviceDate: afterDates[index] }));
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ sessions: after.map(({ sessionIndex, serviceDate }) => ({ sessionIndex, serviceDate })) }, 2));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2,
+            before: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries },
+            after: { startDate: afterDates[0], endDate: afterDates[2], sessions: after },
+            contentChanges: { headerChanged: false, changedSessionIndexes: shiftFollowing ? [1, 2, 3] : [1] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getAllByRole("combobox")[2]);
+        fireEvent.click(screen.getByRole("option", { name: "4일" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        const modal = screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" });
+        expect(modal).toHaveTextContent("1회차의 서비스 제공일을 1영업일만큼 변경합니다. 뒷 회차들도 동일하게 변경할까요?");
+        expect(within(modal).getByRole("button", { name: "그대로 두기" })).toBeEnabled();
+        fireEvent.click(within(modal).getByRole("button", { name: label }));
+        expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.04");
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1 }] }, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing });
+    });
+
+    it("closing the follow prompt returns to the date picker without moving anything", () => {
+        const { container } = open();
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getAllByRole("combobox")[2]);
+        fireEvent.click(screen.getByRole("option", { name: "4일" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.keyDown(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" }), { key: "Escape" });
+        expect(screen.queryByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).not.toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.07");
     });
 
     it("does not confirm another session's content even when its date move was approved", async () => {
