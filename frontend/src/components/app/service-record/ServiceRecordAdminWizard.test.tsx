@@ -872,6 +872,44 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1 }] }, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: true });
     });
 
+    it.each([
+        ["당기기", true, ["2026-09-04", "2026-09-07", "2026-09-08"]],
+        ["그대로 두기", false, ["2026-09-04", "2026-09-08", "2026-09-09"]],
+    ] as const)("asks before pulling later sessions when a date moves earlier (%s)", async (label, shiftFollowing, afterDates) => {
+        const after = sessionOverview.scheduleProjection!.entries.map((entry, index) => ({ ...entry, serviceDate: afterDates[index] }));
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ sessions: after.map(({ sessionIndex, serviceDate }) => ({ sessionIndex, serviceDate })) }, 2));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse, draftVersion: 2,
+            before: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries },
+            after: { startDate: afterDates[0], endDate: afterDates[2], sessions: after },
+            contentChanges: { headerChanged: false, changedSessionIndexes: shiftFollowing ? [1, 2, 3] : [1] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getAllByRole("combobox")[2]);
+        fireEvent.click(screen.getByRole("option", { name: "4일" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        const modal = screen.getByRole("dialog", { name: "뒷 회차들의 제공일을 당길까요?" });
+        expect(modal).toHaveTextContent("1회차 서비스 제공일을 9월 4일로 앞당깁니다. 당기기를 누르면 뒷 회차들의 서비스 제공일도 1 영업일씩 앞당겨집니다.");
+        fireEvent.click(within(modal).getByRole("button", { name: label }));
+        expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.04");
+        fireEvent.click(screen.getByRole("button", { name: "수정 확인" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, { sessions: [{ sessionIndex: 1 }] }, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing });
+    });
+
+    it("closing the pull prompt returns to the date picker without moving anything", () => {
+        const { container } = open();
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getAllByRole("combobox")[2]);
+        fireEvent.click(screen.getByRole("option", { name: "4일" }));
+        fireEvent.click(within(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).getByRole("button", { name: "수정" }));
+        fireEvent.keyDown(screen.getByRole("dialog", { name: "뒷 회차들의 제공일을 당길까요?" }), { key: "Escape" });
+        expect(screen.queryByRole("dialog", { name: "뒷 회차들의 제공일을 당길까요?" })).not.toBeInTheDocument();
+        expect(screen.getByRole("dialog", { name: "1회차 서비스 제공일 수정" })).toBeInTheDocument();
+        expect(container.querySelector('[data-slot="datechip"]')).toHaveTextContent("2026.09.07");
+    });
+
     it("does not confirm another session's content even when its date move was approved", async () => {
         jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({ sessions: [{ sessionIndex: 2, notes: "other administrator" }] }, 2));
         const { container } = open();
