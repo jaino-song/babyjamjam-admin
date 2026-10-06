@@ -12,3 +12,16 @@ ignoreUntil = 2027-01-31T00:00:00Z
 # input reaches brace expansion. Revisit when braces ships a fix (then bump and
 # drop this entry), or when the expiry above lapses.
 reason = "No patched braces release exists; only reachable via developer-authored globs in jest/eslint tooling, not production runtime or untrusted input."
+
+[[IgnoredVulns]]
+id = "GHSA-hp3w-g68c-fv3c"
+ignoreUntil = 2027-01-31T00:00:00Z
+# sprintf-js <=1.1.3 DoS through unbounded precision specifiers (published
+# 2026-09-24). No patched release exists (last_affected 1.1.3).
+# Exposure review (2026-10-06): `pnpm why sprintf-js -r --prod` finds no
+# production path; sprintf-js 1.0.3 arrives only through argparse 1 <- js-yaml 3
+# <- @istanbuljs/load-nyc-config <- babel-plugin-istanbul in jest coverage, whose
+# format strings are fixed library code. No untrusted input reaches sprintf.
+# Revisit when sprintf-js ships a fix (then bump and drop this entry), or when
+# the expiry above lapses.
+reason = "No patched sprintf-js release exists; only reachable via jest coverage tooling (argparse/js-yaml), not production runtime or untrusted input."
