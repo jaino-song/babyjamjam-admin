@@ -96,7 +96,7 @@ type MockEvidence = {
     unhandledApiRequests: string[];
     /** Draft writes in the order they were sent: start, update, preview, confirm, discard. */
     writeSteps: () => string[];
-    /** Another admin confirmed the case: the server moves to `caseVersion` and announces it on the event stream. */
+    /** Another admin confirmed the case: announce `caseVersion` on the event stream, then serve it to later reads. */
     announceCaseChange: (caseVersion: number) => Promise<void>;
     assertSafe: () => void;
 };
@@ -489,7 +489,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                 confirmConflict = null;
                 if (conflict === "contract_period" || conflict === "receipt_refresh") {
                     return json(route, 409, {
-                        code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
+                        code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
                         blockingOperation: { operation: conflict, status: "RUNNING", lastErrorCode: null },
                     });
                 }
@@ -538,9 +538,11 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                 return `${request.method} ${request.pathname}`;
             }),
         announceCaseChange: async (caseVersion) => {
-            state.sourceCaseVersion = caseVersion;
-            state.sourceFingerprint = CONFIRMED_FINGERPRINT;
+            const draftReads = () => requests.filter((request) => request.method === "GET" && request.pathname.endsWith("/draft")).length;
+            const readsBefore = draftReads();
             await expect.poll(() => heldEventStreams.length, { message: "the editor opens the case event stream" }).toBeGreaterThan(0);
+            // The server still reports the old version while the stream opens, so the editor's catch-up read
+            // on open finds nothing new and only the `case-changed` event itself can raise the refresh modal.
             // A development double-mount leaves one closed stream in the list; fulfilling it throws and is skipped.
             for (const stream of heldEventStreams.splice(0)) {
                 await stream.fulfill({
@@ -550,6 +552,10 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                     body: `event: case-changed\ndata: ${JSON.stringify({ caseId: CASE_ID, caseVersion })}\n\n`,
                 }).catch(() => undefined);
             }
+            // The catch-up read is answered the moment it arrives; only later reads see the new version.
+            await expect.poll(draftReads, { message: "the editor catches up when the stream opens" }).toBeGreaterThan(readsBefore);
+            state.sourceCaseVersion = caseVersion;
+            state.sourceFingerprint = CONFIRMED_FINGERPRINT;
         },
         assertSafe: () => {
             expect(unhandledApiRequests, "unexpected API route").toEqual([]);
