@@ -24,6 +24,9 @@ export function useClientMessageHistory(client: Client | null) {
     return query.data
       .filter((log) => {
         if (log.clientId === client.id) return true;
+        // Phone matching is only for logs with no owner; a log owned by another
+        // client stays with that client even if this client now has the number.
+        if (log.clientId != null) return false;
         if (!clientPhone) return false;
 
         const logPhones = [
