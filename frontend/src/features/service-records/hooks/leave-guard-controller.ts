@@ -37,15 +37,18 @@
  * Release (`release()`, run one tick later so a StrictMode remount can cancel it) never
  * navigates anywhere the user did not ask to go. The controller does not wrap or patch
  * `history.pushState` / `replaceState` and never rebuilds history. It takes G back out
- * with exactly one `history.back()` only when the current entry is provably G:
- * our tag in `history.state` (role "guard") AND the location still equals the editor
- * URL it armed on AND the entry's real identity matches. A tag alone proves nothing,
- * because a router can copy `history.state` onto a brand-new entry of the same URL.
- * Identity is therefore taken from the browser: with the Navigation API the current
- * entry's `key` must be the key recorded when G was pushed and the entry right before
- * it must be E's key; without it `history.length` must still equal the length right
- * after G was pushed (any later push grows it) and that length must have been
- * trustworthy (arming grew the list; a list at the browser's cap never grows).
+ * with exactly one `history.back()` only when the current entry is provably G, and
+ * only where the browser can prove it:
+ * - Navigation API: our tag in `history.state` (role "guard"), the location still
+ *   equal to the editor URL, the current entry's `key` equal to the key recorded when
+ *   G was pushed, AND the entry right before it has E's key and still sits at the
+ *   editor URL (a router can replace that entry's URL in place and keep its key).
+ *   A tag alone proves nothing, because a router can copy `history.state` onto a
+ *   brand-new entry of the same URL.
+ * - No Navigation API: release NEVER navigates. `history.length` and `history.state`
+ *   cannot prove which entry we are on (truncate and re-push a copy of the tag and
+ *   the length matches again), and a wrong guess moves the user. G simply stays in
+ *   the history as a redundant same-URL entry.
  * Any doubt: release does nothing at all (no back, no push, no replace).
  *
  * "Is the user leaving G?" is never a cached boolean alone. A silent
@@ -57,7 +60,8 @@
  *
  * Known limitation: a redundant same-URL guard entry can stay in the history after
  * release (the user then needs one extra Back that lands on the editor URL again). It
- * happens whenever the current entry is not G any more: in-page hash navigation made
+ * always happens without the Navigation API (release never disposes there), and with
+ * it whenever the current entry is not G any more: in-page hash navigation made
  * while armed (`<a href="#x">`, `location.hash`, a router's `pushState` / `replaceState`
  * to the same page or another one), a router replacing the entry's state without our
  * tag, or a second controller arming on top of this one. Not-provably-ours always means
@@ -86,7 +90,7 @@ type PendingNavigation =
     | { kind: "back"; vetoed?: { destinationKey: string | null } };
 
 // The Navigation API is not in TypeScript's DOM lib yet; only what we use.
-interface NavigationEntryLike { key: string; index: number }
+interface NavigationEntryLike { key: string; index: number; url?: string | null }
 interface NavigateEventLike extends Event {
     navigationType: string;
     cancelable: boolean;
@@ -117,10 +121,6 @@ interface Armed {
     editorKey: string | null;
     /** Navigation API key of the guard entry we pushed last (null: none / no API). */
     guardKey: string | null;
-    /** `history.length` right after G was pushed (release identity check, no API). */
-    guardLength: number;
-    /** False when arming did not grow the list (browser cap): length proves nothing. */
-    lengthTrusted: boolean;
     /** True while the user rests on G (the origin that makes Back-onto-E a departure). */
     onGuard: boolean;
     /** `history.length` when `onGuard` was last set; the flag is stale if it changed. */
@@ -152,6 +152,17 @@ function readTag(state: unknown): EntryTag | null {
 function currentUrl(): string {
     const { pathname, search, hash } = window.location;
     return `${pathname}${search}${hash}`;
+}
+
+/** Does the Navigation API entry currently sit at `href` (path + search + hash)? */
+function entryAtUrl(entry: NavigationEntryLike, href: string): boolean {
+    if (!entry.url) return false;
+    try {
+        const url = new URL(entry.url);
+        return url.origin === window.location.origin && `${url.pathname}${url.search}${url.hash}` === href;
+    } catch {
+        return false;
+    }
 }
 
 function withTag(state: unknown, tag: EntryTag): Record<string, unknown> {
@@ -196,7 +207,6 @@ export function createLeaveGuardController({
         a.editorKey = getNavigation()?.currentEntry?.key ?? null;
         window.history.pushState(withTag(a.editorState, { id: a.id, role: "guard" }), "", a.href);
         a.guardKey = getNavigation()?.currentEntry?.key ?? null;
-        a.guardLength = window.history.length;
         a.onGuard = true;
         a.onGuardLength = window.history.length;
     };
@@ -209,7 +219,7 @@ export function createLeaveGuardController({
             return key !== null && key === a.guardKey;
         }
         // No API: the flag was set when we last saw G; a silent push since then grew the list.
-        return a.onGuard && (!a.lengthTrusted || window.history.length === a.onGuardLength);
+        return a.onGuard && window.history.length === a.onGuardLength;
     };
 
     /**
@@ -220,15 +230,13 @@ export function createLeaveGuardController({
         const tag = readTag(window.history.state);
         if (tag?.id !== a.id || tag.role !== "guard") return;
         if (currentUrl() !== a.href) return;
+        // Without the Navigation API nothing proves which entry this is: never navigate.
         const navigation = getNavigation();
-        if (navigation) {
-            const current = navigation.currentEntry;
-            if (!current || a.guardKey === null || a.editorKey === null || current.key !== a.guardKey) return;
-            const before = navigation.entries()[current.index - 1];
-            if (!before || before.key !== a.editorKey) return;
-        } else if (!a.lengthTrusted || window.history.length !== a.guardLength) {
-            return;
-        }
+        if (!navigation) return;
+        const current = navigation.currentEntry;
+        if (!current || a.guardKey === null || a.editorKey === null || current.key !== a.guardKey) return;
+        const before = navigation.entries()[current.index - 1];
+        if (!before || before.key !== a.editorKey || !entryAtUrl(before, a.href)) return;
         window.history.back();
     };
 
@@ -353,14 +361,10 @@ export function createLeaveGuardController({
                     editorState: window.history.state,
                     editorKey: null,
                     guardKey: null,
-                    guardLength: 0,
-                    lengthTrusted: false,
                     onGuard: false,
                     onGuardLength: 0,
                 };
-                const lengthBefore = window.history.length;
                 pushGuardEntry(armed);
-                armed.lengthTrusted = window.history.length > lengthBefore;
             }
             addListeners();
         },

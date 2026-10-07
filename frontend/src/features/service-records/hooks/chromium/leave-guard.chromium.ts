@@ -185,7 +185,7 @@ for (const mode of MODES) {
             }
         });
 
-        test("release leaves no extra entry between the editor and the previous page, and does not navigate", async ({ page }) => {
+        test("release never navigates; with the Navigation API it also takes the guard entry out of the way", async ({ page }) => {
             await setup(page, mode);
             const lengthBefore = await historyLength(page);
             await arm(page);
@@ -194,9 +194,19 @@ for (const mode of MODES) {
             expect(await where(page)).toBe(EDITOR);
             expect(await historyState(page)).toMatchObject(NEXT_STATE);
             expect(await historyLength(page)).toBe(lengthBefore + 1); // the guard entry stays in the list...
-            await browserBack(page); // ...but is no longer between the editor and the previous page
+            await browserBack(page);
             await settle(page);
-            expect(await where(page)).toBe("/previous");
+            if (mode === "navigation-api") {
+                // ...but is no longer between the editor and the previous page.
+                expect(await where(page)).toBe("/previous");
+            } else {
+                // Without the API release never disposes: one redundant same-URL entry, no prompt.
+                expect(await where(page)).toBe(EDITOR);
+                expect(await modalOpen(page)).toBe(false);
+                await browserBack(page);
+                await settle(page);
+                expect(await where(page)).toBe("/previous");
+            }
         });
 
         // Release must never navigate or rewrite history: arm, tamper with the history the
@@ -322,6 +332,57 @@ for (const mode of MODES) {
             await settle(page);
             expect(await modalOpen(page)).toBe(true);
             expect(await where(page)).toBe(EDITOR);
+        });
+
+        for (const scenario of ["truncate-recopy-release", "replace-predecessor"] as const) {
+            test(`release safety, ${scenario}: never navigates`, async ({ page }) => {
+                await setup(page, mode);
+                await arm(page);
+                await page.evaluate(
+                    async ({ editor, kind }) => {
+                        const wait = () => new Promise((resolve) => setTimeout(resolve, 150));
+                        const copy = history.state;
+                        history.pushState(null, "", `${editor}#x`);
+                        history.go(-2); // -> the editor entry
+                        await wait();
+                        history.replaceState(history.state, "", "/different");
+                        if (kind === "replace-predecessor") {
+                            history.forward(); // onto the guard entry, whose predecessor now sits at /different
+                            await wait();
+                        } else {
+                            history.pushState(copy, "", editor); // truncates G; same length and tag again
+                        }
+                    },
+                    { editor: EDITOR, kind: scenario },
+                );
+                expect(await where(page)).toBe(EDITOR);
+                const before = { state: await historyState(page), length: await historyLength(page) };
+                await page.evaluate(() => {
+                    const w = window as unknown as { pops: number };
+                    w.pops = 0;
+                    window.addEventListener("popstate", () => { w.pops += 1; });
+                    (window as unknown as HarnessWindow).guard.release();
+                });
+                await page.waitForTimeout(400);
+                expect(await where(page)).toBe(EDITOR);
+                expect(await historyState(page)).toEqual(before.state);
+                expect(await historyLength(page)).toBe(before.length);
+                expect(await page.evaluate(() => (window as unknown as { pops: number }).pops)).toBe(0);
+            });
+        }
+
+        test("arming over a forward tail: a silent hash push then a traversal onto the editor entry does not prompt", async ({ page }) => {
+            await setup(page, mode);
+            await page.evaluate((editor) => history.pushState(null, "", `${editor}#future`), EDITOR);
+            await page.evaluate(() => history.back());
+            await settle(page);
+            expect(await where(page)).toBe(EDITOR);
+            await arm(page);
+            await page.evaluate((editor) => history.pushState({ __NA: true }, "", `${editor}#x`), EDITOR);
+            await page.evaluate(() => history.go(-2));
+            await settle(page);
+            expect(await where(page)).toBe(EDITOR);
+            expect(await modalOpen(page)).toBe(false);
         });
 
         test("release safety, plain <a href=#x> fragment navigation: nothing moves", async ({ page }) => {

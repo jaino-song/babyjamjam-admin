@@ -162,6 +162,20 @@ describe("useUnsavedChangesGuard", () => {
             expect(screen.getByRole("dialog")).toBeInTheDocument();
         });
 
+        it("does not prompt for a hash-only traversal after arming over a forward tail", async () => {
+            // A forward entry exists when arming: the guard push truncates it, so the list does not grow.
+            window.history.pushState(null, "", `${EDITOR}#future`);
+            await traverse(() => window.history.back());
+            expect(window.location.hash).toBe("");
+            render(<Harness active />);
+            window.history.pushState({ __NA: true }, "", `${EDITOR}#x`); // silent: no popstate
+
+            await traverse(() => window.history.go(-2)); // EDITOR#x -> guard -> editor entry
+
+            expect(paths()).toBe(EDITOR);
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        });
+
         it("lets a hash-only Forward onto the editor entry pass without a prompt", async () => {
             // Entries: .., EDITOR#a, EDITOR#b (armed on #b, guard on top).
             window.history.replaceState(NEXT_STATE, "", `${EDITOR}#a`);
@@ -248,7 +262,7 @@ describe("useUnsavedChangesGuard", () => {
             window.removeEventListener("popstate", nextHandler);
         });
 
-        it("takes the guard entry back out, without navigating, when deactivated", async () => {
+        it("never navigates when deactivated without the Navigation API (the guard entry stays, unprompted)", async () => {
             const { rerender } = render(<Harness active />);
             const lengthWhileArmed = window.history.length;
 
@@ -257,10 +271,13 @@ describe("useUnsavedChangesGuard", () => {
 
             expect(paths()).toBe(EDITOR);
             expect(window.history.state).toMatchObject(NEXT_STATE);
-            // No leftover entry: one Back reaches the previous page.
+            expect(window.history.length).toBe(lengthWhileArmed);
+            // Documented limitation: one redundant same-URL entry, no prompt, then the previous page.
+            await traverse(() => window.history.back());
+            expect(paths()).toBe(EDITOR);
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
             await traverse(() => window.history.back());
             expect(paths()).toBe("/previous");
-            expect(window.history.length).toBe(lengthWhileArmed);
         });
 
         describe("release safety: never navigates, never rewrites history", () => {
@@ -305,15 +322,14 @@ describe("useUnsavedChangesGuard", () => {
                 expect(window.history.replaceState).toBe(originalReplace);
             });
 
-            it("removes only its own untouched guard entry: URL kept, one Back reaches the previous page", async () => {
-                const { before, after, popstate } = await releaseAfter(() => undefined);
-                // The single same-URL Back is the only thing release may do.
-                expect(after.url).toBe(before.url);
-                expect(after.url).toBe(EDITOR);
-                expect(after.state).toMatchObject(NEXT_STATE);
-                expect(popstate.mock.calls.length).toBeLessThanOrEqual(1);
-                expect(window.history.pushState).toBe(originalPush);
-                expect(window.history.replaceState).toBe(originalReplace);
+            it("does not navigate on its own untouched guard entry without the Navigation API", async () => {
+                const result = await releaseAfter(() => undefined);
+                expect(result.after.url).toBe(EDITOR);
+                expect(result.after.state).toMatchObject(NEXT_STATE);
+                expectUntouched(result);
+                // The redundant guard entry costs one extra Back.
+                await traverse(() => window.history.back());
+                expect(paths()).toBe(EDITOR);
                 await traverse(() => window.history.back());
                 expect(paths()).toBe("/previous");
             });
@@ -388,6 +404,30 @@ describe("useUnsavedChangesGuard", () => {
                 expect(paths()).toBe(EDITOR);
             });
 
+            it.each([
+                ["truncate and re-push a copy of the tag", true],
+                ["replace the predecessor in place, then go Forward", false],
+            ])("never navigates after the entries were rearranged (%s)", async (_label, recopy) => {
+                const { rerender } = render(<Harness active />);
+                const copy = window.history.state;
+                await traverse(() => {
+                    window.history.pushState(null, "", `${EDITOR}#x`);
+                    window.history.go(-2); // -> the editor entry
+                });
+                window.history.replaceState(window.history.state, "", "/different");
+                if (recopy) window.history.pushState(copy, "", EDITOR); // truncates G, same length again
+                else await traverse(() => window.history.forward()); // onto the guard entry
+                expect(paths()).toBe(EDITOR);
+                const before = snapshot();
+                const popstate = jest.fn();
+                window.addEventListener("popstate", popstate);
+                rerender(<Harness active={false} />);
+                await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+                window.removeEventListener("popstate", popstate);
+                expectUntouched({ before, after: snapshot(), popstate });
+                expect(paths()).toBe(EDITOR);
+            });
+
             it("does nothing after a plain <a href=\"#x\"> fragment navigation", async () => {
                 const result = await releaseAfter(() => {
                     fireEvent.click(screen.getByText("hash")); // href="#section": no pushState call
@@ -430,6 +470,9 @@ describe("useUnsavedChangesGuard", () => {
 
             await traverse(() => window.history.back());
             expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+            expect(paths()).toBe(EDITOR); // the redundant guard entry, no prompt
+            await traverse(() => window.history.back());
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
             expect(paths()).toBe("/previous");
         });
 
@@ -444,9 +487,12 @@ describe("useUnsavedChangesGuard", () => {
             expect(paths()).toBe(EDITOR);
             fireEvent.click(screen.getByRole("button", { name: "머무르기" }));
 
-            // Deactivating leaves no extra entry behind.
+            // Deactivating never navigates; the single guard entry stays (no second one was pushed).
             rerender(<StrictMode><Harness active={false} /></StrictMode>);
             await settle();
+            expect(paths()).toBe(EDITOR);
+            await traverse(() => window.history.back());
+            expect(paths()).toBe(EDITOR);
             await traverse(() => window.history.back());
             expect(paths()).toBe("/previous");
         });
