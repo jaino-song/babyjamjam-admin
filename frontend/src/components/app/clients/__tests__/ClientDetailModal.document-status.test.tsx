@@ -60,4 +60,32 @@ describe("ClientDetailModal document status badge", () => {
 
         expect(screen.getByText("계약 완료")).toBeInTheDocument();
     });
+
+    it("shows a pending cancellation (040) as 철회 요청됨 in the warning tone, not 철회됨", () => {
+        renderModal(buildClient({ documentStatus: "revoke_requested", hasSigned: false }));
+
+        const badge = screen.getByText("철회 요청됨");
+        expect(badge).toBeInTheDocument();
+        expect(badge).toHaveClass("text-[hsl(38,92%,35%)]");
+        expect(screen.queryByText("철회됨")).not.toBeInTheDocument();
+    });
+
+    it("keeps 철회 요청됨 even when the customer already signed", () => {
+        renderModal(buildClient({ documentStatus: "revoke_requested", hasSigned: true }));
+
+        expect(screen.getByText("철회 요청됨")).toBeInTheDocument();
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("localizes the pending cancellation for non-Korean locales", () => {
+        renderModal(buildClient({ documentStatus: "revoke_requested" }), "en");
+
+        expect(screen.getByText("Revocation requested")).toBeInTheDocument();
+    });
+
+    it("keeps 철회됨 in the danger tone for a completed cancellation", () => {
+        renderModal(buildClient({ documentStatus: "revoked" }));
+
+        expect(screen.getByText("철회됨")).toHaveClass("text-[hsl(355,36%,45%)]");
+    });
 });
