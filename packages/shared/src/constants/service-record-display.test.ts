@@ -56,3 +56,24 @@ describe("getSignatureStatusMeta", () => {
         });
     });
 });
+
+describe("getSignatureStatusMeta revoke request (040)", () => {
+    it("shows a requested revoke as a non-terminal warning, ignoring a misleading stored detail", () => {
+        for (const statusDetail of ["거부", "", null, "철회", "문서 취소 요청"]) {
+            expect(getSignatureStatusMeta({ statusType: "040", statusDetail })).toEqual({
+                label: "철회 요청됨",
+                variant: "warning",
+            });
+        }
+        expect(getSignatureStatusMeta({ statusType: "doc_request_revoke", statusDetail: "거부" })).toEqual({
+            label: "철회 요청됨",
+            variant: "warning",
+        });
+    });
+
+    it("keeps the actual terminal negatives danger", () => {
+        for (const statusType of ["011", "042", "061", "071", "080", "090"]) {
+            expect(getSignatureStatusMeta({ statusType, statusDetail: "" }).variant).toBe("danger");
+        }
+    });
+});
