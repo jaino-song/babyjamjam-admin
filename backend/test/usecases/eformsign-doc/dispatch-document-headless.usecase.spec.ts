@@ -910,6 +910,110 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         expect(dispatchCreation).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        ["040", true],
+        ["045", true],
+        ["041", true],
+        ["060", true],
+        ["042", false],
+        ["090", false],
+        ["099", false],
+        ["003", false],
+    ])("duplicate-send guard for a same-template %s document inside the window blocks=%s", async (statusType, blocks) => {
+        const dispatchCreation = jest.fn().mockResolvedValue({ ok: false, reason: "stop", durationMs: 1 });
+        const repository = { findByClientId: jest.fn().mockResolvedValue([{
+            documentId: "existing-1",
+            templateId: "template-1",
+            statusType,
+            createdDate: new Date(),
+        }]) };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+            { dispatchCreation } as never,
+            { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
+            createCredentialBoundary() as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn() } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn() } as never,
+            { assertLiveAssignedProvider: jest.fn() } as never,
+            repository as never,
+            { execute: jest.fn() } as never,
+            createWorkflowClient() as never,
+        );
+
+        const result = await usecase.execute(
+            "branch-1",
+            { clientId: 7, contractData: { area: "seoul" } as never },
+            TEST_PRINCIPAL,
+        );
+
+        if (blocks) {
+            expect(result).toEqual(expect.objectContaining({
+                reason: "duplicate_pending_document",
+                existingDocumentId: "existing-1",
+            }));
+            expect(dispatchCreation).not.toHaveBeenCalled();
+        } else {
+            expect(result).not.toEqual(expect.objectContaining({ reason: "duplicate_pending_document" }));
+            expect(dispatchCreation).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it.each([
+        ["040", "철회 요청"],
+        ["045", "철회 요청"],
+        ["041", "서명 단계"],
+        ["060", "서명 단계"],
+        ["042", "거부"],
+        ["003", "완료"],
+    ])("stores the same statusDetail as the webhook for a %s document after headless creation", async (statusType, statusDetail) => {
+        const createEformsignDocUsecase = { execute: jest.fn().mockResolvedValue(undefined) };
+        const usecase = new DispatchDocumentHeadlessUsecase(
+            {
+                resolveEffectiveTemplateId,
+                generateDocumentOptions: jest.fn().mockReturnValue({
+                    mode: { type: "01" },
+                    prefill: { document_name: "산모신생아건강관리서비스 계약서" },
+                }),
+            } as never,
+            { dispatchCreation: jest.fn().mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 1 }) } as never,
+            { findByArea: jest.fn().mockResolvedValue(null) } as never,
+            createCredentialBoundary() as never,
+            createEformsignDocUsecase as never,
+            {
+                execute: jest.fn().mockResolvedValue({
+                    template: { id: "template-1", name: "서구 계약서" },
+                    current_status: {
+                        status_type: statusType,
+                        step_type: "05",
+                        step_index: "2",
+                        step_name: "서명 단계",
+                        expired_date: 0,
+                        _expired: false,
+                    },
+                }),
+            } as never,
+            { emit: jest.fn() } as never,
+            { findById: jest.fn().mockResolvedValue({ name: "김고객", phone: CLIENT_FALLBACK_PHONE }) } as never,
+            { assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 10 }) } as never,
+            { findByClientId: jest.fn().mockResolvedValue([]) } as never,
+            { execute: jest.fn().mockResolvedValue([]) } as never,
+            createWorkflowClient() as never,
+        );
+
+        await usecase.execute("branch-1", {
+            clientId: 7,
+            progressId: "progress-1",
+            contractData: { customerName: "김고객", customerContact: CUSTOMER_PHONE } as never,
+        }, TEST_PRINCIPAL);
+
+        expect(createEformsignDocUsecase.execute).toHaveBeenCalledWith(
+            "branch-1",
+            expect.objectContaining({ documentId: "doc-1", statusType, statusDetail }),
+        );
+    });
+
     it("does not start a second creation while the same client operation is in progress", async () => {
         const headlessService = { dispatchCreation: jest.fn() };
         const getAccessTokenUsecase = { execute: jest.fn() };

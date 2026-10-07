@@ -2,7 +2,9 @@ import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/bus
 import {
   contractStatusBadgeType,
   getStatusCategory,
+  isCustomerSignedDisplayStatus,
   mapDocStatusLabel,
+  resolveDocDisplayStatus,
   mapStatusToLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -133,5 +135,66 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
   it("uses the warning (review) badge tone, distinct from the expired one", () => {
     expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
     expect(contractStatusBadgeType("기간 만료")).toBe("expired");
+  });
+});
+
+describe("045 (doc_request_reject) is treated exactly like 040", () => {
+  it("is labelled 철회 요청됨 with the warning tone and keeps the expired category", () => {
+    expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "doc_request_reject" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045" }, null, "revoke_requested")).toBe("철회 요청됨");
+    expect(getStatusCategory("045")).toBe("expired");
+    expect(contractStatusBadgeType(mapDocStatusLabel({ status_type: "045" }))).toBe("review");
+  });
+});
+
+describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is in progress and labelled by step and review window like 060", () => {
+    expect(getStatusCategory("041")).toBe("in-progress");
+    expect(getStatusCategory("doc_refuse_revoke")).toBe("in-progress");
+    for (const step of [customerStep, reviewStep]) {
+      for (const endDate of [null, "2027-12-31", "2025-01-01"]) {
+        expect(mapDocStatusLabel({ status_type: "041", ...step }, endDate)).toBe(
+          mapDocStatusLabel({ status_type: "060", ...step }, endDate),
+        );
+      }
+    }
+    expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
+    expect(mapDocStatusLabel({ status_type: "041", ...reviewStep }, "2025-01-01")).toBe("검토 필요");
+  });
+});
+
+describe("customer-signed (contracts stepper) is decided from the display status, not the label text", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+  const signedFor = (status: Parameters<typeof resolveDocDisplayStatus>[0], endDate: string | null, displayStatus?: string | null) =>
+    isCustomerSignedDisplayStatus(resolveDocDisplayStatus(status, endDate, displayStatus));
+
+  it("060 on the customer step is not signed; 062 / 070 at review / 050 / 003 are", () => {
+    expect(signedFor({ status_type: "060", ...customerStep }, null)).toBe(false);
+    expect(signedFor({ status_type: "062", ...customerStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "070", ...reviewStep }, "2027-12-31")).toBe(true);
+    expect(signedFor({ status_type: "070", ...reviewStep }, "2025-01-01")).toBe(true);
+    expect(signedFor({ status_type: "072", ...reviewStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "050", ...reviewStep }, null)).toBe(true);
+    expect(signedFor({ status_type: "003", ...reviewStep }, null)).toBe(true);
+  });
+
+  it("an unassigned document (고객 등록 필요) at the review step counts as customer-signed", () => {
+    // The label is 고객 등록 필요, which the old label comparison did not recognise.
+    expect(mapDocStatusLabel({ status_type: "070", ...reviewStep }, null, "unassigned")).toBe("고객 등록 필요");
+    expect(signedFor({ status_type: "070", ...reviewStep }, null, "unassigned")).toBe(true);
+  });
+
+  it("040 / 045 / expired statuses claim no signature, and 041 follows 060", () => {
+    for (const code of ["040", "045", "042", "080"]) {
+      expect(signedFor({ status_type: code, ...reviewStep }, null)).toBe(false);
+    }
+    expect(signedFor({ status_type: "041", ...customerStep }, null)).toBe(false);
+    expect(signedFor({ status_type: "041", ...reviewStep }, "2025-01-01")).toBe(true);
   });
 });

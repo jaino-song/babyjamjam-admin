@@ -216,6 +216,38 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     expect(stages).not.toContain("문서 기간이 만료됐어요");
   });
 
+  it.each([
+    ["with display_status revoke_requested", "revoke_requested"],
+    ["without display_status (legacy payload)", undefined],
+  ])("shows 045 exactly like 040: its own revoke-requested category, never expired or signed — %s", (_label, displayStatus) => {
+    const doc = makeDoc({ statusType: "045", stepType: "06", stepName: "제공기관 검토", displayStatus });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("revoke-requested");
+    expect(progress).toBe("철회 요청됨");
+    expect(stages).toContain("철회가 요청됐어요 — 아직 철회가 완료되지 않았어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+  });
+
+  it("reads 041 (a refused revoke) exactly like 060: customer not signed on the customer step", () => {
+    const doc041 = makeDoc({ statusType: "041", stepType: "05", stepName: "이용자" });
+    const doc060 = makeDoc({ statusType: "060", stepType: "05", stepName: "이용자" });
+
+    expect(view(doc041)).toEqual(view(doc060));
+    expect(view(doc041).category).toBe("drafting");
+    expect(view(doc041).stages).not.toContain(SIGNED_STAGE);
+  });
+
+  it("reads 041 at the provider review step exactly like 060: customer signed, review needed", () => {
+    const doc041 = makeDoc({ statusType: "041", stepType: "06", stepName: "제공기관 검토" });
+    const doc060 = makeDoc({ statusType: "060", stepType: "06", stepName: "제공기관 검토" });
+
+    expect(view(doc041)).toEqual(view(doc060));
+    expect(view(doc041).progress).toBe("5/6 - 제공기관 검토 필요");
+    expect(view(doc041).stages).toContain(SIGNED_STAGE);
+  });
+
   it("leaves 042 / 080 as expired and keeps 040 files under the 기간 만료 filter pill", () => {
     for (const statusType of ["042", "080"]) {
       const { category, progress } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "expired" }));

@@ -1,4 +1,4 @@
-export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 
 export type ClientBadgeStatus =
     | "active"
@@ -42,6 +42,12 @@ export const CLIENT_BADGE_STATUS_TOKENS = {
     },
     contract_required: {
         terminated: { variant: "danger", defaultLabel: "계약서 필요" },
+    },
+    // The contract is live but its cancellation was requested (eformsign 040/045): a warning,
+    // never "계약서 필요". Its own key so it neither feeds the contract_required filters nor
+    // displaces the real service_status badge.
+    contract_status: {
+        review: { variant: "warning", defaultLabel: "철회 요청됨" },
     },
 } as const satisfies Record<ClientBadgeKey, Partial<Record<ClientBadgeStatus, ClientBadgeStatusToken>>>;
 

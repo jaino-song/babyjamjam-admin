@@ -37,8 +37,9 @@ export type EformsignDocDisplayStatus =
     | "unassigned"
     | "completed"
     /**
-     * eformsign 040 (doc_request_revoke): cancellation was requested, not done — it may still be
-     * refused (→ 060) or completed (→ 042). Display only: the document keeps the "expired"
+     * eformsign 040 (doc_request_revoke) and 045 (doc_request_reject): cancellation was
+     * requested, not done — it may still be refused (041 → continues like 060) or completed
+     * (→ 042). Display only: the document keeps the "expired"
      * category for tabs, scope and stats; this is neither 기간 만료 (080) nor 철회됨 (042/090).
      */
     | "revoke_requested"
@@ -91,7 +92,7 @@ export function resolveEformsignDocDisplayStatus(
     now: Date,
     calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
-    // Before the category checks: 040 sits in the expired bucket for filtering, but the document
+    // Before the category checks: 040/045 sit in the expired bucket for filtering, but the document
     // is not expired — independent of step, unassigned state and end date.
     if (isRevokeRequestedStatus(stringFromUnknown(getCurrentStatus(document)?.["status_type"]))) {
         return "revoke_requested";

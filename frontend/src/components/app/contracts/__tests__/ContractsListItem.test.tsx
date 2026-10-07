@@ -75,6 +75,7 @@ describe("ContractsListItem", () => {
 
   it.each([
     ["040", "철회 요청됨", "bg-v3-orange-light"],
+    ["045", "철회 요청됨", "bg-v3-orange-light"],
     ["042", "기간 만료", "bg-v3-burgundy-light"],
     ["080", "기간 만료", "bg-v3-burgundy-light"],
   ] as const)(

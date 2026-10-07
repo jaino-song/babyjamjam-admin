@@ -9,7 +9,12 @@ import {
     ServiceRecordRevisionOperationUnresolvedError,
     SERVICE_RECORD_BORN_STUCK_ERROR_CODES,
 } from "domain/errors/service-record-edit.error";
-import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_IN_PROGRESS_STATUS_CODES,
+    TERMINAL_STATUS_CODES,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
@@ -154,18 +159,21 @@ type DocumentScopeRow = {
 
 function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditContractStage, null> {
     const status = normalizeEformsignStatusCode(document.statusType);
-    if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
+    if (EFORMSIGN_COMPLETED_STATUS_CODES.has(status)) {
         return "completed";
     }
-    // "040" (revoke requested) is a live, non-terminal document: eformsign can still refuse the
-    // request or the signer can carry on, so it is in progress, not rejected.
+    // 040/045 (revoke requested) are live, non-terminal documents: eformsign can still refuse
+    // the request or the signer can carry on, so they are in progress, not rejected.
     if (isRevokeRequestedStatus(status)) {
         return "in_progress";
     }
-    if (["011", "021", "031", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
+    // Every code the domain reads as an ending that is not completion — rejected, revoked
+    // (042/090) and deleted (047/049/099) alike.
+    if (TERMINAL_STATUS_CODES.has(status)) {
         return "rejected";
     }
-    if (["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"].includes(status)) {
+    // 041 (a refused revoke) is in this set: the document continues exactly like 060.
+    if (EFORMSIGN_IN_PROGRESS_STATUS_CODES.has(status)) {
         return "in_progress";
     }
     return "unknown";

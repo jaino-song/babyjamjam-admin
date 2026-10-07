@@ -2055,6 +2055,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         "010",
         "020",
         "030",
+        // 041 (doc_refuse_revoke): a refused revoke continues exactly like 060.
+        "041",
         "043",
         "060",
         "062",

@@ -1,7 +1,7 @@
 import { isCancellableUnsignedContract } from "./eformsign-customer-signature";
 
 describe("isCancellableUnsignedContract", () => {
-    it.each(["001", "002", "010", "043", "020", "030", "060", "070"])(
+    it.each(["001", "002", "010", "043", "020", "030", "041", "060", "070"])(
         "allows unsigned status %s only outside provider review",
         (statusType) => {
             expect(isCancellableUnsignedContract({ statusType, stepType: "05", stepName: "고객 서명" })).toBe(true);
@@ -10,7 +10,7 @@ describe("isCancellableUnsignedContract", () => {
         },
     );
 
-    it.each(["003", "012", "022", "032", "050", "062", "072", "092", "047", "049", "099", "999", ""])(
+    it.each(["003", "012", "022", "032", "050", "062", "072", "092", "040", "042", "045", "047", "049", "090", "099", "999", ""])(
         "fails closed for status %s",
         (statusType) => {
             expect(isCancellableUnsignedContract({ statusType, stepType: "05", stepName: "고객 서명" })).toBe(false);
