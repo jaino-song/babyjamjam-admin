@@ -626,12 +626,11 @@ function ClientContractsList({
         <div data-component={`${dataComponentPrefix}-contracts-list`} className="space-y-3">
             {docs.map((doc) => {
                 // The backend stamps displayStatus at serve time; the local derivation
-                // (including the legacy statusDetail-string nudge for stale step fields)
                 // only backstops payloads that predate the field.
                 const statusLabel = mapDocStatusLabel(
                     {
                         status_type: doc.statusType,
-                        step_type: doc.statusDetail === "검토 필요" ? "06" : doc.stepType,
+                        step_type: doc.stepType,
                         step_name: doc.stepName,
                     },
                     doc.contractEndDate ?? null,

@@ -24,12 +24,20 @@ describe("contractPaymentDateFromFields", () => {
 });
 
 describe("isCancellableContractStatus", () => {
+    const unsigned = { hasSigned: false };
+
     it("is true only for unsigned, still-live contracts", () => {
-        expect(isCancellableContractStatus("created")).toBe(true);
-        expect(isCancellableContractStatus("requested")).toBe(true);
-        expect(isCancellableContractStatus("opened")).toBe(true);
-        expect(isCancellableContractStatus("completed")).toBe(false);
-        expect(isCancellableContractStatus("revoked")).toBe(false);
-        expect(isCancellableContractStatus(null)).toBe(false);
+        expect(isCancellableContractStatus("created", unsigned)).toBe(true);
+        expect(isCancellableContractStatus("requested", unsigned)).toBe(true);
+        expect(isCancellableContractStatus("opened", unsigned)).toBe(true);
+        expect(isCancellableContractStatus("completed", unsigned)).toBe(false);
+        expect(isCancellableContractStatus("revoked", unsigned)).toBe(false);
+        expect(isCancellableContractStatus(null, unsigned)).toBe(false);
+    });
+
+    it("is false once the customer has signed, even though documentStatus still reads requested", () => {
+        expect(isCancellableContractStatus("requested", { hasSigned: true })).toBe(false);
+        expect(isCancellableContractStatus("opened", { hasSigned: true })).toBe(false);
+        expect(isCancellableContractStatus("created", { hasSigned: true })).toBe(false);
     });
 });

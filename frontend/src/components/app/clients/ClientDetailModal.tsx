@@ -1,6 +1,12 @@
 "use client";
 
 import { Pencil, Trash2, X } from "lucide-react";
+import {
+    getClientDocumentStatusMeta,
+    resolveClientDocumentDisplayStatus,
+    type ClientDocumentDisplayStatus,
+} from "@babyjamjam/shared/constants/client-document-status";
+import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { Client, SERVICE_STATUS_OPTIONS, DocumentStatus, type ServiceStatus } from "@/lib/client/types";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -65,34 +71,35 @@ const formatPrice = (price: string | null): string => {
     return `${num.toLocaleString("ko-KR")}원`;
 };
 
-type NonNullDocumentStatus = Exclude<DocumentStatus, null>;
+const DOC_STATUS_LABEL_KEYS = {
+    signed: "clients.form.document-signed",
+    created: "clients.form.doc-created",
+    opened: "clients.form.doc-opened",
+    requested: "clients.form.doc-requested",
+    completed: "clients.form.doc-completed",
+    rejected: "clients.form.doc-rejected",
+    revoked: "clients.form.doc-revoked",
+    deleted: "clients.form.doc-deleted",
+    none: "clients.form.doc-not-sent",
+} as const satisfies Record<ClientDocumentDisplayStatus, string>;
 
-const getDocStatusBadge = (status: DocumentStatus, locale: Locale) => {
-    if (status === null) {
-        return <Badge variant="outline" className="text-muted-foreground">{t(locale, "clients.form.doc-not-sent")}</Badge>;
-    }
+const DOC_STATUS_BADGE_VARIANTS = {
+    success: "v3-active",
+    warning: "v3-pending",
+    danger: "v3-expired",
+    info: "v3-info",
+    primary: "v3-info",
+    neutral: "outline",
+} as const satisfies Record<StatusBadgeVariant, string>;
 
-    const labelMap: Record<NonNullDocumentStatus, string> = {
-        completed: t(locale, "clients.form.doc-completed"),
-        opened: t(locale, "clients.form.doc-opened"),
-        created: t(locale, "clients.form.doc-created"),
-        requested: t(locale, "clients.form.doc-requested"),
-        rejected: t(locale, "clients.form.doc-rejected"),
-        revoked: t(locale, "clients.form.doc-revoked"),
-        deleted: t(locale, "clients.form.doc-deleted"),
-    };
+// The shared meta is the single source for the Korean label and badge tone (incl. the signed step
+// derived from hasSigned); other locales map the same resolved status onto their own message keys.
+const getDocStatusBadge = (status: DocumentStatus, hasSigned: boolean, locale: Locale) => {
+    const display = resolveClientDocumentDisplayStatus(status, { hasSigned });
+    const meta = getClientDocumentStatusMeta(status, { hasSigned });
+    const label = locale === "ko" ? meta.label : t(locale, DOC_STATUS_LABEL_KEYS[display]);
 
-    const label = labelMap[status] || t(locale, "clients.form.doc-not-sent");
-    
-    const isCompleted = status === "completed";
-    const isPending = status === "requested" || status === "opened";
-    const isRejected = status === "rejected" || status === "revoked";
-
-    if (isCompleted) return <Badge variant="v3-active">{label}</Badge>;
-    if (isPending) return <Badge variant="v3-pending">{label}</Badge>;
-    if (isRejected) return <Badge variant="v3-expired">{label}</Badge>;
-
-    return <Badge variant="outline">{label}</Badge>;
+    return <Badge variant={DOC_STATUS_BADGE_VARIANTS[meta.variant]}>{label}</Badge>;
 };
 
 export function ClientDetailModal({
@@ -265,7 +272,7 @@ export function ClientDetailModal({
                         </h4>
                         <div className="flex items-center justify-between py-2">
                              <span className="text-sm text-muted-foreground">{t(locale, "clients.form.document-status")}</span>
-                             {getDocStatusBadge(client.documentStatus, locale)}
+                             {getDocStatusBadge(client.documentStatus, client.hasSigned, locale)}
                         </div>
                     </div>
                 </div>
