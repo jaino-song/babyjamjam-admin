@@ -19,6 +19,7 @@ import { FIELD_COPY } from "../../../packages/service-record-ui/src/field-messag
 
 import {
     NOW,
+    PLANNED_DATES,
     SAVED_HEADER,
     SERVER_NAMES,
     SUBMITTED_ANSWERS,
@@ -45,6 +46,7 @@ jest.mock("@/components/app/service-record/SignaturePad", () => ({
 }));
 
 // The rebuilt UI must keep these strings (Phase 3 brief input).
+// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
 const PINNED_COPY = {
     /** Title of the invalid-link state (ServiceRecordWizard.tsx:822). */
     invalidLinkTitle: "링크를 사용할 수 없습니다",
@@ -89,8 +91,25 @@ const FAKE_DATE_ONLY = [
 
 type User = ReturnType<typeof userEvent.setup>;
 
-/** A 회차 card is identified by its number only (not by its date or status words). */
-const dayCard = (sessionIndex: number) => ({ name: new RegExp(`(^|\\D)${sessionIndex}(?!\\d)`) });
+/**
+ * A day card is identified by its service date, never by its session number or
+ * status words (a card may also show unrelated numbers such as "담당자 1명").
+ * The date is matched in any of the formats below so the rebuilt UI can choose one.
+ */
+// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
+const dayCardByDate = (isoDate: string) => {
+    const [year, month, day] = isoDate.split("-").map(Number);
+    const m = `0?${month}`;
+    const d = `0?${day}`;
+    const formats = [
+        `${year}[.-]${m}[.-]${d}`, // 2026.09.21, 2026-09-21
+        `${m}/${d}`, // 9/21, 09/21
+        `${m}\\.${d}`, // 9.21, 09.21
+        `${m}월\\s*${d}일`, // 9월 21일
+    ];
+    return { name: new RegExp(`(?<!\\d)(?:${formats.join("|")})(?!\\d)`) };
+};
+const dayCard = (sessionIndex: number) => dayCardByDate(PLANNED_DATES[sessionIndex - 1].serviceDate);
 
 const decoration = /^[✓●]\s*/;
 

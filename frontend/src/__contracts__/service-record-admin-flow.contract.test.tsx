@@ -15,6 +15,7 @@ import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-
 
 import {
     CLIENT_ID,
+    DATES,
     EDITOR_URL,
     HEADER,
     NOW,
@@ -40,6 +41,7 @@ jest.mock("@/features/service-records/api/admin-service-record-edit.api", () => 
 }));
 
 // The rebuilt UI must keep these strings (Phase 3 brief input).
+// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
 const PINNED_COPY = {
     /** Step title of a session's review page. */
     reviewTitle: "기록 내용 확인",
@@ -72,8 +74,25 @@ const FAKE_DATE_ONLY = [
     "hrtime", "performance",
 ] as const;
 
-/** A 회차 card is identified by its number only (not by its date or status words). */
-const dayCard = (sessionIndex: number) => ({ name: new RegExp(`(^|\\D)${sessionIndex}(?!\\d)`) });
+/**
+ * A day card is identified by its service date, never by its session number or
+ * status words (a card may also show unrelated numbers such as "담당자 1명").
+ * The date is matched in any of the formats below so the rebuilt UI can choose one.
+ */
+// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
+const dayCardByDate = (isoDate: string) => {
+    const [year, month, day] = isoDate.split("-").map(Number);
+    const m = `0?${month}`;
+    const d = `0?${day}`;
+    const formats = [
+        `${year}[.-]${m}[.-]${d}`, // 2026.09.21, 2026-09-21
+        `${m}/${d}`, // 9/21, 09/21
+        `${m}\\.${d}`, // 9.21, 09.21
+        `${m}월\\s*${d}일`, // 9월 21일
+    ];
+    return { name: new RegExp(`(?<!\\d)(?:${formats.join("|")})(?!\\d)`) };
+};
+const dayCard = (sessionIndex: number) => dayCardByDate(DATES[sessionIndex - 1]);
 
 /** An RFC 4122 UUID (versions 1-5), the shape the confirm DTO's isUuid check accepts. */
 const UUID = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
