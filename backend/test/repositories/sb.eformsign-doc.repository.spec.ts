@@ -704,6 +704,12 @@ describe("SbEformsignDocRepository", () => {
         const revisionId = "66666666-6666-4666-8666-666666666666";
         const transaction = {
             $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ clientId: 55 }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-legacy",
+                    branchId,
+                }])
                 .mockResolvedValueOnce([{
                     id: 1,
                     documentId: "doc-legacy",
@@ -714,11 +720,6 @@ describe("SbEformsignDocRepository", () => {
                     revisionId: null,
                     updatedDate: new Date("2026-08-01T00:00:00.000Z"),
                     createdDate: new Date("2026-07-01T00:00:00.000Z"),
-                }])
-                .mockResolvedValueOnce([{
-                    id: 55,
-                    eDocId: "doc-legacy",
-                    branchId,
                 }])
                 .mockResolvedValueOnce([{
                     id: caseId,
@@ -737,15 +738,77 @@ describe("SbEformsignDocRepository", () => {
 
         await expect(fencedRepository.isCurrentContractDocument(branchId, "doc-legacy"))
             .resolves.toBe(false);
-        expect(transaction.$queryRaw).toHaveBeenCalledTimes(3);
-        expect(transaction.$queryRaw.mock.calls.every(([query]) =>
-            query.strings.join(" ").includes("FOR UPDATE"))).toBe(true);
+        // unlocked owner read, then client -> document -> case: the project-wide client-first order
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(4);
+        const sqlOf = (index: number) => transaction.$queryRaw.mock.calls[index]![0].strings.join(" ");
+        expect(sqlOf(0)).not.toContain("FOR UPDATE");
+        expect(sqlOf(1)).toMatch(/FROM client[\s\S]*FOR UPDATE/);
+        expect(sqlOf(2)).toMatch(/FROM eformsign_doc[\s\S]*FOR UPDATE/);
+        expect(sqlOf(3)).toMatch(/FROM service_record_case[\s\S]*FOR UPDATE/);
+    });
+
+    it("restarts the completion guard when the owner moved between the unlocked read and the document lock", async () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+        const documentRow = (clientId: number) => ({
+            id: 1,
+            documentId: "doc-current",
+            clientId,
+            branchId,
+            documentKind: "contract",
+            serviceRecordCaseId: null,
+            revisionId: null,
+            updatedDate: new Date("2026-08-01T00:00:00.000Z"),
+            createdDate: new Date("2026-07-01T00:00:00.000Z"),
+        });
+        const transaction = {
+            $queryRaw: jest.fn()
+                // attempt 1: unlocked read says client 55, the locked row says client 56 -> start over
+                .mockResolvedValueOnce([{ clientId: 55 }])
+                .mockResolvedValueOnce([{ id: 55, eDocId: null, branchId }])
+                .mockResolvedValueOnce([documentRow(56)])
+                // attempt 2: owner 56 is locked first, then the document, then the case
+                .mockResolvedValueOnce([{ clientId: 56 }])
+                .mockResolvedValueOnce([{ id: 56, eDocId: "doc-current", branchId }])
+                .mockResolvedValueOnce([documentRow(56)])
+                .mockResolvedValueOnce([]),
+        };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+
+        await expect(new SbEformsignDocRepository(prisma).isCurrentContractDocument(branchId, "doc-current"))
+            .resolves.toBe(true);
+        expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+        const clientLocks = transaction.$queryRaw.mock.calls
+            .map(([query]) => query as { strings: string[]; values: unknown[] })
+            .filter((query) => query.strings.join(" ").includes("FROM client"))
+            .map((query) => query.values[0]);
+        expect(clientLocks).toEqual([55, 56]);
+    });
+
+    it("answers false without locking anything when the document does not exist", async () => {
+        const transaction = { $queryRaw: jest.fn().mockResolvedValueOnce([]) };
+        const prisma = {
+            eformsign_doc: eformsignDocModel,
+            $transaction: jest.fn((callback) => callback(transaction)),
+        } as unknown as PrismaService;
+
+        await expect(new SbEformsignDocRepository(prisma).isCurrentContractDocument("branch", "missing"))
+            .resolves.toBe(false);
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
     });
 
     it("allows the current legacy contract when its case has no revision evidence", async () => {
         const branchId = "44444444-4444-4444-4444-444444444444";
         const transaction = {
             $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ clientId: 55 }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-current",
+                    branchId,
+                }])
                 .mockResolvedValueOnce([{
                     id: 1,
                     documentId: "doc-current",
@@ -756,11 +819,6 @@ describe("SbEformsignDocRepository", () => {
                     revisionId: null,
                     updatedDate: new Date("2026-08-01T00:00:00.000Z"),
                     createdDate: new Date("2026-07-01T00:00:00.000Z"),
-                }])
-                .mockResolvedValueOnce([{
-                    id: 55,
-                    eDocId: "doc-current",
-                    branchId,
                 }])
                 .mockResolvedValueOnce([]),
         };
@@ -780,6 +838,12 @@ describe("SbEformsignDocRepository", () => {
         const revisionId = "66666666-6666-4666-8666-666666666666";
         const transaction = {
             $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ clientId: 55 }])
+                .mockResolvedValueOnce([{
+                    id: 55,
+                    eDocId: "doc-revision",
+                    branchId,
+                }])
                 .mockResolvedValueOnce([{
                     id: 1,
                     documentId: "doc-revision",
@@ -790,11 +854,6 @@ describe("SbEformsignDocRepository", () => {
                     revisionId,
                     updatedDate: new Date("2026-08-01T00:00:00.000Z"),
                     createdDate: new Date("2026-07-01T00:00:00.000Z"),
-                }])
-                .mockResolvedValueOnce([{
-                    id: 55,
-                    eDocId: "doc-revision",
-                    branchId,
                 }])
                 .mockResolvedValueOnce([{
                     id: caseId,

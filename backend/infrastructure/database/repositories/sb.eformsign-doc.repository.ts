@@ -649,8 +649,12 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         branchid: string,
         documentId: string,
     ): Promise<boolean> {
-        return this.prismaService.$transaction(async (tx) =>
-            this.isCurrentContractDocumentInTransaction(tx, branchid, documentId));
+        for (let attempt = 0; attempt < LINK_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            const outcome = await this.prismaService.$transaction(async (tx) =>
+                this.isCurrentContractDocumentInTransaction(tx, branchid, documentId));
+            if (outcome !== LINK_OWNERSHIP_CHANGED) return outcome;
+        }
+        throw new Error("Eformsign document owner kept changing while checking the current contract");
     }
 
     /**
@@ -844,11 +848,49 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return true;
     }
 
+    /**
+     * Lock order: client row -> document row -> case row(s) (the same client-first order as
+     * `linkClientIfActive`, confirmation and receipt promotion). Taking the document row first
+     * deadlocked (`40P01`) against promotion, which holds the client row and then locks all of
+     * the client's documents, and the webhook skipped its completion effects on that error.
+     * The owner is read WITHOUT a lock only to decide which client row to lock; it is compared
+     * again under the document lock, and a changed owner restarts the check (nothing was
+     * written).
+     */
     private async isCurrentContractDocumentInTransaction(
         tx: Prisma.TransactionClient,
         branchid: string,
         documentId: string,
-    ): Promise<boolean> {
+    ): Promise<boolean | typeof LINK_OWNERSHIP_CHANGED> {
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND permanent_purge_requested_at IS NULL
+              AND status_type NOT IN ('047', '049', '099')
+        `);
+        const peek = peeked?.[0];
+        if (!peek) return false;
+        let client: { id: number; eDocId: string | null; branchId: string | null } | undefined;
+        if (peek.clientId !== null && peek.clientId !== undefined) {
+            const clients = await tx.$queryRaw<Array<{
+                id: number;
+                eDocId: string | null;
+                branchId: string | null;
+            }>>(Prisma.sql`
+                SELECT id,
+                       e_doc_id AS "eDocId",
+                       branch_id AS "branchId"
+                FROM client
+                WHERE id = ${peek.clientId}
+                  AND branch_id = ${branchid}::uuid
+                FOR UPDATE
+            `);
+            client = clients?.[0];
+            if (!client) return false;
+        }
+
         const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
             SELECT id,
                    document_id AS "documentId",
@@ -867,29 +909,17 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             FOR UPDATE
         `);
         const document = documents?.[0];
+        if (!document) return false;
+        if ((document.clientId ?? null) !== (peek.clientId ?? null)) {
+            return LINK_OWNERSHIP_CHANGED;
+        }
         if (
-            !document
-            || document.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
+            document.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
             || document.clientId === null
             || document.clientId === undefined
         ) {
             return false;
         }
-
-        const clients = await tx.$queryRaw<Array<{
-            id: number;
-            eDocId: string | null;
-            branchId: string | null;
-        }>>(Prisma.sql`
-            SELECT id,
-                   e_doc_id AS "eDocId",
-                   branch_id AS "branchId"
-            FROM client
-            WHERE id = ${document.clientId}
-              AND branch_id = ${branchid}::uuid
-            FOR UPDATE
-        `);
-        const client = clients?.[0];
         if (!client || client.eDocId !== documentId) return false;
 
         return this.hasCurrentContractRevisionEvidence(tx, branchid, document);
