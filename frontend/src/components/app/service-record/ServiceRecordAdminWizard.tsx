@@ -826,6 +826,28 @@ export function ServiceRecordAdminWizard({
         setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message
             : "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요.");
     };
+    /**
+     * A 409 without a blockingOperation means the server no longer has this tab's draft open. That is
+     * either another tab's 수정 확정 closing it (the case is unchanged, so the staged edits stay) or a
+     * real change to the record (the blocking refresh modal). The server is asked which one it was.
+     */
+    const handleCommitFailure = async (failure: unknown) => {
+        if (!(failure instanceof AdminServiceRecordEditApiError) || failure.status !== 409 || readBlockingOperation(failure.body)) {
+            handleFailure(failure);
+            return;
+        }
+        try {
+            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            if (sameSource(sourceIdentity, state) && state.sourceCaseVersion <= knownVersion.current) {
+                setPreviewOpen(false);
+                setPreview(null);
+                commitRequest.current = null;
+                setError("다른 화면에서 수정 확정을 시작해서 이 확인이 취소되었어요. 수정 확정을 다시 눌러 주세요.");
+                return;
+            }
+        } catch { /* The source cannot be verified: fall through to the refresh modal. */ }
+        showRefreshModal();
+    };
     /** 수정 확정, step 1: turn every pending edit into one server draft and open its preview. */
     const startCommit = async () => {
         if (saving.current || !hasPending || needsReload || refreshModalOpen) return;
@@ -878,7 +900,7 @@ export function ServiceRecordAdminWizard({
             setPreviewOpen(true);
         } catch (failure) {
             if (prepared) await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
-            handleFailure(failure);
+            await handleCommitFailure(failure);
         } finally { saving.current = false; setBusy(false); }
     };
     /** Open the blocking refresh modal for a case event that is newer than this tab's data. */
@@ -923,7 +945,7 @@ export function ServiceRecordAdminWizard({
                 setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
             }
         } catch (failure) {
-            handleFailure(failure);
+            await handleCommitFailure(failure);
         } finally {
             confirmInFlight.current = false;
             const buffered = bufferedEvents.current;
