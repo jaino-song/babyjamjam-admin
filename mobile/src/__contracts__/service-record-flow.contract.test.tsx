@@ -95,18 +95,32 @@ const dayCard = (sessionIndex: number) => ({ name: new RegExp(`(^|\\D)${sessionI
 const decoration = /^[✓●]\s*/;
 
 /**
- * Chooses one option of an item. `scope` is the item's visible title (or a
- * region element). When the title resolves to a labelled group the lookup stays
- * inside it; otherwise it falls back to the whole screen, where an option text
- * that is not unique fails loudly instead of picking by position.
+ * Chooses one option of an item.
+ *
+ * `scope` is the item's visible title (or a container element). A title only
+ * counts when it resolves to a semantic container (radiogroup, group, region or
+ * fieldset): if it does not, this throws instead of widening the search to the
+ * whole screen, where a same-named option of another item could be clicked.
+ * With `scope` explicitly `undefined` the whole screen is searched, and the
+ * option must then be the only control of that name on the screen.
  * Options are looked up as radio, then checkbox, then button.
  */
 async function chooseOption(user: User, scope: string | HTMLElement | undefined, optionText: string) {
     const root = scopeFor(scope);
-    for (const role of ["radio", "checkbox", "button"] as const) {
-        const found = root.queryAllByRole(role, {
-            name: (accessibleName: string) => accessibleName.replace(decoration, "").trim() === optionText,
-        });
+    const matchesOption = (accessibleName: string) => accessibleName.replace(decoration, "").trim() === optionText;
+    const byRole = (["radio", "checkbox", "button"] as const).map((role) => ({
+        role,
+        found: root.queryAllByRole(role, { name: matchesOption }),
+    }));
+    if (scope === undefined) {
+        const all = byRole.flatMap(({ found }) => found);
+        if (all.length !== 1) {
+            throw new Error(`option "${optionText}" must be the only control of that name on screen, found ${all.length}`);
+        }
+        await user.click(all[0]);
+        return;
+    }
+    for (const { role, found } of byRole) {
         if (found.length > 1) throw new Error(`option "${optionText}" is ambiguous (${found.length} ${role}s); scope it`);
         if (found.length === 1) {
             await user.click(found[0]);
@@ -116,19 +130,35 @@ async function chooseOption(user: User, scope: string | HTMLElement | undefined,
     throw new Error(`option "${optionText}" not found as radio, checkbox or button`);
 }
 
+/** An option whose name is unique on screen, so no container is needed to pick it. */
+const chooseUniqueOption = (user: User, optionText: string) => chooseOption(user, undefined, optionText);
+
+const SCOPE_ROLES = ["radiogroup", "group", "region"] as const;
+
 function scopeFor(scope: string | HTMLElement | undefined): ReturnType<typeof within> {
     if (scope instanceof HTMLElement) return within(scope);
-    if (typeof scope !== "string") return screen;
-    const named = [
-        ...screen.queryAllByRole("radiogroup", { name: scope }),
-        ...screen.queryAllByRole("group", { name: scope }),
-    ];
+    if (scope === undefined) return screen;
+    const candidates = SCOPE_ROLES.flatMap((role) => screen.queryAllByRole(role));
+    const named = SCOPE_ROLES.flatMap((role) => screen.queryAllByRole(role, { name: scope }));
     if (named.length === 1) return within(named[0]);
-    // A group that holds the item's title as text; the innermost one wins.
-    const holding = [...screen.queryAllByRole("radiogroup"), ...screen.queryAllByRole("group")]
-        .filter((group) => within(group).queryAllByText(scope).length > 0);
-    const innermost = holding.filter((group) => !holding.some((other) => other !== group && group.contains(other)));
-    return innermost.length === 1 ? within(innermost[0]) : screen;
+    // A container that holds the item's title as text; the innermost one wins.
+    const holding = candidates.filter((candidate) => within(candidate).queryAllByText(scope).length > 0);
+    const innermost = holding.filter((candidate) => !holding.some((other) => other !== candidate && candidate.contains(other)));
+    if (innermost.length === 1) return within(innermost[0]);
+    throw new Error(
+        `no accessible group, radiogroup or region labelled or titled "${scope}" (${named.length} named, ${innermost.length} innermost holding it); `
+        + "refusing to search the whole screen",
+    );
+}
+
+/**
+ * The review screen shows each chosen value; whether a value sits in one text
+ * node ("이상없음, 열상") or one chip each does not matter to the user. So every
+ * value is asserted on its own against the combined text of what is on screen
+ * (the review is the only page shown), never as one joined string.
+ */
+function expectReviewShows(...values: Array<string | RegExp>) {
+    for (const value of values) expect(document.body).toHaveTextContent(value);
 }
 
 /** Numeric count inputs: a number field today, possibly a numeric text field after the rebuild. */
@@ -272,7 +302,7 @@ describe("service-record page contract", () => {
             await user.type(screen.getByLabelText(HEADER_LABELS.babyName), SAVED_HEADER.babyName);
             await user.type(screen.getByLabelText(HEADER_LABELS.babyBirth), "20260910");
             await user.type(screen.getByLabelText(HEADER_LABELS.babyWeight), SAVED_HEADER.babyWeight);
-            await chooseOption(user, DELIVERY_LABEL, "제왕절개");
+            await chooseUniqueOption(user, "제왕절개"); // 분만형태
 
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
 
@@ -328,8 +358,8 @@ describe("service-record page contract", () => {
             await openFirstDay(user);
 
             // Page 1 (산모 기록): ⑤ 식사/간식 is unanswered, so next does not advance.
-            await chooseOption(user, ITEM.perineum, "열상");
-            await chooseOption(user, ITEM.sitzBath, "미실시");
+            await chooseUniqueOption(user, "열상"); // ① 회음절개부위
+            await chooseUniqueOption(user, "미실시"); // 좌욕
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
             expect(await screen.findByText("식사를 입력해 주세요")).toBeInTheDocument();
             expect(screen.getByText(ITEM.perineum)).toBeInTheDocument();
@@ -344,8 +374,8 @@ describe("service-record page contract", () => {
             // ⑧ 모유수유 and ⑨ 분유수유 share the accessible name 횟수: both get the same count.
             for (const count of countInputs(/횟수/)) await user.type(count, "3");
             await user.type(countInput(/회당/), "90");
-            await chooseOption(user, ITEM.sleep, "잘 못 잠");
-            await chooseOption(user, ITEM.stool, "이상변");
+            await chooseUniqueOption(user, "잘 못 잠"); // 수면
+            await chooseUniqueOption(user, "이상변"); // 대변
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
             expect(await screen.findByText(FIELD_COPY.stoolColor)).toBeInTheDocument();
             expect(screen.queryByText(ITEM.etcService)).not.toBeInTheDocument();
@@ -359,17 +389,12 @@ describe("service-record page contract", () => {
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
             expect(await screen.findByText(FIELD_COPY.paymentConfirm)).toBeInTheDocument();
             expect(screen.queryByText(PINNED_COPY.reviewTitle)).not.toBeInTheDocument();
-            await chooseOption(user, ITEM.paymentConfirmed, PINNED_COPY.paymentOption);
+            await chooseUniqueOption(user, PINNED_COPY.paymentOption); // 결제 확인
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
 
             // Review: the chosen values are shown.
             expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
-            expect(screen.getByText("이상없음, 열상")).toBeInTheDocument();
-            expect(screen.getByText("미실시")).toBeInTheDocument();
-            expect(screen.getByText("잘 못 잠")).toBeInTheDocument();
-            expect(screen.getByText("이상변 (연두색)")).toBeInTheDocument();
-            expect(screen.getByText("신생아 옷 정리")).toBeInTheDocument();
-            expect(screen.getByText("간식 시간 변경")).toBeInTheDocument();
+            expectReviewShows("이상없음", "열상", "미실시", "잘 못 잠", "이상변", "연두색", "신생아 옷 정리", "간식 시간 변경");
 
             // 이전 goes back exactly one page and keeps the answers.
             await user.click(screen.getByRole("button", { name: PINNED_COPY.back }));
@@ -378,7 +403,7 @@ describe("service-record page contract", () => {
             expect(screen.getByLabelText(ITEM.etcService)).toHaveValue("신생아 옷 정리");
             await user.click(screen.getByRole("button", { name: PINNED_COPY.next }));
             await screen.findByText(PINNED_COPY.reviewTitle);
-            expect(screen.getByText("이상없음, 열상")).toBeInTheDocument();
+            expectReviewShows("이상없음", "열상");
 
             // Sign, submit and confirm.
             await user.click(screen.getByRole("button", { name: "서명 입력" }));
@@ -425,17 +450,10 @@ describe("service-record page contract", () => {
             await user.click(await screen.findByRole("button", dayCard(1)));
 
             expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
-            expect(screen.getByText("혈종")).toBeInTheDocument();
-            expect(screen.getByText("울혈, 통증")).toBeInTheDocument();
-            expect(screen.getByText("불편감")).toBeInTheDocument();
-            expect(screen.getByText("미실시")).toBeInTheDocument();
-            expect(screen.getByText("잘 못 잠")).toBeInTheDocument();
-            expect(screen.getByText("이상변 (연두색)")).toBeInTheDocument();
-            expect(screen.getByText(/식사\s*3/)).toBeInTheDocument();
-            expect(screen.getByText(/37\.1/)).toBeInTheDocument();
-            expect(screen.getByText(/120/)).toBeInTheDocument();
-            expect(screen.getByText("옷 정리")).toBeInTheDocument();
-            expect(screen.getByText("산모 요청으로 간식 시간 변경")).toBeInTheDocument();
+            expectReviewShows(
+                "혈종", "울혈", "통증", "불편감", "미실시", "잘 못 잠", "이상변", "연두색",
+                /식사\s*3/, /37\.1/, /120/, "옷 정리", "산모 요청으로 간식 시간 변경",
+            );
         });
 
         it("6. re-submitting a re-opened day sends the server's answers unchanged and keeps the saved signature", async () => {
