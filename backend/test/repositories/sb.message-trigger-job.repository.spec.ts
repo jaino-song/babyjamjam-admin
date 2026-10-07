@@ -217,8 +217,8 @@ describe("SbMessageTriggerJobRepository", () => {
         }
         await expect(repository.upsertPendingForRuleGeneration(job, now, false)).resolves.toBeNull();
         await expect(repository.promoteAutomaticSchedulingClaim("marker", now.toISOString(), job)).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toBeNull();
+        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toEqual({ kind: "not_claimable" });
+        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toEqual({ kind: "not_claimable" });
         expect(queryRaw).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
         for (const method of Object.values(messageTriggerJobModel)) expect(method).not.toHaveBeenCalled();
@@ -1218,8 +1218,17 @@ describe("SbMessageTriggerJobRepository", () => {
         txJob.create.mockResolvedValue({
             ...createRow({ id: "retry-1", status: "pending", dedupeKey: retry.dedupeKey, payload: retry.payload }),
         });
-        const transaction = { $queryRaw: jest.fn().mockResolvedValue([rawSource]), message_trigger_job: txJob };
-        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+        const order: string[] = [];
+        const transaction = {
+            $executeRaw: jest.fn().mockImplementation(async (sql: Prisma.Sql) => { order.push(sql.sql.replace(/\s+/g, " ").trim()); return 0; }),
+            $queryRaw: jest.fn().mockResolvedValue([rawSource]),
+            message_trigger_job: txJob,
+        };
+        let transactionOptions: unknown;
+        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>, options?: unknown) => {
+            transactionOptions = options;
+            return operation(transaction);
+        });
 
         const snapshotHash = "snapshot-hash";
         await expect(repository.claimProviderRejectedForRetry(
@@ -1229,7 +1238,12 @@ describe("SbMessageTriggerJobRepository", () => {
             snapshotHash,
             source,
             retry,
-        )).resolves.toEqual(expect.objectContaining({ id: "retry-1" }));
+        )).resolves.toEqual({ kind: "claimed", job: expect.objectContaining({ id: "retry-1" }) });
+        // The lock wait is bounded before any lock is taken, and the interactive
+        // transaction outlives that bound.
+        expect(order).toEqual(["SET LOCAL lock_timeout = '1s'"]);
+        expect(transaction.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(transaction.$queryRaw.mock.invocationCallOrder[0]!);
+        expect(transactionOptions).toEqual({ timeout: 10_000 });
         // Rule row first, then the source job row: rule -> job -> retry INSERT.
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
         const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
@@ -1237,6 +1251,70 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(ruleLock.values).toEqual(["rule-1"]);
         expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
+    });
+
+    describe("claimProviderRejectedForRetry lock wait", () => {
+        const source = MessageTriggerJobEntity.reconstitute(
+            "job-1", "branch-1", "rule-1", "failed",
+            new Date("2026-07-09T01:00:00.000Z"), null, null, "provider rejected", 1, null,
+            MessageTriggerRecipientType.CLIENT, "01012345678", MessageTriggerTemplateKey.SERVICE_INFO,
+            "rule-1:client:1",
+            {
+                memberId: "1",
+                recipientName: "홍길동",
+                recipientPhone: "01012345678",
+                templateVariables: { retrySafety: "provider-rejected" },
+            },
+            new Date("2026-07-08T00:00:00.000Z"), new Date("2026-07-08T01:00:00.000Z"), 1, null,
+        );
+        const retry = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: "rule-1",
+            scheduledFor: now,
+            clientId: 1,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: "01012345678",
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            dedupeKey: "agent-sms-retry:action-lock",
+            payload: source.payload,
+        });
+        const claimWith = async (failure: unknown) => {
+            const transaction = {
+                $executeRaw: jest.fn().mockResolvedValue(0),
+                $queryRaw: jest.fn().mockRejectedValue(failure),
+                message_trigger_job: createMockPrismaMessageTriggerJob(),
+            };
+            (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+            return {
+                transaction,
+                outcome: repository.claimProviderRejectedForRetry(
+                    "branch-1", source.id, targetVersion(source, "snapshot-hash"), "snapshot-hash", source, retry,
+                ),
+            };
+        };
+
+        it("answers a lock wait past lock_timeout (P2010 / 55P03) as lock_timeout with nothing written", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("lock timeout", {
+                code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "canceling statement due to lock timeout" },
+            });
+            const { transaction, outcome } = await claimWith(failure);
+            await expect(outcome).resolves.toEqual({ kind: "lock_timeout" });
+            expect(transaction.message_trigger_job.create).not.toHaveBeenCalled();
+        });
+
+        it("does not turn an interactive-transaction timeout (P2028) into a definite outcome", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("transaction timeout", { code: "P2028", clientVersion: "test" });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
+
+        it("rethrows a P2010 that is not lock_not_available", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("deadlock", {
+                code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+            });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
     });
 
     it("findSentByRuleIdAndEmployeeScheduleId queries sent rows for the schedule", async () => {

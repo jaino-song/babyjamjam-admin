@@ -65,7 +65,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             findHistoryByBranch: jest.fn().mockResolvedValue([source]),
             findByIdInBranch: jest.fn().mockResolvedValue(source),
             upsertPending: jest.fn().mockImplementation(async (candidate: MessageTriggerJobEntity) => Object.assign(candidate, { id: "retry-job" })),
-            claimProviderRejectedForRetry: jest.fn().mockImplementation(async (_branchId: string, _sourceJobId: string, _version: string, _snapshotHash: string, _source: MessageTriggerJobEntity, candidate: MessageTriggerJobEntity) => Object.assign(candidate, { id: "retry-job" })),
+            claimProviderRejectedForRetry: jest.fn().mockImplementation(async (_branchId: string, _sourceJobId: string, _version: string, _snapshotHash: string, _source: MessageTriggerJobEntity, candidate: MessageTriggerJobEntity) => ({ kind: "claimed", job: Object.assign(candidate, { id: "retry-job" }) })),
         };
         const delivery = {
             dispatchPendingJobNow: jest.fn().mockResolvedValue({ status: "sent" }),
@@ -375,6 +375,37 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(result).toEqual({ status: "sent", jobId: "retry-job" });
     });
 
+    it("reports a retry claim that waited past the lock timeout as a definite not-created failure, not uncertain", async () => {
+        const { repository, delivery, capabilities } = setup();
+        repository.claimProviderRejectedForRetry.mockResolvedValue({ kind: "lock_timeout" });
+        const capability = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await capability.inspect!(context, { jobId: "job-a" });
+
+        await expect(capability.execute({
+            ...context,
+            approvedTargetVersion: inspection.targetVersion,
+            approvedTargetSnapshot: inspection.targetSnapshot,
+        }, { jobId: "job-a" })).rejects.toMatchObject({
+            name: "AgentActionCertainFailureError",
+            message: expect.stringContaining("try again"),
+        });
+        expect(delivery.dispatchPendingJobNow).not.toHaveBeenCalled();
+    });
+
+    it("keeps an unclassified claim error (e.g. an interactive-transaction timeout) uncertain", async () => {
+        const { repository, capabilities } = setup();
+        repository.claimProviderRejectedForRetry.mockRejectedValue(Object.assign(new Error("Transaction already closed"), { code: "P2028" }));
+        const capability = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await capability.inspect!(context, { jobId: "job-a" });
+
+        const failure = await capability.execute({
+            ...context,
+            approvedTargetVersion: inspection.targetVersion,
+            approvedTargetSnapshot: inspection.targetSnapshot,
+        }, { jobId: "job-a" }).catch((error: unknown) => error);
+        expect((failure as Error).name).not.toBe("AgentActionCertainFailureError");
+    });
+
     it("fails closed when the provider-bound retry target drifts after revalidation", async () => {
         const source = terminalJob();
         const { repository, delivery, capabilities } = setup(source);
@@ -405,7 +436,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             }),
             claimProviderRejectedForRetry: jest.fn().mockImplementation(async (_branchId: string, _sourceJobId: string, _version: string, _snapshotHash: string, _source: MessageTriggerJobEntity, candidate: MessageTriggerJobEntity) => {
                 stagedRetry = Object.assign(candidate, { id: "retry-job" });
-                return stagedRetry;
+                return { kind: "claimed", job: stagedRetry };
             }),
             claimPendingWithRuleFence: jest.fn().mockImplementation(async (id: string) => id === stagedRetry?.id ? "claim-a" : null),
             update: jest.fn().mockResolvedValue(undefined),

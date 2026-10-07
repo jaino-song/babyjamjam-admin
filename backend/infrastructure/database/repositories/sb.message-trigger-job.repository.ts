@@ -8,6 +8,7 @@ import {
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
     ReplacePendingJobsResult,
+    ClaimProviderRejectedForRetryResult,
     ScheduleFenceLinkOptions,
     ClientUpcomingMessageTriggerJobCursor,
     ClientUpcomingMessageTriggerJobRecord,
@@ -1477,61 +1478,78 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedSnapshotHash: string,
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
-    ): Promise<MessageTriggerJobEntity | null> {
-        if (isReservedAutomationJob(expectedSource) || isReservedAutomationJob(retryJob)) return null;
+    ): Promise<ClaimProviderRejectedForRetryResult> {
+        if (isReservedAutomationJob(expectedSource) || isReservedAutomationJob(retryJob)) return { kind: "not_claimable" };
         // The target version is computed by the capability from the canonical
         // provider snapshot. The row lock below is the linearization point at
         // which that approved source is compared and the retry is claimed.
-        if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) return null;
-        return this.prisma.$transaction(async (transaction) => {
-            // Rule row first, then the source job row, then the retry INSERT (whose
-            // foreign key takes a KEY SHARE lock on its rule row): the same order as
-            // the dispatcher claim, the manual send fence and the automatic
-            // promotion. Taking the job row first and the rule only at INSERT time
-            // inverts it against a transaction that holds the rule row and waits on
-            // this failed row (PostgreSQL aborts one side with 40P01). The source's
-            // rule is re-verified against the locked row below (`sameRetrySource`);
-            // the retry job's rule, if it differs, is locked too, in id order.
-            const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
-            await transaction.$queryRaw(Prisma.sql`
-                SELECT id
-                FROM "message_trigger_rule"
-                WHERE id IN (${Prisma.join(ruleIds)})
-                ORDER BY id
-                FOR UPDATE
-            `);
-            const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
-                SELECT *
-                FROM "message_trigger_job"
-                WHERE "id" = ${sourceJobId}
-                  AND "branch_id" = ${branchId}::uuid
-                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
-                FOR UPDATE
-            `);
-            const row = rows[0];
-            if (!row) return null;
+        if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) {
+            return { kind: "not_claimable" };
+        }
+        try {
+            return await this.prisma.$transaction(async (transaction): Promise<ClaimProviderRejectedForRetryResult> => {
+                // Never wait on another transaction's lock for longer than this: a
+                // branch that is normalising a large rule holds the rule row for
+                // seconds, and waiting past the interactive transaction's own
+                // timeout ends in a bare P2028 that leaves the caller unable to
+                // tell whether the retry was created. Past this the request is
+                // answered as a definite "nothing written, try again". The error is
+                // not caught in here: it must abort the transaction.
+                await transaction.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '1s'`);
+                // Rule row first, then the source job row, then the retry INSERT (whose
+                // foreign key takes a KEY SHARE lock on its rule row): the same order as
+                // the dispatcher claim, the manual send fence and the automatic
+                // promotion. Taking the job row first and the rule only at INSERT time
+                // inverts it against a transaction that holds the rule row and waits on
+                // this failed row (PostgreSQL aborts one side with 40P01). The source's
+                // rule is re-verified against the locked row below (`sameRetrySource`);
+                // the retry job's rule, if it differs, is locked too, in id order.
+                const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
+                await transaction.$queryRaw(Prisma.sql`
+                    SELECT id
+                    FROM "message_trigger_rule"
+                    WHERE id IN (${Prisma.join(ruleIds)})
+                    ORDER BY id
+                    FOR UPDATE
+                `);
+                const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
+                    SELECT *
+                    FROM "message_trigger_job"
+                    WHERE "id" = ${sourceJobId}
+                      AND "branch_id" = ${branchId}::uuid
+                      AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+                    FOR UPDATE
+                `);
+                const row = rows[0];
+                if (!row) return { kind: "not_claimable" };
 
-            const current = this.rawRowToDomain(row);
-            const retrySafety = current.payload.templateVariables?.["retrySafety"];
-            if (
-                current.status !== "failed"
-                || retrySafety !== "provider-rejected"
-                || !sameRetrySource(current, expectedSource)
-                || jobTargetVersion(current, expectedSnapshotHash) !== expectedTargetVersion
-            ) {
-                return null;
-            }
+                const current = this.rawRowToDomain(row);
+                const retrySafety = current.payload.templateVariables?.["retrySafety"];
+                if (
+                    current.status !== "failed"
+                    || retrySafety !== "provider-rejected"
+                    || !sameRetrySource(current, expectedSource)
+                    || jobTargetVersion(current, expectedSnapshotHash) !== expectedTargetVersion
+                ) {
+                    return { kind: "not_claimable" };
+                }
 
-            const existing = await transaction.message_trigger_job.findUnique({
-                where: { dedupeKey: retryJob.dedupeKey, ...ordinaryAutomationJobWhere() },
-            });
-            if (existing) return this.toDomain(existing);
+                const existing = await transaction.message_trigger_job.findUnique({
+                    where: { dedupeKey: retryJob.dedupeKey, ...ordinaryAutomationJobWhere() },
+                });
+                if (existing) return { kind: "claimed", job: this.toDomain(existing) };
 
-            const created = await transaction.message_trigger_job.create({
-                data: this.toCreate(retryJob),
-            });
-            return this.toDomain(created);
-        });
+                const created = await transaction.message_trigger_job.create({
+                    data: this.toCreate(retryJob),
+                });
+                return { kind: "claimed", job: this.toDomain(created) };
+            }, { timeout: 10_000 });
+        } catch (error) {
+            // Only 55P03 is proof that nothing was written. A P2028 (interactive
+            // transaction timeout) is not: it is rethrown and stays uncertain.
+            if (isLockNotAvailable(error)) return { kind: "lock_timeout" };
+            throw error;
+        }
     }
 
     private toCreate(job: MessageTriggerJobEntity) {

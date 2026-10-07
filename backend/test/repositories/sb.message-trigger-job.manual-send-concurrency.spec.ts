@@ -682,6 +682,118 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(result).toEqual({ ok: true, value: { kind: "lock_timeout" } });
             expect(await jobs()).toHaveLength(0);
         });
+
+        describe("provider-rejected retry behind the rule lock (b4)", () => {
+            /** A failed provider-rejected source, the approved target version for it, and the action-bound retry candidate. */
+            const rejectedRetry = async () => {
+                const rejectedSource = MessageTriggerJobEntity.create({
+                    branchId: BRANCH,
+                    ruleId: RULE,
+                    scheduledFor: new Date(),
+                    clientId: 20,
+                    employeeScheduleId: SCHEDULE,
+                    recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                    recipientPhone: "01011112222",
+                    templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                    dedupeKey: `${RULE}:schedule:${SCHEDULE}:primary:manual:rejected`,
+                    payload: {
+                        memberId: "employee:30",
+                        recipientName: "provider",
+                        recipientPhone: "01011112222",
+                        templateVariables: { retrySafety: "provider-rejected" },
+                    },
+                });
+                rejectedSource.markFailed("provider rejected");
+                const source = await repository.create(rejectedSource);
+                const snapshotHash = "b4-snapshot";
+                const version = createHash("sha256").update(JSON.stringify({
+                    id: source.id, branchId: source.branchId, ruleId: source.ruleId, status: source.status,
+                    scheduledFor: source.scheduledFor.toISOString(), sentAt: source.sentAt?.toISOString() ?? null,
+                    canceledAt: source.canceledAt?.toISOString() ?? null, cancelReason: source.cancelReason,
+                    clientId: source.clientId, employeeScheduleId: source.employeeScheduleId,
+                    recipientType: source.recipientType, recipientPhone: source.recipientPhone, templateKey: source.templateKey,
+                    payload: source.payload, attempts: source.attempts, nextAttemptAt: source.nextAttemptAt?.toISOString() ?? null,
+                    createdAt: source.createdAt.toISOString(), updatedAt: source.updatedAt.toISOString(),
+                    deliverySnapshotHash: snapshotHash,
+                })).digest("hex");
+                const retryJob = MessageTriggerJobEntity.create({
+                    branchId: BRANCH,
+                    ruleId: RULE,
+                    scheduledFor: new Date(),
+                    clientId: 20,
+                    employeeScheduleId: OTHER_SCHEDULE,
+                    recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                    recipientPhone: "01011112222",
+                    templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                    dedupeKey: "agent-sms-retry:b4",
+                    payload: source.payload,
+                });
+                return {
+                    source,
+                    retryJob,
+                    claim: (target: SbMessageTriggerJobRepository = repository) => target.claimProviderRejectedForRetry(
+                        BRANCH, source.id, version, snapshotHash, source, retryJob,
+                    ),
+                };
+            };
+
+            it("answers lock_timeout within ~1-2 s when the rule lock is held for 6 s, writing nothing", async () => {
+                const { source, claim } = await rejectedRetry();
+                const hold = await holdOpen(lockRule);
+                // A rule normalisation holds the row for ~6 s: past Prisma's 5 s
+                // interactive-transaction default, which is what used to end in P2028.
+                const releaseLater = setTimeout(() => hold.release(), 6000);
+
+                const started = Date.now();
+                const result = await settle(claim());
+                const elapsed = Date.now() - started;
+                clearTimeout(releaseLater);
+                hold.release();
+                await hold.done;
+
+                // Not P2028 after the 5 s interactive default: the lock wait is bounded at 1 s.
+                expect(result).toEqual({ ok: true, value: { kind: "lock_timeout" } });
+                expect(elapsed).toBeGreaterThanOrEqual(900);
+                expect(elapsed).toBeLessThan(2500);
+                expect(await jobs()).toHaveLength(1);
+                expect(await statusOf(source.id)).toBe("failed");
+            });
+
+            it("a retry started behind a long hold returns lock_timeout; the same retry after release creates the job", async () => {
+                const { source, retryJob, claim } = await rejectedRetry();
+                const hold = await holdOpen(lockRule);
+                const first = await settle(claim());
+                hold.release();
+                await hold.done;
+                expect(first).toEqual({ ok: true, value: { kind: "lock_timeout" } });
+                expect(await jobs()).toHaveLength(1);
+
+                const second = await settle(claim());
+                expect(second).toMatchObject({
+                    ok: true,
+                    value: { kind: "claimed", job: expect.objectContaining({ dedupeKey: retryJob.dedupeKey, status: "pending" }) },
+                });
+                expect(await jobs()).toHaveLength(2);
+                expect(await statusOf(source.id)).toBe("failed");
+            });
+
+            it("a lock released well inside lock_timeout still creates the retry", async () => {
+                const { retryJob, claim } = await rejectedRetry();
+                const hold = await holdOpen(lockRule);
+
+                const retry = settle(claim());
+                await waitForLockWait("retry behind the rule lock");
+                await delay(150);
+                hold.release();
+                await hold.done;
+
+                expect(await retry).toMatchObject({
+                    ok: true,
+                    value: { kind: "claimed", job: expect.objectContaining({ dedupeKey: retryJob.dedupeKey }) },
+                });
+                expect(await jobs()).toHaveLength(2);
+            });
+        });
     });
 
     describe("automatic promotion vs manual send", () => {
@@ -883,7 +995,7 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             release.resolve();
             const [retryResult, promotionResult] = await Promise.all([retry, promotion]);
 
-            expect(retryResult).toMatchObject({ ok: true, value: expect.objectContaining({ dedupeKey: retryJob.dedupeKey, status: "pending" }) });
+            expect(retryResult).toMatchObject({ ok: true, value: { kind: "claimed", job: expect.objectContaining({ dedupeKey: retryJob.dedupeKey, status: "pending" }) } });
             expect(promotionResult).toEqual({ ok: true, value: null });
             expect(await statusOf(marker.id)).toBe("failed");
             expect(await liveJobs(RULE, OTHER_SCHEDULE)).toHaveLength(1);

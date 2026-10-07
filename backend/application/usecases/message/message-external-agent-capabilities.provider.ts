@@ -691,23 +691,29 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             source,
             retryCandidate,
         );
-        if (!retry) {
+        if (retry.kind === "lock_timeout") {
+            // The claim aborted on a lock held by another transaction (e.g. a
+            // large rule normalisation): nothing was written, so this is a
+            // definite not-created outcome and the retry can be proposed again.
+            throw new AgentActionCertainFailureError("SMS retry was not created because the message rule was busy; try again");
+        }
+        if (retry.kind !== "claimed") {
             throw new AgentActionCertainFailureError("SMS source job changed before the retry could be claimed");
         }
         let delivered: MessageTriggerJobEntity;
         try {
-            delivered = await this.messageTriggerService.dispatchPendingJobNow(retry.id, {
+            delivered = await this.messageTriggerService.dispatchPendingJobNow(retry.job.id, {
                 expectedBranchId: context.principal.branchId,
             });
         } catch {
-            throw new AgentActionUncertainError("SMS retry delivery status is uncertain", { jobId: retry.id });
+            throw new AgentActionUncertainError("SMS retry delivery status is uncertain", { jobId: retry.job.id });
         }
-        if (delivered.status === "sent") return { status: "sent", jobId: retry.id };
-        if (delivered.status === "canceled") return { status: "canceled", jobId: retry.id };
+        if (delivered.status === "sent") return { status: "sent", jobId: retry.job.id };
+        if (delivered.status === "canceled") return { status: "canceled", jobId: retry.job.id };
         if (delivered.status === "failed" && this.isProviderRejected(delivered)) {
-            return { status: "failed", jobId: retry.id };
+            return { status: "failed", jobId: retry.job.id };
         }
-        throw new AgentActionUncertainError("SMS retry delivery status is uncertain", { jobId: retry.id });
+        throw new AgentActionUncertainError("SMS retry delivery status is uncertain", { jobId: retry.job.id });
     }
 
     private async ensureSmsApprovedForExecution(branchId: string): Promise<void> {
