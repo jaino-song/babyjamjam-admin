@@ -1113,6 +1113,16 @@ export default function ClientsPage() {
                                             <Pencil className="w-4 h-4" />
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
+                                        {canCreateNewContractDocument(activeSelectedClient) && (
+                                            <DropdownMenuItem
+                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_create-maternity-contract"
+                                                onClick={() => setMaternityContractClient(activeSelectedClient)}
+                                                className="gap-2"
+                                            >
+                                                <FileSignature className="w-4 h-4" />
+                                                서비스 계약서 생성
+                                            </DropdownMenuItem>
+                                        )}
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
                                             disabled={isPreparingScheduleChange}
@@ -1131,16 +1141,6 @@ export default function ClientsPage() {
                                             <Send className="w-4 h-4" />
                                             {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
                                         </DropdownMenuItem>
-                                        {canCreateNewContractDocument(activeSelectedClient) && (
-                                            <DropdownMenuItem
-                                                data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_create-maternity-contract"
-                                                onClick={() => setMaternityContractClient(activeSelectedClient)}
-                                                className="gap-2"
-                                            >
-                                                <FileSignature className="w-4 h-4" />
-                                                산모 계약서 생성
-                                            </DropdownMenuItem>
-                                        )}
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
                                                 asChild
