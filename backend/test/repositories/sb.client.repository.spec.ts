@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientEntity } from "domain/entities/client.entity";
@@ -73,6 +74,7 @@ describe("SbClientRepository", () => {
     const branchId = "org-1";
 
     let clientModel: ReturnType<typeof createMockPrismaClient>;
+    let eformsignDocModel: { findMany: jest.Mock };
     let transactionQueryRaw: jest.Mock;
     let prisma: PrismaService;
     let repository: SbClientRepository;
@@ -84,11 +86,13 @@ describe("SbClientRepository", () => {
         // answer and silently pass/fail for the wrong reason.
         clearSchemaCapabilityCache();
         clientModel = createMockPrismaClient();
+        eformsignDocModel = { findMany: jest.fn().mockResolvedValue([]) };
         transactionQueryRaw = jest.fn()
             .mockResolvedValueOnce([{ id: 1 }])
             .mockResolvedValue([{ count: 0 }]);
         prisma = {
             client: clientModel,
+            eformsign_doc: eformsignDocModel,
             $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
             $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
                 callback({ client: clientModel, $queryRaw: transactionQueryRaw })),
@@ -1177,118 +1181,299 @@ describe("SbClientRepository", () => {
     });
 
     // ============================================
-    // findStartingWithinDays
+    // Korean-calendar windows (digest, /clients/filtered, PWA reminders)
     // ============================================
-    describe("findStartingWithinDays", () => {
-        describe("given clients with start dates within the specified days", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                const rows = [createClientRow({ id: 1, name: "Future Client" })];
-                clientModel.findMany.mockResolvedValue(rows);
+    // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea; the server runs in UTC, so a
+    // runtime-local "today" would still be 2026-09-30. 2026-10-01T03:00:00Z is the control
+    // where both readings already agree. Both must produce the same Korean-date window.
+    const KST_EARLY_MORNING = new Date("2026-09-30T16:30:00.000Z");
+    const KST_MORNING_CONTROL = new Date("2026-10-01T03:00:00.000Z");
+    const INSTANTS: Array<[string, Date]> = [
+        ["2026-09-30T16:30:00Z (01:30 KST next day)", KST_EARLY_MORNING],
+        ["2026-10-01T03:00:00Z (control)", KST_MORNING_CONTROL],
+    ];
 
-                // Act
-                await repository.findStartingWithinDays(branchId, 7);
+    describe.each(INSTANTS)("Korean calendar window at %s", (_label, now) => {
+        it("findStartingWithinDays spans Korean today through today + N days, last day included", async () => {
+            clientModel.findMany.mockResolvedValue([]);
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
-                expect(callArgs.where.startDate.lte).toBeDefined();
+            await repository.findStartingWithinDays(branchId, 7, now);
+
+            const { startDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(startDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(startDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+            expect(startDate.gt).toBeUndefined();
+            expect(startDate.lte).toBeUndefined();
+        });
+
+        it("findEndingWithinDays spans Korean today through today + N days, last day included", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findEndingWithinDays(branchId, 7, now);
+
+            const { endDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(endDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(endDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+        });
+
+        it("findWithIncompleteContractsStartingWithinDays uses the same Korean window", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, now);
+
+            const { startDate } = clientModel.findMany.mock.calls[0][0].where;
+            expect(startDate.gte).toEqual(new Date("2026-10-01T00:00:00.000Z"));
+            expect(startDate.lt).toEqual(new Date("2026-10-09T00:00:00.000Z"));
+        });
+
+        it("findByStartDate / findByEndDate match the Korean calendar day of the given instant", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await repository.findByStartDate(branchId, now);
+            await repository.findByEndDate(branchId, now);
+
+            const [startCall, endCall] = clientModel.findMany.mock.calls;
+            expect(startCall![0].where.startDate).toEqual({
+                gte: new Date("2026-10-01T00:00:00.000Z"),
+                lt: new Date("2026-10-02T00:00:00.000Z"),
             });
-
-            it("should return mapped ClientEntity array", async () => {
-                // Arrange
-                const rows = [
-                    createClientRow({ id: 1, name: "Client A" }),
-                    createClientRow({ id: 2, name: "Client B" }),
-                ];
-                clientModel.findMany.mockResolvedValue(rows);
-
-                // Act
-                const result = await repository.findStartingWithinDays(branchId, 7);
-
-                // Assert
-                expect(result).toHaveLength(2);
-                expect(result[0]).toBeInstanceOf(ClientEntity);
-                expect(result[0]!.name).toBe("Client A");
+            expect(endCall![0].where.endDate).toEqual({
+                gte: new Date("2026-10-01T00:00:00.000Z"),
+                lt: new Date("2026-10-02T00:00:00.000Z"),
             });
         });
 
-        describe("given no clients within date range", () => {
-            it("should return empty array", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+        it("findByCreatedDate spans KST midnight to KST midnight of the given instant", async () => {
+            clientModel.findMany.mockResolvedValue([]);
 
-                // Act
-                const result = await repository.findStartingWithinDays(branchId, 7);
+            await repository.findByCreatedDate(branchId, now);
 
-                // Assert
+            expect(clientModel.findMany.mock.calls[0][0].where.createdAt).toEqual({
+                gte: new Date("2026-09-30T15:00:00.000Z"),
+                lt: new Date("2026-10-01T15:00:00.000Z"),
+            });
+        });
+    });
+
+    describe("findStartingWithinDays result mapping", () => {
+        it("should return mapped ClientEntity array", async () => {
+            clientModel.findMany.mockResolvedValue([
+                createClientRow({ id: 1, name: "Client A" }),
+                createClientRow({ id: 2, name: "Client B" }),
+            ]);
+
+            const result = await repository.findStartingWithinDays(branchId, 7);
+
+            expect(result).toHaveLength(2);
+            expect(result[0]).toBeInstanceOf(ClientEntity);
+            expect(result[0]!.name).toBe("Client A");
+        });
+
+        it("should return empty array when nothing is in the window", async () => {
+            clientModel.findMany.mockResolvedValue([]);
+
+            await expect(repository.findStartingWithinDays(branchId, 7)).resolves.toEqual([]);
+        });
+    });
+
+    // ============================================
+    // Current-contract rule (digest, /clients/filtered, PWA reminders)
+    // ============================================
+    // These two lists must use the dashboard's rule: the CURRENT contract (newest
+    // non-service-record eformsign_doc per client), never the document pinned by eDocId.
+    describe("current-contract lists", () => {
+        // 2026-03-17 is a Tuesday; 2026-03-20 is 3 business days out (inside the send window).
+        const NOW = new Date("2026-03-17T09:00:00.000Z");
+        const contractDoc = (clientId: number, statusType: string, overrides: Record<string, unknown> = {}) => ({
+            clientId,
+            documentId: `doc-${clientId}-${statusType}`,
+            statusType,
+            stepType: "02",
+            stepName: "이용자 서명",
+            detailPayload: null,
+            permanentPurgeRequestedAt: null,
+            documentKind: "contract",
+            serviceRecordCaseId: null,
+            templateId: null,
+            ...overrides,
+        });
+        const row = (id: number, overrides: Record<string, unknown> = {}) => createClientRow({
+            id,
+            name: `Client ${id}`,
+            serviceStatus: "waiting",
+            startDate: new Date("2026-03-20T00:00:00.000Z"),
+            endDate: new Date("2026-04-04T00:00:00.000Z"),
+            eDocId: null,
+            ...overrides,
+        });
+        const ids = (clients: ClientEntity[]) => clients.map((client) => client.id).sort((a, b) => a - b);
+
+        describe("findWithIncompleteContractsStartingWithinDays", () => {
+            it("counts a client whose CURRENT contract is alive but not completed, whatever eDocId points at", async () => {
+                clientModel.findMany.mockResolvedValue([
+                    row(1, { eDocId: null }), // live 060 contract linked only by clientId
+                    row(2, { eDocId: "stale-pin" }), // pinned doc is stale; current contract is completed
+                    row(3), // completed
+                    row(4), // current contract rejected: nothing alive, so it is "발송 필요", not "미완료"
+                    row(5), // no contract at all
+                    row(6), // 040 revoke requested: alive, not completed
+                    row(7), // 041 refused revoke: continues like 060
+                ]);
+                eformsignDocModel.findMany.mockResolvedValue([
+                    contractDoc(1, "060"),
+                    contractDoc(2, "050"),
+                    contractDoc(3, "003"),
+                    contractDoc(4, "080"),
+                    contractDoc(6, "040"),
+                    contractDoc(7, "041"),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1, 6, 7]);
+            });
+
+            it("judges a client by the newest contract, not an older completed one", async () => {
+                clientModel.findMany.mockResolvedValue([row(1)]);
+                // Newest first, as the lookup orders them: the re-issued contract is still unsigned.
+                eformsignDocModel.findMany.mockResolvedValue([
+                    contractDoc(1, "060", { documentId: "reissued" }),
+                    contractDoc(1, "050", { documentId: "older-completed" }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            it("ignores service-record documents and purge-requested contracts", async () => {
+                clientModel.findMany.mockResolvedValue([row(1), row(2)]);
+                eformsignDocModel.findMany.mockResolvedValue([
+                    // Client 1: the only alive-looking document is a service record, so no contract.
+                    contractDoc(1, "060", { documentKind: "service_record" }),
+                    // Client 2: the newest contract is purge-requested (deleted), so it is dead.
+                    contractDoc(2, "060", { permanentPurgeRequestedAt: new Date("2026-03-01T00:00:00.000Z") }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
                 expect(result).toEqual([]);
             });
         });
-    });
 
-    // ============================================
-    // findWithIncompleteContractsStartingWithinDays
-    // ============================================
-    describe("findWithIncompleteContractsStartingWithinDays", () => {
-        describe("given clients with incomplete contracts starting soon", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+        describe("findWithoutContractSentStartingWithinDays (발송 필요)", () => {
+            const find = (clients: unknown[], docs: unknown[], now = NOW) => {
+                clientModel.findMany.mockResolvedValue(clients);
+                eformsignDocModel.findMany.mockResolvedValue(docs);
+                return repository.findWithoutContractSentStartingWithinDays(branchId, KR_BUILTIN_CALENDAR, now);
+            };
 
-                // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
+            it("does not treat a live 040/045 contract as not sent, even when eDocId is null", async () => {
+                const result = await find(
+                    [row(1, { eDocId: null }), row(2, { eDocId: null }), row(3, { eDocId: null })],
+                    [contractDoc(1, "040"), contractDoc(2, "045"), contractDoc(3, "041")],
+                );
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
+                expect(result).toEqual([]);
             });
 
-            it("should filter by eDocId not null and statusType not 050", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+            it("counts a client whose pinned doc is stale only when the CURRENT contract is dead or absent", async () => {
+                const result = await find(
+                    [
+                        row(1, { eDocId: "doc-1-080" }), // pinned + current contract expired
+                        row(2, { eDocId: "doc-2-060-old" }), // pinned stale but current contract is live
+                        row(3, { eDocId: null }), // no contract at all
+                        row(4, { eDocId: "doc-4-042" }), // revoked
+                        row(5, { eDocId: null }), // live contract linked only by clientId
+                    ],
+                    [
+                        contractDoc(1, "080"),
+                        contractDoc(2, "050"),
+                        contractDoc(4, "042"),
+                        contractDoc(5, "060"),
+                    ],
+                );
 
-                // Act
-                await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7);
-
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.eDocId).toEqual({ not: null });
-                expect(callArgs.where.eformsignDocByEDocId.statusType).toEqual({ not: '050' });
-            });
-        });
-    });
-
-    // ============================================
-    // findWithoutContractSentStartingWithinDays
-    // ============================================
-    describe("findWithoutContractSentStartingWithinDays", () => {
-        describe("given clients without contracts sent starting soon", () => {
-            it("should query with gte (not gt) so clients starting today are included", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
-
-                // Act
-                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
-
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.startDate.gte).toBeDefined();
-                expect(callArgs.where.startDate.gt).toBeUndefined();
+                expect(ids(result)).toEqual([1, 3, 4]);
             });
 
-            it("should filter by eDocId being null", async () => {
-                // Arrange
-                clientModel.findMany.mockResolvedValue([]);
+            it("uses the effective service status, not the stored one", async () => {
+                const result = await find(
+                    [
+                        // Stored waiting but the service already ended: effectively completed.
+                        row(1, { startDate: new Date("2026-02-01T00:00:00.000Z"), endDate: new Date("2026-03-01T00:00:00.000Z") }),
+                        // Stored active but the start is still ahead: effectively waiting, inside the window.
+                        row(2, { serviceStatus: "active" }),
+                        // Manual statuses never need a contract sent.
+                        row(3, { serviceStatus: "terminated" }),
+                        row(4, { serviceStatus: "pre_booking" }),
+                        // 교체 요청 keeps its stored status and still needs a contract.
+                        row(5, { serviceStatus: "replacement_requested" }),
+                    ],
+                    [],
+                );
 
-                // Act
-                await repository.findWithoutContractSentStartingWithinDays(branchId, 7);
+                expect(ids(result)).toEqual([2, 5]);
+            });
 
-                // Assert
-                const callArgs = clientModel.findMany.mock.calls[0][0];
-                expect(callArgs.where.eDocId).toBeNull();
+            it("only returns clients inside the business-day send window", async () => {
+                // 2026-03-26 is the 7th business day after 2026-03-17: outside the window of 6.
+                const result = await find(
+                    [row(1, { startDate: new Date("2026-03-25T00:00:00.000Z") }), row(2, { startDate: new Date("2026-03-26T00:00:00.000Z") })],
+                    [],
+                );
+
+                expect(ids(result)).toEqual([1]);
+            });
+
+            it("skips a client whose dates are outside the calendar range instead of failing the request", async () => {
+                const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                try {
+                    const result = await find(
+                        [row(1), row(2, { startDate: new Date("2030-01-10T00:00:00.000Z"), endDate: new Date("2030-02-10T00:00:00.000Z") })],
+                        [],
+                    );
+
+                    expect(ids(result)).toEqual([1]);
+                    const message = warn.mock.calls.map(([text]) => String(text)).join("\n");
+                    expect(message).toContain("client ids 2");
+                    expect(message).not.toContain("Client 2");
+                } finally {
+                    warn.mockRestore();
+                }
+            });
+
+            it("narrows the query to a superset of the send window without the stored-status or eDocId pin", async () => {
+                await find([], []);
+
+                const { where } = clientModel.findMany.mock.calls[0][0];
+                // 7th business day after 2026-03-17 is 2026-03-26: a start before it is inside the window.
+                expect(where.startDate).toEqual({ lt: new Date("2026-03-26T00:00:00.000Z") });
+                expect(where.eDocId).toBeUndefined();
+                expect(JSON.stringify(where)).not.toContain("eformsignDocByEDocId");
+                expect(where.OR).toEqual([
+                    { serviceStatus: "replacement_requested" },
+                    {
+                        AND: [
+                            {
+                                OR: [
+                                    { serviceStatus: null },
+                                    { serviceStatus: { notIn: ["pre_booking", "terminated", "replacement_requested"] } },
+                                ],
+                            },
+                            { endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } },
+                        ],
+                    },
+                ]);
+            });
+
+            it("counts on the Korean date at 01:30 KST, one day after the UTC date", async () => {
+                // 2026-03-16T16:30Z is 2026-03-17 01:30 KST: business-day math starts from 03-17.
+                await find([], [], new Date("2026-03-16T16:30:00.000Z"));
+
+                const { where } = clientModel.findMany.mock.calls[0][0];
+                expect(where.startDate).toEqual({ lt: new Date("2026-03-26T00:00:00.000Z") });
+                expect(where.OR[1].AND[1]).toEqual({ endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } });
             });
         });
     });

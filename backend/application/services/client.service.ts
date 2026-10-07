@@ -3,7 +3,13 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
-import { selectCurrentContractDocument } from "application/utils/current-contract-document";
+import {
+    CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD,
+    findLatestContractSignalsByClientId,
+    isActiveContractSignal,
+    isContractSendRequired,
+    type LatestContractSignal,
+} from "application/utils/current-contract-document";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import {
@@ -89,10 +95,6 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
-// Contract attention window, in KR business days before service start, within
-// which a client with no active contract document is flagged as needing one sent.
-// The badge and the action-required feeds all read this number.
-const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
 // 040/045 (cancellation REQUESTED, not done) are deliberately absent: they are their own
 // non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
@@ -126,7 +128,7 @@ export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested
 // contract until eformsign actually revokes it. Everything else (rejected/revoked/
 // deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
 const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
-export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
+export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
     | "active"
@@ -206,16 +208,6 @@ export type ActionRequiredReason = "교체 요청" | "서명 필요" | "발송 �
 export interface ClientActionRequired {
     reason: ActionRequiredReason;
     priority: 1 | 2 | 3;
-}
-
-/** The latest contract signal the document-status/active-document checks read. */
-interface LatestContractSignal {
-    statusType: string;
-    permanentPurgeRequestedAt: Date | null;
-    documentId: string;
-    stepType: string | null;
-    stepName: string | null;
-    detailPayload: unknown;
 }
 
 export interface ClientActionRequiredAlert extends ClientActionRequired {
@@ -748,78 +740,23 @@ export class ClientService {
 
     /**
      * Latest non-service-record contract document per client. The selection rule lives in
-     * `selectCurrentContractDocument`, shared with the receipt-link automatic path so the
-     * screen and the receipt always judge the same "current" contract.
+     * `selectCurrentContractDocument`, shared with the receipt-link automatic path and the
+     * repository's digest/filter lookups, so every screen and message judges the same "current"
+     * contract.
      */
     private async findLatestContractByClientId(
         clientIds: number[],
     ): Promise<Map<number, LatestContractSignal>> {
-        const latestContractMap = new Map<number, LatestContractSignal>();
-        if (clientIds.length === 0) return latestContractMap;
-
-        const serviceRecordTemplateIds =
-            configuredServiceRecordTemplateIds(this.configService);
-        const contractDocs = await this.prismaService.eformsign_doc.findMany({
-            where: {
-                clientId: { in: clientIds },
-                serviceRecordCaseId: null,
-                // Contract lifecycle status is an indexed projection that commits before
-                // detail/PDF artifacts finish. Do not filter it by artifact syncStatus:
-                // doing so can hide the newest contract and fall back to an older one.
-                OR: [
-                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
-                    { documentKind: null },
-                ],
-            },
-            // Newest first at full timestamptz(6) precision: selectCurrentContractDocument keeps this order.
-            orderBy: [
-                { createdDate: "desc" },
-                { id: "desc" },
-            ],
-            select: {
-                clientId: true,
-                documentId: true,
-                statusType: true,
-                stepType: true,
-                stepName: true,
-                detailPayload: true,
-                permanentPurgeRequestedAt: true,
-                documentKind: true,
-                serviceRecordCaseId: true,
-                templateId: true,
-            },
-        });
-
-        const docsByClientId = new Map<number, typeof contractDocs>();
-        for (const doc of contractDocs) {
-            if (doc.clientId === null) continue;
-            const docs = docsByClientId.get(doc.clientId);
-            if (docs) docs.push(doc);
-            else docsByClientId.set(doc.clientId, [doc]);
-        }
-
-        for (const [clientId, docs] of docsByClientId) {
-            const doc = selectCurrentContractDocument(docs, serviceRecordTemplateIds);
-            if (!doc) continue;
-            latestContractMap.set(clientId, {
-                statusType: doc.statusType,
-                permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
-                documentId: doc.documentId,
-                stepType: doc.stepType,
-                stepName: doc.stepName,
-                detailPayload: doc.detailPayload,
-            });
-        }
-
-        return latestContractMap;
+        return findLatestContractSignalsByClientId(
+            this.prismaService,
+            configuredServiceRecordTemplateIds(this.configService),
+            clientIds,
+        );
     }
 
-    /** Whether a client's latest contract document is still active (see `ACTIVE_DOCUMENT_STATUSES`). */
+    /** Whether a client's latest contract document is still active (see `isActiveContractSignal`). */
     private isActiveContractDocument(contract: LatestContractSignal | undefined): boolean {
-        if (!contract) return false;
-        return contract.permanentPurgeRequestedAt == null
-            && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
-            && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType));
+        return isActiveContractSignal(contract);
     }
 
     private async findHasActiveContractDocumentByClientId(
@@ -852,36 +789,31 @@ export class ClientService {
      * contract exists, so it must not suppress the contract badge.
      */
     private computeContractActionRequired(params: {
+        clientId?: number;
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
+        now?: Date;
     }, calendar: KrBusinessDayCalendar): ClientActionRequired | null {
-        if (
-            params.serviceStatus === SERVICE_STATUS.PRE_BOOKING ||
-            params.serviceStatus === SERVICE_STATUS.COMPLETED ||
-            params.serviceStatus === SERVICE_STATUS.TERMINATED
-        ) {
-            return null;
-        }
+        return isContractSendRequired(params, calendar, (clientId) => this.warnCalendarSkip(clientId))
+            ? { reason: "발송 필요", priority: 3 }
+            : null;
+    }
 
-        if (!params.startDate) return null;
-
-        const businessDaysUntilStart = calendar.diffBusinessDays(
-            params.startDate.toISOString().slice(0, 10),
+    /**
+     * A client whose dates fall outside the supported/synced holiday-calendar range cannot be
+     * judged by business days. It is skipped from those counts instead of failing the request.
+     * Logs the client id only (no PII).
+     */
+    private warnCalendarSkip(clientId: number | undefined): void {
+        this.logger.warn(
+            `Skipping business-day contract check for client ${clientId ?? "unknown"}: a date is outside the supported holiday calendar range`,
         );
-        if (businessDaysUntilStart === null) return null;
-
-        if (params.hasActiveContractDocument) return null;
-
-        if (businessDaysUntilStart <= CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD) {
-            return { reason: "발송 필요", priority: 3 };
-        }
-
-        return null;
     }
 
     /** Contract attention plus the non-contract 교체 요청 alert, which outranks it. */
     private computeActionRequired(params: {
+        clientId?: number;
         serviceStatus: string | null;
         startDate: Date | null;
         hasActiveContractDocument: boolean;
@@ -895,6 +827,8 @@ export class ClientService {
 
     private buildClientBadges(params: {
         contractActionRequired: ClientActionRequired | null;
+        /** The current contract is 040/045 (철회 요청됨): still live, cancellation only requested. */
+        contractRevokeRequested: boolean;
         serviceStatus: string | null;
         breastPump: boolean;
         careCenter: boolean | null;
@@ -908,6 +842,19 @@ export class ClientService {
                 label: "계약서 필요",
                 tone: "danger",
                 priority: 10,
+            });
+        }
+
+        // Same condition and order as the shared fallback (`legacyClientBadges`): an active
+        // service whose live contract has a pending cancellation gets a warning-toned
+        // contract_status badge right after (never instead of) the contract_required slot.
+        if (params.contractRevokeRequested && params.serviceStatus === SERVICE_STATUS.ACTIVE) {
+            badges.push({
+                key: "contract_status",
+                status: "review",
+                label: "철회 요청됨",
+                tone: "warning",
+                priority: 15,
             });
         }
 
@@ -1532,9 +1479,10 @@ export class ClientService {
                 );
                 break;
             case 'no-contract':
+                // Exactly the dashboard's contractsNotSent / the list's 발송 필요 badge.
                 clients = await this.clientRepository.findWithoutContractSentStartingWithinDays(
                     branchid,
-                    FILTER_DAYS_THRESHOLD
+                    await this.holidayCalendar.forBranch(branchid),
                 );
                 break;
             default:
@@ -1631,12 +1579,14 @@ export class ClientService {
                 : this.mapStatusTypeToDocumentStatus(latestContract?.statusType);
             const hasActiveContractDocument = ACTIVE_DOCUMENT_STATUSES.has(documentStatus);
             const contractSignals = {
+                clientId: client.id,
                 serviceStatus: computedStatus,
                 startDate: client.startDate,
                 hasActiveContractDocument,
             };
             const badges = this.buildClientBadges({
                 contractActionRequired: this.computeContractActionRequired(contractSignals, calendar),
+                contractRevokeRequested: documentStatus === "revoke_requested",
                 serviceStatus: computedStatus,
                 breastPump: client.breastPump,
                 careCenter: client.careCenter,
@@ -2701,30 +2651,37 @@ export class ClientService {
         const { thisMonthStart, nextMonthStart, nextMonthEndExclusive } =
             getClientListDateRanges(now);
 
-        const [activeClients, branchClients, upcomingThisMonth, upcomingNextMonth] =
-            await Promise.all([
-                this.prismaService.client.count({
-                    where: { serviceStatus: SERVICE_STATUS.ACTIVE, branchId: branchid },
-                }),
-                this.prismaService.client.findMany({
-                    where: { branchId: branchid },
-                    select: { id: true, startDate: true, endDate: true, serviceStatus: true },
-                }),
-                this.prismaService.client.count({
-                    where: {
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: thisMonthStart, lt: nextMonthStart },
-                        branchId: branchid,
-                    },
-                }),
-                this.prismaService.client.count({
-                    where: {
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: nextMonthStart, lt: nextMonthEndExclusive },
-                        branchId: branchid,
-                    },
-                }),
-            ]);
+        const branchClients = await this.prismaService.client.findMany({
+            where: { branchId: branchid },
+            select: { id: true, startDate: true, endDate: true, serviceStatus: true },
+        });
+
+        // Every figure below counts the DERIVED service status the client list shows
+        // (getEffectiveClientServiceStatus), never the stored column, which lags until the
+        // lazy update runs. Month boundaries are the KST ones from getClientListDateRanges.
+        const effectiveStatusByClientId = new Map<number, ServiceStatusType>();
+        let activeClients = 0;
+        let upcomingThisMonth = 0;
+        let upcomingNextMonth = 0;
+        for (const client of branchClients) {
+            const effectiveStatus = getEffectiveClientServiceStatus(
+                client.serviceStatus ?? null,
+                client.startDate ?? null,
+                client.endDate ?? null,
+                now,
+            );
+            effectiveStatusByClientId.set(client.id, effectiveStatus);
+            if (effectiveStatus === SERVICE_STATUS.ACTIVE) {
+                activeClients++;
+            } else if (effectiveStatus === SERVICE_STATUS.WAITING && client.startDate) {
+                const startTime = client.startDate.getTime();
+                if (startTime >= thisMonthStart.getTime() && startTime < nextMonthStart.getTime()) {
+                    upcomingThisMonth++;
+                } else if (startTime >= nextMonthStart.getTime() && startTime < nextMonthEndExclusive.getTime()) {
+                    upcomingNextMonth++;
+                }
+            }
+        }
 
         // 대시보드의 "검토 필요 문서"는 계약서 목록과 같은 규칙으로 센다: 제공기관
         // 검토 단계에 있고 검토 창(계약 종료 영업일 1일 전~)이 열린 문서만.
@@ -2738,17 +2695,15 @@ export class ClientService {
         // and the same business-day send window as the list (computeContractActionRequired).
         const contractsNotSent = branchClients.filter((client) =>
             this.computeContractActionRequired({
-                serviceStatus: getEffectiveClientServiceStatus(
-                    client.serviceStatus ?? null,
-                    client.startDate ?? null,
-                    client.endDate ?? null,
-                ),
+                clientId: client.id,
+                now,
+                serviceStatus: effectiveStatusByClientId.get(client.id) ?? null,
                 startDate: client.startDate ?? null,
                 hasActiveContractDocument: this.isActiveContractDocument(latestContracts.get(client.id)),
             }, calendar)?.reason === "발송 필요",
         ).length;
 
-        const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
+        const contractsPendingSignature = [...latestContracts].filter(([clientId, doc]) => {
             if (
                 doc.permanentPurgeRequestedAt != null
                 || DELETED_DOCUMENT_STATUS_TYPES.has(doc.statusType.trim().padStart(3, "0"))
@@ -2758,15 +2713,22 @@ export class ClientService {
             const endDate = doc.detailPayload && typeof doc.detailPayload === "object"
                 ? extractEformsignContractEndDate(doc.detailPayload as unknown as EformsignApiDocumentResponse)
                 : null;
-            return resolveEformsignDocDisplayStatus({
-                id: doc.documentId,
-                current_status: {
-                    status_type: doc.statusType,
-                    step_type: doc.stepType,
-                    step_name: doc.stepName,
-                },
-                ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
-            }, now, calendar) === "review";
+            try {
+                return resolveEformsignDocDisplayStatus({
+                    id: doc.documentId,
+                    current_status: {
+                        status_type: doc.statusType,
+                        step_type: doc.stepType,
+                        step_name: doc.stepName,
+                    },
+                    ...(endDate ? { contract_end_date: endDate.toISOString().slice(0, 10) } : {}),
+                }, now, calendar) === "review";
+            } catch {
+                // A contract end date outside the calendar's supported range must not fail the
+                // whole dashboard request: leave this client out of the review-window count.
+                this.warnCalendarSkip(clientId);
+                return false;
+            }
         }).length;
 
         return { activeClients, contractsNotSent, contractsPendingSignature, upcomingThisMonth, upcomingNextMonth };
@@ -2846,6 +2808,7 @@ export class ClientService {
                 );
 
                 const actionRequired = this.computeActionRequired({
+                    clientId: client.id,
                     serviceStatus,
                     startDate: client.startDate,
                     hasActiveContractDocument: hasActiveDocumentByClientId.get(client.id) ?? false,

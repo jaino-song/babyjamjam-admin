@@ -1,4 +1,5 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     ClientWithInitialSchedule,
@@ -10,11 +11,23 @@ import {
     ClientListTab,
     CLIENT_LIST_TAB_VALUES,
     clientListTabWhere,
+    getClientCalendarDayRange,
+    getClientDateWindow,
     getClientListDateRanges,
+    getEffectiveClientServiceStatus,
+    getKstDayInstantRange,
     PaginatedResult,
 } from "domain/repositories/client.repository.interface";
 import { SERVICE_STATUS } from "domain/value-objects/service-status.vo";
-import type { KrBusinessDayCalendar } from "domain/utils/business-days";
+import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import {
+    CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD,
+    findLatestContractSignalsByClientId,
+    isActiveContractSignal,
+    isContractSendRequired,
+    isIncompleteContractSignal,
+} from "application/utils/current-contract-document";
+import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import {
@@ -110,7 +123,12 @@ function requiresClientSearchFallback(search: string | undefined): boolean {
 
 @Injectable()
 export class SbClientRepository implements IClientRepository {
-    constructor(private readonly prismaService: PrismaService) {}
+    private readonly logger = new Logger(SbClientRepository.name);
+
+    constructor(
+        private readonly prismaService: PrismaService,
+        @Optional() private readonly configService?: ConfigService,
+    ) {}
 
     private async getClientSelect(capabilityClient: SchemaCapabilityClient = this.prismaService) {
         const supportsCreatedAt = await hasColumn(capabilityClient, "client", "created_at");
@@ -615,19 +633,15 @@ export class SbClientRepository implements IClientRepository {
 
     async findByStartDate(branchid: string, date: Date): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
-        // Normalize to start of day for date comparison
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        // start_date is a date-only column (UTC-midnight values): compare the Korean calendar day.
+        const { dayStart, nextDayStart } = getClientCalendarDayRange(date);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 startDate: {
-                    gte: startOfDay,
-                    lte: endOfDay,
+                    gte: dayStart,
+                    lt: nextDayStart,
                 },
             },
             select,
@@ -637,19 +651,14 @@ export class SbClientRepository implements IClientRepository {
 
     async findByEndDate(branchid: string, date: Date): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
-        // Normalize to start of day for date comparison
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        const { dayStart, nextDayStart } = getClientCalendarDayRange(date);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 endDate: {
-                    gte: startOfDay,
-                    lte: endOfDay,
+                    gte: dayStart,
+                    lt: nextDayStart,
                 },
             },
             select,
@@ -664,18 +673,15 @@ export class SbClientRepository implements IClientRepository {
         }
 
         const select = await this.getClientSelect();
-        const startOfDay = new Date(date);
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const endOfDay = new Date(date);
-        endOfDay.setHours(23, 59, 59, 999);
+        // created_at is a timestamp: the Korean calendar day is KST midnight to KST midnight.
+        const { start, endExclusive } = getKstDayInstantRange(date);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 createdAt: {
-                    gte: startOfDay,
-                    lte: endOfDay,
+                    gte: start,
+                    lt: endExclusive,
                 },
             },
             select,
@@ -683,21 +689,20 @@ export class SbClientRepository implements IClientRepository {
         return clients.map((client) => ClientMapper.toDomain(client as any));
     }
 
-    async findStartingWithinDays(branchid: string, days: number): Promise<ClientEntity[]> {
+    async findStartingWithinDays(
+        branchid: string,
+        days: number,
+        now: Date = new Date(),
+    ): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
+        const { start, endExclusive } = getClientDateWindow(days, now);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 startDate: {
-                    gte: today,
-                    lte: endDate,
+                    gte: start,
+                    lt: endExclusive,
                 },
             },
             select,
@@ -705,21 +710,20 @@ export class SbClientRepository implements IClientRepository {
         return clients.map((client) => ClientMapper.toDomain(client as any));
     }
 
-    async findEndingWithinDays(branchid: string, days: number): Promise<ClientEntity[]> {
+    async findEndingWithinDays(
+        branchid: string,
+        days: number,
+        now: Date = new Date(),
+    ): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
+        const { start, endExclusive } = getClientDateWindow(days, now);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 endDate: {
-                    gte: today,
-                    lte: endDate,
+                    gte: start,
+                    lt: endExclusive,
                 },
             },
             select,
@@ -727,67 +731,136 @@ export class SbClientRepository implements IClientRepository {
         return clients.map((client) => ClientMapper.toDomain(client as any));
     }
 
+    /**
+     * Bounded query + in-memory rule: the database narrows to the clients starting inside the
+     * (small) Korean-calendar window, and the "current contract is alive but not completed"
+     * rule runs over those rows. Prisma cannot express it because the current contract is the
+     * newest non-service-record `eformsign_doc` per client, not the `eDocId` pin.
+     */
     async findWithIncompleteContractsStartingWithinDays(
         branchid: string,
-        days: number
-    ): Promise<ClientEntity[]> {
-        const baseSelect = await this.getClientSelect();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
-
-        const clients = await this.prismaService.client.findMany({
-            where: {
-                branchId: branchid,
-                startDate: {
-                    gte: today,
-                    lte: endDate,
-                },
-                eDocId: { not: null },
-                eformsignDocByEDocId: {
-                    statusType: { not: '050' },
-                },
-            },
-            select: {
-                ...baseSelect,
-                eformsignDocByEDocId: {
-                    select: {
-                        documentId: true,
-                        statusType: true,
-                    },
-                },
-            },
-        });
-        return clients.map((client) => ClientMapper.toDomain(client as any));
-    }
-
-    async findWithoutContractSentStartingWithinDays(
-        branchid: string,
-        days: number
+        days: number,
+        now: Date = new Date(),
     ): Promise<ClientEntity[]> {
         const select = await this.getClientSelect();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
+        const { start, endExclusive } = getClientDateWindow(days, now);
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
                 startDate: {
-                    gte: today,
-                    lte: endDate,
+                    gte: start,
+                    lt: endExclusive,
                 },
-                eDocId: null,
             },
             select,
         });
-        return clients.map((client) => ClientMapper.toDomain(client as any));
+
+        const latestContracts = await findLatestContractSignalsByClientId(
+            this.prismaService,
+            configuredServiceRecordTemplateIds(this.configService),
+            clients.map((client) => client.id),
+        );
+        return clients
+            .filter((client) => isIncompleteContractSignal(latestContracts.get(client.id)))
+            .map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    /**
+     * Bounded query + in-memory rule. The in-memory pass re-runs the dashboard's complete rule
+     * (`isContractSendRequired` over the effective service status and the current contract), so
+     * the database predicate only has to be a SUPERSET of it:
+     *  - `startDate < addBusinessDays(today, threshold + 1)`: a start inside the business-day
+     *    send window is exactly any date before the business day just past it (the same bound
+     *    `getActionRequiredAlerts` uses); a null start never matches;
+     *  - not a stored manual pre_booking/terminated status, and `endDate >= today` (a finished
+     *    service is effectively completed), except 교체 요청 which keeps its stored status.
+     * That leaves the branch's currently running or upcoming clients starting before the window
+     * end, which is bounded by the branch's live clients rather than its whole history.
+     */
+    async findWithoutContractSentStartingWithinDays(
+        branchid: string,
+        calendar: KrBusinessDayCalendar,
+        now: Date = new Date(),
+    ): Promise<ClientEntity[]> {
+        const select = await this.getClientSelect();
+        const { todayStart } = getClientListDateRanges(now);
+
+        let sendWindowEndExclusive: Date;
+        try {
+            sendWindowEndExclusive = new Date(
+                `${calendar.addBusinessDays(isoDateInKorea(now), CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Skipping the contract-send check for branch ${branchid}: today is outside the supported holiday calendar range (${error instanceof Error ? error.message : String(error)})`,
+            );
+            return [];
+        }
+
+        const clients = await this.prismaService.client.findMany({
+            where: {
+                branchId: branchid,
+                startDate: { lt: sendWindowEndExclusive },
+                OR: [
+                    { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
+                    {
+                        AND: [
+                            {
+                                OR: [
+                                    { serviceStatus: null },
+                                    {
+                                        serviceStatus: {
+                                            notIn: [
+                                                SERVICE_STATUS.PRE_BOOKING,
+                                                SERVICE_STATUS.TERMINATED,
+                                                SERVICE_STATUS.REPLACEMENT_REQUESTED,
+                                            ],
+                                        },
+                                    },
+                                ],
+                            },
+                            { endDate: { gte: todayStart } },
+                        ],
+                    },
+                ],
+            },
+            select,
+        });
+
+        const latestContracts = await findLatestContractSignalsByClientId(
+            this.prismaService,
+            configuredServiceRecordTemplateIds(this.configService),
+            clients.map((client) => client.id),
+        );
+
+        const skippedClientIds: number[] = [];
+        const needingSend = clients.filter((client) =>
+            isContractSendRequired(
+                {
+                    clientId: client.id,
+                    now,
+                    serviceStatus: getEffectiveClientServiceStatus(
+                        client.serviceStatus ?? null,
+                        client.startDate ?? null,
+                        client.endDate ?? null,
+                        now,
+                    ),
+                    startDate: client.startDate ?? null,
+                    hasActiveContractDocument: isActiveContractSignal(latestContracts.get(client.id)),
+                },
+                calendar,
+                (clientId) => {
+                    if (clientId !== undefined) skippedClientIds.push(clientId);
+                },
+            ),
+        );
+        if (skippedClientIds.length > 0) {
+            this.logger.warn(
+                `Skipped ${skippedClientIds.length} client(s) from the contract-send check, a date is outside the supported holiday calendar range: client ids ${skippedClientIds.slice(0, 20).join(", ")}`,
+            );
+        }
+        return needingSend.map((client) => ClientMapper.toDomain(client as any));
     }
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {

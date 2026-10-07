@@ -31,9 +31,10 @@ import { SystemSettingModule } from "./system-setting.module";
 import { NotificationAgentCapabilitiesProvider } from "application/usecases/notification/notification-agent-capabilities.provider";
 import { MessageModule } from "./message.module";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
+import { HolidayModule } from "./holiday.module";
 
 @Module({
-    imports: [DatabaseModule, ConfigModule, AuthModule, SystemSettingModule, MessageModule],
+    imports: [DatabaseModule, ConfigModule, AuthModule, SystemSettingModule, MessageModule, HolidayModule],
     controllers: [NotificationController],
     providers: [
         // Use Cases
