@@ -1401,16 +1401,32 @@ export class EformsignWebhookService {
             case DOCUMENT_STATUS.DOC_EXPIRED:
                 return { statusType: "080", statusDetail: "만료" };
 
-            // Rejected/Declined states
+            // Rejected/Revoked states. These used to be synthesized as 080 (거부)
+            // and 090 (철회), codes eformsign never reports as a document's
+            // current status. The webhook only persists when its mapped code
+            // equals the mirror's real current_status.status_type
+            // (isCurrentMirrorStatus), and the mirror holds the real code
+            // (061 / 011 / 042 / 040), so every one of these events was
+            // discarded as IGNORED_STALE_MIRROR: the stored row stayed at 060
+            // (서명 대기) and the client list kept showing a live contract until
+            // the 6-hourly reconcile sweep. Same defect, same fix as the
+            // reviewer-stage cases below: carry the real code. Every consumer of
+            // the stored code (TERMINAL/REJECTED status sets, the client list's
+            // rejected/revoked mapping) already recognises the real codes.
             case DOCUMENT_STATUS.DOC_REJECT_PARTICIPANT:
             case DOCUMENT_STATUS.DOC_REJECT_APPROVAL:
+                return { statusType: normalizeEformsignStatusCode(status), statusDetail: "거부" };
+            case DOCUMENT_STATUS.DOC_REVOKE:
+                return { statusType: normalizeEformsignStatusCode(status), statusDetail: "철회" };
+            case DOCUMENT_STATUS.DOC_REQUEST_REVOKE:
+                return { statusType: normalizeEformsignStatusCode(status), statusDetail: "철회 요청" };
+
+            // doc_decline is not in normalizeEformsignStatusCode's table, so there
+            // is no real code to carry; it keeps the synthesized 080.
             case DOCUMENT_STATUS.DOC_DECLINE:
                 return { statusType: "080", statusDetail: "거부" };
 
-            // Revoked/Deleted states
-            case DOCUMENT_STATUS.DOC_REVOKE:
-            case DOCUMENT_STATUS.DOC_REQUEST_REVOKE:
-                return { statusType: "090", statusDetail: "철회" };
+            // Deleted state
             case DOCUMENT_STATUS.DOC_DELETED:
                 return { statusType: "049", statusDetail: "삭제됨" };
 
