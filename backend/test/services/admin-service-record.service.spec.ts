@@ -562,6 +562,7 @@ describe("AdminServiceRecordService", () => {
             {
                 employeeScheduleId: 3,
                 documentId: "service-record-doc-3",
+                statusType: "050",
                 statusDetail: "완료",
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-02T07:00:00.000Z"),
@@ -572,6 +573,7 @@ describe("AdminServiceRecordService", () => {
             {
                 employeeScheduleId: 3,
                 documentId: "service-record-doc-3-old",
+                statusType: "060",
                 statusDetail: "대기",
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-01T07:00:00.000Z"),
@@ -620,6 +622,7 @@ describe("AdminServiceRecordService", () => {
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 1)?.signatureDoc).toBeNull();
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 3)?.signatureDoc).toEqual({
             documentId: "service-record-doc-3",
+            statusType: "050",
             statusDetail: "완료",
             stepName: "제공기록지 서명",
             createdDate: new Date("2026-07-02T07:00:00.000Z"),

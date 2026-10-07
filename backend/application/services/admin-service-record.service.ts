@@ -94,6 +94,7 @@ type SignatureDocRow = Prisma.eformsign_docGetPayload<{
     select: {
         employeeScheduleId: true;
         documentId: true;
+        statusType: true;
         statusDetail: true;
         stepName: true;
         createdDate: true;
@@ -660,6 +661,7 @@ export class AdminServiceRecordService {
     private mapSignatureDoc(document: SignatureDocRow): AdminServiceRecordSignatureDocDto {
         return {
             documentId: document.documentId,
+            statusType: document.statusType,
             statusDetail: document.statusDetail,
             stepName: document.stepName,
             createdDate: document.createdDate,
@@ -696,6 +698,7 @@ export class AdminServiceRecordService {
                 select: {
                     employeeScheduleId: true,
                     documentId: true,
+                    statusType: true,
                     statusDetail: true,
                     stepName: true,
                     createdDate: true,
@@ -942,6 +945,7 @@ function latestSignatureDocByScheduleId(docs: SignatureDocRow[]): Map<number, Ad
 function mapSignatureDocRow(doc: SignatureDocRow): AdminServiceRecordSignatureDocDto {
     return {
         documentId: doc.documentId,
+        statusType: doc.statusType,
         statusDetail: doc.statusDetail,
         stepName: doc.stepName,
         createdDate: doc.createdDate,

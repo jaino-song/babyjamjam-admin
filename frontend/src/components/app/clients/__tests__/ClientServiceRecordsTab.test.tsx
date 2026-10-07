@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
+import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import type {
@@ -21,6 +22,21 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
         mutateAsync,
     }),
 }));
+
+// Records every render's modal props so a test can call a handler captured from an
+// older render, the way a click handler that outlived a refresh would.
+const mockResendModalRenders: Array<{ onApprove: () => void }> = [];
+jest.mock("@/components/app/ui/TwoButtonModal", () => {
+    const actual = jest.requireActual("@/components/app/ui/TwoButtonModal");
+    const React = jest.requireActual("react");
+    return {
+        ...actual,
+        TwoButtonModal: (props: { onApprove: () => void }) => {
+            mockResendModalRenders.push(props);
+            return React.createElement(actual.TwoButtonModal, props);
+        },
+    };
+});
 
 jest.mock("@/hooks/use-toast", () => ({
     useToast: () => ({ toast }),
@@ -118,6 +134,7 @@ describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
         toast.mockReset();
+        mockResendModalRenders.length = 0;
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },
             isPending: false,
@@ -565,6 +582,42 @@ describe("ClientServiceRecordsTab", () => {
         });
     });
 
+    it("disables the manual send with a reason while a link is sending, on both layouts", () => {
+        for (const layout of ["desktop", "mobile"] as const) {
+            const { unmount } = render(
+                <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                    layout={layout}
+                    overview={{ assignments: [createAssignment(1, "sending")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            const button = screen.getByRole("button", { name: layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송" });
+            expect(button).toBeDisabled();
+            const reason = screen.getByText(/발송 처리 중이에요\. 끝난 뒤에/);
+            expect(reason.parentElement).not.toHaveAttribute("aria-hidden", "true");
+            fireEvent.click(button);
+            expect(mutateAsync).not.toHaveBeenCalled();
+            unmount();
+        }
+    });
+
+    it("keeps the manual send enabled for a scheduled link", () => {
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [createAssignment(1, "scheduled")] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
+        expect(screen.queryByText(/발송 처리 중이에요\. 끝난 뒤에/)).not.toBeInTheDocument();
+    });
+
     it("labels an in-flight link as sending and keeps it on the first-send layout", () => {
         render(
             <ClientServiceRecordsTab data-component={TEST_COMPONENT}
@@ -578,6 +631,81 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("발송 중")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "메시지 재전송" })).not.toBeInTheDocument();
+    });
+
+    describe("resend confirmation while the link starts sending", () => {
+        const baseProps = {
+            "data-component": TEST_COMPONENT,
+            clientId: 100,
+            isLoading: false,
+            isError: false,
+        };
+        const RESEND_DIALOG = "제공기록지 메시지를 재전송하시겠습니까?";
+
+        it("disables the approve button with the sending reason and never sends", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            expect(screen.getByRole("dialog", { name: RESEND_DIALOG })).toBeInTheDocument();
+
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+
+            const dialog = screen.getByRole("dialog", { name: RESEND_DIALOG });
+            const approve = within(dialog).getByRole("button", { name: "메시지 재전송" });
+            expect(approve).toBeDisabled();
+            expect(within(dialog).getByText(/발송 처리 중이에요/)).toBeInTheDocument();
+            fireEvent.click(approve);
+            expect(mutateAsync).not.toHaveBeenCalled();
+        });
+
+        it("does not send from an approve handler captured before the refresh", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "failed")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            const staleApprove = mockResendModalRenders[mockResendModalRenders.length - 1].onApprove;
+
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+            await act(async () => {
+                staleApprove();
+            });
+
+            expect(mutateAsync).not.toHaveBeenCalled();
+        });
+
+        it("sends again once the link is no longer sending", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+
+            const dialog = screen.getByRole("dialog", { name: RESEND_DIALOG });
+            fireEvent.click(within(dialog).getByRole("button", { name: "메시지 재전송" }));
+
+            await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+            expect(mutateAsync).toHaveBeenCalledWith({ scheduleId: 1, clientId: 100 });
+        });
     });
 
     it("presends the manual-send layout while sending, then switches to resend after refresh", async () => {
@@ -675,11 +803,38 @@ describe("ClientServiceRecordsTab", () => {
         );
     });
 
-    it("normalizes uppercase completed document statuses", () => {
+    it("shows a rejected document as danger from its status code, with the Korean detail as text", () => {
         const assignment = createAssignment(1, "sent");
         assignment.signatureDoc = {
-            documentId: "service-record-document-uppercase",
-            statusDetail: "COMPLETED",
+            documentId: "service-record-document-rejected",
+            statusType: "071",
+            statusDetail: "검토 반려",
+            stepName: "제공기관 검토",
+            createdDate: "2026-07-05T18:30:00+09:00",
+            updatedDate: "2026-07-05T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        const pill = screen.getByText("검토 반려");
+        expect(pill).toHaveClass(...STATUS_SURFACE.danger.split(" "));
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("labels a completed document from its status code", () => {
+        const assignment = createAssignment(1, "sent");
+        assignment.signatureDoc = {
+            documentId: "service-record-document-complete",
+            statusType: "050",
+            statusDetail: "완료",
             stepName: "완료",
             createdDate: "2026-07-05T18:30:00+09:00",
             updatedDate: "2026-07-05T19:00:00+09:00",
@@ -696,7 +851,6 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("서명 완료")).toBeInTheDocument();
-        expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
     });
 
     it("uses the Korean business-day calendar for empty session placeholders", () => {
