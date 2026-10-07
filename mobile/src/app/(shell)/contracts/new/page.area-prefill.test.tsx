@@ -10,7 +10,6 @@ const mockStartNavigation = jest.fn();
 const mockDispatchHeadless = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
-const mockFetchClient = jest.fn();
 const mockToast = jest.fn();
 let mockClients: Client[] | undefined = [];
 let mockAreaTemplatesData: Array<{ areaId: string; templateName: string | null }> | undefined;
@@ -70,7 +69,6 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
-  fetchClient: (id: number) => mockFetchClient(id),
   useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
@@ -243,8 +241,6 @@ beforeEach(() => {
   useFormStore.getState().resetAll();
   mockCreateClient.mockResolvedValue({ id: 8 });
   mockUpdateClient.mockResolvedValue({ id: 7 });
-  mockFetchClient.mockReset();
-  mockFetchClient.mockResolvedValue(makeClient());
   mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 1 });
 });
 

@@ -16,7 +16,6 @@ const mockSupersedeDocument = jest.fn();
 const mockOpenDocument = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
-const mockFetchClient = jest.fn();
 const mockToast = jest.fn();
 const mockUseFormStore = jest.fn();
 const mockSelectClient = jest.fn();
@@ -64,7 +63,6 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
-  fetchClient: (id: number) => mockFetchClient(id),
   useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
@@ -293,8 +291,6 @@ beforeEach(() => {
   mockUseFormStore.mockReset();
   installEventSourceStub();
   installFormState();
-  mockFetchClient.mockReset();
-  mockFetchClient.mockResolvedValue({ id: 7, endDate: null });
   mockCreateClient.mockResolvedValue({ id: 8 });
   mockUpdateClient.mockResolvedValue({ id: 7 });
   mockCreateDocRecord.mockResolvedValue({ id: 21, documentId: "doc-iframe" });
