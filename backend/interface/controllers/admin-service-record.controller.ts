@@ -3,19 +3,23 @@ import {
     Body,
     Controller,
     Get,
+    MessageEvent,
     Param,
     ParseIntPipe,
     Patch,
     PipeTransform,
     Post,
     Query,
+    Sse,
     UseGuards,
 } from "@nestjs/common";
+import { Observable, filter, interval, map, merge } from "rxjs";
 import {
     AdminServiceRecordService,
     ServiceRecordAdminActor,
 } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
@@ -66,7 +70,42 @@ export class AdminServiceRecordController {
     constructor(
         private readonly adminServiceRecordService: AdminServiceRecordService,
         private readonly adminServiceRecordEditService: AdminServiceRecordEditService,
+        private readonly caseEventBus: ServiceRecordCaseEventBus,
     ) {}
+
+    /**
+     * GET /admin/service-records/events
+     * Server-Sent Events stream telling open editors that a case in the caller's
+     * branch changed. The branch is never sent to the client. A `ping` every 30s
+     * keeps proxies and clients honest. Declared before the parameterised routes
+     * so it can never be shadowed by them.
+     */
+    @Sse("events")
+    @UseGuards(BranchManagerGuard)
+    events(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ): Observable<MessageEvent> {
+        const branchId = tenant.branchId ?? "";
+
+        const changes = this.caseEventBus.events$.pipe(
+            filter((event) => branchId !== "" && event.branchId === branchId),
+            map((event) => ({
+                type: "case-changed",
+                data: {
+                    clientId: event.clientId,
+                    caseId: event.caseId,
+                    caseVersion: event.caseVersion,
+                },
+            } as MessageEvent)),
+        );
+
+        const heartbeat = interval(30000).pipe(
+            map(() => ({ type: "ping", data: { at: Date.now() } } as MessageEvent)),
+        );
+
+        return merge(changes, heartbeat);
+    }
 
     @Get("client/:clientId")
     getClientOverview(

@@ -3,6 +3,7 @@ import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/
 import { Test, TestingModule } from "@nestjs/testing";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
@@ -56,6 +57,7 @@ describe("AdminServiceRecordController (Integration)", () => {
                     provide: AdminServiceRecordEditService,
                     useValue: adminServiceRecordEditService,
                 },
+                ServiceRecordCaseEventBus,
             ],
         })
             .overrideGuard(JwtGuard)
