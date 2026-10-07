@@ -16,6 +16,7 @@ const mockStartNavigation = jest.fn();
 const mockDispatchHeadless = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
+const mockFetchClient = jest.fn();
 const mockToast = jest.fn();
 let mockClients: Client[] | undefined = [];
 // react-query hands back a stable reference; a fresh array per render would loop the price auto-fill effect.
@@ -74,6 +75,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
+  fetchClient: (id: number) => mockFetchClient(id),
   useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
@@ -268,6 +270,8 @@ beforeEach(() => {
   useFormStore.getState().resetAll();
   mockCreateClient.mockResolvedValue({ id: 8 });
   mockUpdateClient.mockResolvedValue({ id: 7 });
+  mockFetchClient.mockReset();
+  mockFetchClient.mockResolvedValue(makeClient());
   mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 1 });
 });
 
@@ -1120,5 +1124,93 @@ describe("mobile contract form - a picked client keeps its stored end date", () 
     next(); next(); next();
 
     expect(endDateInput()).toHaveValue("2026-10-16");
+  });
+});
+
+// 목록에서 고객의 기준값을 못 찾았을 때(목록 로딩 중이거나 목록에 없을 때)도 기간을 쓰는 저장은
+// 저장된 종료일을 기준으로 막혀야 해요. 입력 폼의 종료일을 기준으로 대신하면 안 돼요.
+describe("mobile contract form - period save without a baseline from the client list", () => {
+  const FORM_END = STORED_END;
+  const NEWER_STORED_END = "2026-10-30";
+
+  function prefillFromDetail(client: Client) {
+    useFormStore.getState().prefillFromContract({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      address: client.address ?? "",
+      employeeId: EMPLOYEE.id,
+      employeeName: EMPLOYEE.name,
+      employeePhone: EMPLOYEE.phone,
+      employee2Id: null,
+      employee2Name: "",
+      employee2Phone: "",
+      startDate: STORED_START,
+      endDate: FORM_END,
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      voucherType: client.type ?? "",
+      voucherDuration: client.duration != null ? String(client.duration) : "",
+      area: "",
+    });
+  }
+
+  async function submitFromDetail() {
+    prefillFromDetail(makeClient());
+    await renderPage();
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    next(); next(); next();
+    submit();
+  }
+
+  it.each([
+    ["the list is still loading", undefined],
+    ["the client is not in the list", []],
+  ] as const)("loads the stored end date and guards the period PATCH when %s", async (_label, list) => {
+    mockClients = list as Client[] | undefined;
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: `${NEWER_STORED_END}T00:00:00.000Z` }));
+
+    await submitFromDetail();
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockFetchClient).toHaveBeenCalledWith(7);
+    const dto = getUpdateDto();
+    expect(dto).toEqual(expect.objectContaining({ endDate: FORM_END, expectedEndDate: NEWER_STORED_END }));
+    expect(dto.expectedEndDate).not.toBe(dto.endDate);
+    expect(mockFetchClient.mock.invocationCallOrder[0]).toBeLessThan(mockUpdateClient.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("guards with null when the stored client has no end date", async () => {
+    mockClients = [];
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: null }));
+
+    await submitFromDetail();
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).toHaveProperty("expectedEndDate", null);
+  });
+
+  it.each([
+    ["the list is still loading", undefined],
+    ["the client is not in the list", []],
+  ] as const)("blocks the submit and never sends the period when loading the client fails and %s", async (_label, list) => {
+    mockClients = list as Client[] | undefined;
+    mockFetchClient.mockRejectedValue(new Error("network down"));
+
+    await submitFromDetail();
+
+    await waitFor(() => expect(mockFetchClient).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(mockUpdateClient).not.toHaveBeenCalled();
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    // The failure is retryable: nothing was written, so the submit is not locked.
+    await waitFor(() => expect(screen.getByRole("button", { name: "계약서 생성" })).not.toBeDisabled());
+
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: NEWER_STORED_END }));
+    submit();
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).toHaveProperty("expectedEndDate", NEWER_STORED_END);
   });
 });

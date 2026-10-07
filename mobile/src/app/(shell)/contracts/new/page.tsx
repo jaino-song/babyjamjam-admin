@@ -21,7 +21,7 @@ import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { toast } from "@/hooks/use-toast";
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
-import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { fetchClient, useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -1317,6 +1317,22 @@ export default function ContractCreationPage() {
           ? persistedClientSnapshotRef.current !== clientPersistenceSnapshot
           : clientId !== null || storedClientByIdentity || storedClientByPhone;
       if (shouldUpdatePersistedClient) {
+        // 기간을 쓰는 저장은 항상 저장된 종료일을 기준으로 보내요. 목록에서 기준값을 못 찾았으면 고객 정보를
+        // 직접 다시 불러와요. 불러오지 못하면 아무것도 저장하지 않고 멈춰요. 입력한 종료일로 대신하지 않아요.
+        let expectedEndDate: string | null | undefined;
+        if (clientUpdateMode === "full" && !omitPeriodFields) {
+          if (loadedBaseline) {
+            expectedEndDate = loadedBaseline.snapshot.endDate.value ?? null;
+          } else {
+            try {
+              const currentClient = await fetchClient(finalClientId);
+              expectedEndDate = normalizeIsoDate(currentClient.endDate) || null;
+            } catch (error) {
+              showSubmissionFailure(error, "NOT_APPLIED");
+              return;
+            }
+          }
+        }
         try {
           await updateClientMutation.mutateAsync({
             id: finalClientId,
@@ -1328,9 +1344,7 @@ export default function ContractCreationPage() {
                   Object.entries(clientData).filter(([key]) => !CLIENT_PERIOD_DTO_KEYS.has(key)),
                 ) as Partial<typeof clientData>
                 // 기간 값을 함께 보내는 저장은, 폼을 열 때의 종료일을 같이 보내 그사이 종료일이 바뀌었으면 덮어쓰지 않고 거절돼요.
-                : loadedBaseline
-                  ? { ...clientData, expectedEndDate: loadedBaseline.snapshot.endDate.value ?? null }
-                  : clientData,
+                : { ...clientData, expectedEndDate },
           });
         } catch (error) {
           showSubmissionFailure(error, "UNKNOWN");
