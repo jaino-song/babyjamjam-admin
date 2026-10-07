@@ -8,6 +8,7 @@ import {
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
     ReplacePendingJobsResult,
+    ScheduleFenceLinkOptions,
     ClientUpcomingMessageTriggerJobCursor,
     ClientUpcomingMessageTriggerJobRecord,
     ClientUpcomingMessageTriggerJobStatus,
@@ -114,6 +115,30 @@ function isLockNotAvailable(error: unknown): boolean {
  */
 function scheduleFenceLockKey(ruleId: string, employeeScheduleId: number): string {
     return `message-trigger-job-replace:${ruleId}:${employeeScheduleId}`;
+}
+
+/**
+ * Whether the link token a job is about to carry is still usable for the
+ * schedule. Read under the schedule fence AFTER the job rows are locked: a
+ * revoke holds that same fence (advisory lock, then jobs, then tokens) for its
+ * whole cancel + token revocation, so once this transaction owns the fence a
+ * committed revoke is visible here and a pending one has not started. A plain
+ * read is enough; no token row lock is taken.
+ */
+async function activeLinkTokenExists(
+    client: Prisma.TransactionClient,
+    linkToken: string,
+    employeeScheduleId: number,
+): Promise<boolean> {
+    const rows = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id
+        FROM "service_record_token"
+        WHERE "link_token_hash" = ${linkToken}
+          AND "schedule_id" = ${employeeScheduleId}
+          AND "active" = true
+          AND "revoked_at" IS NULL
+    `);
+    return rows.length > 0;
 }
 
 /**
@@ -755,15 +780,77 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         employeeScheduleId: number,
         reason: string,
     ): Promise<CancelPendingJobsResult> {
-        // ONE statement, no interactive transaction, no advisory/rule lock and no
-        // lock_timeout (revoke/reset must never fail on a conflict). The CTE
+        return this.cancelPendingByRuleAndEmployeeScheduleWith(this.prisma, ruleId, employeeScheduleId, reason);
+    }
+
+    async cancelPendingUnderScheduleFence(
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<CancelPendingJobsResult> {
+        // Lock order: schedule advisory lock -> job rows (`ORDER BY id FOR
+        // UPDATE`, inside the cancel statement) -> whatever `afterCancel` writes
+        // (the token rows). Deliberately NO rule `FOR UPDATE` and NO `lock_timeout`:
+        // a revoke must not fail on a conflict, and a rule lock held by a rule
+        // normalisation (seconds) must not push it past the transaction limit.
+        // The advisory lock is the same key a manual send and an automatic
+        // promotion take first, so a revoke is serialized with both: it either
+        // runs wholly before them (they then see the revoked token and refuse) or
+        // wholly after (it cancels what they enqueued). The interactive
+        // transaction gets a limit well past Prisma's 5 s default because the
+        // advisory wait can outlast a promotion that is itself waiting on the rule.
+        return this.prisma.$transaction(async (transaction) => {
+            await transaction.$executeRaw(Prisma.sql`
+                SELECT pg_advisory_xact_lock(hashtextextended(${scheduleFenceLockKey(ruleId, employeeScheduleId)}, 0))
+            `);
+            const result = await this.cancelPendingByRuleAndEmployeeScheduleWith(
+                transaction,
+                ruleId,
+                employeeScheduleId,
+                reason,
+            );
+            if (afterCancel) await afterCancel(transaction);
+            return result;
+        }, { timeout: 30_000, maxWait: 30_000 });
+    }
+
+    async cancelProcessingClaim(id: string, claimToken: string, reason: string): Promise<boolean> {
+        // ONE statement: the row lock the UPDATE takes re-checks `status` and the
+        // claim token on the locked version. A job the dispatcher moved on to
+        // `dispatching` (that step leaves the claim token unchanged) while the
+        // caller was deciding is skipped, never overwritten.
+        const canceled = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job"
+            SET status = 'canceled',
+                canceled_at = date_trunc('milliseconds', clock_timestamp()),
+                cancel_reason = ${reason},
+                claim_token = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE id = ${id}
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+              AND status = 'processing'
+              AND claim_token = ${claimToken}
+            RETURNING id
+        `);
+        return canceled.length === 1;
+    }
+
+    private async cancelPendingByRuleAndEmployeeScheduleWith(
+        client: PrismaService | Prisma.TransactionClient,
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+    ): Promise<CancelPendingJobsResult> {
+        // ONE statement, no advisory/rule lock and no lock_timeout of its own
+        // (revoke/reset must never fail on a conflict). The CTE
         // row-locks the cancellable jobs in id order (the same job-lock order as
         // `replacePendingJobsUnlessInFlight`); the UPDATE then re-checks the
         // status on the locked version, so a job the dispatcher moved to
         // `dispatching` while this statement waited is skipped, never overwritten.
         // `processing` is cancelled on purpose: clearing its claim token is what
         // makes the dispatcher's `processing -> dispatching` authorization lose.
-        const canceled = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        const canceled = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             WITH locked AS (
                 SELECT id
                 FROM "message_trigger_job"
@@ -785,7 +872,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
               AND job.status IN ('pending', 'processing')
             RETURNING job.id
         `);
-        const inFlight = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        const inFlight = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             SELECT id
             FROM "message_trigger_job"
             WHERE ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
@@ -1013,6 +1100,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        options: ScheduleFenceLinkOptions = {},
     ): Promise<ReplacePendingJobsResult> {
         this.assertOrdinaryJob(replacement);
         const { ruleId, employeeScheduleId } = replacement;
@@ -1075,6 +1163,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     return { kind: "in_flight", inFlightJobIds };
                 }
 
+                // A revoke that committed while the link was being prepared has
+                // already cancelled every job; enqueueing now would queue a send
+                // whose link is dead. Read after the job locks, like a revoke
+                // writes its token rows after its job locks.
+                if (
+                    options.requireActiveLinkToken !== undefined
+                    && !(await activeLinkTokenExists(transaction, options.requireActiveLinkToken, employeeScheduleId))
+                ) {
+                    return { kind: "link_revoked" };
+                }
+
                 const pendingIds = live.map((row) => row.id);
                 if (pendingIds.length > 0) {
                     const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -1109,6 +1208,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
         transaction?: Prisma.TransactionClient,
+        options: ScheduleFenceLinkOptions = {},
     ): Promise<MessageTriggerJobEntity | null> {
         if (isReservedAutomationJob(job)) return null;
         // Automatic service-record scheduling uses a failed row as a durable
@@ -1154,6 +1254,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE
             `);
             if (blockers.length > 0) return null;
+
+            // A revoke that committed while the link was being prepared left the
+            // lease alone (it is `failed`, not cancellable) and revoked the
+            // token. Promoting would queue a send whose link is dead; refuse and
+            // let the caller release the lease. Read after the job locks above.
+            if (
+                options.requireActiveLinkToken !== undefined
+                && !(await activeLinkTokenExists(client, options.requireActiveLinkToken, employeeScheduleId))
+            ) {
+                return null;
+            }
 
             const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
                 UPDATE "message_trigger_job"

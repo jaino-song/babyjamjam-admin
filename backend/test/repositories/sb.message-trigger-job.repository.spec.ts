@@ -2244,3 +2244,109 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             .rejects.toThrow("employee schedule scope");
     });
 });
+
+/**
+ * Statement-shape checks for the b5 cancel/fence additions. The races those
+ * statements close are proven on a real PostgreSQL in
+ * `sb.message-trigger-job.manual-send-concurrency.spec.ts` (env-gated).
+ */
+describe("SbMessageTriggerJobRepository b5 cancel races (statement shape)", () => {
+    const RULE_ID = SERVICE_RECORD_LINK_RULE_ID;
+    const flat = (value: unknown): string => {
+        const candidate = value as { strings?: string[]; text?: string };
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ").trim();
+    };
+
+    const spyPrisma = (rows: (sql: string) => unknown[] = () => []) => {
+        const statements: string[] = [];
+        const client = {
+            $queryRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return rows(flat(query)); }),
+            $executeRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return 1; }),
+        };
+        const transaction = jest.fn(async (work: (tx: typeof client) => Promise<unknown>, options?: unknown) => {
+            statements.push(`BEGIN ${JSON.stringify(options)}`);
+            return work(client);
+        });
+        return { statements, prisma: { ...client, $transaction: transaction } as unknown as PrismaService, transaction };
+    };
+
+    describe("cancelProcessingClaim", () => {
+        it("is one status- and token-predicated UPDATE, not a read-then-write", async () => {
+            const { statements, prisma, transaction } = spyPrisma(() => [{ id: "job-1" }]);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "Client data changed"))
+                .resolves.toBe(true);
+
+            expect(statements).toHaveLength(1);
+            expect(statements[0]).toMatch(/^UPDATE "message_trigger_job" SET status = 'canceled'.*claim_token = NULL/);
+            expect(statements[0]).toMatch(/AND status = 'processing' AND claim_token = \$\d+ RETURNING id$/);
+            expect(transaction).not.toHaveBeenCalled();
+        });
+
+        it("reports false when nothing matched (the job moved on)", async () => {
+            const { prisma } = spyPrisma(() => []);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "x"))
+                .resolves.toBe(false);
+        });
+    });
+
+    describe("cancelPendingUnderScheduleFence", () => {
+        it("takes the schedule advisory lock, then the job locks, then runs afterCancel on the same transaction; no rule lock, no lock_timeout, long limits", async () => {
+            const { statements, prisma, transaction } = spyPrisma();
+            const afterCancel = jest.fn(async () => { statements.push("AFTER_CANCEL"); });
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .cancelPendingUnderScheduleFence(RULE_ID, 10, "Service record access revoked", afterCancel);
+
+            expect(result).toEqual({ canceledJobIds: [], inFlightJobIds: [] });
+            expect(statements[0]).toBe('BEGIN {"timeout":30000,"maxWait":30000}');
+            expect(statements[1]).toMatch(/^SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)$/);
+            expect(statements[2]).toMatch(/^WITH locked AS .*ORDER BY id FOR UPDATE.*UPDATE "message_trigger_job" AS job/);
+            expect(statements[3]).toContain("status = 'dispatching'");
+            expect(statements[4]).toBe("AFTER_CANCEL");
+            expect(afterCancel).toHaveBeenCalledTimes(1);
+            expect(statements.join(" ")).not.toContain("message_trigger_rule");
+            expect(statements.join(" ")).not.toContain("lock_timeout");
+            expect(transaction).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("link token re-check under the fence", () => {
+        const replacement = () => MessageTriggerJobEntity.create({
+            branchId: "11111111-1111-4111-8111-111111111111",
+            ruleId: RULE_ID,
+            scheduledFor: new Date(),
+            clientId: 20,
+            employeeScheduleId: 10,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01011112222",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `${RULE_ID}:schedule:10:primary:manual:x`,
+            payload: { memberId: "employee:30", recipientName: "p", recipientPhone: "01011112222", templateVariables: {} },
+        });
+
+        it("a manual replace reads the token AFTER the job locks and writes nothing when it is revoked", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .replacePendingJobsUnlessInFlight(replacement(), "r", { requireActiveLinkToken: "efl_x" });
+
+            expect(result).toEqual({ kind: "link_revoked" });
+            const jobLock = statements.findIndex((sql) => sql.includes('FROM "message_trigger_job"') && sql.includes("FOR UPDATE"));
+            const tokenRead = statements.findIndex((sql) => sql.includes('FROM "service_record_token"'));
+            expect(jobLock).toBeGreaterThan(-1);
+            expect(tokenRead).toBeGreaterThan(jobLock);
+            expect(statements.join(" ")).not.toContain("INSERT INTO");
+            expect(statements.join(" ")).not.toContain("SET status = 'canceled'");
+        });
+
+        it("without the option no token statement is issued", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            await new SbMessageTriggerJobRepository(prisma).replacePendingJobsUnlessInFlight(replacement(), "r").catch(() => undefined);
+
+            expect(statements.join(" ")).not.toContain("service_record_token");
+        });
+    });
+});

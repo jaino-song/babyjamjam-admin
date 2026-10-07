@@ -555,11 +555,18 @@ export class ServiceRecordTokenService {
         });
     }
 
-    /** Revoke every active token for an assignment (replacement / termination). */
-    async revokeForSchedule(scheduleId: number): Promise<void> {
-        const schedule = await this.prismaService.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
+    /**
+     * Revoke every active token for an assignment (replacement / termination).
+     * `tx` lets a caller that already holds the schedule fence revoke on its own
+     * connection: opening another transaction from inside it would wait on
+     * locks (`service-record-link:` advisory, case row) that this connection
+     * cannot see.
+     */
+    async revokeForSchedule(scheduleId: number, tx?: Prisma.TransactionClient): Promise<void> {
+        const db = tx ?? this.prismaService;
+        const schedule = await db.employee_schedule.findUnique({ where: { id: scheduleId }, select: { branchId: true } });
         if (!schedule?.branchId) return;
-        await this.prismaService.service_record_token.updateMany({
+        await db.service_record_token.updateMany({
             where: { scheduleId, branchId: schedule.branchId, active: true },
             data: { active: false, revokedAt: new Date(), accessTokenHash: null, verifiedAt: null },
         });

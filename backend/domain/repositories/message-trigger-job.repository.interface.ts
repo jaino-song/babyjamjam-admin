@@ -42,7 +42,17 @@ export interface ClientUpcomingMessageTriggerJobCursor {
 export type ReplacePendingJobsResult =
     | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
     | { kind: "in_flight"; inFlightJobIds: string[] }
-    | { kind: "lock_timeout" };
+    | { kind: "lock_timeout" }
+    | { kind: "link_revoked" };
+
+/**
+ * Guard a job write taken under the schedule fence against a link revoke:
+ * the plaintext link token the job's message carries must still be an active,
+ * non-revoked token of the schedule, checked under the fence.
+ */
+export interface ScheduleFenceLinkOptions {
+    requireActiveLinkToken?: string;
+}
 
 /**
  * Outcome of cancelling a schedule's not-yet-sent jobs. `inFlightJobIds` are
@@ -152,6 +162,28 @@ export interface IMessageTriggerJobRepository {
         employeeScheduleId: number,
         reason: string,
     ): Promise<CancelPendingJobsResult>;
+    /**
+     * `cancelPendingByRuleAndEmployeeSchedule` under the schedule fence, for a
+     * revoke/reset: in ONE transaction it takes the schedule advisory lock,
+     * cancels the jobs, then runs `afterCancel` with the same transaction (the
+     * token revocation), so the cancel and the revocation are atomic against a
+     * manual send / automatic promotion of the same schedule. Never takes the
+     * rule lock or the branch lock and never gives up on a lock (it must not
+     * fail a revoke); `afterCancel` must use only the given transaction.
+     */
+    cancelPendingUnderScheduleFence(
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<CancelPendingJobsResult>;
+    /**
+     * Cancel one `processing` claim by the token its owner read, in ONE
+     * status-predicated statement. A job that has since moved to `dispatching`
+     * (same claim token) or been re-claimed is left untouched. Returns whether
+     * this call canceled it.
+     */
+    cancelProcessingClaim(id: string, claimToken: string, reason: string): Promise<boolean>;
     cancelPendingByClientContext(branchId: string, clientId: number, reason: string): Promise<number>;
     cancelOrphanedPending(reason: string, branchId?: string): Promise<number>;
     findRecoverableOrphanedClientJobs(branchId: string, limit?: number): Promise<MessageTriggerJobEntity[]>;
@@ -176,6 +208,7 @@ export interface IMessageTriggerJobRepository {
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
         transaction?: Prisma.TransactionClient,
+        options?: ScheduleFenceLinkOptions,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Cancel mutable pending jobs only while the branch-scoped rule is at the
@@ -203,10 +236,14 @@ export interface IMessageTriggerJobRepository {
      * Otherwise the pending jobs are canceled with `reason` and the replacement
      * is inserted in the same transaction, so a concurrent dispatcher claim
      * either wins first (-> `in_flight`) or loses against the canceled row.
+     * With `options.requireActiveLinkToken`, the link token the replacement
+     * carries is re-checked under the fence; a revoked one yields
+     * `link_revoked` with nothing written.
      */
     replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        options?: ScheduleFenceLinkOptions,
     ): Promise<ReplacePendingJobsResult>;
     /**
      * Upsert a pending job only while its rule is at the inspected generation

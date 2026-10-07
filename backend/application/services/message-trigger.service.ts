@@ -2379,11 +2379,16 @@ export class MessageTriggerService {
 
             // A client mutation can race a job that was already claimed for
             // delivery. Invalidate that active claim before refreshing the
-            // pending payload; the CAS update is intentionally skipped when
-            // another worker has already replaced the token.
+            // pending payload, in ONE status-predicated statement: it matches
+            // only a row that is still `processing` under the token read above.
+            // A worker that has since moved the job to `dispatching` (the token
+            // does not change at that step) or replaced the claim wins, and its
+            // job is left untouched instead of being overwritten as canceled
+            // while its message goes out.
             if (job.status === "processing") {
-                job.cancel("Client data changed");
-                await this.jobRepository.update(job);
+                if (job.claimToken) {
+                    await this.jobRepository.cancelProcessingClaim(job.id, job.claimToken, "Client data changed");
+                }
                 continue;
             }
 

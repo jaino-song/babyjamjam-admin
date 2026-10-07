@@ -3598,6 +3598,7 @@ describe("MessageTriggerService", () => {
             }),
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
             cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
+            cancelProcessingClaim: jest.fn().mockResolvedValue(true),
             cancelPendingForRuleGeneration: jest.fn().mockImplementation(async (
                 _branchId: string,
                 ruleId: string,
@@ -4091,6 +4092,33 @@ describe("MessageTriggerService", () => {
         expect(pendingGreeting.canceledAt).toBeNull();
         expect(pendingGreeting.cancelReason).toBeNull();
         expect(reSync.jobRepository.upsertPendingForRuleGeneration).toHaveBeenCalledTimes(1);
+    });
+
+    it("invalidates a claimed (processing) IMMEDIATE job with ONE status-predicated cancel under the token it read, never a read-then-update", async () => {
+        const greetingRule = createRule({
+            id: "rule-greeting-active",
+            eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        });
+        const claimed = createJob({ id: "job-greeting-claimed", ruleId: greetingRule.id });
+        claimed.markProcessing("claim-token-1");
+        const reSync = createSyncService();
+        reSync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
+        reSync.jobRepository.findPendingByRuleIdsAndClientId.mockResolvedValue([claimed]);
+
+        await reSync.service.syncClientRulesForClient(branchId, 1, false);
+
+        expect(reSync.jobRepository.cancelProcessingClaim).toHaveBeenCalledWith(
+            "job-greeting-claimed",
+            "claim-token-1",
+            "Client data changed",
+        );
+        // No id-only write of the stale in-memory copy, and no pending refresh of a claimed job.
+        expect(reSync.jobRepository.update).not.toHaveBeenCalled();
+        expect(reSync.jobRepository.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        expect(claimed.status).toBe("processing");
     });
 
     it("refreshes the pending IMMEDIATE job's recipient phone and payload from the edited client", async () => {
