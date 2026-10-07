@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, Logger, Not
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -678,25 +679,11 @@ export class ServiceRecordLinkService {
                 FROM "message_trigger_job" AS blocker
                 WHERE blocker."employee_schedule_id" = ${params.scheduleId}
                   AND blocker."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
-                  AND (
-                      blocker."status" IN ('pending', 'processing', 'dispatching', 'sent')
-                      OR (
-                          blocker."status" = 'failed'
-                          AND blocker."cancel_reason" IS DISTINCT FROM ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
-                      )
-                      OR (
-                          blocker."status" = 'canceled'
-                          AND (
-                              blocker."canceled_by_user" = true
-                              OR blocker."cancel_reason" IS NULL
-                              OR blocker."cancel_reason" NOT IN (
-                                  ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
-                                  ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
-                              )
-                          )
-                      )
-                  )
+                  AND ${serviceRecordScheduleBlockerSql({
+                      status: Prisma.sql`blocker."status"`,
+                      cancelReason: Prisma.sql`blocker."cancel_reason"`,
+                      canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                  })}
             )
             ON CONFLICT ("dedupe_key") DO UPDATE SET
                 status = 'failed',

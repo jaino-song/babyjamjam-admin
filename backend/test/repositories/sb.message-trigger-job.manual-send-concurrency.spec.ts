@@ -1,8 +1,12 @@
 import { ConfigService } from "@nestjs/config";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
+import {
+    SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
+} from "domain/constants/service-record-link-message";
 import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
@@ -226,13 +230,58 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         return service;
     };
 
+    /**
+     * The real service with the real branch lock and repository, as
+     * `scheduleForServiceStart` runs in production; only the token service is
+     * faked, and `duringLinkPreparation` runs inside its `reuseActiveLink`, i.e.
+     * between the automatic claim and its promotion.
+     */
+    const automaticService = (duringLinkPreparation: () => Promise<void> = async () => undefined): ServiceRecordLinkService => {
+        const schedule = {
+            id: SCHEDULE, branchId: BRANCH, clientId: 20, replaced: false,
+            startDate: new Date(), endDate: new Date(Date.now() + 30 * 86_400_000),
+            primaryEmployee: { id: 30, name: "provider", phone: "01011112222" },
+            client: { id: 20, name: "client" },
+        };
+        const prisma = new Proxy(db, {
+            get(target, key) {
+                if (key === "employee_schedule") return { findUnique: async () => schedule };
+                const value = Reflect.get(target, key) as unknown;
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        });
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService,
+            {
+                reuseActiveLink: async () => {
+                    await duringLinkPreparation();
+                    return { linkToken: "same-link" };
+                },
+                revokeForSchedule: async () => undefined,
+                issueLink: async () => ({ linkToken: "reset-link" }),
+            } as never,
+            { get: (_key: string, fallback: string) => fallback } as unknown as ConfigService,
+            repository,
+            { findRetryableServiceRecordSmsByScheduleId: async () => [] } as never,
+            {} as never,
+            undefined,
+            undefined,
+            new MessageAutomationBranchLockService(db as never),
+            { getTriggerDispatchEnabled: async () => true } as never,
+        );
+        (service as unknown as { ensureSystemRule: () => Promise<void> }).ensureSystemRule = async () => undefined;
+        return service;
+    };
+
     beforeAll(async () => {
         db = new PrismaClient({ datasources: { db: { url: disposableDatabaseUrl(DATABASE_URL!) } } });
         repository = new SbMessageTriggerJobRepository(db as unknown as PrismaService);
         for (const sql of [
             "DROP TABLE IF EXISTS message_trigger_job, message_trigger_rule_branch_override, message_trigger_rule CASCADE",
             `CREATE TABLE message_trigger_rule (id text PRIMARY KEY, branch_id uuid, is_active boolean NOT NULL DEFAULT true, jobs_stale boolean NOT NULL DEFAULT false)`,
-            `CREATE TABLE message_trigger_rule_branch_override (branch_id uuid, rule_id text, is_active boolean, PRIMARY KEY (branch_id, rule_id))`,
+            `CREATE TABLE message_trigger_rule_branch_override (branch_id uuid, rule_id text, is_active boolean,
+                created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+                PRIMARY KEY (branch_id, rule_id))`,
             `CREATE TABLE message_trigger_job (
                 id text PRIMARY KEY DEFAULT gen_random_uuid()::text, branch_id uuid,
                 rule_id text NOT NULL REFERENCES message_trigger_rule(id) ON DELETE CASCADE ON UPDATE NO ACTION,
@@ -593,6 +642,136 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
 
             expect(result).toEqual({ ok: true, value: { kind: "lock_timeout" } });
             expect(await jobs()).toHaveLength(0);
+        });
+    });
+
+    describe("automatic promotion vs manual send", () => {
+        const leaseRow = async () => (await db.$queryRaw<Array<{
+            id: string; status: string; cancel_reason: string | null; next_attempt_at: Date | null; updated_at: Date;
+        }>>`
+            SELECT id, status, cancel_reason, next_attempt_at, updated_at FROM message_trigger_job
+            WHERE dedupe_key = ${`${RULE}:schedule:${SCHEDULE}:primary`}
+        `)[0];
+
+        /** Starts the automatic path and parks it holding its lease, between its claim and its promotion. */
+        const automaticRun = async () => {
+            const reached = defer();
+            const release = defer();
+            const service = automaticService(async () => {
+                reached.resolve();
+                await release.promise;
+            });
+            const run = settle(service.scheduleForServiceStart(SCHEDULE));
+            await Promise.race([reached.promise, run.then(() => { throw new Error("automatic run ended before link preparation"); })]);
+            return { run, release: () => release.resolve() };
+        };
+
+        it("control: automatic only, then a manual send, leaves exactly one live job", async () => {
+            expect(await automaticService().scheduleForServiceStart(SCHEDULE)).toBe(true);
+            expect(await liveJobs()).toHaveLength(1);
+
+            await linkService(repository).sendNow(SCHEDULE);
+
+            const live = await liveJobs();
+            expect(live).toHaveLength(1);
+            expect(live[0]!.status).toBe("pending");
+        });
+
+        it("a manual send the dispatcher claimed during link preparation is never joined by a second job", async () => {
+            const { run, release } = await automaticRun();
+            const leaseBefore = (await leaseRow())!.next_attempt_at!;
+            expect(await leaseRow()).toMatchObject({ status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+
+            const manual = await linkService(repository).sendNow(SCHEDULE);
+            const token = await repository.claimPendingWithRuleFence(manual.jobId, BRANCH);
+            expect(token).not.toBeNull();
+            expect(await authorizeDispatch(db, manual.jobId, token)).toEqual([{ id: manual.jobId }]);
+            release();
+            const outcome = await run;
+
+            expect(outcome).toEqual({ ok: true, value: false });
+            const live = await liveJobs();
+            expect(live).toEqual([expect.objectContaining({ id: manual.jobId, status: "dispatching" })]);
+            // The lease is released, not promoted: still the failed marker, retry pushed out.
+            const lease2 = (await leaseRow())!;
+            expect(lease2).toMatchObject({ status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+            expect(lease2.next_attempt_at!.getTime()).toBeGreaterThan(leaseBefore.getTime());
+            expect(lease2.next_attempt_at!.getTime()).toBeGreaterThan(Date.now() + 9 * 60_000);
+        });
+
+        it("a manual job that already went out (sent) before the promotion blocks it", async () => {
+            const { run, release } = await automaticRun();
+
+            const manual = await linkService(repository).sendNow(SCHEDULE);
+            await db.$executeRaw`UPDATE message_trigger_job SET status = 'sent', sent_at = now() WHERE id = ${manual.jobId}`;
+            release();
+            const outcome = await run;
+
+            expect(outcome).toEqual({ ok: true, value: false });
+            expect(await liveJobs()).toHaveLength(0);
+            expect(await statusOf(manual.jobId)).toBe("sent");
+            expect(await leaseRow()).toMatchObject({ status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+        });
+
+        it("a manual job still pending at promotion blocks it (the manual send wins, one live row)", async () => {
+            const { run, release } = await automaticRun();
+
+            const manual = await linkService(repository).sendNow(SCHEDULE);
+            release();
+            const outcome = await run;
+
+            expect(outcome).toEqual({ ok: true, value: false });
+            expect(await liveJobs()).toEqual([expect.objectContaining({ id: manual.jobId, status: "pending" })]);
+        });
+
+        it("a manual send arriving while the promotion holds the fence replaces the promoted job without deadlock", async () => {
+            // The lease an automatic claim would hold: a failed marker on the automatic dedupe key.
+            const dedupeKey = `${RULE}:schedule:${SCHEDULE}:primary`;
+            const [marker] = await db.$queryRaw<Array<{ id: string; claim_version: string }>>`
+                INSERT INTO message_trigger_job (branch_id, rule_id, status, scheduled_for, employee_schedule_id, client_id,
+                    recipient_type, recipient_phone, template_key, dedupe_key, cancel_reason, next_attempt_at, updated_at)
+                VALUES (${BRANCH}::uuid, ${RULE}, 'failed', now(), ${SCHEDULE}, 20, ${MessageTriggerRecipientType.PRIMARY_EMPLOYEE},
+                    '01011112222', ${MessageTriggerTemplateKey.SERVICE_RECORD_LINK}, ${dedupeKey},
+                    ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}, now() + interval '10 minutes', clock_timestamp())
+                RETURNING id, updated_at::text AS claim_version
+            `;
+            const automaticJob = MessageTriggerJobEntity.create({
+                branchId: BRANCH,
+                ruleId: RULE,
+                scheduledFor: new Date(),
+                clientId: 20,
+                employeeScheduleId: SCHEDULE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientPhone: "01011112222",
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey,
+                payload: { memberId: "employee:30", recipientName: "provider", recipientPhone: "01011112222", templateVariables: {} },
+            });
+
+            const promoted = defer();
+            const commit = defer();
+            const promotion = settle(db.$transaction(async (tx) => {
+                const job = await repository.promoteAutomaticSchedulingClaim(marker!.id, marker!.claim_version, automaticJob, tx);
+                promoted.resolve();
+                await commit.promise;
+                return job;
+            }));
+            await promoted.promise;
+
+            // Started while the promotion's locks are held; commits well inside the manual send's 1 s lock_timeout.
+            const manual = settle(repository.replacePendingJobsUnlessInFlight(manualJob("manual"), REASON));
+            await waitForLockWait("manual send behind the promotion");
+            await delay(300);
+            commit.resolve();
+            const [promotionResult, manualResult] = await Promise.all([promotion, manual]);
+
+            expect(promotionResult).toMatchObject({ ok: true, value: expect.objectContaining({ id: marker!.id, status: "pending" }) });
+            expect(manualResult).toMatchObject({ ok: true, value: { kind: "replaced", canceledJobIds: [marker!.id] } });
+            expect(await statusOf(marker!.id)).toBe("canceled");
+            const live = await liveJobs();
+            expect(live).toHaveLength(1);
+            expect(live[0]).toMatchObject({ status: "pending" });
+            expect(live[0]!.id).not.toBe(marker!.id);
         });
     });
 });
