@@ -60,6 +60,7 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
         findBranchIdByDocumentId: jest.fn(),
         claimCompletionStatus: jest.fn(),
         update: jest.fn(),
+        updateWithOutcome: jest.fn(),
         updateIfSourceNewer: jest.fn(),
         upsertUnassignedByDocumentId: jest.fn(),
     };
@@ -83,6 +84,12 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
             async (_branch: string, doc: EformsignDocEntity) => {
                 row = doc;
                 return doc;
+            },
+        );
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            async (_branch: string, doc: EformsignDocEntity) => {
+                row = doc;
+                return { document: doc, applied: true };
             },
         );
         eformsignDocRepository.updateIfSourceNewer.mockImplementation(
