@@ -1772,3 +1772,194 @@ describe("AdminServiceRecordEditService", () => {
         });
     });
 });
+
+describe("AdminServiceRecordEditService receipt facts follow the current contract", () => {
+    const POINTER_DOCUMENT_ID = "contract-document-1";
+    const CURRENT_DOCUMENT_ID = "contract-document-2";
+    const TOKEN_ID = "66666666-6666-4666-8666-666666666666";
+
+    function pinnedFactsSource(): ServiceRecordEditRevisionFactsSource {
+        return observedRevisionFactsSource();
+    }
+
+    /** The same observed contract, re-issued as the client's newer current document. */
+    function currentFactsDocument(): NonNullable<ServiceRecordEditRevisionFactsSource["document"]> {
+        const pinned = pinnedFactsSource().document!;
+        const detail = pinned.detailPayload as Record<string, unknown>;
+        return {
+            ...pinned,
+            documentId: CURRENT_DOCUMENT_ID,
+            mirrorGeneration: "mirror-generation-9",
+            detailPayload: { ...detail, id: CURRENT_DOCUMENT_ID },
+        };
+    }
+
+    function liveToken() {
+        return {
+            id: TOKEN_ID,
+            eformsignDocId: 77,
+            branchId: BRANCH_ID,
+            clientId: CLIENT_ID,
+            active: true,
+            revokedAt: null,
+        };
+    }
+
+    async function planWith(revisionFactsSource: ServiceRecordEditRevisionFactsSource) {
+        const source = previewSourceSnapshot();
+        source.documentScope = {
+            evidence: "observed",
+            serviceRecordSnapshot: { documentIds: [], snapshotVersion: null, chunks: [] },
+            currentRevision: { id: null, revisionNumber: null, formVersion: null },
+            form: { version: source.formVersion },
+            // client.eDocId still points at the OLD document...
+            contract: { currentDocumentId: POINTER_DOCUMENT_ID, stage: "in_progress" },
+            // ...while the receipt token was issued for the newer current contract.
+            receipt: {
+                evidence: "observed",
+                eformsignDocId: 77,
+                tokenIds: [TOKEN_ID],
+                sourceDocumentId: CURRENT_DOCUMENT_ID,
+            },
+        };
+        const harness = createHarness({ source });
+        const started = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {});
+        if (!started.draft) throw new Error("expected a draft");
+        const activeDraft = {
+            ...started.draft,
+            changes: { sessions: [{ sessionIndex: 3, serviceDate: "2026-09-04" }] },
+        };
+        harness.repository.findDraftById.mockResolvedValue(activeDraft);
+        harness.repository.loadSource.mockResolvedValue(source);
+        const preview = await harness.service.previewDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+        });
+        harness.repository.confirmDraft.mockResolvedValue({
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 8,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 1,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        });
+        await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, {
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: preview.previewId,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        });
+        const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
+            serviceRecordTemplateIds?: string[];
+            prepare: (snapshot: {
+                draft: typeof activeDraft;
+                source: ServiceRecordEditSource;
+                revisionFactsSource?: ServiceRecordEditRevisionFactsSource;
+            }) => unknown;
+        };
+        const plan = input.prepare({ draft: activeDraft, source, revisionFactsSource }) as {
+            contractOperation: {
+                status: string;
+                sourceDocumentId: string | null;
+                immutableInput: Record<string, unknown>;
+            } | null;
+            receiptOperation: {
+                status: string;
+                sourceDocumentId: string | null;
+                lastErrorCode: string | null;
+                immutableInput: Record<string, unknown>;
+            } | null;
+        };
+        return { plan, input };
+    }
+
+    it("rebuilds the receipt from the current contract while the eDocId pointer lags", async () => {
+        const { plan } = await planWith({
+            document: pinnedFactsSource().document,
+            receiptTokens: [liveToken()],
+            receiptDocument: currentFactsDocument(),
+        });
+
+        expect(plan.receiptOperation?.status).toBe("pending");
+        expect(plan.receiptOperation?.sourceDocumentId).toBe(CURRENT_DOCUMENT_ID);
+        expect(plan.receiptOperation?.immutableInput).toEqual(expect.objectContaining({
+            kind: "receipt_refresh",
+            tokens: { eformsignDocId: 77, tokenIds: [TOKEN_ID] },
+            source: expect.objectContaining({
+                documentId: CURRENT_DOCUMENT_ID,
+                mirrorGeneration: "mirror-generation-9",
+            }),
+        }));
+    });
+
+    it("leaves contract-revision targeting on the eDocId-pinned document", async () => {
+        const { plan } = await planWith({
+            document: pinnedFactsSource().document,
+            receiptTokens: [liveToken()],
+            receiptDocument: currentFactsDocument(),
+        });
+
+        expect(plan.contractOperation?.status).toBe("pending");
+        expect(plan.contractOperation?.sourceDocumentId).toBe(POINTER_DOCUMENT_ID);
+        expect(plan.contractOperation?.immutableInput).toEqual(expect.objectContaining({
+            kind: "contract_period",
+            original: expect.objectContaining({
+                documentId: POINTER_DOCUMENT_ID,
+                mirrorGeneration: "mirror-generation-7",
+            }),
+        }));
+        // Neither the facts the contract write is built from nor its pinned workflow carry the
+        // receipt's document (the embedded revision payload legitimately records the scope).
+        expect(JSON.stringify(plan.contractOperation?.immutableInput?.["original"])).not.toContain(CURRENT_DOCUMENT_ID);
+        expect(JSON.stringify(plan.contractOperation?.immutableInput?.["target"])).not.toContain(CURRENT_DOCUMENT_ID);
+    });
+
+    it("fails the receipt closed, not onto the pointer's document, when the current contract is unresolved", async () => {
+        const { plan } = await planWith({
+            document: pinnedFactsSource().document,
+            receiptTokens: [liveToken()],
+            receiptDocument: null,
+        });
+
+        expect(plan.receiptOperation?.status).toBe("manual_review");
+        expect(plan.receiptOperation?.lastErrorCode).toBe("SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE");
+        expect(plan.receiptOperation?.sourceDocumentId).not.toBe(POINTER_DOCUMENT_ID);
+        // The contract operation is not affected by the receipt failing closed.
+        expect(plan.contractOperation?.status).toBe("pending");
+        expect(plan.contractOperation?.sourceDocumentId).toBe(POINTER_DOCUMENT_ID);
+    });
+
+    it("keeps the previous behaviour when the receipt document is the pointer's document", async () => {
+        const pinned = pinnedFactsSource().document!;
+        const sameDocument = await planWith({
+            document: pinned,
+            receiptTokens: [liveToken()],
+            receiptDocument: pinned,
+        });
+        const omitted = await planWith({
+            document: pinned,
+            receiptTokens: [liveToken()],
+        });
+
+        for (const { plan } of [sameDocument, omitted]) {
+            expect(plan.receiptOperation?.status).toBe("pending");
+            expect(plan.receiptOperation?.immutableInput).toEqual(expect.objectContaining({
+                source: expect.objectContaining({ documentId: POINTER_DOCUMENT_ID }),
+            }));
+        }
+        expect(sameDocument.plan.receiptOperation?.immutableInput)
+            .toEqual(omitted.plan.receiptOperation?.immutableInput);
+    });
+
+    it("hands the configured service-record template ids to the repository for the current-contract rule", async () => {
+        const { input } = await planWith({
+            document: pinnedFactsSource().document,
+            receiptTokens: [liveToken()],
+            receiptDocument: currentFactsDocument(),
+        });
+
+        expect(Array.isArray(input.serviceRecordTemplateIds)).toBe(true);
+    });
+});
