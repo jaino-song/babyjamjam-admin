@@ -2,7 +2,7 @@
 import { normalizeApiError } from "@babyjamjam/shared";
 
 
-import { createContext, useContext, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
     getServiceRecordStatusMeta,
     getSignatureStatusMeta,
@@ -302,12 +302,17 @@ function LinkCard({
         ? assignment.link.token.state === "expired" || isPastDate(expiresAt)
         : false;
     const isPending = isSending || sendLinkMutation.isPending;
-    // A link in "sending" is already being delivered by the scheduler; a manual send
-    // would queue a second SMS. "scheduled" stays sendable on purpose: a manual send
-    // cancels the pending job and queues its replacement ("send now").
+    // A link in "sending" is already being delivered by the scheduler, so a manual
+    // send is blocked to avoid a second SMS. "scheduled" stays sendable on purpose:
+    // it is the manual "send now" path.
     const isLinkSending = assignment.link.status === "sending";
+    // The send handlers can run from a render older than the latest refresh, so they
+    // read the newest status through this ref instead of the captured prop.
+    const latestLinkStatusRef = useRef(assignment.link.status);
+    latestLinkStatusRef.current = assignment.link.status;
 
-    const sendLink = async () => {
+    const sendLink = async (): Promise<boolean> => {
+        if (latestLinkStatusRef.current === "sending") return false;
         setIsSending(true);
         try {
             const result = await sendLinkMutation.mutateAsync({
@@ -341,6 +346,7 @@ function LinkCard({
         } finally {
             setIsSending(false);
         }
+        return true;
     };
 
     const handleSendClick = () => {
@@ -354,8 +360,8 @@ function LinkCard({
     };
 
     const handleConfirmResend = async () => {
-        await sendLink();
-        setResendModalOpen(false);
+        const attempted = await sendLink();
+        if (attempted) setResendModalOpen(false);
     };
 
     return (
@@ -447,10 +453,13 @@ function LinkCard({
                 }}
                 data-component={`${dataComponent}_resend-approval`}
                 title="제공기록지 메시지를 재전송하시겠습니까?"
-                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
+                description={isLinkSending
+                    ? "발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요."
+                    : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="메시지 재전송"
                 pendingLabel="메시지 재전송 중..."
+                approvalDisabled={isLinkSending}
                 isPending={isPending}
                 onApprove={handleConfirmResend}
             />

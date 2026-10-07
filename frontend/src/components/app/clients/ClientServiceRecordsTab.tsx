@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
     getServiceRecordStatusMeta,
     getSignatureStatusMeta,
@@ -170,7 +170,17 @@ function ClientServiceRecordsTabContent({
     const activeAssignment = assignments.find((assignment) => !assignment.replaced)
         ?? assignments[0]
         ?? null;
-    const [pendingResendAssignment, setPendingResendAssignment] = useState<ServiceRecordAssignment | null>(null);
+    // The confirmation remembers only which assignment it was opened for; the
+    // assignment itself is always read from the latest overview, so a refresh that
+    // moves the link to "sending" while the dialog is open is seen by the approve
+    // button and the send handler.
+    const [pendingResendScheduleId, setPendingResendScheduleId] = useState<number | null>(null);
+    const pendingResendAssignment = pendingResendScheduleId === null
+        ? null
+        : assignments.find((assignment) => assignment.scheduleId === pendingResendScheduleId) ?? null;
+    const isPendingResendSending = pendingResendAssignment?.link.status === "sending";
+    const latestAssignmentsRef = useRef(assignments);
+    latestAssignmentsRef.current = assignments;
     const [sendingSchedule, setSendingSchedule] = useState<{
         scheduleId: number;
         isResend: boolean;
@@ -182,6 +192,12 @@ function ClientServiceRecordsTabContent({
     });
 
     const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
+        // The caller may hold an assignment captured before the latest refresh, so the
+        // send itself checks the newest status instead of trusting the click handler.
+        const latest = latestAssignmentsRef.current.find(
+            (candidate) => candidate.scheduleId === assignment.scheduleId,
+        );
+        if (!latest || latest.link.status === "sending") return false;
         setSendingSchedule(getSendingState(assignment));
         try {
             const result = await sendLinkMutation.mutateAsync({
@@ -225,7 +241,7 @@ function ClientServiceRecordsTabContent({
         if (assignment.link.status === "sending") return;
         const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
         if (isResend) {
-            setPendingResendAssignment(assignment);
+            setPendingResendScheduleId(assignment.scheduleId);
             return;
         }
 
@@ -233,11 +249,11 @@ function ClientServiceRecordsTabContent({
     };
 
     const handleResendConfirm = async () => {
-        if (!pendingResendAssignment) return;
+        if (!pendingResendAssignment || isPendingResendSending) return;
 
         const sent = await sendLink(pendingResendAssignment);
         if (sent) {
-            setPendingResendAssignment(null);
+            setPendingResendScheduleId(null);
         }
     };
 
@@ -415,14 +431,17 @@ function ClientServiceRecordsTabContent({
             <TwoButtonModal
                 open={pendingResendAssignment !== null}
                 onOpenChange={(open) => {
-                    if (!open) setPendingResendAssignment(null);
+                    if (!open) setPendingResendScheduleId(null);
                 }}
                 dataComponent={`${dataComponent}_resend-approval`}
                 title="제공기록지 메시지를 재전송하시겠습니까?"
-                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
+                description={isPendingResendSending
+                    ? SEND_LINK_BLOCKED_HINT
+                    : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="메시지 재전송"
                 pendingLabel="메시지 재전송 중..."
+                approvalDisabled={isPendingResendSending}
                 isPending={sendLinkMutation.isPending}
                 onApprove={() => void handleResendConfirm()}
             />
@@ -952,9 +971,8 @@ function LinkStatusCard({
     const isResend = link.status === "sent" || link.status === "failed";
     const isLinkSending = link.status === "sending";
     const usesResendLayout = isResend || isSendingResend;
-    // "scheduled" stays sendable on purpose: a manual send cancels the pending job
-    // and queues its replacement, so it is "send now", never a second delivery.
-    // Only an in-flight job (sending) cannot be cancelled and must block the button.
+    // "scheduled" stays sendable on purpose: it is the manual "send now" path.
+    // "sending" (an in-flight job) blocks the button so staff cannot double-send.
     const expiryDate = new Date(`${assignment.endDate?.slice(0, 10)}T00:00:00.000Z`);
     expiryDate.setUTCDate(expiryDate.getUTCDate() + 7);
     const expiresAt = link.token?.expiresAt ?? (Number.isNaN(expiryDate.getTime())

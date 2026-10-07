@@ -23,6 +23,21 @@ jest.mock("@/features/service-records/hooks/use-service-records", () => ({
     }),
 }));
 
+// Records every render's modal props so a test can call a handler captured from an
+// older render, the way a click handler that outlived a refresh would.
+const mockResendModalRenders: Array<{ onApprove: () => void }> = [];
+jest.mock("@/components/app/ui/TwoButtonModal", () => {
+    const actual = jest.requireActual("@/components/app/ui/TwoButtonModal");
+    const React = jest.requireActual("react");
+    return {
+        ...actual,
+        TwoButtonModal: (props: { onApprove: () => void }) => {
+            mockResendModalRenders.push(props);
+            return React.createElement(actual.TwoButtonModal, props);
+        },
+    };
+});
+
 jest.mock("@/hooks/use-toast", () => ({
     useToast: () => ({ toast }),
 }));
@@ -119,6 +134,7 @@ describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
         toast.mockReset();
+        mockResendModalRenders.length = 0;
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },
             isPending: false,
@@ -588,7 +604,7 @@ describe("ClientServiceRecordsTab", () => {
         }
     });
 
-    it("keeps the manual send enabled for a scheduled link (it replaces the pending job)", () => {
+    it("keeps the manual send enabled for a scheduled link", () => {
         render(
             <ClientServiceRecordsTab data-component={TEST_COMPONENT}
                 overview={{ assignments: [createAssignment(1, "scheduled")] }}
@@ -615,6 +631,81 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("발송 중")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "메시지 재전송" })).not.toBeInTheDocument();
+    });
+
+    describe("resend confirmation while the link starts sending", () => {
+        const baseProps = {
+            "data-component": TEST_COMPONENT,
+            clientId: 100,
+            isLoading: false,
+            isError: false,
+        };
+        const RESEND_DIALOG = "제공기록지 메시지를 재전송하시겠습니까?";
+
+        it("disables the approve button with the sending reason and never sends", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            expect(screen.getByRole("dialog", { name: RESEND_DIALOG })).toBeInTheDocument();
+
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+
+            const dialog = screen.getByRole("dialog", { name: RESEND_DIALOG });
+            const approve = within(dialog).getByRole("button", { name: "메시지 재전송" });
+            expect(approve).toBeDisabled();
+            expect(within(dialog).getByText(/발송 처리 중이에요/)).toBeInTheDocument();
+            fireEvent.click(approve);
+            expect(mutateAsync).not.toHaveBeenCalled();
+        });
+
+        it("does not send from an approve handler captured before the refresh", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "failed")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            const staleApprove = mockResendModalRenders[mockResendModalRenders.length - 1].onApprove;
+
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+            await act(async () => {
+                staleApprove();
+            });
+
+            expect(mutateAsync).not.toHaveBeenCalled();
+        });
+
+        it("sends again once the link is no longer sending", async () => {
+            mutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = render(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+            fireEvent.click(screen.getByRole("button", { name: "메시지 재전송" }));
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sending")] }} />,
+            );
+            rerender(
+                <ClientServiceRecordsTab {...baseProps}
+                    overview={{ assignments: [createAssignment(1, "sent")] }} />,
+            );
+
+            const dialog = screen.getByRole("dialog", { name: RESEND_DIALOG });
+            fireEvent.click(within(dialog).getByRole("button", { name: "메시지 재전송" }));
+
+            await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+            expect(mutateAsync).toHaveBeenCalledWith({ scheduleId: 1, clientId: 100 });
+        });
     });
 
     it("presends the manual-send layout while sending, then switches to resend after refresh", async () => {

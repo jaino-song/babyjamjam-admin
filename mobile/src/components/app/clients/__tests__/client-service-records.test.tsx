@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { buildCalendarFromHolidayYears } from "@babyjamjam/shared/utils/holiday-calendar";
@@ -31,6 +32,21 @@ jest.mock("@/hooks/useServiceRecords", () => ({
         mutateAsync: mockMutateAsync,
     }),
 }));
+
+// Records every render's modal props so a test can call a handler captured from an
+// older render, the way a click handler that outlived a refresh would.
+const mockResendModalRenders: Array<{ onApprove: () => void | Promise<void> }> = [];
+jest.mock("@/components/app/ui/ApprovalTwoButtonModal", () => {
+    const actual = jest.requireActual("@/components/app/ui/ApprovalTwoButtonModal");
+    const React = jest.requireActual("react");
+    return {
+        ...actual,
+        ApprovalTwoButtonModal: (props: { onApprove: () => void | Promise<void> }) => {
+            mockResendModalRenders.push(props);
+            return React.createElement(actual.ApprovalTwoButtonModal, props);
+        },
+    };
+});
 
 jest.mock("@/hooks/use-toast", () => ({
     toast: jest.fn(),
@@ -130,6 +146,7 @@ function renderComponent(
 describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockResendModalRenders.length = 0;
         mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
         mockMutateAsync.mockResolvedValue(undefined);
         mockUseGetAuthUser.mockReturnValue({
@@ -353,6 +370,55 @@ describe("ClientServiceRecords", () => {
         });
     });
 
+    describe("resend confirmation while the link starts sending", () => {
+        const RESEND_DIALOG = "제공기록지 메시지를 재전송하시겠습니까?";
+        const rerenderWith = (
+            rerender: (ui: ReactElement) => void,
+            status: ServiceRecordAssignment["link"]["status"],
+        ) => rerender(
+            <ClientServiceRecords
+                data-component={TEST_COMPONENT}
+                client={client}
+                activeTab="serviceRecords"
+                overview={{ assignments: [createAssignment(1, status)] }}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        it("disables the approve button with the sending reason and never sends", async () => {
+            const user = userEvent.setup();
+            mockMutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = renderComponent({ assignments: [createAssignment(1, "sent")] });
+            await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+            expect(screen.getByRole("dialog", { name: RESEND_DIALOG })).toBeInTheDocument();
+
+            rerenderWith(rerender, "sending");
+
+            const dialog = screen.getByRole("dialog", { name: RESEND_DIALOG });
+            const approve = within(dialog).getByRole("button", { name: "메시지 재전송" });
+            expect(approve).toBeDisabled();
+            expect(within(dialog).getByText(/발송 처리 중이에요/)).toBeInTheDocument();
+            await user.click(approve);
+            expect(mockMutateAsync).not.toHaveBeenCalled();
+        });
+
+        it("does not send from an approve handler captured before the refresh", async () => {
+            const user = userEvent.setup();
+            mockMutateAsync.mockResolvedValue({ status: "sent", ok: true });
+            const { rerender } = renderComponent({ assignments: [createAssignment(1, "failed")] });
+            await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+            const staleApprove = mockResendModalRenders[mockResendModalRenders.length - 1].onApprove;
+
+            rerenderWith(rerender, "sending");
+            await act(async () => {
+                await staleApprove();
+            });
+
+            expect(mockMutateAsync).not.toHaveBeenCalled();
+        });
+    });
+
     describe("send-now result", () => {
         const sendFirstLink = async (result: { ok: boolean; status: string }) => {
             const user = userEvent.setup();
@@ -426,7 +492,7 @@ describe("ClientServiceRecords", () => {
         expect(mockMutateAsync).not.toHaveBeenCalled();
     });
 
-    it("keeps send-now available for a scheduled link (the manual send replaces the pending job)", () => {
+    it("keeps send-now available for a scheduled link", () => {
         renderComponent({ assignments: [createAssignment(1, "scheduled")] });
 
         expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
