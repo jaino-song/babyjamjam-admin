@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     removeById,
@@ -7,7 +8,7 @@ import {
     snapshotAndTransformQueries,
     type QuerySnapshot,
 } from "@/lib/query/optimistic-list-cache";
-import { messageTriggersApi } from "../api/message-triggers.api";
+import { messageTriggersApi, type ClientMessageHistoryPageTransport } from "../api/message-triggers.api";
 import { messageTriggerKeys } from "./keys";
 import type {
     MessageLogRecord,
@@ -157,6 +158,81 @@ export function useClientUpcomingMessageTriggerJobs(
                     .map((job) => [job.id, job] as const),
             ).values(),
         );
+
+    return {
+        ...query,
+        items,
+    };
+}
+
+function normalizeClientHistoryPayload(payload: unknown): ClientMessageHistoryPageTransport {
+    const candidate = payload !== null && typeof payload === "object" && "data" in payload
+        ? (payload as { data?: unknown }).data
+        : payload;
+    if (!candidate || typeof candidate !== "object") {
+        return { items: [], page: { snapshotAt: "", nextCursor: null, hasMore: false } };
+    }
+
+    const value = candidate as { items?: unknown; page?: { snapshotAt?: unknown; nextCursor?: unknown } };
+    const nextCursor = typeof value.page?.nextCursor === "string" && value.page.nextCursor.length > 0
+        ? value.page.nextCursor
+        : null;
+    return {
+        items: Array.isArray(value.items) ? value.items as MessageLogRecord[] : [],
+        page: {
+            snapshotAt: typeof value.page?.snapshotAt === "string" ? value.page.snapshotAt : "",
+            nextCursor,
+            hasMore: nextCursor !== null,
+        },
+    };
+}
+
+/**
+ * One client's message history, read from the client-scoped endpoint instead of
+ * the branch-wide `/message-logs` window (which only holds the branch's newest
+ * rows, so an older client history used to read as "no messages").
+ *
+ * `hasNextPage` is true while the server still has older records; callers must
+ * say so rather than present the loaded pages as the complete history.
+ */
+export function useClientMessageHistory(
+    clientId: number | null,
+    options: UseMessageHistoryOptions & { limit?: number } = {},
+) {
+    const limit = options.limit ?? 50;
+    const enabled = (options.enabled ?? true)
+        && Number.isSafeInteger(clientId)
+        && (clientId ?? 0) > 0;
+    const query = useInfiniteQuery<ClientMessageHistoryPageTransport, Error>({
+        queryKey: messageTriggerKeys.clientHistory(clientId ?? 0),
+        initialPageParam: null,
+        queryFn: ({ pageParam }) =>
+            messageTriggersApi
+                .listClientHistory(clientId as number, {
+                    limit,
+                    cursor: typeof pageParam === "string" ? pageParam : null,
+                })
+                .then((response) => normalizeClientHistoryPayload(response.data)),
+        getNextPageParam: (lastPage) => lastPage.page.nextCursor ?? undefined,
+        enabled,
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
+        refetchInterval: options.refetchInterval ?? 5_000,
+    });
+
+    const { isError, data } = query;
+    const items = useMemo(
+        () => isError
+            ? []
+            : Array.from(
+                new Map(
+                    (data?.pages.flatMap((page) => page.items) ?? [])
+                        .map((record) => [record.id, record] as const),
+                ).values(),
+            ),
+        [isError, data],
+    );
 
     return {
         ...query,
