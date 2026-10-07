@@ -1,6 +1,7 @@
 import { ConfigService } from "@nestjs/config";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerRecipientType,
@@ -164,6 +165,39 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         && ["pending", "processing", "dispatching"].includes(row.status)
     ));
     const statusOf = async (id: string) => (await jobs()).find((row) => row.id === id)?.status;
+    const rowOf = async (id: string) => (await db.$queryRaw<Array<{
+        id: string; status: string; claim_token: string | null; cancel_reason: string | null; canceled_at: Date | null;
+    }>>`
+        SELECT id, status, claim_token, cancel_reason, canceled_at FROM message_trigger_job WHERE id = ${id}
+    `)[0]!;
+
+    /** Opens a transaction that runs `work` and then stays open (holding its locks) until released. */
+    const openHolds: Array<{ release: () => void; done: Promise<unknown> }> = [];
+    const holdOpen = async (work: (tx: Prisma.TransactionClient) => Promise<void>) => {
+        const locked = defer();
+        const release = defer();
+        const done = settle(db.$transaction(async (tx) => {
+            await work(tx);
+            locked.resolve();
+            await release.promise;
+        }, { timeout: 120_000, maxWait: 10_000 }));
+        const hold = { release: () => release.resolve(), done };
+        // A test that fails before releasing must not leave its locks to block the next test.
+        openHolds.push(hold);
+        await Promise.race([
+            locked.promise,
+            done.then((result) => { throw new Error(`holding transaction failed: ${JSON.stringify(result)}`); }),
+        ]);
+        return hold;
+    };
+
+    /** The dispatcher's pre-provider authorization CAS (message-trigger.service.ts), verbatim. */
+    const authorizeDispatch = (client: Prisma.TransactionClient | PrismaClient, id: string, token: string | null) => client.$queryRaw<Array<{ id: string }>>`
+        UPDATE message_trigger_job
+        SET status = 'dispatching', updated_at = date_trunc('milliseconds', clock_timestamp())
+        WHERE id = ${id} AND status = 'processing' AND claim_token = ${token}
+        RETURNING id
+    `;
 
     const linkService = (jobRepository: SbMessageTriggerJobRepository): ServiceRecordLinkService => {
         const prisma = {
@@ -178,7 +212,11 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         };
         const service = new ServiceRecordLinkService(
             prisma as unknown as PrismaService,
-            { reuseActiveLink: async () => ({ linkToken: "same-link" }) } as never,
+            {
+                reuseActiveLink: async () => ({ linkToken: "same-link" }),
+                revokeForSchedule: async () => undefined,
+                issueLink: async () => ({ linkToken: "reset-link" }),
+            } as never,
             { get: (_key: string, fallback: string) => fallback } as unknown as ConfigService,
             jobRepository,
             { findRetryableServiceRecordSmsByScheduleId: async () => [] } as never,
@@ -211,6 +249,13 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
 
     afterAll(async () => {
         await db?.$disconnect();
+    });
+
+    afterEach(async () => {
+        for (const hold of openHolds.splice(0)) {
+            hold.release();
+            await hold.done;
+        }
     });
 
     beforeEach(async () => {
@@ -367,6 +412,187 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(claimResult).toEqual({ ok: true, value: null });
             expect(await statusOf(original)).toBe("canceled");
             expect(await liveJobs()).toHaveLength(1);
+        });
+    });
+
+    describe("cancel by revoke / reset / automatic reschedule vs the dispatcher", () => {
+        const CANCEL_REASON = "Service record access revoked";
+
+        it("cancels pending and processing jobs atomically and reports dispatching ones untouched", async () => {
+            const pending = await seed("pending", { key: "p" });
+            const processing = await seed("processing", { key: "q" });
+            const dispatching = await seed("dispatching", { key: "r" });
+            const otherSchedule = await seed("pending", { scheduleId: OTHER_SCHEDULE });
+            const otherRule = await seed("pending", { ruleId: OTHER_RULE });
+
+            const result = await repository.cancelPendingByRuleAndEmployeeSchedule(RULE, SCHEDULE, CANCEL_REASON);
+
+            expect([...result.canceledJobIds].sort()).toEqual([pending, processing].sort());
+            expect(result.inFlightJobIds).toEqual([dispatching]);
+            for (const id of [pending, processing]) {
+                expect(await rowOf(id)).toMatchObject({ status: "canceled", claim_token: null, cancel_reason: CANCEL_REASON });
+                expect((await rowOf(id)).canceled_at).toBeInstanceOf(Date);
+            }
+            expect(await rowOf(dispatching)).toMatchObject({ status: "dispatching", claim_token: "claim-dispatching", cancel_reason: null });
+            expect(await statusOf(otherSchedule)).toBe("pending");
+            expect(await statusOf(otherRule)).toBe("pending");
+        });
+
+        it("claim first: the cancel waits for the claim, cancels the processing job and the dispatcher authorization loses", async () => {
+            const original = await seed("pending");
+            const claimed = defer();
+            const releaseClaim = defer();
+            let token: string | null = null;
+            const claim = settle(db.$transaction(async (tx) => {
+                token = await repository.claimPendingWithRuleFence(original, BRANCH, tx);
+                claimed.resolve();
+                await releaseClaim.promise;
+            }));
+            await claimed.promise;
+
+            const cancel = settle(repository.cancelPendingByRuleAndEmployeeSchedule(RULE, SCHEDULE, CANCEL_REASON));
+            await waitForLockWait("cancel behind claim");
+            releaseClaim.resolve();
+            const [claimResult, cancelResult] = await Promise.all([claim, cancel]);
+
+            expect(claimResult).toMatchObject({ ok: true });
+            expect(token).not.toBeNull();
+            expect(cancelResult).toEqual({ ok: true, value: { canceledJobIds: [original], inFlightJobIds: [] } });
+            expect(await rowOf(original)).toMatchObject({ status: "canceled", claim_token: null });
+            expect(await authorizeDispatch(db, original, token)).toEqual([]);
+            expect(await statusOf(original)).toBe("canceled");
+        });
+
+        it("cancel first: the dispatcher claim finds a canceled job and claims nothing", async () => {
+            const original = await seed("pending");
+
+            await repository.cancelPendingByRuleAndEmployeeSchedule(RULE, SCHEDULE, CANCEL_REASON);
+
+            expect(await repository.claimPendingWithRuleFence(original, BRANCH)).toBeNull();
+            expect(await statusOf(original)).toBe("canceled");
+        });
+
+        it("authorization first: a cancel arriving behind the processing->dispatching CAS leaves the dispatching job and reports it", async () => {
+            const original = await seed("processing");
+            const hold = await holdOpen(async (tx) => {
+                expect(await authorizeDispatch(tx, original, "claim-processing")).toEqual([{ id: original }]);
+            });
+
+            const cancel = settle(repository.cancelPendingByRuleAndEmployeeSchedule(RULE, SCHEDULE, CANCEL_REASON));
+            await waitForLockWait("cancel behind authorization");
+            hold.release();
+            const [holdResult, cancelResult] = await Promise.all([hold.done, cancel]);
+
+            expect(holdResult).toMatchObject({ ok: true });
+            expect(cancelResult).toEqual({ ok: true, value: { canceledJobIds: [], inFlightJobIds: [original] } });
+            expect(await rowOf(original)).toMatchObject({ status: "dispatching", claim_token: "claim-processing", cancel_reason: null });
+        });
+
+        it("a pending job claimed AND authorized while the cancel waits ends dispatching, never canceled", async () => {
+            const original = await seed("pending");
+            const hold = await holdOpen(async (tx) => {
+                const token = await repository.claimPendingWithRuleFence(original, BRANCH, tx);
+                expect(await authorizeDispatch(tx, original, token)).toEqual([{ id: original }]);
+            });
+
+            const cancel = settle(repository.cancelPendingByRuleAndEmployeeSchedule(RULE, SCHEDULE, CANCEL_REASON));
+            await waitForLockWait("cancel behind claim + authorization");
+            hold.release();
+            const [, cancelResult] = await Promise.all([hold.done, cancel]);
+
+            expect(cancelResult).toEqual({ ok: true, value: { canceledJobIds: [], inFlightJobIds: [original] } });
+            expect((await rowOf(original)).status).toBe("dispatching");
+        });
+
+        it.each([
+            ["revoke", (service: ServiceRecordLinkService) => service.revoke(SCHEDULE)],
+            ["reset", (service: ServiceRecordLinkService) => service.resetLink(SCHEDULE)],
+        ])("%s never overwrites a job the dispatcher authorized meanwhile, and does not throw", async (label, run) => {
+            const original = await seed("processing");
+            const hold = await holdOpen(async (tx) => {
+                expect(await authorizeDispatch(tx, original, "claim-processing")).toEqual([{ id: original }]);
+            });
+
+            const outcome = settle(run(linkService(repository)).then(() => undefined));
+            await waitForLockWait(`${label} behind authorization`);
+            hold.release();
+            const [, result] = await Promise.all([hold.done, outcome]);
+
+            expect(result).toEqual({ ok: true, value: undefined });
+            expect(await rowOf(original)).toMatchObject({ status: "dispatching", cancel_reason: null });
+        });
+
+        it("revoke still cancels what has not been dispatched", async () => {
+            const pending = await seed("pending", { key: "p" });
+            const processing = await seed("processing", { key: "q" });
+
+            await linkService(repository).revoke(SCHEDULE);
+
+            expect(await statusOf(pending)).toBe("canceled");
+            expect(await rowOf(processing)).toMatchObject({ status: "canceled", claim_token: null });
+        });
+    });
+
+    describe("manual send behind a long lock answers 409, not 500", () => {
+        const lockRule = async (tx: Prisma.TransactionClient) => {
+            await tx.$queryRaw`SELECT id FROM message_trigger_rule WHERE id = ${RULE} FOR UPDATE`;
+        };
+
+        it("a lock timeout reaches the caller as P2010 with SQLSTATE 55P03 in meta.code", async () => {
+            const hold = await holdOpen(lockRule);
+            let thrown: unknown;
+            try {
+                await db.$transaction(async (tx) => {
+                    await tx.$executeRaw(Prisma.sql`SET LOCAL lock_timeout = '300ms'`);
+                    await lockRule(tx);
+                });
+            } catch (error) {
+                thrown = error;
+            }
+            hold.release();
+            await hold.done;
+
+            expect(thrown).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+            expect(thrown).toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+        });
+
+        it.each([
+            ["the rule row", lockRule],
+            ["a live job row of the schedule", async (tx: Prisma.TransactionClient) => {
+                await tx.$queryRaw`SELECT id FROM message_trigger_job WHERE rule_id = ${RULE} AND employee_schedule_id = ${SCHEDULE} FOR UPDATE`;
+            }],
+            ["the schedule's advisory replace lock", async (tx: Prisma.TransactionClient) => {
+                await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtextextended(${`message-trigger-job-replace:${RULE}:${SCHEDULE}`}, 0))`);
+            }],
+        ])("sendNow behind %s held past lock_timeout answers 409 REQUEST_CONFLICT and writes nothing", async (_label, lock) => {
+            const original = await seed("pending");
+            const hold = await holdOpen(lock);
+
+            const started = Date.now();
+            const failure = await linkService(repository).sendNow(SCHEDULE).then(() => null, (error: unknown) => error);
+            const elapsed = Date.now() - started;
+            hold.release();
+            await hold.done;
+
+            expect(failure).toMatchObject({ status: 409 });
+            expect((failure as { getResponse(): unknown }).getResponse()).toEqual(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            // Answered by lock_timeout, long before the 5 s interactive-transaction default.
+            expect(elapsed).toBeLessThan(4000);
+            expect(await jobs()).toHaveLength(1);
+            expect(await statusOf(original)).toBe("pending");
+
+            // Once the lock is gone the same send goes through.
+            expect((await repository.replacePendingJobsUnlessInFlight(manualJob("retry"), REASON)).kind).toBe("replaced");
+        });
+
+        it("the repository returns lock_timeout instead of throwing when the rule lock outlasts lock_timeout", async () => {
+            const hold = await holdOpen(lockRule);
+            const result = await settle(repository.replacePendingJobsUnlessInFlight(manualJob("a"), REASON));
+            hold.release();
+            await hold.done;
+
+            expect(result).toEqual({ ok: true, value: { kind: "lock_timeout" } });
+            expect(await jobs()).toHaveLength(0);
         });
     });
 });

@@ -288,15 +288,24 @@ export class ServiceRecordLinkService {
         }
     }
 
-    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<void> {
-        const jobs = await this.jobRepository.findPendingByRuleIdsAndEmployeeScheduleId(
-            [SERVICE_RECORD_LINK_RULE_ID],
+    /**
+     * Cancel the schedule's pending/processing link jobs in one atomic
+     * repository statement. Returns the ids of jobs the dispatcher already
+     * moved to `dispatching`: those are left untouched (the SMS may be on its
+     * way) and each caller decides what that means. Never throws on them.
+     */
+    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<string[]> {
+        const { inFlightJobIds } = await this.jobRepository.cancelPendingByRuleAndEmployeeSchedule(
+            SERVICE_RECORD_LINK_RULE_ID,
             scheduleId,
+            reason,
         );
-        for (const job of jobs) {
-            job.cancel(reason);
-            await this.jobRepository.update(job);
+        if (inFlightJobIds.length > 0) {
+            this.logger.warn(
+                `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
+            );
         }
+        return inFlightJobIds;
     }
 
     private async supersedeRetryableServiceRecordSmsLogs(scheduleId: number, reason: string): Promise<void> {
@@ -404,10 +413,20 @@ export class ServiceRecordLinkService {
             // when the dispatcher already claimed a job. Only the automatic
             // path (guarded by its own scheduling claim) cancels up front.
             if (!options.isManualSend) {
-                await this.cancelPendingServiceRecordJobs(
+                const inFlightJobIds = await this.cancelPendingServiceRecordJobs(
                     scheduleId,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                 );
+                if (inFlightJobIds.length > 0) {
+                    // A send is already on its way: promoting a replacement would
+                    // queue a second one. The claim is released by the finally.
+                    return {
+                        scheduledFor,
+                        employeeId: employee.id,
+                        jobEnqueued: false,
+                        jobId: null,
+                    };
+                }
                 await this.supersedeRetryableServiceRecordSmsLogs(
                     scheduleId,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -530,9 +549,11 @@ export class ServiceRecordLinkService {
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                 );
-                if (replaced.kind === "in_flight") {
+                if (replaced.kind === "in_flight" || replaced.kind === "lock_timeout") {
                     // Never queue a second send behind one the dispatcher
                     // already claimed; the caller re-reads the (sending) status.
+                    // A lock held past the fence's lock_timeout is the same
+                    // answer: nothing was written, try again.
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
                 persistedJob = replaced.job;

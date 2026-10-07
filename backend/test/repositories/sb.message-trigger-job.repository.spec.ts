@@ -19,6 +19,7 @@ import {
     MessageTriggerJobPayload,
 } from "domain/entities/message-trigger-job.entity";
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
@@ -1497,7 +1498,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
 
     const sqlText = (value: unknown): string => {
         const candidate = value as { strings?: string[]; text?: string };
-        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ");
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ").trim();
     };
 
     /** Column comparisons the selectors bind as `$n`, read from the real rendered SQL. */
@@ -1527,6 +1528,11 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         afterRowLocks: (() => Promise<void>) | null = null;
         /** Runs while a claim holds the rule and job locks, before it commits. */
         beforeClaimCommit: (() => Promise<void>) | null = null;
+        /** Real lock_timeout values are seconds; the model caps a wait at this so tests stay fast. */
+        maxLockWaitMs = 25;
+        /** `$transaction` options the repository asked for, in call order. */
+        readonly transactionOptions: unknown[] = [];
+        private readonly lockTimeouts = new WeakMap<object, number>();
 
         seed(status: string, overrides: Partial<FakeRow> = {}): FakeRow {
             const id = overrides.id ?? `job-${this.nextId++}`;
@@ -1592,7 +1598,27 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                     throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
                 }
                 this.waitingOn.set(owner, blockers);
-                await Promise.race(blockers.map((blocker) => this.done(blocker).promise));
+                const released = Promise.race(blockers.map((blocker) => this.done(blocker).promise));
+                const limit = this.lockTimeouts.get(owner);
+                if (limit === undefined) {
+                    await released;
+                    continue;
+                }
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                const outcome = await Promise.race([
+                    released.then(() => "released" as const),
+                    new Promise<"timeout">((resolve) => { timer = setTimeout(() => resolve("timeout"), Math.min(limit, this.maxLockWaitMs)); }),
+                ]);
+                clearTimeout(timer);
+                if (outcome === "timeout") {
+                    this.waitingOn.delete(owner);
+                    // The shape Prisma gives a raw statement that PostgreSQL aborts with SQLSTATE 55P03.
+                    throw new Prisma.PrismaClientKnownRequestError("canceling statement due to lock timeout", {
+                        code: "P2010",
+                        clientVersion: "test",
+                        meta: { code: "55P03", message: "canceling statement due to lock timeout" },
+                    });
+                }
             }
             this.waitingOn.delete(owner);
             if (mode === "exclusive") {
@@ -1602,6 +1628,25 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 sharers.add(owner);
                 this.keyShares.set(key, sharers);
             }
+        }
+
+        /** A standalone transaction that holds the rule row lock until `commit()` (another writer, e.g. a rule normalization). */
+        async holdRuleLock(ruleId = RULE_ID): Promise<{ commit: () => void }> {
+            const owner = {};
+            await this.acquire(`rule:${ruleId}`, owner);
+            return { commit: () => this.releaseAll(owner) };
+        }
+
+        /** A standalone transaction that holds one job row lock; `commit(mutate)` applies `mutate` to the row, then releases. */
+        async holdJobLock(id: string): Promise<{ commit: (mutate?: (row: FakeRow) => void) => void }> {
+            const owner = {};
+            await this.acquire(`job:${id}`, owner);
+            return {
+                commit: (mutate) => {
+                    if (mutate) mutate(this.rows.get(id)!);
+                    this.releaseAll(owner);
+                },
+            };
         }
 
         private releaseAll(owner: object): void {
@@ -1663,6 +1708,46 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 await this.acquire(`rule:${ruleId as string}`, owner);
                 return this.rules.has(ruleId as string) ? [{ id: ruleId }] : [];
             }
+            if (text.startsWith("WITH locked AS") && text.includes("SET status = 'canceled'")) {
+                // Cancel by rule + schedule: ONE statement that row-locks the cancellable jobs in id order, then updates them.
+                expect(text).toContain("ORDER BY id FOR UPDATE");
+                expect(text).toContain("AND job.status IN ('pending', 'processing')");
+                const predicates = boundPredicates(text, values);
+                for (const column of ["rule_id", "employee_schedule_id"]) {
+                    expect(predicates.some((predicate) => predicate.column === column && predicate.op === "=")).toBe(true);
+                }
+                const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!
+                    .split(",").map((status) => status.trim().replace(/'/g, ""));
+                const matches = (row: FakeRow) => statuses.includes(row.status) && predicates.every((predicate) => (
+                    ((predicate.column === "rule_id" ? row.ruleId : row.scheduleId) === predicate.value) === (predicate.op === "=")
+                ));
+                const reason = values.find((value) => typeof value === "string" && !this.rows.has(value) && value.includes(" ")) as string;
+                const locked: FakeRow[] = [];
+                for (const candidate of [...this.rows.values()].filter(matches).sort((left, right) => left.id.localeCompare(right.id))) {
+                    await this.acquire(`job:${candidate.id}`, owner);
+                    locked.push(candidate);
+                }
+                const canceled: Array<{ id: string }> = [];
+                for (const candidate of locked) {
+                    // READ COMMITTED: the UPDATE re-checks its own status predicate on the latest row version.
+                    const current = this.rows.get(candidate.id)!;
+                    if (current.status !== "pending" && current.status !== "processing") continue;
+                    current.status = "canceled";
+                    current.cancelReason = reason;
+                    current.claimToken = null;
+                    canceled.push({ id: current.id });
+                }
+                return canceled;
+            }
+            if (text.includes("status = 'dispatching'") && !text.includes("FOR UPDATE") && text.startsWith("SELECT id FROM")) {
+                const predicates = boundPredicates(text, values);
+                return [...this.rows.values()]
+                    .filter((row) => row.status === "dispatching" && predicates.every((predicate) => (
+                        ((predicate.column === "rule_id" ? row.ruleId : row.scheduleId) === predicate.value) === (predicate.op === "=")
+                    )))
+                    .sort((left, right) => left.id.localeCompare(right.id))
+                    .map((row) => ({ id: row.id }));
+            }
             if (text.includes("FOR UPDATE")) {
                 const predicates = boundPredicates(text, values);
                 // The selector must scope by rule AND schedule; dropping either would lock foreign rows.
@@ -1720,7 +1805,15 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         asPrisma(): PrismaService {
             const transactionClient = (owner: object) => ({
                 $executeRaw: async (query: unknown) => {
-                    expect(sqlText(query)).toContain("pg_advisory_xact_lock");
+                    const text = sqlText(query);
+                    const timeout = /SET LOCAL lock_timeout = '(\d+)(ms|s)'/.exec(text);
+                    if (timeout) {
+                        // Must be a literal in the SQL text, not a bound parameter (SET does not take parameters).
+                        expect((query as RawQuery).values).toEqual([]);
+                        this.lockTimeouts.set(owner, Number(timeout[1]) * (timeout[2] === "s" ? 1000 : 1));
+                        return 0;
+                    }
+                    expect(text).toContain("pg_advisory_xact_lock");
                     await this.acquire(`advisory:${String((query as RawQuery).values[0])}`, owner);
                     return 1;
                 },
@@ -1735,7 +1828,8 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                         this.releaseAll(owner);
                     }
                 },
-                $transaction: async (work: (transaction: unknown) => Promise<unknown>) => {
+                $transaction: async (work: (transaction: unknown) => Promise<unknown>, options?: unknown) => {
+                    this.transactionOptions.push(options);
                     const owner = {};
                     try {
                         return await work(transactionClient(owner));
@@ -1851,19 +1945,20 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         const calls: string[] = [];
         const inner = database.asPrisma();
         const spied = {
-            $transaction: (work: (transaction: unknown) => Promise<unknown>) => inner.$transaction(async (transaction) => {
+            $transaction: (work: (transaction: unknown) => Promise<unknown>, options?: { timeout?: number }) => inner.$transaction(async (transaction) => {
                 const client = transaction as { $queryRaw: (q: unknown) => unknown; $executeRaw: (q: unknown) => unknown };
                 return work({
                     $executeRaw: (query: unknown) => { calls.push(sqlText(query)); return client.$executeRaw(query); },
                     $queryRaw: (query: unknown) => { calls.push(sqlText(query)); return client.$queryRaw(query); },
                 });
-            }),
+            }, options),
         } as unknown as PrismaService;
         database.seed("pending");
 
         await new SbMessageTriggerJobRepository(spied).replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
 
         expect(calls).toEqual([
+            expect.stringContaining("SET LOCAL lock_timeout = '1s'"),
             expect.stringContaining("pg_advisory_xact_lock"),
             expect.stringMatching(/FROM "message_trigger_rule".*FOR UPDATE/),
             expect.stringMatching(/FROM "message_trigger_job".*FOR UPDATE/),
@@ -1949,6 +2044,141 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         ]);
 
         expect(database.live()).toHaveLength(1);
+    });
+
+    describe("lock timeout", () => {
+        it("asks for a 1s lock_timeout before any lock and a 10s interactive-transaction timeout", async () => {
+            await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+            expect(database.transactionOptions).toEqual([{ timeout: 10_000 }]);
+        });
+
+        it.each([
+            ["the rule row lock", () => database.holdRuleLock()],
+            ["a live job row lock", async () => database.holdJobLock(database.seed("pending").id)],
+        ])("returns lock_timeout and writes nothing when %s is held past lock_timeout", async (_label, hold) => {
+            const holder = await hold();
+            const before = database.rows.size;
+
+            const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+            holder.commit();
+
+            expect(result).toEqual({ kind: "lock_timeout" });
+            expect(database.rows.size).toBe(before);
+            expect(database.live().every((row) => row.status === "pending")).toBe(true);
+            // Nothing is left locked: the same send now goes through.
+            expect((await repository.replacePendingJobsUnlessInFlight(manualJob("b"), CANCEL_REASON)).kind).toBe("replaced");
+        });
+
+        it("does not turn other failures into lock_timeout", async () => {
+            const failing = {
+                $transaction: async () => { throw Object.assign(new Error("deadlock detected"), { code: "40P01" }); },
+            } as unknown as PrismaService;
+            await expect(new SbMessageTriggerJobRepository(failing).replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON))
+                .rejects.toThrow("deadlock detected");
+
+            const otherCode = {
+                $transaction: async () => {
+                    throw new Prisma.PrismaClientKnownRequestError("other", { code: "P2010", clientVersion: "test", meta: { code: "40P01" } });
+                },
+            } as unknown as PrismaService;
+            await expect(new SbMessageTriggerJobRepository(otherCode).replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON))
+                .rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
+        });
+    });
+
+    describe("cancelPendingByRuleAndEmployeeSchedule", () => {
+        it("cancels this schedule's pending and processing jobs in one statement and reports dispatching ones untouched", async () => {
+            const pending = database.seed("pending");
+            const processing = database.seed("processing");
+            const dispatching = database.seed("dispatching");
+            const sent = database.seed("sent");
+            const otherSchedule = database.seed("pending", { scheduleId: OTHER_SCHEDULE_ID });
+            const otherRule = database.seed("pending", { ruleId: OTHER_RULE_ID });
+
+            const result = await repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "Service record access revoked");
+
+            expect([...result.canceledJobIds].sort()).toEqual([pending.id, processing.id].sort());
+            expect(result.inFlightJobIds).toEqual([dispatching.id]);
+            expect(pending).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
+            expect(processing).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
+            expect(dispatching).toMatchObject({ status: "dispatching", cancelReason: null, claimToken: `claim-${dispatching.id}` });
+            expect(sent.status).toBe("sent");
+            expect(otherSchedule.status).toBe("pending");
+            expect(otherRule.status).toBe("pending");
+        });
+
+        it("runs as one autocommit statement plus one read: no interactive transaction, no advisory or rule lock, no lock_timeout", async () => {
+            database.seed("pending");
+            const statements: string[] = [];
+            const inner = database.asPrisma();
+            const spied = {
+                $transaction: jest.fn(),
+                $executeRaw: jest.fn(),
+                $queryRaw: (query: unknown) => { statements.push(sqlText(query)); return (inner as unknown as { $queryRaw: (q: unknown) => Promise<unknown> }).$queryRaw(query); },
+            } as unknown as PrismaService;
+
+            await new SbMessageTriggerJobRepository(spied).cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "reason x");
+
+            expect(statements).toHaveLength(2);
+            expect(statements[0]).toMatch(/^WITH locked AS .*ORDER BY id FOR UPDATE.*UPDATE "message_trigger_job" AS job SET status = 'canceled'/);
+            expect(statements[1]).toContain("status = 'dispatching'");
+            expect(statements.join(" ")).not.toContain("message_trigger_rule");
+            expect(statements.join(" ")).not.toContain("advisory");
+            expect((spied as unknown as { $transaction: jest.Mock }).$transaction).not.toHaveBeenCalled();
+            expect((spied as unknown as { $executeRaw: jest.Mock }).$executeRaw).not.toHaveBeenCalled();
+        });
+
+        it("a job the dispatcher moves to dispatching while the cancel waits for its row lock is skipped and reported, never overwritten", async () => {
+            const job = database.seed("processing");
+            const authorization = await database.holdJobLock(job.id);
+
+            const cancel = repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "reason x");
+            await Promise.resolve();
+            authorization.commit((row) => { row.status = "dispatching"; });
+            const result = await cancel;
+
+            expect(result).toEqual({ canceledJobIds: [], inFlightJobIds: [job.id] });
+            expect(job).toMatchObject({ status: "dispatching", cancelReason: null, claimToken: `claim-${job.id}` });
+        });
+
+        it("a claim that holds the locks when the cancel starts: the cancel waits, then cancels the processing job and clears its token", async () => {
+            const original = database.seed("pending");
+            let claimHoldsLocks!: () => void;
+            const locksHeld = new Promise<void>((resolve) => { claimHoldsLocks = resolve; });
+            let letClaimCommit!: () => void;
+            const commitGate = new Promise<void>((resolve) => { letClaimCommit = resolve; });
+            database.beforeClaimCommit = async () => { claimHoldsLocks(); await commitGate; };
+
+            const claim = repository.claimPendingWithRuleFence(original.id, "branch-1");
+            await locksHeld;
+            const cancel = repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "reason x");
+            await Promise.resolve();
+            letClaimCommit();
+            const [claimToken, result] = await Promise.all([claim, cancel]);
+
+            expect(claimToken).not.toBeNull();
+            expect(result).toEqual({ canceledJobIds: [original.id], inFlightJobIds: [] });
+            expect(original).toMatchObject({ status: "canceled", claimToken: null });
+        });
+
+        it("cancel first: the dispatcher claim loses against the canceled row", async () => {
+            const original = database.seed("pending");
+
+            await repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "reason x");
+
+            expect(await repository.claimPendingWithRuleFence(original.id, "branch-1")).toBeNull();
+            expect(original.status).toBe("canceled");
+        });
+
+        it("ignores jobs of another schedule or rule even when they are the only ones in flight", async () => {
+            database.seed("dispatching", { scheduleId: OTHER_SCHEDULE_ID });
+            database.seed("dispatching", { ruleId: OTHER_RULE_ID });
+
+            const result = await repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "reason x");
+
+            expect(result).toEqual({ canceledJobIds: [], inFlightJobIds: [] });
+        });
     });
 
     it("refuses a reserved internal record and a job without a schedule scope", async () => {
