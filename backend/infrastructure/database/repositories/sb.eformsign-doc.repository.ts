@@ -186,8 +186,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         const data = {
             statusType: params.statusType,
             statusDetail: params.statusDetail,
-            stepType: params.stepType,
-            stepIndex: params.stepIndex,
+            // Omitted (not undefined-valued) so the stored step columns stay untouched.
+            ...(params.stepType !== undefined ? { stepType: params.stepType } : {}),
+            ...(params.stepIndex !== undefined ? { stepIndex: params.stepIndex } : {}),
             stepName: params.stepName,
             expired: params.expired,
             ...(params.sourceUpdatedDate

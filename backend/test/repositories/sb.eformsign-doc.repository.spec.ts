@@ -2061,6 +2061,40 @@ describe("SbEformsignDocRepository", () => {
             .not.toHaveProperty("updatedDate");
     });
 
+    it("leaves the stored step columns out of the completion update when the claim carries none", async () => {
+        eformsignDocModel.updateMany.mockResolvedValue({ count: 1 });
+
+        await repository.claimCompletionStatus("branch-1", {
+            documentId: "doc-1",
+            statusType: "050",
+            statusDetail: "완료",
+            stepName: "이용자",
+            expired: false,
+        });
+
+        const data = eformsignDocModel.updateMany.mock.calls[0][0].data;
+        expect(data).not.toHaveProperty("stepType");
+        expect(data).not.toHaveProperty("stepIndex");
+        expect(data).toMatchObject({ statusType: "050", statusDetail: "완료", stepName: "이용자" });
+    });
+
+    it("writes the claim's step columns when it carries them", async () => {
+        eformsignDocModel.updateMany.mockResolvedValue({ count: 1 });
+
+        await repository.claimCompletionStatus("branch-1", {
+            documentId: "doc-1",
+            statusType: "050",
+            statusDetail: "완료",
+            stepType: "06",
+            stepIndex: "5",
+            stepName: "이용자",
+            expired: false,
+        });
+
+        expect(eformsignDocModel.updateMany.mock.calls[0][0].data)
+            .toMatchObject({ stepType: "06", stepIndex: "5" });
+    });
+
     it("refuses a stale completion claim with an atomic vendor timestamp guard", async () => {
         const sourceUpdatedDate = new Date("2026-07-01T00:00:00.000Z");
         eformsignDocModel.updateMany.mockResolvedValue({ count: 0 });

@@ -86,8 +86,13 @@ export interface EformsignDocCompletionClaimParams {
     documentId: string;
     statusType: string;
     statusDetail: string;
-    stepType: string;
-    stepIndex: string;
+    /**
+     * Step kind/index from the mirrored document. When absent the atomic completion update
+     * leaves the stored columns untouched -- re-sending a value read earlier would race a
+     * newer step write and overwrite it.
+     */
+    stepType?: string;
+    stepIndex?: string;
     stepName: string;
     expired: boolean;
     sourceUpdatedDate?: Date;

@@ -284,7 +284,12 @@ export class EformsignWebhookService {
 
         if (localDocument.branchId === null) {
             try {
-                await this.updateUnassignedDocumentFromWebhook(payload, localDocument.document, trace);
+                await this.updateUnassignedDocumentFromWebhook(
+                    payload,
+                    localDocument.document,
+                    trace,
+                    context.mirroredDocument,
+                );
             } catch (error) {
                 if (error instanceof EformsignDocOwnershipConflictError) {
                     return this.retryBranchOwnedWebhookAfterOwnershipConflict(
@@ -493,7 +498,6 @@ export class EformsignWebhookService {
             document_status: status,
             template_id,
             template_name,
-            workflow_seq,
             workflow_name,
         } = pdfEvent;
 
@@ -504,7 +508,7 @@ export class EformsignWebhookService {
             const claimResult = await this.claimDocumentCompletion(
                 branchid,
                 documentId,
-                workflow_seq,
+                mirroredDocument,
                 workflow_name,
                 "ready_document_pdf",
                 document_title,
@@ -583,8 +587,7 @@ export class EformsignWebhookService {
                 documentId,
                 statusType,
                 statusDetail,
-                stepType: String(workflow_seq),
-                stepIndex: String(workflow_seq),
+                ...mirroredStepFields(mirroredDocument),
                 stepName: workflow_name,
                 expired: status === DOCUMENT_STATUS.DOC_EXPIRED,
                 documentName: document_title,
@@ -631,7 +634,6 @@ export class EformsignWebhookService {
             action,
             document_title,
             template_name,
-            workflow_seq,
             workflow_name,
         } = document;
 
@@ -650,8 +652,7 @@ export class EformsignWebhookService {
                 documentId,
                 statusType,
                 statusDetail,
-                stepType: String(workflow_seq || 0),
-                stepIndex: String(workflow_seq || 0),
+                ...mirroredStepFields(mirroredDocument),
                 stepName: workflow_name || "unknown",
                 expired: false,
                 documentName: document_title,
@@ -695,7 +696,6 @@ export class EformsignWebhookService {
             document_title,
             template_id,
             template_name,
-            workflow_seq,
             workflow_name,
         } = document;
 
@@ -709,7 +709,7 @@ export class EformsignWebhookService {
             const claimResult = await this.claimDocumentCompletion(
                 branchid,
                 documentId,
-                workflow_seq,
+                mirroredDocument,
                 workflow_name,
                 status,
                 document_title,
@@ -762,8 +762,7 @@ export class EformsignWebhookService {
                     documentId,
                     statusType,
                     statusDetail,
-                    stepType: String(workflow_seq),
-                    stepIndex: String(workflow_seq),
+                    ...mirroredStepFields(mirroredDocument),
                     stepName: workflow_name,
                     expired: status === DOCUMENT_STATUS.DOC_EXPIRED,
                     documentName: document_title,
@@ -828,19 +827,21 @@ export class EformsignWebhookService {
     private async claimDocumentCompletion(
         branchid: string,
         documentId: string,
-        workflowSeq: number,
+        mirroredDocument: EformsignApiDocumentResponse | null | undefined,
         workflowName: string,
         source: string,
         documentName?: string,
         templateName?: string,
         sourceUpdatedDate?: Date,
     ): Promise<EformsignWebhookCompletionClaim> {
+        // The position the webhook carries is not a step kind, and re-sending a stored value
+        // read earlier would race a newer step write. Without a mirror the claim simply
+        // omits the step columns and the atomic update leaves them untouched.
         const claimResult = await this.eformsignDocRepository.claimCompletionStatus(branchid, {
             documentId,
             statusType: "050",
             statusDetail: "완료",
-            stepType: String(workflowSeq),
-            stepIndex: String(workflowSeq),
+            ...mirroredStepFields(mirroredDocument),
             stepName: workflowName,
             expired: false,
             sourceUpdatedDate,
@@ -1141,12 +1142,11 @@ export class EformsignWebhookService {
         payload: EformsignWebhookPayloadDto,
         existing: EformsignDocEntity,
         trace: EformsignWebhookTrace,
+        mirroredDocument?: EformsignApiDocumentResponse | null,
     ): Promise<void> {
         const { event_type, webhook_id, document, ready_document_pdf } = payload;
         let statusType: string;
         let statusDetail: string;
-        let stepType: string;
-        let stepIndex: string;
         let stepName: string;
         let updatedTimestamp: number | undefined;
         let documentName: string | undefined;
@@ -1156,8 +1156,6 @@ export class EformsignWebhookService {
 
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
             ({ statusType, statusDetail } = this.mapUnassignedStatus(document.status));
-            stepType = String(document.workflow_seq);
-            stepIndex = String(document.workflow_seq);
             stepName = document.workflow_name;
             updatedTimestamp = document.updated_date;
             documentName = document.document_title?.trim() || undefined;
@@ -1168,8 +1166,6 @@ export class EformsignWebhookService {
             const isOpenAction = document.action?.includes("open");
             statusType = "020";
             statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${document.action}`;
-            stepType = String(document.workflow_seq || 0);
-            stepIndex = String(document.workflow_seq || 0);
             stepName = document.workflow_name || "unknown";
             updatedTimestamp = document.updated_date;
             documentName = document.document_title?.trim() || undefined;
@@ -1178,8 +1174,6 @@ export class EformsignWebhookService {
             expired = false;
         } else if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
             ({ statusType, statusDetail } = this.mapUnassignedStatus(ready_document_pdf.document_status));
-            stepType = String(ready_document_pdf.workflow_seq);
-            stepIndex = String(ready_document_pdf.workflow_seq);
             stepName = ready_document_pdf.workflow_name;
             documentName = ready_document_pdf.document_title?.trim() || undefined;
             templateId = ready_document_pdf.template_id?.trim() || undefined;
@@ -1236,6 +1230,7 @@ export class EformsignWebhookService {
             return;
         }
 
+        const mirrored = mirroredStepFields(mirroredDocument);
         const updatedDate = updatedTimestamp === undefined
             ? existing.updatedDate
             : new Date(Math.max(updatedTimestamp, existing.createdDate.getTime()));
@@ -1247,8 +1242,10 @@ export class EformsignWebhookService {
             updatedDate,
             statusType,
             statusDetail,
-            stepType,
-            stepIndex,
+            // The step KIND and index come from the mirrored detail, exactly as the
+            // mirror/backfill writer stores them; without a mirror the stored pair stays.
+            stepType: mirrored.stepType ?? existing.stepType,
+            stepIndex: mirrored.stepIndex ?? existing.stepIndex,
             stepName,
             expired,
         });
@@ -1473,6 +1470,28 @@ export class EformsignWebhookService {
                 return { statusType: "060", statusDetail: status };
         }
     }
+}
+
+/**
+ * eformsign's webhook payload carries `workflow_seq`, the document's POSITION in its
+ * workflow, but the stored `stepType` column holds the step KIND ("06" = provider
+ * reviewer) that `isProviderReviewWorkflowStep` reads to decide signed/review. Writing
+ * the position there made a reviewer step at position 3 read as a non-review step and
+ * any step at position 6 read as the reviewer. The mirrored detail carries the real
+ * `current_status`; take both columns from it, trimmed exactly as the mirror/backfill
+ * writer (`MirrorUnassignedEformsignDocUsecase`) stores them so the two writers cannot
+ * disagree. A missing or blank value is omitted so callers keep the stored one.
+ */
+function mirroredStepFields(
+    mirroredDocument: EformsignApiDocumentResponse | null | undefined,
+): { stepType?: string; stepIndex?: string } {
+    const currentStatus = mirroredDocument?.current_status;
+    const stepType = typeof currentStatus?.step_type === "string" ? currentStatus.step_type.trim() : "";
+    const stepIndex = typeof currentStatus?.step_index === "string" ? currentStatus.step_index.trim() : "";
+    return {
+        ...(stepType ? { stepType } : {}),
+        ...(stepIndex ? { stepIndex } : {}),
+    };
 }
 
 function webhookSourceUpdatedDate(timestamp: unknown): Date | undefined {
