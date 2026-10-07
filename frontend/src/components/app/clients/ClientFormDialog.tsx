@@ -29,13 +29,13 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientFormData } from "@/features/clients/types";
+import { buildClientUpdatePayload } from "./client-update-payload";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import {
     Client,
     CreateClientDto,
-    UpdateClientDto,
     SERVICE_STATUS_OPTIONS
 } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -110,6 +110,8 @@ export type { ClientFormData };
 /** Static guidance shown in a field's label-row slot while nothing more urgent applies. */
 const AREA_FIELD_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
 const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
+const CLIENT_END_DATE_CHANGED_MESSAGE =
+    "그동안 서비스 종료일이 바뀌어 저장하지 않았어요. 창을 닫고 다시 열어 최신 정보로 수정해 주세요.";
 
 const PANEL_STEP_CONTENT_CLASS_NAME =
     "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
@@ -1171,11 +1173,26 @@ function ClientFormContent({
         setTimeout(scrollToTop, 0);
     };
 
-    const setMutationError = (cause: unknown) => {
+    const setMutationError = (cause: unknown, options: { endDateGuardSent?: boolean } = {}) => {
         const normalized = normalizeApiError(cause, {
             locale: locale === "en" ? "en-US" : "ko-KR",
             operation: "mutation",
         });
+
+        // The save carried the end date this form was opened with and the backend found it moved.
+        if (
+            options.endDateGuardSent
+            && normalized.status === 409
+            && normalized.problem?.code === "SERVICE_RECORD_WRITE_TARGET_CHANGED"
+        ) {
+            setError({
+                message: CLIENT_END_DATE_CHANGED_MESSAGE,
+                fieldErrors: [],
+                requestId: normalized.problem.requestId,
+                outcome: normalized.outcome,
+            });
+            return;
+        }
 
         if (isUnstructuredLegacyClientError(cause, normalized)) {
             setError({
@@ -1272,6 +1289,7 @@ function ClientFormContent({
                 return;
             }
         }
+        let endDateGuardSent = false;
         try {
             submissionInFlightRef.current = true;
             const fresh = await refreshForSave();
@@ -1314,32 +1332,16 @@ function ClientFormContent({
             setPendingDurationConfirmation(null);
 
             if (isEditMode && client) {
-                // Build update DTO, excluding null employee IDs to avoid validation errors
-                // (backend @IsOptional only skips undefined, not null)
-                const updateDto: UpdateClientDto = {
-                    name: formData.name,
-                    birthday: formData.birthday,
-                    dueDate: normalizedDueDate || null,
-                    birthDate: normalizedBirthDate || null,
-                    address: formData.address,
-                    phone: formData.phone,
-                    // Only include employee IDs if explicitly selected (not null)
-                    ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
-                    ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
-                    type: formData.voucherClient ? formData.type : null,
-                    duration: formData.duration || null,
-                    ...durationConfirmation,
-                    fullPrice: formData.fullPrice || null,
-                    grant: formData.voucherClient ? formData.grant || null : "0",
-                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
-                    startDate: normalizedStartDate || null,
-                    endDate: normalizedEndDate || null,
-                    careCenter: formData.careCenter,
-                    voucherClient: formData.voucherClient,
-                    breastPump: formData.breastPump,
-                    serviceStatus: formData.serviceStatus,
-                    areaId: formData.areaId || null,
-                };
+                // Send only what the user changed since the form was opened. The backend moves the
+                // end date by itself (a delayed session extends it), so a full snapshot would roll
+                // that back. A save that touches the service period carries the end date this form
+                // was opened with, and the backend refuses it if the end date moved since.
+                const updateDto = buildClientUpdatePayload({
+                    baseline: formDataBaselineRef.current,
+                    current: formData,
+                    allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
+                });
+                endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 onSuccess?.(updatedClient);
             } else {
@@ -1373,7 +1375,7 @@ function ClientFormContent({
             onClose();
             onDirtyChange?.(false);
         } catch (error: unknown) {
-            setMutationError(error);
+            setMutationError(error, { endDateGuardSent });
         } finally {
             submissionInFlightRef.current = false;
         }

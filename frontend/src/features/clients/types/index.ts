@@ -138,6 +138,12 @@ export interface UpdateClientDto {
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
+    /**
+     * The end date (YYYY-MM-DD, or null for none) the edit form was opened with. Sent with any
+     * service-period change so the backend answers 409 instead of overwriting an end date that
+     * moved meanwhile. Not a field to update.
+     */
+    expectedEndDate?: string | null;
 }
 
 // DTO for terminating service
