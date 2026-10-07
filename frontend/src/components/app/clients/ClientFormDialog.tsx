@@ -561,6 +561,9 @@ function ClientFormContent({
     // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
     // catching up with its own table on open; once on, the price baseline stays what was stored.
     const priceBaselineFrozenRef = useRef(false);
+    // The prices the form filled in from its price table before anything was touched. Not part of the
+    // baseline: that keeps the stored prices, so a price filled in after a touch is compared to them.
+    const openingTablePricesRef = useRef<Pick<ClientFormData, "fullPrice" | "grant" | "actualPrice"> | null>(null);
     const [initializedEditClientId, setInitializedEditClientId] = useState<number | null>(null);
     const [hasUserEditedSinceOpen, setHasUserEditedSinceOpen] = useState(false);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -754,14 +757,12 @@ function ClientFormContent({
                             actualPrice: parsePrice(selectedPriceInfo.fullPrice),
                         };
                     // Until staff touch a price field or a price driver, this fill is the form catching up
-                    // with its own price table, not an edit: the saved client is not being re-priced. Move
-                    // the baseline's prices with it, so a save does not send them back and overwrite a
-                    // price someone else changed since. After the first such touch the baseline stays what
-                    // was stored, so every price shown at save time is compared against it. A driver that
-                    // merely matches its opening value again does not prove nothing was touched.
+                    // with its own price table, not an edit: the saved client is not being re-priced.
+                    // Remember it apart from the baseline, which keeps the STORED prices, so a save before
+                    // any touch does not send it, and a save after a touch compares to what was stored.
+                    // A driver that merely matches its opening value again does not prove nothing was touched.
                     if (isEditMode && !priceBaselineFrozenRef.current) {
-                        formDataBaselineRef.current = {
-                            ...formDataBaselineRef.current,
+                        openingTablePricesRef.current = {
                             fullPrice: next.fullPrice,
                             grant: next.grant,
                             actualPrice: next.actualPrice,
@@ -965,6 +966,7 @@ function ClientFormContent({
             queueMicrotask(() => {
                 formDataBaselineRef.current = nextFormData;
                 priceBaselineFrozenRef.current = false;
+                openingTablePricesRef.current = null;
                 setFormData(nextFormData);
                 setIsEndDateUnsupported(false);
                 setInitializedEditClientId(client?.id ?? null);
@@ -1017,11 +1019,20 @@ function ClientFormContent({
         });
     }, [client, hasUserEditedSinceOpen, open, prefill]);
 
+    // What the form is compared to when deciding what changed. Until a price field or a price driver is
+    // touched, the prices the form filled in from its table on open are not an edit; once touched, prices
+    // are compared against what was stored.
+    const getEffectiveBaseline = useCallback((): ClientFormData => (
+        openingTablePricesRef.current && !priceBaselineFrozenRef.current
+            ? { ...formDataBaselineRef.current, ...openingTablePricesRef.current }
+            : formDataBaselineRef.current
+    ), []);
+
     useEffect(() => {
         if (surface !== "panel" || !open || !onDirtyChange) return;
 
-        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(formDataBaselineRef.current));
-    }, [formData, onDirtyChange, open, surface]);
+        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(getEffectiveBaseline()));
+    }, [formData, getEffectiveBaseline, onDirtyChange, open, surface]);
 
     const isLegacyNoopEdit = Boolean(
         isEditMode
@@ -1381,7 +1392,7 @@ function ClientFormContent({
                 // that back. A save that touches the service period carries the end date this form
                 // was opened with, and the backend refuses it if the end date moved since.
                 const updateDto = buildClientUpdatePayload({
-                    baseline: formDataBaselineRef.current,
+                    baseline: getEffectiveBaseline(),
                     current: formData,
                     allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
                 });

@@ -114,7 +114,6 @@ describe("buildClientUpdatePayload", () => {
     const fields = serializeClientUpdateFields({ ...baseline, primaryEmployeeId: null });
 
     expect(fields).not.toHaveProperty("primaryEmployeeId");
-    expect(fields).not.toHaveProperty("secondaryEmployeeId");
     expect(buildClientUpdatePayload({
       baseline,
       current: { ...baseline, primaryEmployeeId: null },
@@ -126,5 +125,22 @@ describe("buildClientUpdatePayload", () => {
       baseline,
       current: { ...baseline, secondaryEmployeeId: 9 },
     })).toEqual({ secondaryEmployeeId: 9 });
+  });
+
+  it("removes the secondary employee with an explicit null, and does not resend an unchanged null", () => {
+    const withSecondary: ClientFormData = { ...baseline, secondaryEmployeeId: 4 };
+
+    expect(buildClientUpdatePayload({
+      baseline: withSecondary,
+      current: { ...withSecondary, secondaryEmployeeId: null },
+    })).toEqual({ secondaryEmployeeId: null });
+    expect(buildClientUpdatePayload({
+      baseline,
+      current: { ...baseline, secondaryEmployeeId: null },
+    })).toEqual({});
+    expect(buildClientUpdatePayload({
+      baseline: withSecondary,
+      current: { ...withSecondary },
+    })).toEqual({});
   });
 });
