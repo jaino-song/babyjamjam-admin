@@ -16,6 +16,7 @@ import {
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
     EformsignDocUnscopedResult,
+    EformsignContractCandidateRow,
     IEformsignDocRepository,
     RecentEformsignDocRow,
     ReviewStageContract,
@@ -294,6 +295,39 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             clientId: clientId,
             branchId: branchid,
             permanentPurgeRequestedAt: null,
+        });
+    }
+
+    async findContractCandidatesByClientId(clientId: number): Promise<EformsignContractCandidateRow[]> {
+        return this.prismaService.eformsign_doc.findMany({
+            // Same row set as the client summary (ClientService.findLatestContractByClientId):
+            // no branch, purge or sync-state filter.
+            where: {
+                clientId,
+                serviceRecordCaseId: null,
+                OR: [
+                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                    { documentKind: null },
+                ],
+            },
+            // Newest first, ranked by the database at full timestamptz(6) precision (microseconds):
+            // selectCurrentContractDocument keeps this order and must not re-sort with a JS Date.
+            orderBy: [
+                { createdDate: "desc" },
+                { id: "desc" },
+            ],
+            select: {
+                id: true,
+                documentId: true,
+                documentKind: true,
+                serviceRecordCaseId: true,
+                templateId: true,
+                createdDate: true,
+                statusType: true,
+                stepType: true,
+                stepName: true,
+                permanentPurgeRequestedAt: true,
+            },
         });
     }
 
