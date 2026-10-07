@@ -3,7 +3,12 @@ import {
     type CurrentContractCandidate,
 } from "application/utils/current-contract-document";
 
-type Row = CurrentContractCandidate & { documentId: string; permanentPurgeRequestedAt?: Date | null };
+type Row = CurrentContractCandidate & {
+    id: number;
+    documentId: string;
+    createdDate: Date;
+    permanentPurgeRequestedAt?: Date | null;
+};
 
 const row = (overrides: Partial<Row> & Pick<Row, "id" | "documentId">): Row => ({
     createdDate: new Date("2026-01-01T00:00:00Z"),
@@ -20,25 +25,26 @@ describe("selectCurrentContractDocument", () => {
         expect(selectCurrentContractDocument([], NO_TEMPLATES)).toBeNull();
     });
 
-    it("picks the newest contract by createdDate regardless of input order", () => {
-        const older = row({ id: 1, documentId: "older", createdDate: new Date("2026-01-01T00:00:00Z") });
+    it("returns the first contract of the DB-ordered input (newest first), never re-ranking by JS Date", () => {
         const newer = row({ id: 2, documentId: "newer", createdDate: new Date("2026-06-01T00:00:00Z") });
-        expect(selectCurrentContractDocument([older, newer], NO_TEMPLATES)?.documentId).toBe("newer");
+        const older = row({ id: 1, documentId: "older", createdDate: new Date("2026-01-01T00:00:00Z") });
         expect(selectCurrentContractDocument([newer, older], NO_TEMPLATES)?.documentId).toBe("newer");
     });
 
-    it("breaks a createdDate tie by the higher id", () => {
-        const date = new Date("2026-06-01T00:00:00Z");
-        const low = row({ id: 5, documentId: "low", createdDate: date });
-        const high = row({ id: 9, documentId: "high", createdDate: date });
-        expect(selectCurrentContractDocument([high, low], NO_TEMPLATES)?.documentId).toBe("high");
-        expect(selectCurrentContractDocument([low, high], NO_TEMPLATES)?.documentId).toBe("high");
+    it("honours the database order when timestamps tie at millisecond precision (timestamptz(6) microseconds)", () => {
+        // Both rows are 2026-06-01T00:00:00.000Z as JS Dates, but the DB held .000900 for id 10 and
+        // .000100 for id 20, so `createdDate desc, id desc` returns id 10 first. A JS re-rank would
+        // see a tie and pick id 20.
+        const sameMillisecond = new Date("2026-06-01T00:00:00.000Z");
+        const dbNewest = row({ id: 10, documentId: "db-newest", createdDate: sameMillisecond });
+        const dbOlder = row({ id: 20, documentId: "db-older", createdDate: new Date(sameMillisecond) });
+        expect(selectCurrentContractDocument([dbNewest, dbOlder], NO_TEMPLATES)?.documentId).toBe("db-newest");
     });
 
     it("treats legacy documentKind=null rows as contracts", () => {
         const legacy = row({ id: 2, documentId: "legacy", documentKind: null, createdDate: new Date("2026-06-01T00:00:00Z") });
         const typed = row({ id: 1, documentId: "typed", createdDate: new Date("2026-01-01T00:00:00Z") });
-        expect(selectCurrentContractDocument([typed, legacy], NO_TEMPLATES)?.documentId).toBe("legacy");
+        expect(selectCurrentContractDocument([legacy, typed], NO_TEMPLATES)?.documentId).toBe("legacy");
     });
 
     it("never selects a service-record snapshot, a case-linked row, or a service-record template row", () => {
@@ -65,7 +71,7 @@ describe("selectCurrentContractDocument", () => {
             createdDate: new Date("2026-06-01T00:00:00Z"),
             permanentPurgeRequestedAt: new Date("2026-07-01T00:00:00Z"),
         });
-        const current = selectCurrentContractDocument([older, purged], NO_TEMPLATES);
+        const current = selectCurrentContractDocument([purged, older], NO_TEMPLATES);
         expect(current?.documentId).toBe("purged");
         expect(current?.permanentPurgeRequestedAt).toEqual(new Date("2026-07-01T00:00:00Z"));
     });

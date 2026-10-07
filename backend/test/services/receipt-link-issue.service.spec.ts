@@ -126,7 +126,8 @@ function makeService(overrides: MakeServiceOverrides = {}) {
         findByClientId: jest
             .fn()
             .mockResolvedValue((overrides.docsByClient ?? (doc ? [doc] : [])) as unknown as EformsignDocEntity[]),
-        // The AUTO path's row set: every contract-or-unclassified row of the client (no purge filter).
+        // The AUTO path's row set: every contract-or-unclassified row of the client (no purge filter),
+        // ordered like the real query (`createdDate desc, id desc`) — the selection rule keeps that order.
         findContractCandidatesByClientId: jest.fn().mockResolvedValue(
             (overrides.docsByClient ?? (doc ? [doc] : [])).map((row, index) => ({
                 id: row.id ?? index + 1,
@@ -139,7 +140,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
                 stepType: "06",
                 stepName: "제공기관 확인",
                 permanentPurgeRequestedAt: row.permanentPurgeRequestedAt ?? null,
-            })),
+            })).sort((a, b) => b.createdDate.getTime() - a.createdDate.getTime() || b.id - a.id),
         ),
     } as unknown as IEformsignDocRepository;
 

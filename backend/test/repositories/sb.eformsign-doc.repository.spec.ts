@@ -155,6 +155,17 @@ describe("SbEformsignDocRepository", () => {
     });
 
     describe("findContractCandidatesByClientId", () => {
+        it("asks the database for newest-first order (createdDate desc, id desc) at full precision", async () => {
+            eformsignDocModel.findMany.mockResolvedValueOnce([]);
+
+            await repository.findContractCandidatesByClientId(55);
+
+            expect(eformsignDocModel.findMany.mock.calls[0][0].orderBy).toEqual([
+                { createdDate: "desc" },
+                { id: "desc" },
+            ]);
+        });
+
         it("reads the same row set as the client summary: no branch, purge or sync-state filter", async () => {
             const rows = [{ id: 3, documentId: "doc-3", permanentPurgeRequestedAt: new Date("2026-07-01T00:00:00Z") }];
             eformsignDocModel.findMany.mockResolvedValueOnce(rows);
@@ -172,6 +183,11 @@ describe("SbEformsignDocRepository", () => {
                         { documentKind: null },
                     ],
                 },
+                // Ranked by the database at timestamptz(6) precision; the selection rule keeps this order.
+                orderBy: [
+                    { createdDate: "desc" },
+                    { id: "desc" },
+                ],
                 select: {
                     id: true,
                     documentId: true,

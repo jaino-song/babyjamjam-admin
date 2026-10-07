@@ -177,7 +177,8 @@ export interface IEformsignDocRepository {
     /**
      * Every contract-or-unclassified, non-service-record row linked to the client, INCLUDING
      * purge-requested ones and regardless of artifact sync state — the same row set the client
-     * summary judges. Unordered: pass it to `selectCurrentContractDocument`. Unlike
+     * summary judges. Ordered `createdDate desc, id desc` by the database (full microsecond
+     * precision): pass it straight to `selectCurrentContractDocument`, which keeps that order. Unlike
      * `findByClientId` it must not drop purge-requested rows, or a purge-requested newest
      * contract would silently fall back to an older one.
      */

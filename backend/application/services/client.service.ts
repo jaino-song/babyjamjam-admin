@@ -675,9 +675,12 @@ export class ClientService {
                     { documentKind: null },
                 ],
             },
+            // Newest first at full timestamptz(6) precision: selectCurrentContractDocument keeps this order.
+            orderBy: [
+                { createdDate: "desc" },
+                { id: "desc" },
+            ],
             select: {
-                id: true,
-                createdDate: true,
                 clientId: true,
                 documentId: true,
                 statusType: true,

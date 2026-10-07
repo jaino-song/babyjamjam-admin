@@ -310,6 +310,12 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                     { documentKind: null },
                 ],
             },
+            // Newest first, ranked by the database at full timestamptz(6) precision (microseconds):
+            // selectCurrentContractDocument keeps this order and must not re-sort with a JS Date.
+            orderBy: [
+                { createdDate: "desc" },
+                { id: "desc" },
+            ],
             select: {
                 id: true,
                 documentId: true,
