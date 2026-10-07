@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import {
+    ClientHistoryScope,
     IMessageLogRepository,
     MessageHistoryPageQuery,
     MessageRetryInvocation,
@@ -10,6 +11,11 @@ import {
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import {
+    koreanPhoneStoredDigitCandidates,
+    storedPhoneMatchesSql,
+    UNOWNED_PHONE_MATCH_LIMIT,
+} from "./stored-phone-lookup";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
@@ -400,6 +406,65 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 // continuation tuple.
                 createdAt: { lte: query.snapshotAt },
                 ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    /**
+     * Ids of this branch's unowned rows (no client id) whose stored phone — in
+     * `recipient_phone` or any number of a multi-recipient `receiver` — normalises
+     * to the client's phone key. Filtered by branch first (the only usable index),
+     * never by raw-string equality.
+     */
+    private async findUnownedIdsByPhone(
+        branchId: string,
+        phoneKey: string | null,
+        snapshotAt: Date,
+    ): Promise<number[]> {
+        const candidates = koreanPhoneStoredDigitCandidates(phoneKey);
+        if (candidates.length === 0) return [];
+
+        const rows = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM "message_log"
+            WHERE branch_id = ${branchId}::uuid
+              AND client_id IS NULL
+              AND created_at <= ${snapshotAt}
+              AND (
+                ${storedPhoneMatchesSql(Prisma.sql`recipient_phone`, candidates)}
+                OR ${storedPhoneMatchesSql(Prisma.sql`receiver`, candidates, { splitList: true })}
+              )
+            ORDER BY id DESC
+            LIMIT ${UNOWNED_PHONE_MATCH_LIMIT}
+        `);
+        return rows.map((row) => Number(row.id));
+    }
+
+    async findClientHistoryPageByBranch(
+        branchId: string,
+        scope: ClientHistoryScope,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageLogEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "log"
+            ? { id: { lt: Number(after.nativeId) } }
+            : undefined;
+        const unownedIds = await this.findUnownedIdsByPhone(branchId, scope.phoneKey, query.snapshotAt);
+        const ownerWhere = unownedIds.length > 0
+            ? { OR: [{ clientId: scope.clientId }, { clientId: null, id: { in: unownedIds } }] }
+            : { clientId: scope.clientId };
+
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                // Branch first: message_log has no client index, so the branch
+                // index is what bounds this read and what keeps another
+                // branch's rows out even if a client id were guessed.
+                branchId,
+                createdAt: { lte: query.snapshotAt },
+                AND: [...(afterWhere ? [afterWhere] : []), ownerWhere],
             },
             orderBy: { id: "desc" },
             take: query.limit,

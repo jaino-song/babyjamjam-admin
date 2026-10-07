@@ -30,6 +30,7 @@ describe("SbMessageLogRepository", () => {
         prisma = {
             message_log: messageLogModel,
             client: clientModel,
+            $queryRaw: queryRaw,
             $transaction: jest.fn(async (callback) => callback({
                 message_log: messageLogModel,
                 client: clientModel,
@@ -503,6 +504,81 @@ describe("SbMessageLogRepository", () => {
                 orderBy: { id: "desc" },
                 take: 11,
             });
+        });
+    });
+
+    describe("findClientHistoryPageByBranch", () => {
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const sqlText = (call: unknown[]) =>
+            (call[0] as { strings: string[] }).strings.join("?").replace(/\s+/g, " ");
+
+        it("filters by client in the database, inside the branch, newest id first", async () => {
+            messageLogModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: null },
+                { snapshotAt, after: { source: "log", nativeId: "42" }, limit: 51 },
+            );
+
+            expect(queryRaw).not.toHaveBeenCalled();
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId: "branch-1",
+                    createdAt: { lte: snapshotAt },
+                    AND: [{ id: { lt: 42 } }, { clientId: 7 }],
+                },
+                orderBy: { id: "desc" },
+                take: 51,
+            });
+        });
+
+        it("adds unowned phone-matched rows by id, found with a normalised digit comparison, never a raw equality", async () => {
+            queryRaw.mockResolvedValue([{ id: 99 }, { id: 98 }]);
+            messageLogModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: "01012345678" },
+                { snapshotAt, after: null, limit: 11 },
+            );
+
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            const call = queryRaw.mock.calls[0];
+            const text = sqlText(call);
+            expect(text).toContain("branch_id = ?::uuid");
+            expect(text).toContain("client_id IS NULL");
+            expect(text).toContain("regexp_replace(COALESCE(recipient_phone, ''), '[^0-9]', '', 'g') = ANY(?::text[])");
+            expect(text).toContain("regexp_split_to_array(COALESCE(receiver, ''), '[,;' || chr(10) || ']')");
+            expect(text).not.toMatch(/recipient_phone\s*=\s*\?/);
+            const values = (call[0] as { values: unknown[] }).values;
+            expect(values[0]).toBe("branch-1");
+            expect(values).toContainEqual(expect.arrayContaining(["01012345678", "821012345678"]));
+
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId: "branch-1",
+                    createdAt: { lte: snapshotAt },
+                    AND: [{ OR: [{ clientId: 7 }, { clientId: null, id: { in: [99, 98] } }] }],
+                },
+                orderBy: { id: "desc" },
+                take: 11,
+            });
+        });
+
+        it("keeps a client with no phone match to the rows it owns", async () => {
+            queryRaw.mockResolvedValue([]);
+            messageLogModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: "01012345678" },
+                { snapshotAt, after: null, limit: 11 },
+            );
+
+            expect(messageLogModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({ AND: [{ clientId: 7 }] }),
+            }));
         });
     });
 

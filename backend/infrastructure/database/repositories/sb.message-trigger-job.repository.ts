@@ -10,7 +10,12 @@ import {
     ClientUpcomingMessageTriggerJobRecord,
     ClientUpcomingMessageTriggerJobStatus,
 } from "domain/repositories/message-trigger-job.repository.interface";
-import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
+import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
+import {
+    koreanPhoneStoredDigitCandidates,
+    storedPhoneMatchesSql,
+    UNOWNED_PHONE_MATCH_LIMIT,
+} from "./stored-phone-lookup";
 import {
     MessageTriggerJobEntity,
     MessageTriggerJobPayload,
@@ -465,6 +470,67 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 // compared as a cursor position.
                 createdAt: { lte: query.snapshotAt },
                 ...(afterWhere ? { AND: [afterWhere] } : {}),
+            },
+            orderBy: { id: "desc" },
+            take: query.limit,
+        });
+        return rows.map((row) => this.toDomain(row));
+    }
+
+    /**
+     * Ids of this branch's terminal jobs that carry no client id and whose
+     * recipient phone (column, else the payload copy the history view shows)
+     * normalises to the client's phone key.
+     */
+    private async findUnownedTerminalIdsByPhone(
+        branchId: string,
+        phoneKey: string | null,
+        snapshotAt: Date,
+    ): Promise<string[]> {
+        const candidates = koreanPhoneStoredDigitCandidates(phoneKey);
+        if (candidates.length === 0) return [];
+
+        const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT job.id
+            FROM "message_trigger_job" AS job
+            WHERE job.branch_id = ${branchId}::uuid
+              AND job.client_id IS NULL
+              AND job.rule_id <> ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+              AND job.status IN ('failed', 'canceled')
+              AND job.created_at <= ${snapshotAt}
+              AND ${storedPhoneMatchesSql(
+                  Prisma.sql`COALESCE(job.recipient_phone, job.payload->>'recipientPhone')`,
+                  candidates,
+              )}
+            ORDER BY job.id DESC
+            LIMIT ${UNOWNED_PHONE_MATCH_LIMIT}
+        `);
+        return rows.map((row) => row.id);
+    }
+
+    async findClientHistoryPageByBranch(
+        branchId: string,
+        scope: ClientHistoryScope,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]> {
+        const after = query.after;
+        const afterWhere = after?.source === "job"
+            ? { id: { lt: after.nativeId } }
+            : undefined;
+        const unownedIds = await this.findUnownedTerminalIdsByPhone(branchId, scope.phoneKey, query.snapshotAt);
+        const ownerWhere = unownedIds.length > 0
+            ? { OR: [{ clientId: scope.clientId }, { clientId: null, id: { in: unownedIds } }] }
+            : { clientId: scope.clientId };
+
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                branchId,
+                ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                // Same current-state view as findHistoryPageByBranch.
+                status: { in: ["failed", "canceled"] },
+                logs: { none: { branchId, createdAt: { lte: query.snapshotAt } } },
+                createdAt: { lte: query.snapshotAt },
+                AND: [...(afterWhere ? [afterWhere] : []), ownerWhere],
             },
             orderBy: { id: "desc" },
             take: query.limit,

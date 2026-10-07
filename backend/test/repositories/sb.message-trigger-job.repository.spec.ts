@@ -542,6 +542,60 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    describe("findClientHistoryPageByBranch", () => {
+        const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const afterId = "00000000-0000-4000-8000-000000000042";
+
+        it("keeps the branch-history filters and adds the client, with no raw phone lookup when the client has no phone", async () => {
+            messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: null },
+                { snapshotAt, after: { source: "job", nativeId: afterId }, limit: 11 },
+            );
+
+            expect(queryRaw).not.toHaveBeenCalled();
+            expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    branchId: "branch-1",
+                    ruleId: { not: MESSAGE_AUTOMATION_INTENT_RULE_ID },
+                    status: { in: ["failed", "canceled"] },
+                    logs: { none: { branchId: "branch-1", createdAt: { lte: snapshotAt } } },
+                    createdAt: { lte: snapshotAt },
+                    AND: [{ id: { lt: afterId } }, { clientId: 7 }],
+                },
+                orderBy: { id: "desc" },
+                take: 11,
+            });
+        });
+
+        it("pulls in unowned terminal jobs by normalised phone digits within the branch", async () => {
+            queryRaw.mockResolvedValue([{ id: afterId }]);
+            messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: "01012345678" },
+                { snapshotAt, after: null, limit: 11 },
+            );
+
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+            expect(sqlText).toContain("job.branch_id = ");
+            expect(sqlText).toContain("job.client_id IS NULL");
+            expect(sqlText).toContain("job.status IN ('failed', 'canceled')");
+            expect(sqlText).toContain("COALESCE(job.recipient_phone, job.payload->>'recipientPhone')");
+            expect(sqlText).toContain("'[^0-9]'");
+            expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: expect.objectContaining({
+                    branchId: "branch-1",
+                    AND: [{ OR: [{ clientId: 7 }, { clientId: null, id: { in: [afterId] } }] }],
+                }),
+            }));
+        });
+    });
+
     it("upsertPending falls back to findUnique when the guarded update matches no row (sent row stays immutable)", async () => {
         queryRaw.mockResolvedValue([]);
         messageTriggerJobModel.findUnique.mockResolvedValue(createRow({
