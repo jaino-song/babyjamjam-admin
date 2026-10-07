@@ -124,15 +124,50 @@ describeE2E("revision operation intent readiness (disposable PostgreSQL)", () =>
             .toMatchObject({ status: "queued", payload: job.payload, payloadFingerprint: job.payloadFingerprint });
     });
 
-    it("allows saved drafts but refuses the next confirmation while a contract operation is unresolved", async () => {
+    it("lets the next confirmation through when the contract operation was born stuck without a provider document", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         await linkIncompleteContract(fixture);
         const first = await confirm(fixture, true);
+        expect(await states(first.revisionId)).toEqual(expect.arrayContaining([
+            expect.objectContaining({ operation: "contract_period", status: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE", targetDocumentId: null }),
+        ]));
+        const next = await prepare(fixture, false);
+        expect(next.draft.draftVersion).toBeGreaterThan(1);
+        const second = await editor.confirmDraft(fixture.branch.id, next.draft.id, fixture.actorUserId, {
+            expectedDraftVersion: next.draft.draftVersion, previewId: next.preview.previewId, idempotencyKey: randomUUID(),
+        });
+        expect(second.revisionId).not.toBe(first.revisionId);
+        expect((await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } })).currentRevisionId)
+            .toBe(second.revisionId);
+    });
+
+    const refusingStates: Array<{ name: string; data: Record<string, unknown>; expected: Record<string, unknown> }> = [
+        { name: "an in-flight operation", data: { status: "processing", step: "processing", lastErrorCode: null },
+            expected: { status: "processing", lastErrorCode: null } },
+        { name: "a manual_review operation with a provider-state reason",
+            data: { status: "manual_review", step: "manual_review", lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED" },
+            expected: { status: "manual_review", lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED" } },
+        { name: "a facts-unavailable operation that already has a target document",
+            data: { targetDocumentId: `synthetic-target:${randomUUID()}` },
+            expected: { status: "manual_review", lastErrorCode: "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE" } },
+    ];
+
+    it.each(refusingStates)("allows saved drafts but refuses the next confirmation while $name blocks", async ({ data, expected }) => {
+        const fixture = await createServiceRecordConfirmFixture(prisma);
+        await linkIncompleteContract(fixture);
+        const first = await confirm(fixture, true);
+        const operation = (await states(first.revisionId)).find((row) => row.operation === "contract_period");
+        if (!operation) throw new Error("Missing contract operation");
+        await prisma.service_record_revision_document_state.update({ where: { id: operation.id }, data });
         const next = await prepare(fixture, false);
         expect(next.draft.draftVersion).toBeGreaterThan(1);
         await expect(editor.confirmDraft(fixture.branch.id, next.draft.id, fixture.actorUserId, {
             expectedDraftVersion: next.draft.draftVersion, previewId: next.preview.previewId, idempotencyKey: randomUUID(),
-        })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED" } });
+        })).rejects.toMatchObject({ response: {
+            code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+            blockingOperation: { operation: "contract_period", ...expected },
+        } });
         expect((await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } })).currentRevisionId)
             .toBe(first.revisionId);
         expect(await prisma.service_record_edit_draft.findUnique({ where: { id: next.draft.id } })).not.toBeNull();

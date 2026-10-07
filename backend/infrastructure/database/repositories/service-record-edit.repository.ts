@@ -6,6 +6,8 @@ import {
     ServiceRecordEditConflictError,
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordRevisionOperationUnresolvedError,
+    SERVICE_RECORD_BORN_STUCK_ERROR_CODES,
 } from "domain/errors/service-record-edit.error";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
@@ -1448,11 +1450,6 @@ type BlockingRevisionDocumentStateRow = {
     lastErrorCode: string | null;
 };
 
-/** Stable conflict code surfaced when a current revision operation is unresolved. */
-class ServiceRecordRevisionOperationUnresolvedError extends ServiceRecordEditConflictError {
-    readonly code = "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED";
-}
-
 function operationRevisionDispatchContext(
     state: ServiceRecordRevisionDocumentState,
 ): ServiceRecordRevisionDispatchContext | null {
@@ -1526,8 +1523,13 @@ function operationRevisionDispatchContext(
  * retained editor history and has no executable provider job yet.  The case
  * row is already held by the common confirmation lock sequence, so this
  * scoped query is both the fresh read and the state-row lock before writes.
+ *
+ * Also excluded: a state born in `manual_review` because its provider facts
+ * were unavailable at confirm time (see SERVICE_RECORD_BORN_STUCK_ERROR_CODES).
+ * It has no provider job and no target document, so it cannot duplicate a
+ * send; blocking on it would make the record uneditable forever.
  */
-async function assertNoBlockingRevisionDocumentStates(
+export async function assertNoBlockingRevisionDocumentStates(
     tx: Prisma.TransactionClient,
     input: { branchId: string; clientId: number; serviceRecordCaseId: string },
 ): Promise<void> {
@@ -1552,6 +1554,11 @@ async function assertNoBlockingRevisionDocumentStates(
           AND NOT (
                 state.status IN ('not_required', 'completed')
                 OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+                OR (
+                    state.status = 'manual_review'
+                    AND state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])})
+                    AND state.target_document_id IS NULL
+                )
           )
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
@@ -1561,6 +1568,9 @@ async function assertNoBlockingRevisionDocumentStates(
     const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
     throw new ServiceRecordRevisionOperationUnresolvedError(
         `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+        blocking.operation,
+        blocking.status,
+        blocking.lastErrorCode,
     );
 }
 

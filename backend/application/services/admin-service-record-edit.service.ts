@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
@@ -18,6 +18,9 @@ import {
 import {
     ServiceRecordEditConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordRevisionOperationUnresolvedError,
+    SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE,
+    SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE,
 } from "domain/errors/service-record-edit.error";
 import {
     buildServiceRecordContractRevisionSnapshot,
@@ -57,6 +60,7 @@ import type {
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
@@ -493,7 +497,10 @@ export class AdminServiceRecordEditService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly repository: IServiceRecordEditRepository,
         private readonly holidayCalendar: HolidayCalendarService,
+        @Optional() private readonly caseEventBus?: ServiceRecordCaseEventBus,
     ) {}
+
+    private readonly logger = new Logger(AdminServiceRecordEditService.name);
 
     async startDraft(
         branchId: string,
@@ -683,8 +690,9 @@ export class AdminServiceRecordEditService {
         // Loaded before the repository transaction: its `prepare` callback is synchronous.
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
 
+        let confirmed: ServiceRecordEditConfirmResponse;
         try {
-            return await this.repository.confirmDraft({
+            confirmed = await this.repository.confirmDraft({
                 branchId,
                 draftId,
                 expectedDraftVersion: dto.expectedDraftVersion,
@@ -705,12 +713,41 @@ export class AdminServiceRecordEditService {
             });
         } catch (error) {
             if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
+            if (error instanceof ServiceRecordRevisionOperationUnresolvedError) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
+                    blockingOperation: {
+                        operation: error.operation,
+                        status: error.status,
+                        lastErrorCode: error.lastErrorCode,
+                    },
+                });
+            }
             if (error instanceof ServiceRecordEditConflictError) {
                 // 저장소 충돌 전체(버전 경합·문서 상태 경합)는 "작업 대상 변경"의
                 // 동일 원인이라 등록된 코드를 재사용해요(EM-CAT-02).
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             throw error;
+        }
+        this.emitCaseChanged(branchId, confirmed);
+        return confirmed;
+    }
+
+    /** Tell open editors the case changed; a bus failure must never fail the confirm. */
+    private emitCaseChanged(branchId: string, confirmed: ServiceRecordEditConfirmResponse): void {
+        if (!this.caseEventBus) return;
+        try {
+            this.caseEventBus.emit({
+                branchId,
+                clientId: confirmed.clientId,
+                caseId: confirmed.caseId,
+                caseVersion: confirmed.caseVersion,
+            });
+        } catch (error) {
+            this.logger.warn(
+                `case-changed emit failed case=${confirmed.caseId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
         }
     }
 
@@ -1025,7 +1062,7 @@ export class AdminServiceRecordEditService {
                 status: contractOperationStatus,
                 step: contractOperationStatus,
                 lastErrorCode: contractRequiresSync && !contractFactsAvailable
-                    ? "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE"
+                    ? SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE
                     : null,
                 documentVersion: contractSnapshot?.original.documentVersion ?? null,
                 sourceDocumentId: contractSnapshot?.original.documentId ?? contractDocumentId,
@@ -1091,7 +1128,7 @@ export class AdminServiceRecordEditService {
                 status: receiptOperationStatus,
                 step: receiptOperationStatus,
                 lastErrorCode: receiptRequiresSync && !receiptInput
-                    ? "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE"
+                    ? SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE
                     : null,
                 documentVersion: receiptInput?.source.documentVersion ?? null,
                 sourceDocumentId: receiptInput?.source.documentId ?? receiptScope?.sourceDocumentId ?? null,
