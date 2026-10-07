@@ -223,6 +223,7 @@ export default function DashboardPage() {
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
   const {
     notificationLogs: detailNotificationLogs,
+    hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
     refetch: refetchNotificationLogs,
@@ -514,6 +515,7 @@ export default function DashboardPage() {
               client={selectedClient}
               activeTab={detailTab}
               notificationLogs={detailNotificationLogs}
+              hasMoreNotificationLogs={hasMoreNotificationLogs}
               isNotificationLogsLoading={isNotificationLogsLoading}
               isNotificationLogsError={isNotificationLogsError}
               onRetryNotificationLogs={() => {

@@ -595,6 +595,7 @@ export function ClientDetailContent({
   contractDocument,
   activeTab,
   notificationLogs = [],
+  hasMoreNotificationLogs = false,
   isNotificationLogsLoading = false,
   isNotificationLogsError = false,
   onRetryNotificationLogs,
@@ -611,6 +612,8 @@ export function ClientDetailContent({
   contractDocument?: EformsignDocument | null;
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
+  /** The server holds older records than `notificationLogs`; say so instead of presenting a complete history. */
+  hasMoreNotificationLogs?: boolean;
   isNotificationLogsLoading?: boolean;
   isNotificationLogsError?: boolean;
   onRetryNotificationLogs?: () => void;
@@ -1418,6 +1421,14 @@ export function ClientDetailContent({
                 발송 내역이 없습니다.
               </div>
             )}
+            {hasMoreNotificationLogs && !isNotificationLogsLoading && !isNotificationLogsError ? (
+              <p
+                className="detail-empty-state"
+                data-component={`${dataComponent}_tab-panel_message_history-card_truncated-notice`}
+              >
+                최근 발송 기록만 표시하고 있어요
+              </p>
+            ) : null}
           </InfoCard>
         )}
       </MobileDetailTabPanel>

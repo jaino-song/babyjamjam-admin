@@ -165,24 +165,44 @@ export function useClientUpcomingMessageTriggerJobs(
     };
 }
 
+const CLIENT_HISTORY_CONTRACT_MESSAGE = "메시지 발송 기록 서버 응답 형식이 올바르지 않습니다.";
+
+/**
+ * Validates one page of a client's history. A response missing its envelope
+ * (null data, no `items`, no `page`, a `hasMore` page without a cursor) is a
+ * broken contract, not an empty history: it must surface as an error so the
+ * panel never shows "내역 없음" for records it failed to read.
+ */
 function normalizeClientHistoryPayload(payload: unknown): ClientMessageHistoryPageTransport {
     const candidate = payload !== null && typeof payload === "object" && "data" in payload
         ? (payload as { data?: unknown }).data
         : payload;
-    if (!candidate || typeof candidate !== "object") {
-        return { items: [], page: { snapshotAt: "", nextCursor: null, hasMore: false } };
+    if (candidate === null || typeof candidate !== "object") {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
     }
 
-    const value = candidate as { items?: unknown; page?: { snapshotAt?: unknown; nextCursor?: unknown } };
-    const nextCursor = typeof value.page?.nextCursor === "string" && value.page.nextCursor.length > 0
-        ? value.page.nextCursor
-        : null;
+    const value = candidate as { items?: unknown; page?: unknown };
+    if (!Array.isArray(value.items) || value.page === null || typeof value.page !== "object") {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
+    }
+
+    const page = value.page as { snapshotAt?: unknown; nextCursor?: unknown; hasMore?: unknown };
+    const hasNextCursor = typeof page.nextCursor === "string" && page.nextCursor.length > 0;
+    if (
+        typeof page.hasMore !== "boolean"
+        || (page.nextCursor !== null && page.nextCursor !== undefined && !hasNextCursor)
+        || (page.hasMore && !hasNextCursor)
+        || (!page.hasMore && hasNextCursor)
+    ) {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
+    }
+
     return {
-        items: Array.isArray(value.items) ? value.items as MessageLogRecord[] : [],
+        items: value.items as MessageLogRecord[],
         page: {
-            snapshotAt: typeof value.page?.snapshotAt === "string" ? value.page.snapshotAt : "",
-            nextCursor,
-            hasMore: nextCursor !== null,
+            snapshotAt: typeof page.snapshotAt === "string" ? page.snapshotAt : "",
+            nextCursor: hasNextCursor ? (page.nextCursor as string) : null,
+            hasMore: page.hasMore,
         },
     };
 }

@@ -75,9 +75,24 @@ describe("fetchClientMessageLogs", () => {
     expect(result.logs).toHaveLength(20);
   });
 
-  it("treats a malformed payload as an empty history", async () => {
-    mockGet.mockResolvedValueOnce({ data: null });
+  it.each([
+    ["data: null", null],
+    ["no items array", { page: { nextCursor: null, hasMore: false } }],
+    ["no page object", { items: [] }],
+    ["hasMore is not a boolean", { items: [], page: { nextCursor: null } }],
+    ["hasMore without a cursor", { items: [], page: { nextCursor: null, hasMore: true } }],
+    ["a cursor while hasMore is false", { items: [], page: { nextCursor: "c", hasMore: false } }],
+  ])("rejects a malformed response (%s) instead of reporting an empty history", async (_label, data) => {
+    mockGet.mockResolvedValueOnce({ data });
 
-    await expect(fetchClientMessageLogs(42)).resolves.toEqual({ logs: [], hasMore: false });
+    await expect(fetchClientMessageLogs(42)).rejects.toThrow("서버 응답 형식");
+  });
+
+  it("rejects when a later page is malformed rather than returning a silently shortened history", async () => {
+    mockGet
+      .mockResolvedValueOnce(page([{ id: 2 }], "cursor-2"))
+      .mockResolvedValueOnce({ data: null });
+
+    await expect(fetchClientMessageLogs(42)).rejects.toThrow("서버 응답 형식");
   });
 });
