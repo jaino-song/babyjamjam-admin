@@ -458,6 +458,8 @@ type PreProviderSendFenceResult =
     | { kind: "stale"; reason: string }
     | { kind: "lost" };
 
+const SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON = "제공기록지 링크가 철회되어 발송하지 않았습니다";
+
 const SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON =
     "문자 발송 결과가 불확실하여 자동 재전송을 중단했습니다. 제공자 이력 확인 후 수동 확인이 필요합니다.";
 
@@ -2379,11 +2381,16 @@ export class MessageTriggerService {
 
             // A client mutation can race a job that was already claimed for
             // delivery. Invalidate that active claim before refreshing the
-            // pending payload; the CAS update is intentionally skipped when
-            // another worker has already replaced the token.
+            // pending payload, in ONE status-predicated statement: it matches
+            // only a row that is still `processing` under the token read above.
+            // A worker that has since moved the job to `dispatching` (the token
+            // does not change at that step) or replaced the claim wins, and its
+            // job is left untouched instead of being overwritten as canceled
+            // while its message goes out.
             if (job.status === "processing") {
-                job.cancel("Client data changed");
-                await this.jobRepository.update(job);
+                if (job.claimToken) {
+                    await this.jobRepository.cancelProcessingClaim(job.id, job.claimToken, "Client data changed");
+                }
                 continue;
             }
 
@@ -3110,13 +3117,23 @@ export class MessageTriggerService {
             if (tokenFence.kind === "lost") {
                 return tokenFence;
             }
+            // Read after the job row lock above: a revoke locks the schedule's
+            // jobs and only then writes the token rows, so either it committed
+            // first (the revoked token is seen here) or it waits for this
+            // transaction and leaves the then-dispatching job alone.
+            const linkTokenFence = await this.fenceServiceRecordLinkTokenBeforeProviderSend(
+                job,
+                transaction,
+            );
             const staleFence = sourceFence.kind === "stale"
                 ? sourceFence
                 : revisionFence.kind === "stale"
                     ? revisionFence
                     : serviceEndNoticeFence.kind === "stale"
                         ? serviceEndNoticeFence
-                        : null;
+                        : linkTokenFence.kind === "stale"
+                            ? linkTokenFence
+                            : null;
             if (staleFence) {
                 const canceled = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                     UPDATE "message_trigger_job"
@@ -3191,6 +3208,58 @@ export class MessageTriggerService {
         return canceled.length === 1
             ? { kind: "stale", reason: MESSAGE_AUTOMATION_PARENT_DISABLED_REASON }
             : { kind: "lost" };
+    }
+
+    /**
+     * A service-record link job (automatic, manual, or an `agent-sms-retry:`
+     * copy of a failed one) carries its 제공기록지 URL in its payload. Revoke
+     * cancels pending/processing jobs but not failed source jobs, so a retry
+     * created from one after the revoke would otherwise go out with a dead
+     * link. Under the already-held job row lock, require the link's token row
+     * to belong to the job's branch and schedule and to be active and not
+     * revoked; otherwise cancel the job instead of dispatching it.
+     *
+     * Plain read (no token row lock): lock order stays jobs -> tokens, the
+     * order revoke uses (schedule advisory -> jobs -> tokens), so it cannot
+     * invert with it.
+     */
+    private async fenceServiceRecordLinkTokenBeforeProviderSend(
+        job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient,
+    ): Promise<PreProviderSendFenceResult> {
+        if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return { kind: "allow" };
+        const stale = { kind: "stale" as const, reason: SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
+        const linkToken = this.readServiceRecordLinkToken(job);
+        if (!linkToken || !job.branchId || job.employeeScheduleId === null) return stale;
+
+        const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id
+            FROM "service_record_token"
+            WHERE "link_token_hash" = ${linkToken}
+              AND "branch_id" = ${job.branchId}::uuid
+              AND "schedule_id" = ${job.employeeScheduleId}
+              AND "active" = true
+              AND "revoked_at" IS NULL
+        `);
+        return rows.length > 0 ? { kind: "allow" } : stale;
+    }
+
+    private readServiceRecordLinkToken(job: MessageTriggerJobEntity): string | null {
+        const templateVariables = job.payload.templateVariables as Record<string, unknown> | undefined;
+        const candidates = [job.payload.buttonUrl, templateVariables?.["serviceRecordUrl"]];
+        for (const candidate of candidates) {
+            if (typeof candidate !== "string" || candidate === "") continue;
+            try {
+                const prefix = "/service-record/";
+                const { pathname } = new URL(candidate);
+                if (!pathname.startsWith(prefix)) continue;
+                const token = pathname.slice(prefix.length);
+                if (token && !token.includes("/")) return token;
+            } catch {
+                continue;
+            }
+        }
+        return null;
     }
 
     private async fenceServiceEndNoticeBeforeProviderSend(

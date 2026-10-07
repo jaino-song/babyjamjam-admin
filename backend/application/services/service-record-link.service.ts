@@ -241,7 +241,13 @@ export class ServiceRecordLinkService {
             }));
         }
 
-        await this.cancelPendingServiceRecordJobs(scheduleId, "Service record link reset without resend");
+        // The cancel runs under the schedule fence and commits before
+        // `issueLink` below: `issueLink` opens its own transaction (a
+        // `service-record-link:` advisory lock and a case row lock) that must
+        // never be requested from inside the fence. The reset keeps the token
+        // active (same URL), so a send racing it is not refused for its token;
+        // the job it leaves behind still carries a valid link.
+        await this.cancelPendingServiceRecordJobsUnderFence(scheduleId, "Service record link reset without resend");
         await this.supersedeRetryableServiceRecordSmsLogs(scheduleId, "Service record link reset without resend");
 
         const serviceRecordCase = await this.lifecycleService?.ensureForClient(schedule.clientId);
@@ -265,8 +271,18 @@ export class ServiceRecordLinkService {
     /** Revoke an assignment's service-record access (replacement / termination). */
     async revoke(scheduleId: number): Promise<void> {
         try {
-            await this.tokenService.revokeForSchedule(scheduleId);
-            await this.cancelPendingServiceRecordJobs(scheduleId, "Service record access revoked");
+            // One fence for the job cancel and the token revocation, on one
+            // connection (jobs are locked first, tokens after). A send that
+            // prepared its link before this revoke is then either already
+            // enqueued (and cancelled here) or re-checks the token under the
+            // same fence afterwards and refuses. In-flight (`dispatching`) jobs
+            // are only logged: the SMS already left and the link dies with the
+            // token.
+            await this.cancelPendingServiceRecordJobsUnderFence(
+                scheduleId,
+                "Service record access revoked",
+                (transaction) => this.tokenService.revokeForSchedule(scheduleId, transaction),
+            );
             this.logger.log(`Service record access revoked for schedule ${scheduleId}`);
         } catch (error) {
             this.logger.error(`Failed to revoke service-record link for schedule ${scheduleId}: ${error}`);
@@ -301,12 +317,34 @@ export class ServiceRecordLinkService {
             scheduleId,
             reason,
         );
-        if (inFlightJobIds.length > 0) {
-            this.logger.warn(
-                `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
-            );
-        }
+        this.logInFlightLinkJobs(scheduleId, reason, inFlightJobIds);
         return inFlightJobIds;
+    }
+
+    /**
+     * Same cancel under the schedule fence (revoke / reset). `afterCancel`
+     * runs in the fence's transaction, after the jobs are locked and cancelled.
+     */
+    private async cancelPendingServiceRecordJobsUnderFence(
+        scheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<string[]> {
+        const { inFlightJobIds } = await this.jobRepository.cancelPendingUnderScheduleFence(
+            SERVICE_RECORD_LINK_RULE_ID,
+            scheduleId,
+            reason,
+            afterCancel,
+        );
+        this.logInFlightLinkJobs(scheduleId, reason, inFlightJobIds);
+        return inFlightJobIds;
+    }
+
+    private logInFlightLinkJobs(scheduleId: number, reason: string, inFlightJobIds: string[]): void {
+        if (inFlightJobIds.length === 0) return;
+        this.logger.warn(
+            `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
+        );
     }
 
     private async supersedeRetryableServiceRecordSmsLogs(scheduleId: number, reason: string): Promise<void> {
@@ -527,18 +565,17 @@ export class ServiceRecordLinkService {
                         : {}),
                 },
             });
-            const promote = (transaction?: Prisma.TransactionClient) => transaction
-                ? this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                    transaction,
-                )
-                : this.jobRepository.promoteAutomaticSchedulingClaim(
-                    automaticSchedulingClaim!.id,
-                    automaticSchedulingClaim!.claimVersion,
-                    pendingJob,
-                );
+            // The fence re-checks, after the job locks, that this link token was
+            // not revoked while it was being prepared: a revoke is serialized
+            // with the fence and cancels only what already exists.
+            const linkGuard = { requireActiveLinkToken: linkToken };
+            const promote = (transaction?: Prisma.TransactionClient) => this.jobRepository.promoteAutomaticSchedulingClaim(
+                automaticSchedulingClaim!.id,
+                automaticSchedulingClaim!.claimVersion,
+                pendingJob,
+                transaction,
+                linkGuard,
+            );
             let persistedJob: MessageTriggerJobEntity | null;
             if (automaticSchedulingClaim) {
                 persistedJob = await this.branchLock!.runExclusive(
@@ -549,12 +586,19 @@ export class ServiceRecordLinkService {
                 const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                    { requireActiveLinkToken: linkToken },
                 );
-                if (replaced.kind === "in_flight" || replaced.kind === "lock_timeout") {
+                if (
+                    replaced.kind === "in_flight"
+                    || replaced.kind === "lock_timeout"
+                    || replaced.kind === "link_revoked"
+                ) {
                     // Never queue a second send behind one the dispatcher
                     // already claimed; the caller re-reads the (sending) status.
                     // A lock held past the fence's lock_timeout is the same
-                    // answer: nothing was written, try again.
+                    // answer: nothing was written, try again. So is a link that
+                    // was revoked while the send was being prepared: nothing was
+                    // written and the caller re-reads the schedule.
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
                 persistedJob = replaced.job;
