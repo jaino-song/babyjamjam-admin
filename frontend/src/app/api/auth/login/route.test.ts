@@ -131,4 +131,63 @@ describe("POST /api/auth/login", () => {
         expect(response.status).toBe(401);
         await expect(response.json()).resolves.toEqual({ error: "이메일 또는 비밀번호가 올바르지 않아요." });
     });
+
+    it("does not reflect a diagnostic body from a 200 {success:false} login response", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        mockPost.mockResolvedValue({
+            data: {
+                success: false,
+                message: 'Cannot read properties of undefined (reading "client_id")',
+            },
+            status: 200,
+        });
+
+        const response = await POST(createRequest({ email: "a@b.c", password: "pw" }));
+        consoleError.mockRestore();
+
+        expect(response.status).toBe(401);
+        const text = JSON.stringify(await response.json());
+        expect(text).not.toMatch(/Cannot read|client_id|undefined/);
+        expect(JSON.parse(text)).toEqual({ error: "로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요." });
+        expect(cookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("keeps the Korean credentials message with the upstream status for a resolved 401 failure", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        mockPost.mockResolvedValue({
+            data: { success: false, message: "이메일 또는 비밀번호가 올바르지 않습니다." },
+            status: 401,
+        });
+
+        const response = await POST(createRequest({ email: "a@b.c", password: "pw" }));
+        consoleError.mockRestore();
+
+        expect(response.status).toBe(401);
+        const body = await response.json();
+        expect(body).toEqual({ error: "이메일 또는 비밀번호가 올바르지 않아요." });
+        expect(body).not.toHaveProperty("success");
+        expect(cookieStore.set).not.toHaveBeenCalled();
+    });
+
+    it("keeps the problem code of a resolved coded failure body", async () => {
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        const problem = createProblemDetails({
+            code: "REQUEST_RATE_LIMITED",
+            requestId: "req-login-resolved",
+            outcome: "NOT_APPLIED",
+        });
+        mockPost.mockResolvedValue({
+            data: { ...problem, success: false, message: "stack at /srv/auth/login.ts:12" },
+            status: 429,
+        });
+
+        const response = await POST(createRequest({ email: "a@b.c", password: "pw" }));
+        consoleError.mockRestore();
+
+        expect(response.status).toBe(429);
+        const body = await response.json();
+        expect(body).toMatchObject({ code: "REQUEST_RATE_LIMITED", status: 429 });
+        expect(JSON.stringify(body)).not.toMatch(/srv|login\.ts/);
+        expect(cookieStore.set).not.toHaveBeenCalled();
+    });
 });

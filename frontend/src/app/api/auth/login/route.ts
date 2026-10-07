@@ -14,9 +14,13 @@ export async function POST(request: NextRequest) {
         };
         const { data, status } = await serverAPIClient.post("/auth/login", loginPayload);
 
-        // If login failed, return the response
+        // A resolved failure body goes through the same sanitized boundary as a
+        // thrown upstream error: problem bodies keep their code, plain business
+        // messages survive, diagnostic text is replaced. A failure must never be
+        // an HTTP 2xx/3xx, so a non-error status (e.g. 200 {success:false}) is 401.
         if (!data.success || !data.accessToken) {
-            return NextResponse.json(data, { status: status || 401 });
+            const failureStatus = status >= 400 ? status : 401;
+            return errorResponse({ response: { status: failureStatus, data } }, "log in");
         }
 
         // Set auth cookies on successful login
