@@ -72,6 +72,15 @@ describe("useClientMessageHistory", () => {
         await waitFor(() => expect(result.current.hasMore).toBe(true));
     });
 
+    it("reports an error, not an empty history, when the server response is rejected", async () => {
+        fetchClientLogs.mockRejectedValue(new Error("메시지 발송 기록 서버 응답 형식이 올바르지 않습니다."));
+
+        const { result } = renderHook(() => useClientMessageHistory(client), { wrapper });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(result.current.notificationLogs).toEqual([]);
+    });
+
     it("does not fetch without a client", () => {
         renderHook(() => useClientMessageHistory(null), { wrapper });
 

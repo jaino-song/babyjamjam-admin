@@ -101,6 +101,34 @@ describe("useClientMessageHistory", () => {
         expect(messageTriggerKeys.clientHistory(42).slice(0, 1)).toEqual(messageTriggerKeys.all);
     });
 
+    it.each([
+        ["data: null", { data: null }],
+        ["no items array", { data: { page: { snapshotAt: "x", nextCursor: null, hasMore: false } } }],
+        ["no page object", { data: { items: [] } }],
+        ["hasMore is not a boolean", { data: { items: [], page: { nextCursor: null } } }],
+        ["hasMore without a cursor", { data: { items: [], page: { nextCursor: null, hasMore: true } } }],
+        ["a cursor while hasMore is false", { data: { items: [], page: { nextCursor: "c", hasMore: false } } }],
+    ])("rejects a malformed response (%s) instead of showing an empty history", async (_label, response) => {
+        mockListClientHistory.mockResolvedValue(response as never);
+        const { wrapper } = createWrapper();
+
+        const { result } = renderHook(() => useClientMessageHistory(42), { wrapper });
+
+        await waitFor(() => expect(result.current.isError).toBe(true));
+        expect(result.current.items).toEqual([]);
+    });
+
+    it("keeps the truncation signal when the server reports more records", async () => {
+        mockListClientHistory.mockResolvedValue(page([record(1)], "older") as never);
+        const { wrapper } = createWrapper();
+
+        const { result } = renderHook(() => useClientMessageHistory(42), { wrapper });
+
+        await waitFor(() => expect(result.current.items).toHaveLength(1));
+        expect(result.current.isError).toBe(false);
+        expect(result.current.hasNextPage).toBe(true);
+    });
+
     it("drops loaded rows when a refetch errors", async () => {
         mockListClientHistory.mockRejectedValue(new Error("boom"));
         const { wrapper } = createWrapper();
