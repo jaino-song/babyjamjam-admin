@@ -1327,7 +1327,10 @@ export default function ContractCreationPage() {
                 ? Object.fromEntries(
                   Object.entries(clientData).filter(([key]) => !CLIENT_PERIOD_DTO_KEYS.has(key)),
                 ) as Partial<typeof clientData>
-                : clientData,
+                // 기간 값을 함께 보내는 저장은, 폼을 열 때의 종료일을 같이 보내 그사이 종료일이 바뀌었으면 덮어쓰지 않고 거절돼요.
+                : loadedBaseline
+                  ? { ...clientData, expectedEndDate: loadedBaseline.snapshot.endDate.value ?? null }
+                  : clientData,
           });
         } catch (error) {
           showSubmissionFailure(error, "UNKNOWN");

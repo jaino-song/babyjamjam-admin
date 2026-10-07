@@ -473,6 +473,32 @@ describe("mobile contract form - confirm before writing form edits back to the c
     expect(mockUpdateClient.mock.invocationCallOrder[0]).toBeLessThan(mockDispatchHeadless.mock.invocationCallOrder[0] ?? 0);
   });
 
+  it("sends the end date the client was loaded with as expectedEndDate so a moved end date is refused, not overwritten", async () => {
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).toEqual(expect.objectContaining({ endDate: STORED_END, expectedEndDate: STORED_END }));
+  });
+
+  it("does not send expectedEndDate when a finalized client's update leaves the period out", async () => {
+    mockClients = [makeClient({ serviceRecordPeriodLocked: true })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).not.toHaveProperty("expectedEndDate");
+  });
+
   it("does not ask, and skips the no-op client update, when nothing differs", async () => {
     await renderOnStep(3);
     submit();
