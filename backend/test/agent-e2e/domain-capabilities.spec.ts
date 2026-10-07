@@ -138,11 +138,12 @@ describe("Release A domain read capabilities", () => {
             statusType: "050", statusDetail: "완료", stepType: "05", stepIndex: "1", stepName: "이용자",
             stepRecipientType: "05", stepRecipientName: "이용자", stepRecipientSms: "010-0000-0000", expiredDate: new Date("2026-12-01T00:00:00Z"), expired: false, clientId: 10,
         });
-        const deleted = EformsignDocEntity.create({
-            documentId: "doc-deleted", createdDate: new Date("2026-08-01T00:00:00Z"), statusType: "deleted", statusDetail: "삭제", stepType: "05", stepIndex: "1", stepName: "이용자",
+        // Stored deletion codes are 047 (delete requested) / 049 (deleted) / 099 — never the literal "deleted".
+        const deletedDocs = ["047", "049", "099"].map((statusType) => EformsignDocEntity.create({
+            documentId: `doc-deleted-${statusType}`, createdDate: new Date("2026-08-01T00:00:00Z"), statusType, statusDetail: "삭제", stepType: "05", stepIndex: "1", stepName: "이용자",
             stepRecipientType: "05", stepRecipientName: "이용자", stepRecipientSms: "010-0000-0000", expiredDate: new Date("2026-12-01T00:00:00Z"), expired: false, clientId: 10,
-        });
-        const find = { execute: jest.fn().mockResolvedValue([active, deleted]) };
+        }));
+        const find = { execute: jest.fn().mockResolvedValue([active, ...deletedDocs]) };
         const provider = new EformsignAgentCapabilitiesProvider(find as never, createHolidayCalendarStub());
         const output = await provider.getCapabilities()[0]!.execute(context, { clientId: 10 });
         expect(output).toMatchObject({ documents: [{ documentId: "doc-active", status: "completed" }] });

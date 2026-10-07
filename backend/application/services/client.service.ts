@@ -93,7 +93,9 @@ const FILTER_DAYS_THRESHOLD = 7;
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
 const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
-const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
+// Exported so repository/provider filters exclude the same stored deletion codes
+// (the stored value is never the literal "deleted").
+export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
@@ -719,6 +721,13 @@ export class ClientService {
     }
 
     /** Whether a client's latest contract document is still active (see `ACTIVE_DOCUMENT_STATUSES`). */
+    private isActiveContractDocument(contract: LatestContractSignal | undefined): boolean {
+        if (!contract) return false;
+        return contract.permanentPurgeRequestedAt == null
+            && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
+            && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType));
+    }
+
     private async findHasActiveContractDocumentByClientId(
         clientIds: number[],
     ): Promise<Map<number, boolean>> {
@@ -727,9 +736,7 @@ export class ClientService {
         return new Map(
             [...latestContractMap].map(([clientId, contract]) => [
                 clientId,
-                contract.permanentPurgeRequestedAt == null
-                && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
-                && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType)),
+                this.isActiveContractDocument(contract),
             ]),
         );
     }
@@ -2599,21 +2606,14 @@ export class ClientService {
         const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
         const nextMonthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59);
 
-        const [activeClients, contractsNotSent, branchClients, upcomingThisMonth, upcomingNextMonth] =
+        const [activeClients, branchClients, upcomingThisMonth, upcomingNextMonth] =
             await Promise.all([
                 this.prismaService.client.count({
                     where: { serviceStatus: SERVICE_STATUS.ACTIVE, branchId: branchid },
                 }),
-                this.prismaService.client.count({
-                    where: {
-                        eDocId: null,
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        branchId: branchid,
-                    },
-                }),
                 this.prismaService.client.findMany({
                     where: { branchId: branchid },
-                    select: { id: true },
+                    select: { id: true, startDate: true, endDate: true, serviceStatus: true },
                 }),
                 this.prismaService.client.count({
                     where: {
@@ -2637,6 +2637,22 @@ export class ClientService {
             branchClients.map((client) => client.id),
         );
         const calendar = await this.holidayCalendar.forBranch(branchid);
+
+        // "계약서 발송 필요": exactly the clients whose list row carries the "발송 필요"
+        // contract badge — same effective service status, same latest-contract lookup
+        // and the same business-day send window as the list (computeContractActionRequired).
+        const contractsNotSent = branchClients.filter((client) =>
+            this.computeContractActionRequired({
+                serviceStatus: getEffectiveClientServiceStatus(
+                    client.serviceStatus ?? null,
+                    client.startDate ?? null,
+                    client.endDate ?? null,
+                ),
+                startDate: client.startDate ?? null,
+                hasActiveContractDocument: this.isActiveContractDocument(latestContracts.get(client.id)),
+            }, calendar)?.reason === "발송 필요",
+        ).length;
+
         const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
             if (
                 doc.permanentPurgeRequestedAt != null

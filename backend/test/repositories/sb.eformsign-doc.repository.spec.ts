@@ -245,7 +245,7 @@ describe("SbEformsignDocRepository", () => {
                 where: {
                     branchId: "branch-1",
                     permanentPurgeRequestedAt: null,
-                    statusType: { not: "deleted" },
+                    statusType: { notIn: ["047", "049", "099"] },
                     OR: [
                         { documentKind: "contract" },
                         { documentKind: null },

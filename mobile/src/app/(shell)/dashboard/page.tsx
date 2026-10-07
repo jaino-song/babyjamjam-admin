@@ -27,6 +27,7 @@ import { DashboardRedesign } from "@/components/app/mobile-redesign/DashboardRed
 import { ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import {
   deriveDashboardAnalyticsFromClients,
+  formatAnalyticsCount,
   isServiceStartingWithinWeek,
 } from "@/lib/dashboard/analytics";
 import type {
@@ -288,27 +289,28 @@ export default function DashboardPage() {
     const now = new Date();
     const derivedAnalytics = deriveDashboardAnalyticsFromClients(allClients, now);
     const active = analytics?.activeClients ?? derivedAnalytics.activeClients;
-    const upcoming = analytics?.upcomingThisMonth ?? derivedAnalytics.upcomingThisMonth;
-    const pendingReview =
-      analytics?.contractsPendingSignature ?? derivedAnalytics.contractsPendingSignature;
-    const pendingSend = analytics?.contractsNotSent ?? derivedAnalytics.contractsNotSent;
+    // Seven days, counted with the same rule as the 시작 예정 list below.
+    const upcoming = analytics?.upcomingWithinWeek ?? derivedAnalytics.upcomingWithinWeek;
+    // Contract counts come only from the server stats; unknown shows "-" instead of a guessed 0.
+    const pendingReview = analytics?.contractsPendingSignature ?? null;
+    const pendingSend = analytics?.contractsNotSent ?? null;
 
     const dashboardAnalytics: DashboardAnalytic[] = [
-      { label: "서비스 진행 중", value: String(active), tone: "primary", icon: User },
-      { label: "7일 내 시작 예정", value: String(upcoming), tone: "orange", icon: Calendar },
+      { label: "서비스 진행 중", value: formatAnalyticsCount(active), tone: "primary", icon: User },
+      { label: "7일 내 시작 예정", value: formatAnalyticsCount(upcoming), tone: "orange", icon: Calendar },
       {
         label: "검토 필요 문서",
-        value: String(pendingReview),
+        value: formatAnalyticsCount(pendingReview),
         tone: "green",
         icon: File,
-        urgent: pendingReview > 0,
+        urgent: (pendingReview ?? 0) > 0,
       },
       {
-        label: "계약서 미완료",
-        value: String(pendingSend),
+        label: "계약서 발송 필요",
+        value: formatAnalyticsCount(pendingSend),
         tone: "burgundy",
         icon: Send,
-        urgent: pendingSend > 0,
+        urgent: (pendingSend ?? 0) > 0,
       },
     ];
 
