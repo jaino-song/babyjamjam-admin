@@ -834,22 +834,14 @@ export class EformsignWebhookService {
         templateName?: string,
         sourceUpdatedDate?: Date,
     ): Promise<EformsignWebhookCompletionClaim> {
-        // The claim's step columns are required, but the position the webhook carries
-        // is not a step kind. Without a mirror, re-assert the stored values instead:
-        // a row that does not exist cannot be claimed, so the empty fallback is never
-        // written.
-        let { stepType, stepIndex } = mirroredStepFields(mirroredDocument);
-        if (stepType === undefined || stepIndex === undefined) {
-            const stored = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
-            stepType ??= stored?.stepType ?? "";
-            stepIndex ??= stored?.stepIndex ?? "";
-        }
+        // The position the webhook carries is not a step kind, and re-sending a stored value
+        // read earlier would race a newer step write. Without a mirror the claim simply
+        // omits the step columns and the atomic update leaves them untouched.
         const claimResult = await this.eformsignDocRepository.claimCompletionStatus(branchid, {
             documentId,
             statusType: "050",
             statusDetail: "완료",
-            stepType,
-            stepIndex,
+            ...mirroredStepFields(mirroredDocument),
             stepName: workflowName,
             expired: false,
             sourceUpdatedDate,

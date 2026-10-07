@@ -296,7 +296,7 @@ describe("EformsignWebhookService step kind persistence (real usecase, in-memory
             expect(claimedParams()).toMatchObject({ stepType: "06", stepIndex: "5" });
         });
 
-        it("re-asserts the stored step columns when there is no mirror", async () => {
+        it("omits the step columns when there is no mirror instead of re-asserting stored ones", async () => {
             row = createRow({ stepType: "06", stepIndex: "3" });
 
             await service.processWebhook(documentPayload("doc_complete", 4), {
@@ -304,7 +304,11 @@ describe("EformsignWebhookService step kind persistence (real usecase, in-memory
                 deferCompletionEffects: true,
             });
 
-            expect(claimedParams()).toMatchObject({ stepType: "06", stepIndex: "3" });
+            const params = claimedParams();
+            expect(params).not.toHaveProperty("stepType");
+            expect(params).not.toHaveProperty("stepIndex");
+            // The claim no longer reads the row to fill them in.
+            expect(eformsignDocRepository.findByDocumentId).not.toHaveBeenCalled();
         });
 
         it("uses the mirrored step kind on the ready_document_pdf completion too", async () => {
