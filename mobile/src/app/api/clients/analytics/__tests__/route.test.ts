@@ -35,79 +35,103 @@ describe("clients analytics route", () => {
     jest.useRealTimers();
   });
 
-  it("overrides backend dashboard counts with service-start window derived counts", async () => {
+  const weekClients = {
+    status: 200,
+    data: {
+      data: [
+        { serviceStatus: "waiting", startDate: "2026-06-03T00:00:00+09:00", eDocId: null, documentStatus: null },
+        { serviceStatus: "active", startDate: "2026-06-17T23:59:00+09:00", eDocId: "doc-1", documentStatus: "opened" },
+        { serviceStatus: "active", startDate: "2026-06-18T00:00:00+09:00", eDocId: null, documentStatus: null },
+        { serviceStatus: "waiting", startDate: "2026-06-10T00:00:00+09:00", eDocId: "doc-2", documentStatus: "completed" },
+        { serviceStatus: "pre_booking", startDate: "2026-06-12T00:00:00+09:00", eDocId: null, documentStatus: null },
+      ],
+    },
+  };
+
+  it("returns the backend stats as-is and only adds the seven-day start count from the client list", async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date("2026-06-10T12:00:00+09:00"));
 
     mockServerGet.mockImplementation(async (path: string) => {
-      if (path === "/clients/analytics") {
+      if (path === "/clients/stats") {
         return {
           status: 200,
           data: {
             activeClients: 11,
-            contractsNotSent: 99,
+            contractsNotSent: 4,
             contractsPendingSignature: 3,
-            upcomingThisMonth: 4,
+            upcomingThisMonth: 9,
             upcomingNextMonth: 5,
           },
         };
       }
 
-      return {
-        status: 200,
-        data: {
-          data: [
-            {
-              serviceStatus: "waiting",
-              startDate: "2026-06-03T00:00:00+09:00",
-              eDocId: null,
-              documentStatus: null,
-            },
-            {
-              serviceStatus: "active",
-              startDate: "2026-06-17T23:59:00+09:00",
-              eDocId: "doc-1",
-              documentStatus: "opened",
-            },
-            {
-              serviceStatus: "active",
-              startDate: "2026-06-18T00:00:00+09:00",
-              eDocId: null,
-              documentStatus: null,
-            },
-            {
-              serviceStatus: "waiting",
-              startDate: "2026-06-10T00:00:00+09:00",
-              eDocId: "doc-2",
-              documentStatus: "completed",
-            },
-            {
-              serviceStatus: "pre_booking",
-              startDate: "2026-06-12T00:00:00+09:00",
-              eDocId: null,
-              documentStatus: null,
-            },
-          ],
-        },
-      };
+      return weekClients;
     });
 
     const response = await GET(createRequest());
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
-    await expect(response.json()).resolves.toMatchObject({
+    // contractsNotSent / upcomingThisMonth are the backend's numbers, not locally re-derived ones.
+    await expect(response.json()).resolves.toEqual({
       activeClients: 11,
-      contractsNotSent: 2,
+      contractsNotSent: 4,
       contractsPendingSignature: 3,
-      upcomingThisMonth: 3,
+      upcomingThisMonth: 9,
       upcomingNextMonth: 5,
+      upcomingWithinWeek: 3,
     });
+    expect(mockServerGet).toHaveBeenCalledWith("/clients/stats", expect.anything());
+    expect(mockServerGet).not.toHaveBeenCalledWith("/clients/analytics", expect.anything());
+  });
+
+  it("reports the contract counts as unknown (null), never zero, when the backend stats are unavailable", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-10T12:00:00+09:00"));
+
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") {
+        return { status: 500, data: { message: "boom" } };
+      }
+
+      return weekClients;
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      activeClients: 2,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: 0,
+      upcomingWithinWeek: 3,
+    });
+  });
+
+  it("keeps the backend stats when the client list fails", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") {
+        return {
+          status: 200,
+          data: { activeClients: 11, contractsNotSent: 4, contractsPendingSignature: 3, upcomingThisMonth: 9, upcomingNextMonth: 5 },
+        };
+      }
+
+      return { status: 502, data: { message: "down" } };
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ contractsNotSent: 4, upcomingThisMonth: 9 });
   });
 
   it("uses the backend-safe clients page limit when deriving analytics locally", async () => {
     mockServerGet.mockImplementation(async (path: string) => {
-      if (path === "/clients/analytics") {
+      if (path === "/clients/stats") {
         return { status: 404, data: { message: "missing analytics endpoint" } };
       }
 
@@ -130,7 +154,7 @@ describe("clients analytics route", () => {
 
   it("does not expose raw backend details when client-derived analytics fail", async () => {
     mockServerGet.mockImplementation(async (path: string) => {
-      if (path === "/clients/analytics") {
+      if (path === "/clients/stats") {
         return { status: 404, data: { message: "missing analytics endpoint" } };
       }
 

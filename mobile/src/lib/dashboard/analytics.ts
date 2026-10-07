@@ -1,9 +1,18 @@
+/**
+ * A `null` count is "unknown", never zero: the dashboard renders it as "-". The server stats
+ * endpoint is the only source for the contract counts, so when it is unavailable they stay null
+ * instead of being re-derived from the client list under a different rule.
+ */
 export interface DashboardAnalytics {
-  activeClients: number;
-  contractsNotSent: number;
-  contractsPendingSignature: number;
-  upcomingThisMonth: number;
-  upcomingNextMonth: number;
+  activeClients: number | null;
+  /** Clients whose list row carries the "발송 필요" contract badge (server-decided). */
+  contractsNotSent: number | null;
+  contractsPendingSignature: number | null;
+  /** Server count of waiting clients starting anywhere in the current month. */
+  upcomingThisMonth: number | null;
+  upcomingNextMonth: number | null;
+  /** Clients starting within the next seven days, counted with the same rule as the dashboard list. */
+  upcomingWithinWeek: number | null;
 }
 
 export interface DashboardAnalyticsClient {
@@ -14,9 +23,7 @@ export interface DashboardAnalyticsClient {
   documentStatus: string | null;
 }
 
-const CONTRACT_START_WINDOW_DAYS = 7;
 const SERVICE_START_WINDOW_DAYS = 7;
-const EXCLUDED_CONTRACT_START_SERVICE_STATUSES = new Set(["pre_booking", "completed", "terminated"]);
 const EXCLUDED_UPCOMING_SERVICE_STATUSES = new Set(["completed", "terminated"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,23 +72,6 @@ function kstMonthIndex(date: Date) {
   return shifted.getUTCFullYear() * 12 + shifted.getUTCMonth();
 }
 
-export function isContractIncompleteNearServiceStart(
-  client: DashboardAnalyticsClient,
-  now = new Date(),
-): boolean {
-  const serviceStatus = client.serviceStatus ?? "";
-  if (EXCLUDED_CONTRACT_START_SERVICE_STATUSES.has(serviceStatus)) return false;
-  if (client.documentStatus === "completed") return false;
-
-  const startDate = dateValue(client.startDate);
-  if (!startDate) return false;
-
-  const windowStart = addDays(startOfKstDay(now), -CONTRACT_START_WINDOW_DAYS);
-  const windowEnd = addDays(endOfKstDay(now), CONTRACT_START_WINDOW_DAYS);
-
-  return startDate >= windowStart && startDate <= windowEnd;
-}
-
 export function isServiceStartingWithinWeek(
   client: DashboardAnalyticsClient,
   now = new Date(),
@@ -121,67 +111,64 @@ export function normalizeDashboardAnalyticsPayload(payload: unknown): DashboardA
     numberValue(schedules.upcomingThisMonth);
   const upcomingNextMonth =
     numberValue(payload.upcomingNextMonth) ??
-    numberValue(schedules.startingNextMonth) ??
-    0;
+    numberValue(schedules.startingNextMonth);
+  const upcomingWithinWeek = numberValue(payload.upcomingWithinWeek);
 
   if (
     activeClients === undefined &&
     contractsNotSent === undefined &&
     contractsPendingSignature === undefined &&
-    upcomingThisMonth === undefined
+    upcomingThisMonth === undefined &&
+    upcomingWithinWeek === undefined
   ) {
     return null;
   }
 
   return {
-    activeClients: activeClients ?? 0,
-    contractsNotSent: contractsNotSent ?? 0,
-    contractsPendingSignature: contractsPendingSignature ?? 0,
-    upcomingThisMonth: upcomingThisMonth ?? 0,
-    upcomingNextMonth,
+    activeClients: activeClients ?? null,
+    contractsNotSent: contractsNotSent ?? null,
+    contractsPendingSignature: contractsPendingSignature ?? null,
+    upcomingThisMonth: upcomingThisMonth ?? null,
+    upcomingNextMonth: upcomingNextMonth ?? null,
+    upcomingWithinWeek: upcomingWithinWeek ?? null,
   };
 }
 
+/**
+ * Counts that can honestly be derived from the client rows the dashboard already shows. The contract
+ * counts (발송 필요 / 검토 필요) are decided by the server and are deliberately left `null`.
+ */
 export function deriveDashboardAnalyticsFromClients(
   clients: DashboardAnalyticsClient[],
   now = new Date(),
 ): DashboardAnalytics {
   const today = startOfKstDay(now);
   const nextMonthIndex = kstMonthIndex(now) + 1;
+  let activeClients = 0;
+  let upcomingWithinWeek = 0;
+  let upcomingNextMonth = 0;
 
-  return clients.reduce<DashboardAnalytics>(
-    (acc, client) => {
-      if (client.serviceStatus === "active") {
-        acc.activeClients += 1;
-      }
+  for (const client of clients) {
+    if (client.serviceStatus === "active") activeClients += 1;
+    if (isServiceStartingWithinWeek(client, today)) upcomingWithinWeek += 1;
 
-      const startDate = dateValue(client.startDate);
-      if (isServiceStartingWithinWeek(client, today)) {
-        acc.upcomingThisMonth += 1;
-      }
+    const startDate = dateValue(client.startDate);
+    if (startDate && client.serviceStatus !== "terminated" && kstMonthIndex(startDate) === nextMonthIndex) {
+      upcomingNextMonth += 1;
+    }
+  }
 
-      if (startDate && client.serviceStatus !== "terminated") {
-        if (kstMonthIndex(startDate) === nextMonthIndex) {
-          acc.upcomingNextMonth += 1;
-        }
-      }
+  return {
+    activeClients,
+    contractsNotSent: null,
+    contractsPendingSignature: null,
+    upcomingThisMonth: null,
+    upcomingNextMonth,
+    upcomingWithinWeek,
+  };
+}
 
-      // The client projection cannot distinguish provider-review workflow state
-      // from other unfinished states. Only the dedicated server analytics payload
-      // may populate contractsPendingSignature; the offline fallback stays at zero.
-
-      if (isContractIncompleteNearServiceStart(client, today)) {
-        acc.contractsNotSent += 1;
-      }
-
-      return acc;
-    },
-    {
-      activeClients: 0,
-      contractsNotSent: 0,
-      contractsPendingSignature: 0,
-      upcomingThisMonth: 0,
-      upcomingNextMonth: 0,
-    },
-  );
+/** Display form of an analytics count: a real number, or "-" when it is unknown. */
+export function formatAnalyticsCount(value: number | null | undefined): string {
+  return typeof value === "number" ? String(value) : "-";
 }

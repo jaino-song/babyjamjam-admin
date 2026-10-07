@@ -34,6 +34,7 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 import { extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
+import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.service";
 import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 
 const isUniqueConstraintError = (error: unknown): boolean =>
@@ -336,7 +337,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             where: {
                 branchId: branchid,
                 permanentPurgeRequestedAt: null,
-                statusType: { not: "deleted" },
+                statusType: { notIn: [...DELETED_DOCUMENT_STATUS_TYPES] },
                 OR: [
                     { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
                     { documentKind: null },

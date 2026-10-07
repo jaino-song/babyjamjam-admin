@@ -44,12 +44,14 @@ export async function GET(request: NextRequest) {
   let backendAnalytics: DashboardAnalytics | null = null;
 
   try {
-    const response = await serverAPIClient.get("/clients/analytics", { headers });
+    // The branch stats endpoint is the single source for the contract counts, so the dashboard
+    // numbers match the badges the client list shows.
+    const response = await serverAPIClient.get("/clients/stats", { headers });
     if (response.status < 400) {
       backendAnalytics = normalizeDashboardAnalyticsPayload(response.data);
     }
   } catch {
-    // Fall through to client-derived analytics when the backend has no dedicated endpoint.
+    // Fall through: the contract counts stay unknown (rendered "-"), never a locally guessed number.
   }
 
   try {
@@ -94,13 +96,15 @@ export async function GET(request: NextRequest) {
       page += 1;
     }
 
+    // Backend values are returned as-is. Only the seven-day start count is added, from the same
+    // client rows and rule as the dashboard list, because the backend has no seven-day count.
     const derivedAnalytics = deriveDashboardAnalyticsFromClients(clients);
     return withNoStore(
-      NextResponse.json({
-        ...(backendAnalytics ?? derivedAnalytics),
-        contractsNotSent: derivedAnalytics.contractsNotSent,
-        upcomingThisMonth: derivedAnalytics.upcomingThisMonth,
-      }),
+      NextResponse.json(
+        backendAnalytics
+          ? { ...backendAnalytics, upcomingWithinWeek: derivedAnalytics.upcomingWithinWeek }
+          : derivedAnalytics,
+      ),
     );
   } catch (error) {
     if (backendAnalytics) return withNoStore(NextResponse.json(backendAnalytics));

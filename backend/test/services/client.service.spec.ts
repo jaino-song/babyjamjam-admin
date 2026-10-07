@@ -4819,6 +4819,132 @@ describe("ClientService", () => {
 
             expect(result.contractsPendingSignature).toBe(1);
         });
+
+        // contractsNotSent must equal the number of clients whose list row carries the
+        // "발송 필요" badge: effective service status, latest-contract lookup, send window.
+        describe("contractsNotSent (계약서 발송 필요)", () => {
+            type StoredClient = {
+                id: number;
+                eDocId: string | null;
+                serviceStatus: string | null;
+                startDate: Date;
+                endDate: Date;
+            };
+            const storedClient = (overrides: Partial<StoredClient> = {}): StoredClient => ({
+                id: 1,
+                eDocId: null,
+                serviceStatus: "waiting",
+                startDate: new Date("2026-03-20T00:00:00.000Z"),
+                endDate: new Date("2026-04-04T00:00:00.000Z"),
+                ...overrides,
+            });
+            const contractDoc = (overrides: Record<string, unknown> = {}) => ({
+                clientId: 1,
+                documentId: "doc-1",
+                statusType: "060",
+                stepType: "02",
+                stepName: "이용자 서명",
+                detailPayload: null,
+                permanentPurgeRequestedAt: null,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: null,
+                ...overrides,
+            });
+
+            const seed = (clients: StoredClient[], docs: Record<string, unknown>[]) => {
+                // A tiny stand-in for the database so the legacy stored-status count query
+                // (eDocId IS NULL AND service_status = waiting) behaves like the real one.
+                prismaService.client.count.mockImplementation(async ({ where }: { where: { eDocId?: string | null; serviceStatus?: string } }) =>
+                    clients.filter((client) =>
+                        (where.eDocId === undefined || client.eDocId === where.eDocId)
+                        && (where.serviceStatus === undefined || client.serviceStatus === where.serviceStatus),
+                    ).length);
+                prismaService.client.findMany.mockResolvedValue(clients);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(docs);
+            };
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-03-17T09:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("counts a client whose only contract expired even though eDocId still points at it", async () => {
+                seed(
+                    [storedClient({ eDocId: "doc-1" })],
+                    [contractDoc({ statusType: "080" })],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+            });
+
+            it("does not count a client with a live contract that is linked only by clientId", async () => {
+                seed(
+                    [storedClient({ eDocId: null })],
+                    [contractDoc({ statusType: "060" })],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("does not count a client whose latest contract is completed or under provider review", async () => {
+                seed(
+                    [storedClient({ id: 1 }), storedClient({ id: 2 })],
+                    [
+                        contractDoc({ clientId: 1, documentId: "doc-1", statusType: "050", stepType: "05", stepName: "완료" }),
+                        contractDoc({ clientId: 2, documentId: "doc-2", statusType: "070", stepType: "06", stepName: "제공기관 확인" }),
+                    ],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("counts a client with no contract at all", async () => {
+                seed([storedClient()], []);
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+            });
+
+            it("counts a client whose latest contract was deleted or purged", async () => {
+                seed(
+                    [storedClient({ id: 1 }), storedClient({ id: 2 })],
+                    [
+                        contractDoc({ clientId: 1, documentId: "doc-1", statusType: "049" }),
+                        contractDoc({ clientId: 2, documentId: "doc-2", statusType: "003", permanentPurgeRequestedAt: new Date("2026-03-01T00:00:00.000Z") }),
+                    ],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(2);
+            });
+
+            it("uses the effective service status, not the stored one", async () => {
+                // Stored "active" but the start date is still ahead: the list shows it as waiting.
+                seed([storedClient({ serviceStatus: "active" })], []);
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+
+                // Stored "waiting" but the service already ended: the list shows it as completed.
+                seed(
+                    [storedClient({
+                        serviceStatus: "waiting",
+                        startDate: new Date("2026-02-01T00:00:00.000Z"),
+                        endDate: new Date("2026-03-01T00:00:00.000Z"),
+                    })],
+                    [],
+                );
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("only counts clients inside the business-day send window", async () => {
+                // 2026-03-30 is more than six business days after 2026-03-17.
+                seed([storedClient({ startDate: new Date("2026-03-30T00:00:00.000Z") })], []);
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+        });
     });
 
     // ============================================
