@@ -114,7 +114,7 @@ export function MaternityContractDialog({
         <DialogHeader className={APP_DIALOG_HEADER_CLASS_NAME}>
           <div className={APP_DIALOG_HEADER_ROW_CLASS_NAME}>
             <DialogTitle className={APP_DIALOG_TITLE_CLASS_NAME}>
-              산모 계약서 생성
+              서비스 계약서 생성
             </DialogTitle>
 
             <DialogClose asChild>

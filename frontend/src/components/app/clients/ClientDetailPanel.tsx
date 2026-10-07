@@ -608,11 +608,13 @@ function ClientContractsList({
     isError,
     isLoading,
     dataComponentPrefix,
+    onCreateContract,
 }: {
     docs: LocalEformsignDocRecord[];
     isError: boolean;
     isLoading: boolean;
     dataComponentPrefix: string;
+    onCreateContract?: () => void;
 }) {
     // Display-only: the built-in calendar stands in until the branch calendar loads.
     const { calendar } = useBusinessDayCalendar();
@@ -651,6 +653,16 @@ function ClientContractsList({
         return (
             <DetailEmptyState
                 message="계약서 정보가 없습니다"
+                action={onCreateContract ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        onClick={onCreateContract}
+                        data-component={`${dataComponentPrefix}-contracts-empty_create-contract`}
+                    >
+                        서비스 계약서 생성
+                    </Button>
+                ) : undefined}
             />
         );
     }
@@ -777,6 +789,8 @@ export interface ClientDetailPanelProps {
     layout?: "desktop" | "mobile";
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
+    /** When set, the empty contracts tab offers a button that runs this (same action as the menu's contract item). */
+    onCreateContract?: () => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
     dataComponentPrefix?: string;
     /** Prefix forwarded to `MessageHistoryDetailPanel`'s own `dataComponentPrefix`. */
@@ -801,13 +815,16 @@ function ClientDetailPanelBody({
     layout = "desktop",
     basicInfoColumns = layout === "mobile" ? 1 : 2,
     onScheduleChangeDecided,
+    onCreateContract,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
     idPrefix,
     tabsAriaLabel,
     compactBackLabel,
-    tabPanelsClassName = "min-h-full w-full min-w-0 max-w-full shrink-0",
-    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full",
+    // flex-col + flex-1 give the track a resolved height, so an active panel's
+    // min-h-full fills the scroll area (the empty contracts state centers in it).
+    tabPanelsClassName = "flex min-h-full w-full min-w-0 max-w-full shrink-0 flex-col",
+    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full flex-1",
     tabPanelsPanelClassName = "w-full min-w-0 max-w-full [&[aria-hidden=false]]:min-h-full",
 }: ClientDetailPanelProps) {
     const locale = useLocale();
@@ -1317,12 +1334,14 @@ function ClientDetailPanelBody({
                         },
                         {
                             key: "contracts",
+                            className: "flex flex-col",
                             children: (
                                 <ClientContractsList
                                     docs={clientContractDocs}
                                     isLoading={isClientContractsLoading}
                                     isError={isClientContractsError}
                                     dataComponentPrefix={dataComponentPrefix}
+                                    onCreateContract={onCreateContract}
                                 />
                             ),
                         },

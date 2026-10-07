@@ -1099,15 +1099,6 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={isSendingReceipt}
-                onClick={() => setReceiptSendConfirmOpen(true)}
-                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
-                data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
-              >
-                <Send className="size-[15px]" strokeWidth={2} />
-                {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
                 disabled={isPreparingScheduleChange}
                 onClick={() => void handleOpenServiceScheduleChange()}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
@@ -1115,6 +1106,15 @@ export function ClientDetailContent({
               >
                 <CalendarDays className="size-[15px]" strokeWidth={2} />
                 서비스 일정 변경
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={isSendingReceipt}
+                onClick={() => setReceiptSendConfirmOpen(true)}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
+              >
+                <Send className="size-[15px]" strokeWidth={2} />
+                {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
               </DropdownMenuItem>
               {canManageBranchFeatures ? (
                 <DropdownMenuItem
