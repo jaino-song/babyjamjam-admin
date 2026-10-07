@@ -2763,9 +2763,20 @@ export class ClientService {
         // an exclusive calendar bound so this pre-filter only narrows the scan;
         // computeActionRequired still decides (it alone knows whether the latest
         // document is active).
-        const sendWindowEndExclusive = new Date(
-            `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
-        );
+        // The bound is only an optimisation: when its horizon runs past the supported holiday
+        // years (late December) scan without it; computeActionRequired still decides per client.
+        let startDateBound: Prisma.clientWhereInput["startDate"] = { not: null };
+        try {
+            startDateBound = {
+                lt: new Date(
+                    `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+                ),
+            };
+        } catch {
+            this.logger.warn(
+                "Action-required scan lookahead is outside the supported holiday calendar range; scanning without the start-date bound",
+            );
+        }
 
         const clients = await this.prismaService.client.findMany({
             where: {
@@ -2777,7 +2788,7 @@ export class ClientService {
                             { serviceStatus: null },
                             { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
                         ],
-                        startDate: { lt: sendWindowEndExclusive },
+                        startDate: startDateBound,
                     },
                 ],
             },

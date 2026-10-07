@@ -26,6 +26,7 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+import { findManyFrom } from "../utils/prisma-where-evaluator";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
 import { isActiveContractSignal } from "application/utils/current-contract-document";
@@ -4261,6 +4262,7 @@ describe("ClientService", () => {
         const row = (id: number, overrides: Record<string, unknown> = {}) => ({
             id,
             name: `Client ${id}`,
+            branchId,
             address: null,
             phone: null,
             type: null,
@@ -4331,12 +4333,14 @@ describe("ClientService", () => {
         });
 
         // Backs `service` with a real repository over the same fake database the stats read.
+        // The fake EVALUATES the complete where clause of every query, so the repository's
+        // database predicate is part of what the parity test exercises.
         function seedFixture(clients: ReturnType<typeof row>[], docs: ReturnType<typeof contractDoc>[]) {
-            prismaService.client.findMany.mockResolvedValue(clients);
-            prismaService.eformsign_doc.findMany.mockResolvedValue(docs);
+            prismaService.client.findMany.mockImplementation(findManyFrom(clients));
+            prismaService.eformsign_doc.findMany.mockImplementation(findManyFrom(docs));
             const repositoryPrisma = {
-                client: { findMany: jest.fn().mockResolvedValue(clients) },
-                eformsign_doc: { findMany: jest.fn().mockResolvedValue(docs) },
+                client: { findMany: jest.fn(findManyFrom(clients)) },
+                eformsign_doc: { findMany: jest.fn(findManyFrom(docs)) },
                 $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
             };
             const realRepository = new SbClientRepository(repositoryPrisma as unknown as PrismaService);
@@ -4344,6 +4348,52 @@ describe("ClientService", () => {
                 (...args) => realRepository.findWithoutContractSentStartingWithinDays(...args),
             );
         }
+
+        // At year end the repository's 7-business-day lookahead runs past the supported
+        // holiday years. The dashboard still counts the client, so the filter must too.
+        describe("at year end, when the lookahead is outside the supported holiday years", () => {
+            beforeEach(() => {
+                jest.setSystemTime(new Date("2027-12-30T03:00:00.000Z"));
+            });
+
+            it("lists the client the dashboard counts", async () => {
+                const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                try {
+                    seedFixture(
+                        [
+                            row(1, { serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") }),
+                            row(2, { serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") }),
+                            row(3, { startDate: new Date("2028-01-05T00:00:00.000Z"), endDate: new Date("2028-02-05T00:00:00.000Z") }),
+                        ],
+                        [contractDoc(2, "060")],
+                    );
+
+                    const stats = await service.getStats(branchId);
+                    const listed = await service.findByFilter(branchId, "no-contract");
+
+                    expect(stats.contractsNotSent).toBe(1);
+                    expect(listed.map((client) => client.id)).toEqual([1]);
+                } finally {
+                    warn.mockRestore();
+                }
+            });
+
+            it("still serves the action-required feed instead of failing on the lookahead", async () => {
+                const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                try {
+                    prismaService.client.findMany.mockResolvedValue([
+                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
+                    ]);
+
+                    const alerts = await service.getActionRequiredAlerts(branchId);
+
+                    expect(alerts.map((alert) => alert.id)).toEqual([1]);
+                    expect(prismaService.client.findMany.mock.calls.at(-1)![0].where.OR[1].startDate).toEqual({ not: null });
+                } finally {
+                    warn.mockRestore();
+                }
+            });
+        });
     });
 
     // The contract_status badge is the backend twin of the shared fallback's

@@ -786,22 +786,27 @@ export class SbClientRepository implements IClientRepository {
         const select = await this.getClientSelect();
         const { todayStart } = getClientListDateRanges(now);
 
-        let sendWindowEndExclusive: Date;
+        // The lookahead is only an optimisation. When its horizon runs past the supported
+        // holiday years (late December), fall back to the same superset WITHOUT the start bound:
+        // the per-client rule below still decides, and a client it cannot judge is skipped by
+        // its own calendar guard. Never answer "none" just because the horizon is unsupported.
+        let startDateBound: Prisma.clientWhereInput["startDate"] = { not: null };
         try {
-            sendWindowEndExclusive = new Date(
-                `${calendar.addBusinessDays(isoDateInKorea(now), CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
-            );
+            startDateBound = {
+                lt: new Date(
+                    `${calendar.addBusinessDays(isoDateInKorea(now), CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+                ),
+            };
         } catch (error) {
             this.logger.warn(
-                `Skipping the contract-send check for branch ${branchid}: today is outside the supported holiday calendar range (${error instanceof Error ? error.message : String(error)})`,
+                `Contract-send lookahead for branch ${branchid} is outside the supported holiday calendar range; scanning without the start-date bound (${error instanceof Error ? error.message : String(error)})`,
             );
-            return [];
         }
 
         const clients = await this.prismaService.client.findMany({
             where: {
                 branchId: branchid,
-                startDate: { lt: sendWindowEndExclusive },
+                startDate: startDateBound,
                 OR: [
                     { serviceStatus: SERVICE_STATUS.REPLACEMENT_REQUESTED },
                     {
