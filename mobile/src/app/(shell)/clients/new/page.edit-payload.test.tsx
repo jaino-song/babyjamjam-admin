@@ -237,6 +237,34 @@ describe("mobile client wizard edit saves do not write back a stale snapshot", (
     expect(screen.queryByText(END_DATE_CHANGED_MESSAGE)).not.toBeInTheDocument();
   });
 
+  describe("employees", () => {
+    const withEmployees = () => makeClient({
+      primaryEmployee: { id: 3, name: "가" },
+      secondaryEmployee: { id: 4, name: "나" },
+    } as unknown as Partial<Client>);
+
+    it("removes the secondary employee with an explicit null", async () => {
+      await openEdit(withEmployees());
+      goToStep(2);
+      act(() => useClientWizardStore.getState().setField("secondaryEmployeeId", null));
+
+      save();
+
+      await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      expect(mockUpdateClient).toHaveBeenCalledWith({ id: 7, dto: { secondaryEmployeeId: null } });
+    });
+
+    it("does not send an employee that was left alone", async () => {
+      await openEdit(withEmployees());
+      goToStep(2);
+
+      save();
+
+      await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      expect(mockUpdateClient).toHaveBeenCalledWith({ id: 7, dto: {} });
+    });
+  });
+
   describe("prices", () => {
     // A client with no stored prices: opening the form fills them from the price table.
     const unpricedClient = () => makeClient({ fullPrice: null, grant: null, actualPrice: null });
@@ -255,6 +283,27 @@ describe("mobile client wizard edit saves do not write back a stale snapshot", (
 
       await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
       expect(calledDto()).toEqual({ address: "인천시 연수구" });
+    });
+
+    it("sends the table's prices when staff change the dates after the form already filled them in", async () => {
+      // Stored prices are null, so the filled-in 1000000 differs from what is stored: it is a re-pricing
+      // the moment staff touch a date, even though the fill itself happened before the touch.
+      await openEdit(unpricedClient());
+      await waitFor(() => expect(useClientWizardStore.getState().fullPrice).toBe("1000000"));
+      goToStep(2);
+      fireEvent.change(field("startDate"), { target: { value: "2026-11-03" } });
+      fireEvent.change(field("endDate"), { target: { value: "2026-11-16" } });
+
+      save();
+
+      await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+      expect(calledDto()).toEqual(expect.objectContaining({
+        startDate: "2026-11-03",
+        endDate: "2026-11-16",
+        expectedEndDate: "2026-11-13",
+        fullPrice: "1000000",
+        actualPrice: "1000000",
+      }));
     });
 
     it("sends the prices once staff re-price the client", async () => {

@@ -52,8 +52,10 @@ const SERVICE_PERIOD_FIELDS = ["startDate", "endDate", "duration"] as const;
 
 /**
  * The full update body for a form state: every field the form owns, normalized exactly as it is
- * sent. Employee ids are left out when unset because the backend's `@IsOptional` skips only
- * `undefined`, not `null`.
+ * sent. The primary employee is left out when unset (the backend does not accept a null one). The
+ * secondary employee keeps an explicit `null`: that is how a client's second provider is removed, and
+ * the backend tells `null` (remove) from `undefined` (leave alone). An unchanged `null` still compares
+ * equal to the baseline's, so it is not sent.
  */
 export function serializeClientUpdateFields(form: ClientUpdateFormFields): UpdateClientDto {
     return {
@@ -64,7 +66,7 @@ export function serializeClientUpdateFields(form: ClientUpdateFormFields): Updat
         address: form.address,
         phone: form.phone,
         ...(form.primaryEmployeeId !== null && { primaryEmployeeId: form.primaryEmployeeId }),
-        ...(form.secondaryEmployeeId !== null && { secondaryEmployeeId: form.secondaryEmployeeId }),
+        ...(form.secondaryEmployeeId !== undefined && { secondaryEmployeeId: form.secondaryEmployeeId }),
         type: form.voucherClient ? form.type : null,
         duration: form.duration || null,
         fullPrice: form.fullPrice || null,

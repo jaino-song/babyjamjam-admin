@@ -297,6 +297,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
     // catching up with its own table on open; once on, the price baseline stays what was stored.
     const priceBaselineFrozenRef = useRef(false);
+    // The prices the form filled in from its price table before anything was touched. Not part of the
+    // baseline: that keeps the stored prices, so a price filled in after a touch is compared to them.
+    const openingTablePricesRef = useRef<Pick<ClientFormState, "fullPrice" | "grant" | "actualPrice"> | null>(null);
 
     // Fetch voucher price info based on selected type
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
@@ -359,12 +362,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                         };
                     // Until staff touch a price field or a price driver, this fill is the form catching
                     // up with its own price table, not an edit: the saved client is not being re-priced.
-                    // Move the baseline's prices with it, so a save does not send them back and overwrite
-                    // a price someone else changed since. After the first such touch the baseline stays
-                    // what was stored.
-                    if (isEditMode && formDataBaselineRef.current && !priceBaselineFrozenRef.current) {
-                        formDataBaselineRef.current = {
-                            ...formDataBaselineRef.current,
+                    // Remember it apart from the baseline, which keeps the STORED prices; see handleSubmit.
+                    if (isEditMode && !priceBaselineFrozenRef.current) {
+                        openingTablePricesRef.current = {
                             fullPrice: next.fullPrice,
                             grant: next.grant,
                             actualPrice: next.actualPrice,
@@ -467,6 +467,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         queueMicrotask(() => {
             formDataBaselineRef.current = nextFormData;
             priceBaselineFrozenRef.current = false;
+            openingTablePricesRef.current = null;
             setPricesManuallyEdited(nextPricesManuallyEdited);
             setFormData(nextFormData);
             if (!client) {
@@ -520,8 +521,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 // date by itself (a delayed session extends it), so a full snapshot would roll that
                 // back. A save that touches the service period carries the end date this form was
                 // opened with, and the backend refuses it if the end date moved since.
-                const baseline = formDataBaselineRef.current;
-                if (!baseline) return;
+                const storedBaseline = formDataBaselineRef.current;
+                if (!storedBaseline) return;
+                // While nothing price-related was touched, the prices the form filled in from its table on
+                // open are not an edit; once touched, prices are compared against what was stored.
+                const baseline = openingTablePricesRef.current && !priceBaselineFrozenRef.current
+                    ? { ...storedBaseline, ...openingTablePricesRef.current }
+                    : storedBaseline;
                 const updateDto: UpdateClientDto = buildClientUpdatePayload({ baseline, current: formData });
                 endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });

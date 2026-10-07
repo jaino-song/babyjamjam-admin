@@ -93,6 +93,22 @@ describe("mobile client update payload", () => {
         })).toEqual({ secondaryEmployeeId: 9 });
     });
 
+    it("removes the secondary employee with an explicit null, and does not resend an unchanged null", () => {
+        const withSecondary: ClientUpdateFormFields = { ...stored, secondaryEmployeeId: 4 };
+        expect(buildClientUpdatePayload({
+            baseline: withSecondary,
+            current: { ...withSecondary, secondaryEmployeeId: null },
+        })).toEqual({ secondaryEmployeeId: null });
+        expect(buildClientUpdatePayload({
+            baseline: stored,
+            current: { ...stored, secondaryEmployeeId: null },
+        })).toEqual({});
+        expect(buildClientUpdatePayload({
+            baseline: withSecondary,
+            current: { ...withSecondary },
+        })).toEqual({});
+    });
+
     it("sends a re-priced client's new prices", () => {
         expect(buildClientUpdatePayload({
             baseline: stored,
@@ -136,6 +152,8 @@ describe("parity with the desktop client update payload", () => {
         ["reprice", { fullPrice: "1100000", grant: "900000", actualPrice: "200000" }],
         ["out-of-pocket switch", { voucherClient: false, type: "", fullPrice: "900000" }],
         ["employees", { primaryEmployeeId: null, secondaryEmployeeId: 9 }],
+        // Not here: clearing an assigned secondary employee. Mobile sends `secondaryEmployeeId: null` (as the
+        // old wizard did); the desktop helper still omits it, which is a known desktop limitation.
         ["care center and status", { careCenter: true, serviceStatus: "active" }],
         ["due date cleared", { dueDate: "" }],
     ];

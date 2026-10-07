@@ -359,6 +359,9 @@ export default function NewClientPage() {
   // The client as the edit form was opened on it. An edit sends only what differs from it, so a field the
   // backend changed meanwhile (the end date, on a session delay) is not written back. Cleared with the form.
   const editBaselineRef = useRef<ClientUpdateFormFields | null>(null);
+  // The prices the form filled in from its price table while staff had touched nothing, so the table's own
+  // fill on open is not mistaken for an edit. `editBaselineRef` keeps the STORED prices untouched.
+  const openingTablePricesRef = useRef<Pick<ClientUpdateFormFields, "fullPrice" | "grant" | "actualPrice"> | null>(null);
   const previousServicePeriodRef = useRef<{
     startDate: string;
     duration: number | null | undefined;
@@ -422,6 +425,7 @@ export default function NewClientPage() {
     lastHydratedContractDocIdRef.current = null;
     hasUserEditedServicePeriodRef.current = false;
     editBaselineRef.current = null;
+    openingTablePricesRef.current = null;
     previousServicePeriodRef.current = null;
     submissionInFlightRef.current = false;
     setPendingDurationConfirmation(null);
@@ -815,12 +819,8 @@ export default function NewClientPage() {
       setField("fullPrice", fullPrice);
       setField("grant", grant);
       setField("actualPrice", actualPrice);
-      // Until staff touch a price or anything the price table is looked up by, this fill is the form
-      // catching up with its own table on open, not an edit: the saved client is not being re-priced.
-      // Move the baseline's prices with it, so a save does not send them back and overwrite a price
-      // someone else changed since. Once staff touch one of those fields the baseline stays what was stored.
-      if (editBaselineRef.current && !hasUserEditedServicePeriodRef.current) {
-        editBaselineRef.current = { ...editBaselineRef.current, fullPrice, grant, actualPrice };
+      if (!hasUserEditedServicePeriodRef.current) {
+        openingTablePricesRef.current = { fullPrice, grant, actualPrice };
       }
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField, store.voucherClient]);
@@ -1079,7 +1079,15 @@ export default function NewClientPage() {
         serviceStatus: store.serviceStatus || null,
         areaId: store.areaId,
       };
-      const editBaseline = editingClientId !== null ? editBaselineRef.current : null;
+      const storedBaseline = editingClientId !== null ? editBaselineRef.current : null;
+      // Until staff touch a price or anything the price table is looked up by, the prices the form filled in
+      // from its table are the form catching up on open, not an edit: the saved client is not being
+      // re-priced, so they are not sent back over a price someone else changed since. Once staff touch
+      // one, prices are compared against what was STORED, so a filled-in price that differs from it
+      // (stored null) is sent.
+      const editBaseline = storedBaseline && openingTablePricesRef.current && !hasUserEditedServicePeriodRef.current
+        ? { ...storedBaseline, ...openingTablePricesRef.current }
+        : storedBaseline;
       if (editingClientId !== null && !editBaseline) {
         // The client has not been loaded into the form yet; there is nothing to compare against.
         setPendingDurationConfirmation(null);
