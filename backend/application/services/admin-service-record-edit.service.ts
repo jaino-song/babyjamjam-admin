@@ -991,12 +991,17 @@ export class AdminServiceRecordEditService {
                 targetPeriod,
             })
             : { facts: null, receiptInput: null, missingFacts: [] };
-        // The receipt refresh reads its facts from the receipt document (the tokens' own document,
-        // verified as the client's current contract), which can differ from the
-        // `client.eDocId`-pinned contract document above while that pointer lags a re-issued
-        // contract. Contract-revision planning keeps using `document` untouched: it WRITES to
-        // eformsign, so its target is deliberately not retargeted here. When the receipt document
-        // is the same document (the common case) the single capture above already answers both.
+        // The receipt refresh reads its facts from the receipt document: the client's CURRENT
+        // contract as `selectCurrentContractDocument` resolves it (the same rule the client
+        // summary uses). That can differ from the `client.eDocId`-pinned contract document above
+        // while that pointer lags a re-issued contract, and from the document the receipt tokens
+        // are attached to: receipt links are stable, so the token stays on its original document
+        // and promotion refreshes it from the target document. Promotion requires only that this
+        // target (receipt-facts) document is still the client's current contract, checked under
+        // the client-first lock order (client row -> document rows -> case rows).
+        // Contract-revision planning keeps using `document` untouched: it WRITES to eformsign, so
+        // its target is deliberately not retargeted here. When the receipt document is the same
+        // document (the common case) the single capture above already answers both.
         const receiptDocument = revisionFactsSource?.receiptDocument;
         const receiptFactsResult: ServiceRecordRevisionFactsResult = periodChanged
             && revisionFactsSource

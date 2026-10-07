@@ -102,6 +102,9 @@ export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
+const PHONE_LINK_LOCK_RETRY_LIMIT = 3;
+/** Returned by a phone-link attempt whose locked client set no longer matches the document owners. */
+const PHONE_LINK_LOCK_SET_CHANGED = Symbol("PHONE_LINK_LOCK_SET_CHANGED");
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
@@ -281,6 +284,66 @@ export class ClientService {
         }
     }
 
+    /**
+     * Runs one phone-link transaction attempt, starting over (each attempt is its own
+     * transaction that re-reads the owners) while the locked client set turned out stale.
+     * Running out of attempts throws into the caller's failure path.
+     */
+    private async retryWhilePhoneLinkLockSetChanges(
+        runAttempt: () => Promise<unknown>,
+    ): Promise<void> {
+        for (let attempt = 0; attempt < PHONE_LINK_LOCK_RETRY_LIMIT; attempt += 1) {
+            if (await runAttempt() !== PHONE_LINK_LOCK_SET_CHANGED) return;
+        }
+        throw new Error("Contract document owner kept changing while linking by phone");
+    }
+
+    /**
+     * Clients that must be locked before any of the documents: those that own one of them and
+     * those whose eDocId points at one of them (same branch). Read without a lock; it only
+     * chooses which client rows to lock and is re-read once the document locks are held.
+     */
+    private async findPhoneLinkClientIds(
+        transaction: Prisma.TransactionClient,
+        branchId: string,
+        documentIds: number[],
+    ): Promise<number[]> {
+        const rows = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT doc.client_id AS id
+            FROM eformsign_doc AS doc
+            WHERE doc.id IN (${Prisma.join(documentIds)})
+              AND doc.client_id IS NOT NULL
+            UNION
+            SELECT pointer_client.id
+            FROM client AS pointer_client
+            JOIN eformsign_doc AS pointed_doc
+              ON pointed_doc.document_id = pointer_client.e_doc_id
+            WHERE pointed_doc.id IN (${Prisma.join(documentIds)})
+              AND pointer_client.branch_id = ${branchId}::uuid
+        `);
+        return (rows ?? []).map((row) => row.id);
+    }
+
+    /** Locks the target client and every owner/pointer client of the documents, in id order. */
+    private async lockPhoneLinkClients(
+        transaction: Prisma.TransactionClient,
+        branchId: string,
+        targetClientId: number,
+        documentIds: number[],
+    ): Promise<Set<number>> {
+        const peekedClientIds = await this.findPhoneLinkClientIds(transaction, branchId, documentIds);
+        const clientIdsToLock = Array.from(new Set([targetClientId, ...peekedClientIds]))
+            .sort((left, right) => left - right);
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id IN (${Prisma.join(clientIdsToLock)})
+            ORDER BY id
+            FOR UPDATE
+        `);
+        return new Set(clientIdsToLock);
+    }
+
     private async linkContractDocumentsByPhone(
         branchid: string,
         client: ClientEntity,
@@ -387,11 +450,21 @@ export class ClientService {
                 return;
             }
 
-            await this.prismaService.$transaction(async (transaction) => {
+            await this.retryWhilePhoneLinkLockSetChanges(() => this.prismaService.$transaction(async (transaction) => {
                 const documentIdsToLock = Array.from(new Set([
                     ...documentIdsToReassign,
                     ...(shouldUpdateClientDocument && latestContract ? [latestContract.id] : []),
                 ])).sort((left, right) => left - right);
+                // Lock order (project-wide): client row(s) -> eformsign_doc rows (id order) ->
+                // case rows. The client rows come first so this link serialises with
+                // `linkClientIfActive`, permanent purge and service-record confirmation
+                // instead of deadlocking (40P01) against them.
+                const lockedClientIds = await this.lockPhoneLinkClients(
+                    transaction,
+                    branchid,
+                    client.id,
+                    documentIdsToLock,
+                );
                 const lockedDocuments = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
                     SELECT doc.id
                     FROM eformsign_doc AS doc
@@ -423,6 +496,18 @@ export class ClientService {
                     ORDER BY doc.id
                     FOR UPDATE
                 `);
+                // The documents are locked, so their owners are stable now. An owner (or a
+                // client pointing at one of them) that was not locked above moved between the
+                // unlocked read and the document lock; locking it now would invert the order.
+                // Nothing has been written yet: start the attempt over.
+                const currentClientIds = await this.findPhoneLinkClientIds(
+                    transaction,
+                    branchid,
+                    documentIdsToLock,
+                );
+                if (currentClientIds.some((id) => !lockedClientIds.has(id))) {
+                    return PHONE_LINK_LOCK_SET_CHANGED;
+                }
                 const lockedDocumentIds = new Set(lockedDocuments.map(({ id }) => id));
                 if (documentIdsToLock.some((id) => !lockedDocumentIds.has(id))) {
                     throw new Error("Contract document mirror generation changed");
@@ -509,7 +594,8 @@ export class ClientService {
                         throw new Error("Client contract pointer update failed");
                     }
                 }
-            });
+                return undefined;
+            }));
 
             if (shouldUpdateClientDocument) {
                 // SAVED computation: update() re-derives the client's duration.

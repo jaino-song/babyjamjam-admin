@@ -7,6 +7,7 @@ import {
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
 } from "domain/errors/service-record-edit.error";
+import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
@@ -154,7 +155,12 @@ function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditCon
     if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
         return "completed";
     }
-    if (["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
+    // "040" (revoke requested) is a live, non-terminal document: eformsign can still refuse the
+    // request or the signer can carry on, so it is in progress, not rejected.
+    if (isRevokeRequestedStatus(status)) {
+        return "in_progress";
+    }
+    if (["011", "021", "031", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
         return "rejected";
     }
     if (["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"].includes(status)) {
@@ -1656,9 +1662,12 @@ async function assertNoBlockingRevisionDocumentStates(
  *    case rows; it used to take the document first, which deadlocked with this lock;
  *  - receipt-link issue (`createOrRefreshContractLink`): client row -> token insert (key-share on
  *    the document row it references).
- * Paths that still take a document before the client (`isCurrentContractDocument`, the phone
- * based link in `ClientService`, permanent purge) are not changed by this lock and keep their
- * pre-existing order.
+ *  - `isCurrentContractDocument`, permanent purge (`purgeContent`) and the phone based link in
+ *    `ClientService` (`linkContractDocumentsByPhone`): each reads the document owners (and the
+ *    clients pointing at the documents) WITHOUT a lock, locks those client rows in `id` order,
+ *    then the document rows, then re-reads the owners and starts over if one was not locked.
+ * Every listed path therefore takes the client rows first; the project-wide order is client row(s)
+ * -> `eformsign_doc` rows (`id` order) -> case rows.
  */
 export async function lockClientOwnedContractDocuments(
     tx: Prisma.TransactionClient,
