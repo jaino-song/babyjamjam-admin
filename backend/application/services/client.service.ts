@@ -53,6 +53,7 @@ import {
     CLIENT_REPOSITORY,
     ClientListSummary,
     ClientListTab,
+    getClientListDateRanges,
     getEffectiveClientServiceStatus,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
@@ -2694,10 +2695,10 @@ export class ClientService {
         upcomingNextMonth: number;
     }> {
         const now = new Date();
-        const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const nextMonthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59);
+        // Month boundaries follow the Korean calendar date, as UTC-midnight dates
+        // like the stored @db.Date start dates (the server runs in UTC).
+        const { thisMonthStart, nextMonthStart, nextMonthEndExclusive } =
+            getClientListDateRanges(now);
 
         const [activeClients, branchClients, upcomingThisMonth, upcomingNextMonth] =
             await Promise.all([
@@ -2711,14 +2712,14 @@ export class ClientService {
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: thisMonthStart, lte: thisMonthEnd },
+                        startDate: { gte: thisMonthStart, lt: nextMonthStart },
                         branchId: branchid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: nextMonthStart, lte: nextMonthEnd },
+                        startDate: { gte: nextMonthStart, lt: nextMonthEndExclusive },
                         branchId: branchid,
                     },
                 }),
@@ -2786,8 +2787,7 @@ export class ClientService {
         branchid: string,
         limit = 3,
     ): Promise<ClientActionRequiredAlert[]> {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = isoDateInKorea(new Date());
 
         // Display-only: one cached calendar instance serves both the cutoff
         // pre-filter and the per-client decision below.
@@ -2797,13 +2797,8 @@ export class ClientService {
         // count. Translate it into the exact calendar date it reaches so this
         // pre-filter only narrows the scan — computeActionRequired still decides
         // (it alone knows whether the latest document is active).
-        const businessDayCutoff = (businessDays: number): Date => {
-            const cutoff = new Date(
-                `${calendar.addBusinessDays(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
-            );
-            cutoff.setHours(23, 59, 59, 999);
-            return cutoff;
-        };
+        const businessDayCutoff = (businessDays: number): Date =>
+            new Date(`${calendar.addBusinessDays(today, businessDays)}T00:00:00.000Z`);
 
         const sendThresholdDate = businessDayCutoff(CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD);
 
