@@ -36,11 +36,19 @@ export const EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES: readonly string[] = [
     "face_signature_complete",
 ];
 
+/**
+ * "040" (doc_request_revoke) is deliberately absent. It records that cancellation was
+ * REQUESTED, not that it happened: the document stays live, and eformsign can still
+ * refuse the request (doc_refuse_revoke, 041) or the signer can carry on (060). The
+ * revoked ending is "042". Treating 040 as terminal froze the row at 040 — the
+ * terminal-downgrade guard then refused the later 060 and the client read "revoked" for a
+ * document that is still signable — and let a delete purge a document whose
+ * cancellation the vendor had not completed.
+ */
 const REJECTED_STATUS_CODES = [
     "011",
     "021",
     "031",
-    "040",
     "042",
     "045",
     "047",
@@ -49,6 +57,19 @@ const REJECTED_STATUS_CODES = [
     "071",
     "080",
 ] as const;
+
+/**
+ * "040" (doc_request_revoke): cancellation was requested but has not happened. It is not
+ * terminal (see above), yet nothing may treat the document as an ordinary live one:
+ * finalize must not report progress on it and must not start on it.
+ */
+export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE = "040";
+
+export function isRevokeRequestedStatus(
+    statusType: string | number | null | undefined,
+): boolean {
+    return normalizeEformsignStatusCode(statusType) === EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
+}
 
 // "090"(철회)·"099"(삭제됨)은 웹훅 상태 매핑이 합성해 영속화하는 종료 코드다.
 export const TERMINAL_STATUS_CODES = new Set<string>([
@@ -115,6 +136,10 @@ export const UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE = new Set<string
     ...UNASSIGNED_TERMINAL_STATUS_CODES,
     ...UNASSIGNED_REVIEW_STAGE_STATUS_CODES,
     "070",
+    // 040 left the terminal set (a cancellation request does not end the document), which
+    // also dropped it from UNASSIGNED_TERMINAL_STATUS_CODES above. A newer revoke request
+    // is still a forward event after 062/071, so list it explicitly.
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
 ]);
 
 /** The one code that means the document passed its expiry date. */

@@ -1481,6 +1481,91 @@ describe("EformsignWebhookService", () => {
     });
 
     /**
+     * Rejection/revocation events used to be mapped to the synthesized 080/090.
+     * isCurrentMirrorStatus compares the mapped code with the mirror's REAL
+     * current_status.status_type (061 / 011 / 042 / 040), so every one of these
+     * webhooks was dropped as IGNORED_STALE_MIRROR and the stored row stayed at
+     * 060 until the 6-hourly sweep. The mapping must carry the real code.
+     */
+    describe("rejection and revocation events carry the real eformsign code", () => {
+        const cases: Array<{
+            event: string;
+            mirrorCode: string;
+            detail: string;
+        }> = [
+            { event: "doc_reject_participant", mirrorCode: "061", detail: "거부" },
+            { event: "doc_reject_approval", mirrorCode: "011", detail: "거부" },
+            { event: "doc_revoke", mirrorCode: "042", detail: "철회" },
+            { event: "doc_request_revoke", mirrorCode: "040", detail: "철회 요청" },
+        ];
+
+        const payloadFor = (event: string): EformsignWebhookPayloadDto => {
+            const payload = createDocumentPayload();
+            if (!payload.document) {
+                throw new Error("document payload is required");
+            }
+            payload.document.status = event;
+            return payload;
+        };
+
+        it.each(cases)(
+            "persists $event as the real code $mirrorCode when the mirror reports it",
+            async ({ event, mirrorCode, detail }) => {
+                const mirroredDocument = {
+                    current_status: { status_type: mirrorCode },
+                };
+
+                await expect(
+                    service.processWebhook(payloadFor(event), { mirroredDocument } as never),
+                ).resolves.toBeUndefined();
+
+                expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledTimes(1);
+                expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledWith(
+                    branchId,
+                    expect.objectContaining({
+                        documentId,
+                        statusType: mirrorCode,
+                        statusDetail: detail,
+                    }),
+                );
+            },
+        );
+
+        it.each(cases)(
+            "still ignores a stale $event when the mirror has already moved past it",
+            async ({ event }) => {
+                // The mirror advanced to the reviewer stage; a late rejection/
+                // revocation event for an earlier moment must not be applied.
+                const mirroredDocument = {
+                    current_status: { status_type: "070" },
+                };
+
+                await expect(
+                    service.processWebhook(payloadFor(event), { mirroredDocument } as never),
+                ).resolves.toBeUndefined();
+
+                expect(updateStatusUsecase.executeWithOutcome).not.toHaveBeenCalled();
+            },
+        );
+
+        it("keeps doc_decline on the synthesized 080 (it has no real code)", async () => {
+            const mirroredDocument = {
+                current_status: { status_type: "080" },
+            };
+
+            await service.processWebhook(
+                payloadFor("doc_decline"),
+                { mirroredDocument } as never,
+            );
+
+            expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType: "080", statusDetail: "거부" }),
+            );
+        });
+    });
+
+    /**
      * The ledger's whole point is that a dropped webhook says why it was
      * dropped. These assert the pairing that would have made the 070 mapping
      * defect visible in a single query: the vendor's own status next to what
