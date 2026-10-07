@@ -465,6 +465,21 @@ describe("containsDiagnosticMarker", () => {
         ["UUID", "고객 1f0c2b7e-3a4d-4b8e-9c1d-0a1b2c3d4e5f 를 찾을 수 없습니다."],
         ["JSON dump", '실패: {"clientId":9137,"reason":"lock"}'],
         ["array of objects", "실패: [{ id 7 }]"],
+        ["underscored dotted identifier", "eformsign_doc.client_id 확인 중 오류가 발생했습니다."],
+        ["localhost host:port", "localhost:3000 연결 중 오류가 발생했습니다."],
+        ["IPv4 host:port", "10.0.0.8:3000 연결 중 오류가 발생했습니다."],
+        ["bare IPv4", "10.0.0.8 연결 중 오류가 발생했습니다."],
+        ["SCREAMING_SNAKE env var", "DATABASE_URL 설정을 확인해 주세요."],
+        ["Nest guard class", "JwtAuthGuard 에서 거부했습니다."],
+        ["Nest service class", "ClientService 처리 중 오류가 발생했습니다."],
+        ["method reference", "ClientService.verifyUser 호출 중 오류가 발생했습니다."],
+        ["method reference with parens", "verifyUser() 호출 중 오류가 발생했습니다."],
+        ["lower snake_case column", "client_id 값을 확인하지 못했습니다."],
+        ["JS runtime: cannot read", '확인 실패: Cannot read properties of undefined (reading "client_id")'],
+        ["JS runtime: not a function", "처리 중 repo.find is not a function 이 발생했습니다."],
+        ["JS runtime: not defined", "처리 중 clientRepo is not defined 가 발생했습니다."],
+        ["JS runtime: undefined", "고객 정보가 undefined 입니다."],
+        ["JS runtime: null of", "고객 정보 변환 중 of null 오류가 발생했습니다."],
     ])("flags %s", (_family, message) => {
         expect(containsDiagnosticMarker(message)).toBe(true);
     });
@@ -481,6 +496,117 @@ describe("containsDiagnosticMarker", () => {
         "같은 전화번호의 고객이 이미 등록되어 있습니다.",
     ])("keeps plain business wording (%s)", (message) => {
         expect(containsDiagnosticMarker(message)).toBe(false);
+    });
+});
+
+/** A sample of the backend's real uncoded Korean exception literals (BadRequest/Conflict/NotFound/Forbidden/Unauthorized, backend/ at this commit). */
+const REAL_BACKEND_BUSINESS_MESSAGES = [
+    "SMS 발송 채널이 없는 템플릿입니다.",
+    "offset은 0 이상이어야 해요.",
+    "true 또는 false여야 해요.",
+    "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+    "같은 회차가 여러 번 있어요.",
+    "계약서에 연결된 산모가 없습니다",
+    "계정 정보가 동시에 변경되었어요. 최신 정보를 확인한 뒤 다시 시도해 주세요.",
+    "고객 알림 발송 예정 페이지 크기가 올바르지 않습니다.",
+    "글로벌 소유자 계정은 독립적으로 인증된 successor를 통해서만 삭제할 수 있어요.",
+    "마지막 글로벌 소유자는 삭제할 수 없어요. 먼저 승인된 successor를 지정해 주세요.",
+    "문서 구분은 산모 또는 서비스 제공 기록으로 선택해 주세요.",
+    "미리보기 식별자가 올바르지 않아요.",
+    "변경할 수 있는 항목이 없어요.",
+    "삭제할 문서 ID 목록을 입력해 주세요.",
+    "산모 선택 정보가 올바르지 않습니다",
+    "산모 확인 승인이 필요합니다.",
+    "생년월일 6자리를 입력해 주세요.",
+    "서비스 제공일자는 YYYY-MM-DD 형식이어야 해요.",
+    "선택한 문서를 찾을 수 없습니다",
+    "승인된 계정만 수정할 수 있어요.",
+    "신생아 출생일자는 YYYY-MM-DD 형식의 유효한 날짜로 입력해 주세요.",
+    "역할 변경에는 감사 주체 정보가 필요해요.",
+    "영수증 이미지는 문서 파일 형식으로만 요청할 수 있어요.",
+    "예약 발송 일시 형식이 올바르지 않습니다.",
+    "오너 역할은 이 경로로 부여할 수 없어요.",
+    "이 링크는 유효하지 않아요. 새 인증 이메일을 요청해 주세요.",
+    "이메일 주소가 설정되어 있지 않아요. 먼저 이메일을 등록해 주세요.",
+    "이미 사용되었거나 만료된 인증 링크예요.",
+    "이미 카카오 계정이 연결되어 있어요.",
+    "임시 저장 버전은 1 이상의 정수여야 해요.",
+    "저장할 변경 내용을 입력해 주세요.",
+    "전자문서 작업을 확인할 권한이 없습니다.",
+    "준비된 제공기록지 링크가 만료되었거나 유효하지 않습니다",
+    "지점을 한 개 이상 선택해 주세요.",
+    "지점장 역할은 기존 지점장 계정에서만 유지할 수 있어요.",
+    "최종 확정된 제공기록지는 링크를 다시 발급할 수 없습니다.",
+    "카카오 연결 세션이 이미 사용되었어요.",
+    "파일 종류는 문서 또는 감사 기록 중에서 선택해 주세요.",
+    "헤더 항목은 120자 이하의 문자열이어야 해요.",
+    "회차 번호가 계약 범위를 벗어났어요.",
+    "이메일 또는 비밀번호가 올바르지 않습니다.",
+    "2026-10-08 이후에는 수정할 수 없습니다.",
+];
+
+describe("containsDiagnosticMarker does not flag the backend's real business messages", () => {
+    it.each(REAL_BACKEND_BUSINESS_MESSAGES)("keeps %s", (message) => {
+        expect(containsDiagnosticMarker(message)).toBe(false);
+    });
+});
+
+describe("errorResponse serialized output", () => {
+    const serverAPIClient = {
+        delete: jest.fn(),
+        get: jest.fn(),
+        post: jest.fn(),
+    } as unknown as Parameters<typeof createRouteUtils>[0]["serverAPIClient"];
+    const DIAGNOSTICS = [
+        "인증 서비스 analytics.internal 확인 중 /srv/auth/verify.ts:88에서 오류가 발생했습니다.",
+        "eformsign_doc.client_id 확인 중 오류가 발생했습니다.",
+        "localhost:3000 연결 중 오류가 발생했습니다.",
+        "DATABASE_URL 설정을 확인해 주세요.",
+        "JwtAuthGuard 에서 거부했습니다.",
+        '확인 실패: Cannot read properties of undefined (reading "client_id")',
+    ];
+    const GENERIC: Record<number, string> = {
+        400: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.",
+        401: "로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요.",
+        403: "이 작업을 할 권한이 없어요.",
+    };
+
+    beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => undefined));
+    afterEach(() => jest.restoreAllMocks());
+
+    describe.each(["legacy-message", "sanitized-fallback"] as const)("%s mode", (mode) => {
+        const { errorResponse, proxyPostRequest } = createRouteUtils({ errorResponseMode: mode, secureCookies: false, serverAPIClient });
+
+        it.each([401, 403, 400])("serializes the status-generic message for a diagnostic %i body", async (status) => {
+            for (const message of DIAGNOSTICS) {
+                const response = errorResponse({ response: { status, data: { message } } }, "log in");
+                const text = JSON.stringify(await response.json());
+                expect(response.status).toBe(status);
+                expect(JSON.parse(text)).toEqual({ error: GENERIC[status] });
+                expect(text).not.toMatch(/analytics|srv|eformsign_doc|localhost|DATABASE_URL|JwtAuthGuard|Cannot read/);
+            }
+        });
+
+        it.each([401, 403, 400])("serializes a plain business message unchanged for %i", async (status) => {
+            const response = errorResponse(
+                { response: { status, data: { message: "이메일 또는 비밀번호가 올바르지 않습니다." } } },
+                "log in",
+            );
+            await expect(response.json()).resolves.toEqual({ error: "이메일 또는 비밀번호가 올바르지 않아요." });
+        });
+
+        it("serializes through a proxied route too (rejected upstream call)", async () => {
+            (serverAPIClient.post as jest.Mock).mockRejectedValue({
+                response: { status: 403, data: { message: DIAGNOSTICS[0], error: "Forbidden" } },
+            });
+            const response = await proxyPostRequest(
+                createJsonRequest(JSON.stringify({ a: 1 })),
+                "/clients",
+                "create client",
+            );
+            expect(response.status).toBe(403);
+            await expect(response.json()).resolves.toEqual({ error: GENERIC[403] });
+        });
     });
 });
 

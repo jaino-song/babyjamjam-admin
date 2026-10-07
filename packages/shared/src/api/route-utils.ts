@@ -448,10 +448,28 @@ const DIAGNOSTIC_MARKER_PATTERNS: readonly RegExp[] = [
     // JSON / object dumps
     /\{[\s\S]*:/,
     /\[\s*\{/,
+    // hosts: IPv4, localhost, host:port
+    /\b\d{1,3}(?:\.\d{1,3}){3}\b/,
+    /\blocalhost\b/i,
+    /\b[a-z][a-z0-9.-]*:\d{2,5}\b/i,
+    // SCREAMING_SNAKE env-var / constant names (two or more segments)
+    /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/,
+    // lower snake_case column / variable names (two or more segments)
+    /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/,
+    // Nest/class identifiers and method references
+    /\b[A-Z][A-Za-z0-9]*(?:Guard|Service|Controller|Module|Repository|Usecase|UseCase|Provider|Interceptor|Filter|Pipe)\b/,
+    /\b[A-Za-z_$][\w$]*\.[a-z_$][\w$]*\(/,
+    /\b[a-z][a-z0-9]*[A-Z][\w$]*\(/,
+    // JavaScript runtime error phrases
+    /cannot read propert(?:y|ies)/i,
+    /\bis not (?:a function|defined|iterable|a constructor)\b/i,
+    /\b(?:undefined|NaN)\b/,
+    /\b(?:of|to|is)\s+(?:undefined|null)\b/i,
+    /\((?:reading|setting)\s/i,
 ];
 
 /** A dotted identifier/hostname (needs a letter, so "3.5" and "2026.10.08" stay plain text). */
-const DOTTED_IDENTIFIER_PATTERN = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/gi;
+const DOTTED_IDENTIFIER_PATTERN = /\b[a-z0-9_-]+(?:\.[a-z0-9_-]+)+\b/gi;
 
 function looksLikeFilePath(token: string): boolean {
     if (!/[A-Za-z]/.test(token)) {
@@ -467,8 +485,10 @@ function looksLikeFilePath(token: string): boolean {
 
 /**
  * True when an upstream message carries a diagnostic fragment (file path or
- * file:line, URL, dotted internal host/identifier, stack frame, SQL, Prisma or
- * PostgreSQL code, exception class name, UUID, JSON/object dump). A message
+ * file:line, URL, host/IP/host:port, dotted or snake_case/SCREAMING_SNAKE
+ * identifier, Nest class or method reference, stack frame, JS runtime error
+ * phrase, SQL, Prisma or PostgreSQL code, exception class name, UUID,
+ * JSON/object dump). A message
  * without any of these is ordinary business wording and is forwarded as-is.
  */
 export function containsDiagnosticMarker(message: string): boolean {
