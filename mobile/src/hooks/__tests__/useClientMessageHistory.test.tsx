@@ -31,6 +31,6 @@ describe("useClientMessageHistory", () => {
         const { result } = renderHook(() => useClientMessageHistory(client), { wrapper });
 
         await waitFor(() => expect(result.current.notificationLogs).toHaveLength(2));
-        expect(result.current.notificationLogs.map((log) => (log as { id: string }).id)).toEqual(["own", "unowned"]);
+        expect(result.current.notificationLogs.map((log) => (log as unknown as { id: string }).id)).toEqual(["own", "unowned"]);
     });
 });
