@@ -1412,8 +1412,15 @@ describe("per-session administrator editing", () => {
             await screen.findByRole("dialog", { name: refreshModalTitle });
         });
 
-        it("opens the modal for a draft conflict without a blockingOperation and keeps the edits", async () => {
+        const closedDraftMessage = "다른 화면에서 수정 확정을 시작해서 이 확인이 취소되었어요. 수정 확정을 다시 눌러 주세요.";
+        const changedSource = { ...makeDraftState(), draft: null, sourceFingerprint: "source-2", sourceCaseVersion: 2 };
+        const unchangedSource = { ...makeDraftState(), draft: null };
+
+        it("opens the modal for a draft conflict without a blockingOperation when the source changed, and keeps the edits", async () => {
             jest.mocked(adminServiceRecordEditApi.startDraft).mockRejectedValue(new AdminServiceRecordEditApiError(409, {}));
+            jest.mocked(adminServiceRecordEditApi.getDraft)
+                .mockResolvedValueOnce(unchangedSource)
+                .mockResolvedValue(changedSource);
             const { container } = await openWithPending();
             fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
             await screen.findByRole("dialog", { name: refreshModalTitle });
@@ -1421,12 +1428,52 @@ describe("per-session administrator editing", () => {
             expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
         });
 
-        it("opens the modal when the confirm itself conflicts without a blockingOperation", async () => {
+        it("opens the modal when the confirm itself conflicts without a blockingOperation and the source changed", async () => {
             jest.mocked(adminServiceRecordEditApi.confirmDraft).mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: "DRAFT_VERSION_CONFLICT" }));
             await openWithPending();
             await startCommit();
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(changedSource);
             confirmInPreview();
             await screen.findByRole("dialog", { name: refreshModalTitle });
+        });
+
+        it("opens the modal when the source cannot be re-read after a confirm conflict", async () => {
+            jest.mocked(adminServiceRecordEditApi.confirmDraft).mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: "DRAFT_VERSION_CONFLICT" }));
+            await openWithPending();
+            await startCommit();
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockRejectedValue(new Error("network"));
+            confirmInPreview();
+            await screen.findByRole("dialog", { name: refreshModalTitle });
+        });
+
+        it("keeps the pending edits and explains inline when another tab closed the draft before this confirm", async () => {
+            jest.mocked(adminServiceRecordEditApi.confirmDraft).mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" }));
+            const { container } = await openWithPending();
+            await startCommit();
+            confirmInPreview();
+
+            await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
+            expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+            expect(screen.getByRole("alert")).toHaveTextContent(closedDraftMessage);
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
+            expect(global.fetch).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["startDraft"],
+            ["previewDraft"],
+        ] as const)("keeps the pending edits and explains inline when %s conflicts because another tab took over", async (method) => {
+            jest.mocked(adminServiceRecordEditApi[method]).mockRejectedValue(new AdminServiceRecordEditApiError(409, { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" }));
+            const { container } = await openWithPending();
+            fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+
+            await screen.findByText(closedDraftMessage);
+            expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+            expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument();
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled());
+            expect(global.fetch).not.toHaveBeenCalled();
         });
     });
 
