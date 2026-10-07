@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -399,14 +399,20 @@ export class ServiceRecordLinkService {
                 }
             }
 
-            await this.cancelPendingServiceRecordJobs(
-                scheduleId,
-                SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-            );
-            await this.supersedeRetryableServiceRecordSmsLogs(
-                scheduleId,
-                SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-            );
+            // A manual send cancels the old pending job and enqueues its
+            // replacement in ONE repository transaction below, so it can refuse
+            // when the dispatcher already claimed a job. Only the automatic
+            // path (guarded by its own scheduling claim) cancels up front.
+            if (!options.isManualSend) {
+                await this.cancelPendingServiceRecordJobs(
+                    scheduleId,
+                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                );
+                await this.supersedeRetryableServiceRecordSmsLogs(
+                    scheduleId,
+                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                );
+            }
 
             if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                 if (!options.recordMissingPhoneFailure) {
@@ -513,9 +519,30 @@ export class ServiceRecordLinkService {
                     automaticSchedulingClaim!.claimVersion,
                     pendingJob,
                 );
-            const persistedJob = automaticSchedulingClaim
-                ? await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
-                : await this.jobRepository.upsertPending(pendingJob);
+            let persistedJob: MessageTriggerJobEntity | null;
+            if (automaticSchedulingClaim) {
+                persistedJob = await this.branchLock!.runExclusive(
+                    schedule.branchId,
+                    (transaction) => promote(transaction),
+                );
+            } else if (options.isManualSend) {
+                const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
+                    pendingJob,
+                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                );
+                if (replaced.kind === "in_flight") {
+                    // Never queue a second send behind one the dispatcher
+                    // already claimed; the caller re-reads the (sending) status.
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+                persistedJob = replaced.job;
+                await this.supersedeRetryableServiceRecordSmsLogs(
+                    scheduleId,
+                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                );
+            } else {
+                persistedJob = await this.jobRepository.upsertPending(pendingJob);
+            }
 
             if (!persistedJob) {
                 return {

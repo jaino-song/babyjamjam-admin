@@ -31,6 +31,15 @@ export interface ClientUpcomingMessageTriggerJobCursor {
     id: string;
 }
 
+/**
+ * Outcome of replacing a schedule's not-yet-started jobs with one manual job.
+ * `in_flight` means a job was already claimed by the dispatcher
+ * (`processing`/`dispatching`); nothing was written in that case.
+ */
+export type ReplacePendingJobsResult =
+    | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
+    | { kind: "in_flight"; inFlightJobIds: string[] };
+
 export interface IMessageTriggerJobRepository {
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
@@ -156,6 +165,20 @@ export interface IMessageTriggerJobRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
+    /**
+     * Atomically replace every `pending` job of the replacement's rule and
+     * employee schedule with the replacement, unless one is already claimed.
+     * Under one transaction the schedule's live jobs are row-locked; if any is
+     * `processing`/`dispatching` (claimed by the dispatcher, so a send may
+     * already be on its way) nothing is written and `in_flight` is returned.
+     * Otherwise the pending jobs are canceled with `reason` and the replacement
+     * is inserted in the same transaction, so a concurrent dispatcher claim
+     * either wins first (-> `in_flight`) or loses against the canceled row.
+     */
+    replacePendingJobsUnlessInFlight(
+        replacement: MessageTriggerJobEntity,
+        reason: string,
+    ): Promise<ReplacePendingJobsResult>;
     /**
      * Upsert a pending job only while its rule is at the inspected generation
      * and expected stale state. A null result means the producer lost the

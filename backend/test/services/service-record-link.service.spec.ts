@@ -1,8 +1,9 @@
-import { BadRequestException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
     SERVICE_RECORD_LINK_SMS_TITLE,
@@ -19,6 +20,7 @@ import { IMessageLogRepository } from "domain/repositories/message-log.repositor
 import { IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 import { IMessageTriggerRuleBranchOverrideRepository } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 describe("ServiceRecordLinkService", () => {
@@ -88,6 +90,10 @@ describe("ServiceRecordLinkService", () => {
         upsertPending: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
             Object.defineProperty(job, "id", { value: "job-1" });
             return job;
+        }),
+        replacePendingJobsUnlessInFlight: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
+            Object.defineProperty(job, "id", { value: "job-1" });
+            return { kind: "replaced", job, canceledJobIds: [] };
         }),
     });
     const createLogRepository = () => ({
@@ -201,7 +207,7 @@ describe("ServiceRecordLinkService", () => {
         expect(job.payload.taskAutomationReference).toEqual(taskAutomationReference);
     });
 
-    it("sendNow grants a 24-hour late token and upserts an immediate pending job", async () => {
+    it("sendNow grants a 24-hour late token and atomically replaces pending jobs with an immediate one", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -228,7 +234,7 @@ describe("ServiceRecordLinkService", () => {
         const issuedExpiry = tokenService.issueLink.mock.calls[0]?.[0].expiresAt as Date;
         expect(issuedExpiry.getTime()).toBeGreaterThanOrEqual(before + 24 * 60 * 60 * 1000);
         expect(issuedExpiry.getTime()).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000);
-        const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        const job = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0]?.[0] as MessageTriggerJobEntity;
         expect(job.scheduledFor.getTime()).toBeGreaterThanOrEqual(before);
         expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(after);
         expect(result.scheduledFor).toBe(job.scheduledFor);
@@ -257,8 +263,8 @@ describe("ServiceRecordLinkService", () => {
         await service.sendNow(10);
         await service.sendNow(10);
 
-        const firstJob = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
-        const secondJob = jobRepository.upsertPending.mock.calls[1]?.[0] as MessageTriggerJobEntity;
+        const firstJob = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        const secondJob = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[1]?.[0] as MessageTriggerJobEntity;
         expect(firstJob.dedupeKey).not.toBe(secondJob.dedupeKey);
         expect(firstJob.dedupeKey).toMatch(
             new RegExp(`^${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary:manual:[0-9a-f-]{36}$`),
@@ -394,7 +400,7 @@ describe("ServiceRecordLinkService", () => {
             expectedPhone: "010-1111-2222",
         }));
         expect(tokenService.issueLink).not.toHaveBeenCalled();
-        const job = jobRepository.upsertPending.mock.calls[0]?.[0] as MessageTriggerJobEntity;
+        const job = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0]?.[0] as MessageTriggerJobEntity;
         expect(job.recipientPhone).toBe("01066211878");
         expect(job.payload.recipientPhone).toBe("01066211878");
         expect(job.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_prepared");
@@ -653,7 +659,7 @@ describe("ServiceRecordLinkService", () => {
         expect(releaseSql?.strings?.join("?")).toContain("canceled_by_user = false");
     });
 
-    it("supersedes retryable stale SMS logs before issuing a replacement token", async () => {
+    it("supersedes retryable stale SMS logs once the replacement job is enqueued", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const logRepository = createLogRepository();
@@ -677,11 +683,12 @@ describe("ServiceRecordLinkService", () => {
             new Date("2026-07-03T06:00:00.000Z"),
         );
         logRepository.findRetryableServiceRecordSmsByScheduleId.mockResolvedValue([staleLog]);
+        const jobRepository = createJobRepository();
         const service = new ServiceRecordLinkService(
             prisma as unknown as PrismaService,
             tokenService as never,
             createConfigService() as unknown as ConfigService,
-            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            jobRepository as unknown as IMessageTriggerJobRepository,
             logRepository as unknown as IMessageLogRepository,
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
         );
@@ -693,9 +700,136 @@ describe("ServiceRecordLinkService", () => {
         expect(staleLog.nextRetryAt).toBeNull();
         expect(staleLog.errorMessage).toBe("Service record link rescheduled");
         expect(logRepository.update).toHaveBeenCalledWith(staleLog);
-        expect(logRepository.update.mock.invocationCallOrder[0]).toBeLessThan(
-            tokenService.issueLink.mock.invocationCallOrder[0]!,
+        // Superseding happens only once the replacement job is durably enqueued,
+        // so a refused (in-flight) manual send leaves retryable logs untouched.
+        expect(logRepository.update.mock.invocationCallOrder[0]).toBeGreaterThan(
+            jobRepository.replacePendingJobsUnlessInFlight.mock.invocationCallOrder[0]!,
         );
+    });
+
+    describe("manual send in-flight fence", () => {
+        const buildService = (jobRepository: ReturnType<typeof createJobRepository>, logRepository = createLogRepository()) => {
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            );
+            return { service, prisma };
+        };
+
+        it("refuses with a 409 and enqueues nothing when the dispatcher already claimed a job", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.replacePendingJobsUnlessInFlight.mockResolvedValue({
+                kind: "in_flight",
+                inFlightJobIds: ["automatic-job"],
+            });
+            const logRepository = createLogRepository();
+            const { service } = buildService(jobRepository, logRepository);
+
+            await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
+            await expect(service.sendNow(10)).rejects.toMatchObject({
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT" }),
+            });
+            expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+            // No unconditional pre-cancel outside the atomic repository call.
+            expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+            expect(jobRepository.update).not.toHaveBeenCalled();
+            // A refused send must not supersede retryable logs either.
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        });
+
+        /** Real service + real repository over a recording database boundary. */
+        const buildWithRealRepository = (liveRows: Array<{ id: string; status: string }>) => {
+            const statements: string[] = [];
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const rawJobRow = (id: string, status: string) => ({
+                id, branch_id: "branch-1", rule_id: SERVICE_RECORD_LINK_RULE_ID, status,
+                scheduled_for: new Date(), attempts: 0, next_attempt_at: null, sent_at: null,
+                canceled_at: null, cancel_reason: null, client_id: 20, employee_schedule_id: 10,
+                recipient_type: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipient_phone: "01011112222",
+                template_key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupe_key: `manual-${id}`,
+                payload: {}, created_at: new Date(), updated_at: new Date(), claim_token: null,
+            });
+            const record = (query: { strings?: string[] }) => statements.push((query.strings ?? []).join("?").replace(/\s+/g, " "));
+            const transaction = {
+                $executeRaw: jest.fn().mockImplementation(async (query) => { record(query); return 1; }),
+                $queryRaw: jest.fn().mockImplementation(async (query) => {
+                    record(query);
+                    const text = statements[statements.length - 1]!;
+                    if (text.includes("FOR UPDATE")) return liveRows;
+                    if (text.includes("SET status = 'canceled'")) {
+                        return liveRows.filter((row) => row.status === "pending").map(({ id }) => ({ id }));
+                    }
+                    return [rawJobRow("new-manual", "pending")];
+                }),
+            };
+            const databaseBoundary = {
+                $transaction: jest.fn().mockImplementation(async (work: (tx: unknown) => unknown) => work(transaction)),
+                message_trigger_job: { update: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+            };
+            const repository = new SbMessageTriggerJobRepository(databaseBoundary as unknown as PrismaService);
+            const logRepository = createLogRepository();
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                repository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            );
+            return { service, statements, databaseBoundary, logRepository };
+        };
+
+        it("real repository: a job the scheduler advanced to dispatching blocks the manual send before any write", async () => {
+            const { service, statements, databaseBoundary, logRepository } = buildWithRealRepository([
+                { id: "automatic-in-flight", status: "dispatching" },
+            ]);
+
+            await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
+
+            // lock + read only: no cancel, no insert, no unconditional by-id update
+            expect(statements).toHaveLength(2);
+            expect(statements[0]).toContain("pg_advisory_xact_lock");
+            expect(statements[1]).toContain("FOR UPDATE");
+            expect(databaseBoundary.message_trigger_job.update).not.toHaveBeenCalled();
+            expect(databaseBoundary.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        });
+
+        it("real repository: only pending jobs -> cancelled and exactly one new job inserted", async () => {
+            const { service, statements } = buildWithRealRepository([{ id: "old-pending", status: "pending" }]);
+
+            const result = await service.sendNow(10);
+
+            expect(result.jobId).toBe("new-manual");
+            expect(statements.filter((text) => text.includes("INSERT INTO"))).toHaveLength(1);
+            expect(statements.filter((text) => text.includes("SET status = 'canceled'"))).toHaveLength(1);
+            expect(statements.findIndex((text) => text.includes("SET status = 'canceled'")))
+                .toBeLessThan(statements.findIndex((text) => text.includes("INSERT INTO")));
+        });
+
+        it("hands the repository the whole replacement so cancel and enqueue are one atomic step", async () => {
+            const jobRepository = createJobRepository();
+            const { service } = buildService(jobRepository);
+
+            const result = await service.sendNow(10);
+
+            expect(result.jobId).toBe("job-1");
+            expect(jobRepository.replacePendingJobsUnlessInFlight).toHaveBeenCalledTimes(1);
+            const [job, reason] = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0] as [MessageTriggerJobEntity, string];
+            expect(job.employeeScheduleId).toBe(10);
+            expect(job.ruleId).toBe(SERVICE_RECORD_LINK_RULE_ID);
+            expect(job.status).toBe("pending");
+            expect(reason).toBe(SERVICE_RECORD_LINK_RESCHEDULED_REASON);
+            expect(jobRepository.update).not.toHaveBeenCalled();
+            expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+        });
     });
 
     it("records a failed history row when provider phone is missing", async () => {
@@ -1025,7 +1159,8 @@ describe("ServiceRecordLinkService", () => {
             const result = await service.sendNow(10);
 
             expect(result.jobId).toBe("job-1");
-            expect(jobRepository.upsertPending).toHaveBeenCalledTimes(1);
+            expect(jobRepository.replacePendingJobsUnlessInFlight).toHaveBeenCalledTimes(1);
+            expect(jobRepository.upsertPending).not.toHaveBeenCalled();
             expect(overrideRepository.findOne).not.toHaveBeenCalled();
         });
 
