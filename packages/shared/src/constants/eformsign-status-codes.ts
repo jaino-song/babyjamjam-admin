@@ -11,7 +11,9 @@
  *    terminal-negative status: eformsign-webhook.service.ts:614 synthesizes
  *    `{ statusType: "090", statusDetail: "철회" }`, and
  *    backend/application/services/client.service.ts:26 groups it with the
- *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"])`.
+ *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"])` (040 is the
+ *    separate non-terminal "revoke_requested" client status; this per-document
+ *    category list below still buckets 040 with the revoke family).
  *    "090" is not part of eformsign's own API status-code table — it is a
  *    backend-synthesized status — which is why neither frontend nor mobile
  *    (whose code sets are transcribed from the eformsign API docs) had it.

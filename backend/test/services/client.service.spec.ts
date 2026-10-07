@@ -3233,6 +3233,61 @@ describe("ClientService", () => {
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
             });
 
+            it("should read a cancellation-requested (040) document as revoke_requested and keep it a live contract", async () => {
+                const client = createWaitingClient("2026-07-16", "revoke-requested-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "040" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                // 040 is a pending request, not a cancellation: eformsign may still refuse it.
+                expect(result?.documentStatus).toBe("revoke_requested");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                expect(result?.actionRequired).toBeNull();
+            });
+
+            it("should read a signed-and-revoke-requested document as revoke_requested", async () => {
+                const client = createWaitingClient("2026-07-16", "revoke-requested-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "040", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("revoke_requested");
+            });
+
+            it.each([
+                ["060", "requested"],
+                ["042", "revoked"],
+            ])("should read a later %s after a 040 as %s", async (laterStatusType, documentStatus) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                // Newest first: the refused (060) or completed (042) cancellation is the latest row.
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, documentId: "doc", statusType: laterStatusType },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe(documentStatus);
+            });
+
+            it.each(["042", "090"])("should keep %s as revoked", async (statusType) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([{ clientId: 1, statusType }]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("revoked");
+            });
+
             it("should preserve a completed lifecycle status while its mirror is syncing", async () => {
                 const client = createWaitingClient("2026-07-16", "completed-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
@@ -3667,6 +3722,15 @@ describe("ClientService", () => {
             prismaService.client.findMany.mockResolvedValue([alertClient()]);
             prismaService.eformsign_doc.findMany.mockResolvedValue([
                 { clientId: 1, statusType: "070", stepType: "06", stepName: "제공기관 확인" },
+            ]);
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
+        });
+
+        it("drops the alert while the latest contract has a pending cancellation (040)", async () => {
+            prismaService.client.findMany.mockResolvedValue([alertClient()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([
+                { clientId: 1, statusType: "040" },
             ]);
 
             expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
@@ -4898,6 +4962,15 @@ describe("ClientService", () => {
                         contractDoc({ clientId: 1, documentId: "doc-1", statusType: "050", stepType: "05", stepName: "완료" }),
                         contractDoc({ clientId: 2, documentId: "doc-2", statusType: "070", stepType: "06", stepName: "제공기관 확인" }),
                     ],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("does not count a client whose latest contract has a pending cancellation (040)", async () => {
+                seed(
+                    [storedClient({ eDocId: "doc-1" })],
+                    [contractDoc({ statusType: "040" })],
                 );
 
                 expect((await service.getStats(branchId)).contractsNotSent).toBe(0);

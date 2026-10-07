@@ -67,6 +67,7 @@ import {
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import {
     COMPLETED_DOCUMENT_STATUS_TYPES,
     CREATED_DOCUMENT_STATUS_TYPES,
@@ -92,7 +93,9 @@ const FILTER_DAYS_THRESHOLD = 7;
 // The badge and the action-required feeds all read this number.
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
-const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
+// 040 (cancellation REQUESTED, not done) is deliberately absent: it is its own
+// non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"]);
 // Exported so repository/provider filters exclude the same stored deletion codes
 // (the stored value is never the literal "deleted").
 export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
@@ -107,14 +110,17 @@ const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
 // - 020: opened (서명 페이지 열림)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
-// - 090: revoked (철회됨)
+// - 040: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
+//   still refuse it and the signer may continue, so it is non-terminal)
+// - 042/045/090: revoked (철회됨)
 // - 099: deleted (삭제됨)
-export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
 // A document in one of these states is still "alive" — the client already has
 // a contract in flight (or finished), so the "계약서 필요" signal must not fire
-// even if it is unsigned. Everything else (rejected/revoked/deleted/no document
-// at all) is a dead document and falls back to the "발송 필요" check.
-const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "opened", "completed"]);
+// even if it is unsigned. A pending cancellation (revoke_requested) is still a live
+// contract until eformsign actually revokes it. Everything else (rejected/revoked/
+// deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
+const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
 export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
@@ -1703,6 +1709,7 @@ export class ClientService {
         if (normalized === "000") return null;
 
         if (COMPLETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "completed";
+        if (isRevokeRequestedStatus(normalized)) return "revoke_requested";
         if (REJECTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "rejected";
         if (REVOKED_DOCUMENT_STATUS_TYPES.has(normalized)) return "revoked";
         if (DELETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "deleted";

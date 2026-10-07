@@ -78,6 +78,7 @@ const DOC_STATUS_LABEL_KEYS = {
     requested: "clients.form.doc-requested",
     completed: "clients.form.doc-completed",
     rejected: "clients.form.doc-rejected",
+    revoke_requested: "clients.form.doc-revoke-requested",
     revoked: "clients.form.doc-revoked",
     deleted: "clients.form.doc-deleted",
     none: "clients.form.doc-not-sent",

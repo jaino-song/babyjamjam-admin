@@ -11,6 +11,7 @@ export type ClientDocumentStatus =
     | "created"
     | "opened"
     | "requested"
+    | "revoke_requested"
     | "completed"
     | "rejected"
     | "revoked"
@@ -27,6 +28,9 @@ export const CLIENT_DOCUMENT_STATUS_META = {
     opened: { label: "열람됨", variant: "warning" },
     completed: { label: "계약 완료", variant: "success" },
     rejected: { label: "거부됨", variant: "danger" },
+    // 040 (doc_request_revoke): cancellation requested, not done. eformsign may refuse it and the
+    // signer may continue, so it is a warning, not the terminal danger of 철회됨.
+    revoke_requested: { label: "철회 요청됨", variant: "warning" },
     revoked: { label: "철회됨", variant: "danger" },
     deleted: { label: "삭제됨", variant: "danger" },
 } as const satisfies Record<ClientDocumentStatus, ClientDocumentStatusMeta>;

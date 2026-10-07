@@ -32,6 +32,8 @@ describe("isCancellableContractStatus", () => {
         expect(isCancellableContractStatus("opened", unsigned)).toBe(true);
         expect(isCancellableContractStatus("completed", unsigned)).toBe(false);
         expect(isCancellableContractStatus("revoked", unsigned)).toBe(false);
+        // A cancellation is already pending; it must not be cancellable again.
+        expect(isCancellableContractStatus("revoke_requested", unsigned)).toBe(false);
         expect(isCancellableContractStatus(null, unsigned)).toBe(false);
     });
 

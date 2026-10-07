@@ -17,7 +17,7 @@ export interface EmployeeSummary {
 }
 
 // Document status type for eformsign documents
-export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
 
 export type { ClientBadgeKey, ClientBadgeStatus };
 
