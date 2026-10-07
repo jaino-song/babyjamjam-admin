@@ -998,7 +998,7 @@ export class AdminServiceRecordEditService {
         // are attached to: receipt links are stable, so the token stays on its original document
         // and promotion refreshes it from the target document. Promotion requires only that this
         // target (receipt-facts) document is still the client's current contract, checked under
-        // the client-first lock order (client row -> document rows -> case rows).
+        // the client-first lock order (client row first, then the client's document rows in id order).
         // Contract-revision planning keeps using `document` untouched: it WRITES to eformsign, so
         // its target is deliberately not retargeted here. When the receipt document is the same
         // document (the common case) the single capture above already answers both.

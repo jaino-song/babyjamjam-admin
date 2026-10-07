@@ -1662,12 +1662,15 @@ async function assertNoBlockingRevisionDocumentStates(
  *    case rows; it used to take the document first, which deadlocked with this lock;
  *  - receipt-link issue (`createOrRefreshContractLink`): client row -> token insert (key-share on
  *    the document row it references).
- *  - `isCurrentContractDocument`, permanent purge (`purgeContent`) and the phone based link in
- *    `ClientService` (`linkContractDocumentsByPhone`): each reads the document owners (and the
- *    clients pointing at the documents) WITHOUT a lock, locks those client rows in `id` order,
- *    then the document rows, then re-reads the owners and starts over if one was not locked.
- * Every listed path therefore takes the client rows first; the project-wide order is client row(s)
- * -> `eformsign_doc` rows (`id` order) -> case rows.
+ *  - permanent purge (`purgeContent`) and the phone based link in `ClientService`
+ *    (`linkContractDocumentsByPhone`): each reads the document owners and the clients pointing at
+ *    the documents WITHOUT a lock, locks those client rows in `id` order, then the document rows,
+ *    then re-reads them and starts over if one was not locked;
+ *  - `isCurrentContractDocument`: the same, for the document's owner only.
+ * Every listed path therefore takes the client rows first and the document rows in `id` order.
+ * Case/revision rows are not in one fixed place relative to the documents (promotion takes them
+ * before the documents, `linkClientIfActive` after); what keeps them deadlock-free is that every
+ * such path already holds the client row.
  */
 export async function lockClientOwnedContractDocuments(
     tx: Prisma.TransactionClient,
