@@ -29,6 +29,7 @@ type Row = Record<string, unknown> & {
     stepRecipientName: string;
     stepRecipientSms: string;
     expiredDate: Date;
+    expired: boolean;
     updatedDate: Date;
 };
 
@@ -283,10 +284,14 @@ describe("unassigned webhook path honours the mirrored status", () => {
             mirror("070"),
         );
 
-        // Before the guard this wrote 020 over a reviewer-stage 070.
+        // Before the guard this wrote 020 over a reviewer-stage 070. An action knows
+        // nothing about status, detail or expiry, so it writes none of them.
         expect(state.row.statusType).toBe("070");
-        expect(state.row.statusDetail).toBe("서명 페이지 열림");
+        expect(state.row.statusDetail).toBe("from mirror");
         expect(state.updateData).toHaveLength(1);
+        expect(state.updateData[0]).not.toHaveProperty("statusType");
+        expect(state.updateData[0]).not.toHaveProperty("statusDetail");
+        expect(state.updateData[0]).not.toHaveProperty("expired");
     });
 
     it("CONTROL: an action with no mirror still falls back to 020", async () => {
@@ -340,6 +345,54 @@ describe("unassigned webhook path honours the mirrored status", () => {
         expect(state.updateData).toHaveLength(1);
     });
 });
+
+describe.each(BOTH_PATHS)(
+    "a document_action never rewrites the status facts of a terminal mirrored row, %s row",
+    (_label, branchId) => {
+        it.each([
+            ["080", "만료", true],
+            ["061", "거부", false],
+        ])("a row at %s (%s, expired=%s) keeps its detail and expiry", async (code, detail, expired) => {
+            const { state, prisma } = createTable(freshRow(branchId, {
+                statusType: code,
+                statusDetail: detail,
+                expired,
+                updatedDate: new Date(T - 1000),
+            }));
+            const { service } = createService(prisma);
+
+            await service.processWebhook(
+                documentPayload("doc_request_participant", { action: "doc_open_participant" }),
+                mirror(code),
+            );
+
+            expect(state.row.statusType).toBe(code);
+            expect(state.row.statusDetail).toBe(detail);
+            expect(state.row.expired).toBe(expired);
+            // The action itself still lands.
+            expect(state.row.updatedDate).toEqual(new Date(T));
+            expect(state.updateData).toHaveLength(1);
+            expect(state.updateData[0]).not.toHaveProperty("statusDetail");
+            expect(state.updateData[0]).not.toHaveProperty("expired");
+        });
+
+        it("a live row keeps its detail too, and still takes the action's timestamp", async () => {
+            const { state, prisma } = createTable(freshRow(branchId, {
+                statusDetail: "서명 요청됨",
+                updatedDate: new Date(T - 1000),
+            }));
+            const { service } = createService(prisma);
+
+            await service.processWebhook(
+                documentPayload("doc_request_participant", { action: "doc_open_participant" }),
+                mirror("060"),
+            );
+
+            expect(state.row.statusDetail).toBe("서명 요청됨");
+            expect(state.row.updatedDate).toEqual(new Date(T));
+        });
+    },
+);
 
 describe("a 062 acceptance is never written back as 060", () => {
     it.each(BOTH_PATHS)(
@@ -569,6 +622,19 @@ describe.each(BOTH_PATHS)(
             }
         });
 
+        it("a newer concurrent stepRecipientTypes survives a status webhook", async () => {
+            const { state, prisma } = createTable(
+                freshRow(branchId, { stepRecipientTypes: "05" }),
+                (row) => ({ ...row, stepRecipientTypes: "06", updatedDate: new Date(T - 60_000) }),
+            );
+            const { service } = createService(prisma);
+
+            await service.processWebhook(documentPayload("doc_request_participant"), mirror("060"));
+
+            expect(state.row["stepRecipientTypes"]).toBe("06");
+            expect(state.updateData[0]).not.toHaveProperty("stepRecipientTypes");
+        });
+
         it("CONTROL: the fields the webhook does carry are still written", async () => {
             const { state, prisma } = createTable(freshRow(branchId, { expired: false }));
             const { service } = createService(prisma);
@@ -679,6 +745,16 @@ describe("mirror/backfill and other default-option writes are unchanged", () => 
             documentNumber: "N-9",
             templateId: "template-1",
         });
+    });
+
+    it("update() with updateStepRecipient:false also leaves stepRecipientTypes out", async () => {
+        const { state, prisma } = createTable(freshRow(BRANCH));
+        const repository = new SbEformsignDocRepository(prisma as never);
+
+        await repository.update(BRANCH, entity(), { updateStepRecipient: false });
+
+        expect(state.updateData[0]).not.toHaveProperty("stepRecipientTypes");
+        expect(state.updateData[0]).not.toHaveProperty("stepRecipientName");
     });
 
     it("update() honours each new option independently", async () => {

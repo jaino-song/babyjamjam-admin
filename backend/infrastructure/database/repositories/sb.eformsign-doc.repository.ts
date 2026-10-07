@@ -1039,6 +1039,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             stepRecipientSms,
             documentNumber,
             expiredDate,
+            stepRecipientTypes,
+            statusDetail,
+            expired,
             ...rest
         } = EformsignDocMapper.toPrismaUpdate(doc);
         // A column the caller did not supply holds the value it read earlier; leaving it out
@@ -1052,6 +1055,11 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             ...(options?.updateStepRecipient === false
                 ? {}
                 : { stepRecipientType, stepRecipientName, stepRecipientSms }),
+            ...(options?.updateStepRecipient === false || stepRecipientTypes === undefined
+                ? {}
+                : { stepRecipientTypes }),
+            ...(options?.updateStatusDetail === false ? {} : { statusDetail }),
+            ...(options?.updateExpired === false ? {} : { expired }),
             ...(options?.updateDocumentNumber === false || documentNumber === undefined
                 ? {}
                 : { documentNumber }),
@@ -1157,7 +1165,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             branchId: null,
         };
         const update = {
-            statusType: doc.statusType,
+            ...(options?.updateStatusType === false ? {} : { statusType: doc.statusType }),
             ...(options?.markMirrorPending ? { syncStatus: "pending" as const } : {}),
             ...(options?.updateStatusDetail === false ? {} : { statusDetail: doc.statusDetail }),
             ...(options?.updateStepType === false ? {} : { stepType: doc.stepType }),

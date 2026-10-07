@@ -16,6 +16,13 @@ export interface UpdateEformsignDocStatusParams {
     stepIndex?: string;
     stepName?: string;
     expired?: boolean;
+    /**
+     * The event reports an action (a document was opened), not a status. `statusType` is
+     * then the mirror's own code, and the detail and expiry are not the event's to set:
+     * a "서명 페이지 열림" or `expired: false` written over a terminal row would erase
+     * "만료"/"거부" and un-expire it. Both are kept as stored.
+     */
+    actionOnly?: boolean;
     sourceUpdatedDate?: Date;
     documentName?: string;
     templateName?: string;
@@ -88,7 +95,7 @@ export class UpdateEformsignDocStatusUsecase {
             createdDate: existing.createdDate,
             updatedDate,
             statusType: params.statusType,
-            statusDetail: params.statusDetail,
+            statusDetail: params.actionOnly ? existing.statusDetail : params.statusDetail,
             stepType: params.stepType ?? existing.stepType,
             stepIndex: params.stepIndex ?? existing.stepIndex,
             stepName: params.stepName ?? existing.stepName,
@@ -96,7 +103,7 @@ export class UpdateEformsignDocStatusUsecase {
             stepRecipientName: existing.stepRecipientName,
             stepRecipientSms: existing.stepRecipientSms,
             expiredDate: existing.expiredDate,
-            expired: params.expired ?? existing.expired,
+            expired: params.actionOnly ? existing.expired : params.expired ?? existing.expired,
             clientId: existing.clientId,
             documentKind: existing.documentKind,
             employeeScheduleId: existing.employeeScheduleId,
@@ -112,6 +119,7 @@ export class UpdateEformsignDocStatusUsecase {
             ...(params.stepType === undefined ? { updateStepType: false } : {}),
             ...(params.stepIndex === undefined ? { updateStepIndex: false } : {}),
             ...(params.stepName === undefined ? { updateStepName: false } : {}),
+            ...(params.actionOnly ? { updateStatusDetail: false, updateExpired: false } : {}),
             updateStepRecipient: false,
             updateDocumentNumber: false,
             updateExpiredDate: false,

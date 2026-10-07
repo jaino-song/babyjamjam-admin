@@ -655,6 +655,10 @@ export class EformsignWebhookService {
                 statusDetail,
                 ...mirroredStepFields(mirroredDocument),
                 expired: false,
+                // With a mirror the code is the mirror's own and the action knows nothing
+                // about the document's detail or expiry; without one this is the old
+                // synthesised 020, which the terminal fence in the usecase still refuses.
+                ...(mirroredDocument ? { actionOnly: true } : {}),
                 documentName: document_title,
                 templateName: template_name,
                 sourceUpdatedDate: webhookSourceUpdatedDate(document.updated_date),
@@ -1145,6 +1149,7 @@ export class EformsignWebhookService {
         let statusType: string;
         let statusDetail: string;
         let isCompletionEvent = false;
+        let isActionOnMirror = false;
         let updatedTimestamp: number | undefined;
         let documentName: string | undefined;
         let templateId: string | undefined;
@@ -1167,6 +1172,7 @@ export class EformsignWebhookService {
             statusType = mirroredDocument
                 ? normalizeEformsignStatusCode(mirroredDocument.current_status.status_type)
                 : "020";
+            isActionOnMirror = Boolean(mirroredDocument);
             statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${document.action}`;
             updatedTimestamp = document.updated_date;
             documentName = document.document_title?.trim() || undefined;
@@ -1274,6 +1280,12 @@ export class EformsignWebhookService {
             updateCreatedDate: false,
             updateExpiredDate: false,
             updateDocumentNumber: false,
+            // An action on a mirrored row says nothing about status, detail or expiry: the
+            // mirror projected them already, and the action's "서명 페이지 열림" and
+            // expired=false would otherwise erase "만료"/"거부" on a terminal row.
+            ...(isActionOnMirror
+                ? { updateStatusType: false, updateStatusDetail: false, updateExpired: false }
+                : {}),
             ...(mirrored.stepType === undefined ? { updateStepType: false } : {}),
             ...(mirrored.stepIndex === undefined ? { updateStepIndex: false } : {}),
             ...(mirrored.stepName === undefined ? { updateStepName: false } : {}),

@@ -140,6 +140,15 @@ export interface EformsignDocStepWriteOptions {
      * real stored expiry with it.
      */
     updateExpiredDate?: boolean;
+    updateExpired?: boolean;
+    /**
+     * The list endpoint carries no status detail, so a caller working from it only has a
+     * value derived from the step name. Set false there: a new row still needs something,
+     * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.
+     * An action event likewise carries no status detail, only the fact that something
+     * happened, and must not replace "만료" with "서명 페이지 열림".
+     */
+    updateStatusDetail?: boolean;
 }
 
 export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWriteOptions {
@@ -150,13 +159,11 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
      * The mirror service republishes it only after both required PDFs reach ready.
      */
     markMirrorPending?: boolean;
-    updateExpired?: boolean;
     /**
-     * The list endpoint carries no status detail, so a caller working from it only has a
-     * value derived from the step name. Set false there: a new row still needs something,
-     * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.
+     * The event reports no status at all (a document action on a mirrored row), so the
+     * status code is not its to write either; the mirror has already projected it.
      */
-    updateStatusDetail?: boolean;
+    updateStatusType?: boolean;
     /**
      * Creation time is the list's sort key, and rows written by the create and adopt paths
      * carry the moment we wrote them rather than the moment eformsign created the
