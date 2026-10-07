@@ -121,7 +121,7 @@ describe("employee service record inline guidance", () => {
         fireEvent.blur(birth);
         expect(birth).toHaveValue("1999-01-0");
         expect(birth).toHaveAttribute("aria-invalid", "true");
-        expect(slotOf(birth)).toHaveTextContent("8자리로 입력해 주세요 (예: 19940315)");
+        expect(slotOf(birth)).toHaveTextContent("8자리로 입력해 주세요");
         expect(slotOf(birth)).toHaveClass("error");
         fireEvent.change(birth, { target: { value: "" } });
         expect(birth).toHaveValue("");
@@ -161,7 +161,7 @@ describe("employee service record inline guidance", () => {
     it.each([
         ["19990229", "존재하지 않는 날짜예요"],
         ["20260922", "미래 날짜는 입력할 수 없어요"],
-        ["990101", "8자리로 입력해 주세요 (예: 19940315)"],
+        ["990101", "8자리로 입력해 주세요"],
     ])("does not accept an invalid or incomplete formatted birthday: %s", (value, message) => {
         render(<Harness />);
         const birth = screen.getByLabelText("산모 생년월일");
@@ -342,7 +342,7 @@ describe("employee service record service date", () => {
         expect(onServiceDateChange).not.toHaveBeenCalled();
         expect(slotOf(date)).toHaveTextContent("예: 19940315");
         fireEvent.blur(date);
-        expect(slotOf(date)).toHaveTextContent("8자리로 입력해 주세요 (예: 19940315)");
+        expect(slotOf(date)).toHaveTextContent("8자리로 입력해 주세요");
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
         expect(next).not.toHaveBeenCalled();
         expect(date).toHaveFocus();

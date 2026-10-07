@@ -86,9 +86,9 @@ describe("service record input policy", () => {
         for (const [key, value] of samples) {
             const message = getServiceRecordHeaderFieldError(key, value, NOW, { required: true });
             expect(message).not.toBeNull();
-            expect(message!.length).toBeLessThanOrEqual(27);
+            expect(message!.length).toBeLessThanOrEqual(23);
         }
-        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("8자리로 입력해 주세요 (예: 19940315)");
+        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("8자리로 입력해 주세요");
         expect(getServiceRecordHeaderFieldError("momBirth", "2026-10-01", NOW)).toBe("미래 날짜는 입력할 수 없어요");
         expect(getServiceRecordHeaderFieldError("momBirth", "1990-02-30", NOW)).toBe("존재하지 않는 날짜예요");
         expect(getServiceRecordHeaderFieldError("babyBirth", "", NOW, { required: true })).toBe("신생아 출생일자를 입력해 주세요");
