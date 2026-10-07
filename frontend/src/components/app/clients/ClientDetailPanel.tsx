@@ -801,8 +801,10 @@ function ClientDetailPanelBody({
     idPrefix,
     tabsAriaLabel,
     compactBackLabel,
-    tabPanelsClassName = "min-h-full w-full min-w-0 max-w-full shrink-0",
-    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full",
+    // flex-col + flex-1 give the track a resolved height, so an active panel's
+    // min-h-full fills the scroll area (the empty contracts state centers in it).
+    tabPanelsClassName = "flex min-h-full w-full min-w-0 max-w-full shrink-0 flex-col",
+    tabPanelsTrackClassName = "min-h-full w-full min-w-0 max-w-full flex-1",
     tabPanelsPanelClassName = "w-full min-w-0 max-w-full [&[aria-hidden=false]]:min-h-full",
 }: ClientDetailPanelProps) {
     const locale = useLocale();
@@ -1323,6 +1325,7 @@ function ClientDetailPanelBody({
                         },
                         {
                             key: "contracts",
+                            className: "flex flex-col",
                             children: (
                                 <ClientContractsList
                                     docs={clientContractDocs}
