@@ -65,3 +65,18 @@ describe("getMobileClientBadges", () => {
     );
   });
 });
+
+describe("getMobileClientBadges legacy fallback for a revoke-requested contract (040/045)", () => {
+  it("renders the 철회 요청됨 warning badge instead of 계약서 필요", () => {
+    const badges = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "revoke_requested" });
+
+    expect(badges.some((badge) => badge.key === "contract_required")).toBe(false);
+    expect(badges[0]).toEqual(expect.objectContaining({ label: "철회 요청됨", tone: "orange" }));
+  });
+
+  it("keeps 계약서 필요 for a revoked contract", () => {
+    const badges = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "revoked" });
+
+    expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_required", label: "계약서 필요" }));
+  });
+});

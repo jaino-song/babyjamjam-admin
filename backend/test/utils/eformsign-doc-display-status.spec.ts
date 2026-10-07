@@ -151,6 +151,30 @@ describe("resolveEformsignDocDisplayStatus", () => {
         )).toBe("unknown");
     });
 
+    it.each(["040", "045"])("shows %s (revoke requested) as revoke_requested, not expired, whatever the step or end date", (code) => {
+        const at = (current_status: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+            resolveEformsignDocDisplayStatus({ id: "d", current_status, ...extra }, kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR);
+        expect(at({ status_type: code })).toBe("revoke_requested");
+        expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-07" })).toBe("revoke_requested");
+        expect(at({ status_type: code, step_type: "05", step_name: "이용자 서명" })).toBe("revoke_requested");
+        expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { [MIRROR_UNASSIGNED_KEY]: true })).toBe("revoke_requested");
+    });
+
+    it("shows 041 (doc_refuse_revoke) exactly like 060: a live in-progress document", () => {
+        const at = (current_status: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+            resolveEformsignDocDisplayStatus({ id: "d", current_status, ...extra }, kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR);
+        for (const current_status of [
+            { step_type: "05", step_name: "이용자 서명" },
+            { step_type: "06", step_name: "제공기관 확인" },
+        ]) {
+            expect(at({ status_type: "041", ...current_status }, { contract_end_date: "2026-08-07" }))
+                .toBe(at({ status_type: "060", ...current_status }, { contract_end_date: "2026-08-07" }));
+        }
+        expect(at({ status_type: "041", step_type: "05", step_name: "이용자 서명" })).toBe("pending");
+        expect(at({ status_type: "doc_refuse_revoke", step_type: "05", step_name: "이용자 서명" })).toBe("pending");
+        expect(at({ status_type: "041", step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-07" })).toBe("review");
+    });
+
     it("shows 040 (doc_request_revoke) as revoke_requested, not expired, whatever the step or end date", () => {
         // Parity: packages/shared/src/constants/eformsign-doc-status.test.ts. 040 stays in the
         // "expired" category for filtering/stats (see eformsign-document-list), but is not expired.
@@ -165,7 +189,7 @@ describe("resolveEformsignDocDisplayStatus", () => {
     });
 
     it("leaves 042/090 (revoked) and 080 (expired) as expired and 047/049 as unknown", () => {
-        for (const code of ["042", "090", "080", "011", "045"]) {
+        for (const code of ["042", "090", "080", "011"]) {
             expect(resolveEformsignDocDisplayStatus(
                 { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
             )).toBe("expired");

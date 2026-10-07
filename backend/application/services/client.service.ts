@@ -94,9 +94,9 @@ const FILTER_DAYS_THRESHOLD = 7;
 // The badge and the action-required feeds all read this number.
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
-// 040 (cancellation REQUESTED, not done) is deliberately absent: it is its own
+// 040/045 (cancellation REQUESTED, not done) are deliberately absent: they are their own
 // non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
-const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"]);
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "090"]);
 // Exported so repository/provider filters exclude the same stored deletion codes
 // (the stored value is never the literal "deleted").
 export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
@@ -114,9 +114,10 @@ const PHONE_LINK_LOCK_SET_CHANGED = Symbol("PHONE_LINK_LOCK_SET_CHANGED");
 // - 020: opened (서명 페이지 열림)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
-// - 040: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
+// - 060/041: requested (041 = a refused revoke; the document continues exactly like 060)
+// - 040/045: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
 //   still refuse it and the signer may continue, so it is non-terminal)
-// - 042/045/090: revoked (철회됨)
+// - 042/090: revoked (철회됨)
 // - 099: deleted (삭제됨)
 export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
 // A document in one of these states is still "alive" — the client already has

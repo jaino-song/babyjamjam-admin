@@ -98,3 +98,27 @@ describe("schedule-change badge priority", () => {
     expect(screen.getByText("+3")).toBeInTheDocument();
   });
 });
+
+describe("getClientBadges legacy fallback for a revoke-requested contract (040/045)", () => {
+  const legacyClient = (documentStatus: string) => ({
+    badges: [],
+    pendingScheduleChange: null,
+    serviceStatus: "active",
+    documentStatus,
+    breastPump: false,
+    careCenter: false,
+  });
+
+  it("renders the 철회 요청됨 warning badge instead of 계약서 필요", () => {
+    const badges = getClientBadges(legacyClient("revoke_requested") as never);
+
+    expect(badges.some((badge) => badge.key === "contract_required")).toBe(false);
+    expect(badges[0]).toEqual(expect.objectContaining({ label: "철회 요청됨", tone: "warning" }));
+  });
+
+  it("keeps 계약서 필요 for a revoked contract", () => {
+    const badges = getClientBadges(legacyClient("revoked") as never);
+
+    expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_required", label: "계약서 필요" }));
+  });
+});

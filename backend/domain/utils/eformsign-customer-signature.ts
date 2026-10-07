@@ -3,7 +3,9 @@ import { isProviderReviewWorkflowStep, normalizeEformsignStatusCode } from "./ef
 export const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 export const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
 export const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
-export const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
+// 041 (doc_refuse_revoke): the revoke was refused and the document continues like 060.
+// 040/045 (revoke requested) are deliberately absent: not cancellable, not "requested".
+export const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "041", "060", "070"]);
 
 /** 재발행 취소는 알려진 미서명 진행 상태에서만 허용한다. */
 export function isCancellableUnsignedContract(contract: {

@@ -20,12 +20,15 @@ import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { EformsignDocDisplayFields } from "domain/repositories/eformsign-doc.repository.interface";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_REJECTED_STATUS_CODES,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL,
+    isRevokeRequestedStatus,
+} from "domain/constants/eformsign-doc-status.constants";
 import { EformsignDocumentSnapshotService } from "./eformsign-document-snapshot.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EformsignProviderPrincipal } from "./eformsign-credential-boundary.service";
-
-const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
-const REJECTED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"]);
 
 @Injectable()
 export class EformsignDocService {
@@ -189,10 +192,14 @@ export class EformsignDocService {
     }
 
     private statusDetail(statusType: string, stepName: string | null | undefined): string {
-        if (COMPLETED_STATUS_CODES.has(statusType)) {
+        if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) {
             return "완료";
         }
-        if (REJECTED_STATUS_CODES.has(statusType)) {
+        // Same text the webhook writes for 040/045 — a revoke REQUEST is not a rejection.
+        if (isRevokeRequestedStatus(statusType)) {
+            return EFORMSIGN_REVOKE_REQUESTED_STATUS_DETAIL;
+        }
+        if (EFORMSIGN_REJECTED_STATUS_CODES.has(statusType)) {
             return "거부";
         }
         return stepName?.trim() || "진행중";

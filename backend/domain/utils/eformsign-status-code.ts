@@ -12,6 +12,7 @@ const STATUS_NAME_TO_CODE: Readonly<Record<string, string>> = {
     doc_reject_outsider: "031",
     doc_accept_outsider: "032",
     doc_request_revoke: "040",
+    doc_refuse_revoke: "041",
     doc_revoke: "042",
     doc_update: "043",
     doc_request_reject: "045",

@@ -73,8 +73,17 @@ function legacyBadge(
 export function legacyClientBadges(client: LegacyClientBadgeInput): LegacyClientBadge[] {
     const badges: LegacyClientBadge[] = [];
 
-    if (client.serviceStatus === "active" && client.documentStatus !== "completed") {
+    // 철회 요청됨 (040/045): the contract is still ACTIVE — cancellation is only requested and
+    // may be refused — so it never reads "계약서 필요" (no 발송 필요), and it must not be counted
+    // by the contract_required filters. It surfaces as the warning-toned status instead.
+    const revokeRequested = client.documentStatus === "revoke_requested";
+
+    if (client.serviceStatus === "active" && client.documentStatus !== "completed" && !revokeRequested) {
         badges.push(legacyBadge("contract_required", "terminated"));
+    }
+
+    if (client.serviceStatus === "active" && revokeRequested) {
+        badges.push(legacyBadge("service_status", "review", "철회 요청됨"));
     }
 
     badges.push(legacyBadge(

@@ -186,7 +186,7 @@ const ContractPdfViewer = dynamic(
   }
 );
 
-// "revoke-requested" is eformsign 040 (cancellation asked, not done). It is display-only: the
+// "revoke-requested" is eformsign 040/045 (cancellation asked, not done). It is display-only: the
 // server still files it under the "기간 만료" filter, so FILTER_BY_CATEGORY maps it there and the
 // pill counts keep matching the server's expired filter.
 type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";

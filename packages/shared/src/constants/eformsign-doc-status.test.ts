@@ -169,6 +169,32 @@ describe("revoke_requested (eformsign 040)", () => {
         })).toBe("revoke_requested");
     });
 
+    it("labels 045 (doc_request_reject) exactly like 040", () => {
+        for (const statusType of ["045", "doc_request_reject"]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-07", statusType, now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("철회 요청됨");
+        }
+    });
+
+    it("resolves 041 (a refused revoke) exactly like 060, by step and review window", () => {
+        for (const [currentStatus, contractEndDate] of [
+            [CUSTOMER_STEP_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+        ] as const) {
+            const params = { category: "in-progress" as const, currentStatus, contractEndDate, now: kstNoon("2026-08-06") };
+            expect(resolveContractDocDisplayStatus({ ...params, statusType: "041" }))
+                .toBe(resolveContractDocDisplayStatus({ ...params, statusType: "060" }));
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress", currentStatus: CUSTOMER_STEP_STATUS, contractEndDate: null, statusType: "041",
+        })).toBe("pending");
+    });
+
     it("leaves other expired-bucket codes alone (042/090 revoked, 080 expired)", () => {
         for (const statusType of ["042", "090", "080", "011", undefined, null]) {
             expect(resolveContractDocStatusLabel({

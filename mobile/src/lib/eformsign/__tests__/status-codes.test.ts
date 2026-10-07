@@ -144,3 +144,30 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
     }
   });
 });
+
+describe("045 (doc_request_reject) is treated exactly like 040", () => {
+  it("is labelled 철회 요청됨 with the expired category kept for the filter tab", () => {
+    expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "doc_request_reject" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "045", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+    expect(getStatusCategory("045")).toBe("expired");
+  });
+});
+
+describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
+  const customerStep = { step_type: "05", step_name: "이용자 서명" };
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is in progress and labelled by step and review window like 060", () => {
+    expect(getStatusCategory("041")).toBe("in-progress");
+    expect(getStatusCategory("doc_refuse_revoke")).toBe("in-progress");
+    for (const step of [customerStep, reviewStep]) {
+      for (const endDate of [null, "2027-12-31", "2025-01-01"]) {
+        expect(mapDocStatusLabel({ status_type: "041", ...step }, endDate)).toBe(
+          mapDocStatusLabel({ status_type: "060", ...step }, endDate),
+        );
+      }
+    }
+    expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
+  });
+});

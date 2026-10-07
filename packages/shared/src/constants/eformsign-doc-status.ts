@@ -39,8 +39,9 @@ export type ContractDocDisplayStatus =
     | "unassigned"
     | "completed"
     /**
-     * eformsign 040 (doc_request_revoke): cancellation was requested, not done — it may still be
-     * refused (→ 060) or completed (→ 042). Shown "철회 요청됨" (warning); distinct from 기간 만료
+     * eformsign 040 (doc_request_revoke) and 045 (doc_request_reject): cancellation was
+     * requested, not done — it may still be refused (041, which continues like 060) or
+     * completed (→ 042). Shown "철회 요청됨" (warning); distinct from 기간 만료
      * (080) and from 철회됨 (042/090). It keeps the "expired" category for tabs/filters/stats —
      * only the label and tone differ.
      */
@@ -136,7 +137,7 @@ export function resolveContractDocDisplayStatus(params: {
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
     /**
-     * The provider status code (current_status.status_type). Checked first so 040
+     * The provider status code (current_status.status_type). Checked first so 040/045
      * (cancellation requested) is not folded into the "expired" category.
      */
     statusType?: string | number | null;
@@ -209,7 +210,7 @@ export function resolveContractDocStatusLabel(params: {
     category: ContractDocStatusCategory;
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
-    /** See resolveContractDocDisplayStatus: 040 resolves to 철회 요청됨 before the category. */
+    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨 before the category. */
     statusType?: string | number | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;

@@ -71,6 +71,25 @@ describe("getSignatureStatusMeta revoke request (040)", () => {
         });
     });
 
+    it("treats 045 (doc_request_reject) exactly like 040", () => {
+        for (const statusType of ["045", "doc_request_reject"]) {
+            expect(getSignatureStatusMeta({ statusType, statusDetail: "거부" })).toEqual({
+                label: "철회 요청됨",
+                variant: "warning",
+            });
+        }
+    });
+
+    it("shows 041 (a refused revoke) like 060: the live in-progress document", () => {
+        expect(getSignatureStatusMeta({ statusType: "041", statusDetail: "" })).toEqual(
+            getSignatureStatusMeta({ statusType: "060", statusDetail: "" }),
+        );
+        expect(getSignatureStatusMeta({ statusType: "041", statusDetail: "" })).toEqual({
+            label: "진행 중",
+            variant: "primary",
+        });
+    });
+
     it("keeps the actual terminal negatives danger", () => {
         for (const statusType of ["011", "042", "061", "071", "080", "090"]) {
             expect(getSignatureStatusMeta({ statusType, statusDetail: "" }).variant).toBe("danger");

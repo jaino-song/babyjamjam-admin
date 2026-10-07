@@ -3387,6 +3387,54 @@ describe("ClientService", () => {
                 expect(result?.actionRequired).toBeNull();
             });
 
+            it.each([
+                ["040", "revoke_requested"],
+                ["045", "revoke_requested"],
+                ["041", "requested"],
+                ["060", "requested"],
+                ["070", "requested"],
+                ["042", "revoked"],
+                ["090", "revoked"],
+                ["099", "deleted"],
+                ["062", "completed"],
+                ["050", "completed"],
+            ])("should map eformsign %s to client documentStatus %s", async (statusType, documentStatus) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([{ clientId: 1, statusType }]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe(documentStatus);
+            });
+
+            it.each(["040", "045", "041", "060"])(
+                "should keep a %s document a live contract: no 계약서 필요 badge, no action required",
+                async (statusType) => {
+                    listClientsUsecase.execute.mockResolvedValue([
+                        createWaitingClient("2026-07-16", "doc"),
+                    ]);
+                    prismaService.eformsign_doc.findMany.mockResolvedValue([{ clientId: 1, statusType }]);
+
+                    const [result] = await service.findAll(branchId);
+
+                    expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                    expect(result?.actionRequired).toBeNull();
+                },
+            );
+
+            it.each(["042", "090"])("should still flag 계약서 필요 for a %s (revoked) document", async (statusType) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([{ clientId: 1, statusType }]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
+            });
+
             it("should read a signed-and-revoke-requested document as revoke_requested", async () => {
                 const client = createWaitingClient("2026-07-16", "revoke-requested-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
@@ -3866,14 +3914,17 @@ describe("ClientService", () => {
             expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
         });
 
-        it("drops the alert while the latest contract has a pending cancellation (040)", async () => {
-            prismaService.client.findMany.mockResolvedValue([alertClient()]);
-            prismaService.eformsign_doc.findMany.mockResolvedValue([
-                { clientId: 1, statusType: "040" },
-            ]);
+        it.each(["040", "045", "041"])(
+            "drops the alert while the latest contract is %s (revoke requested / refused revoke)",
+            async (statusType) => {
+                prismaService.client.findMany.mockResolvedValue([alertClient()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType },
+                ]);
 
-            expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
-        });
+                expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
+            },
+        );
 
         it("reads the latest contract rather than the document pinned by eDocId", async () => {
             prismaService.client.findMany.mockResolvedValue([alertClient()]);
@@ -5202,13 +5253,25 @@ describe("ClientService", () => {
                 expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
             });
 
-            it("does not count a client whose latest contract has a pending cancellation (040)", async () => {
+            it.each(["040", "045", "041"])(
+                "does not count a client whose latest contract is %s (revoke requested / refused revoke)",
+                async (statusType) => {
+                    seed(
+                        [storedClient({ eDocId: "doc-1" })],
+                        [contractDoc({ statusType })],
+                    );
+
+                    expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+                },
+            );
+
+            it.each(["042", "090"])("counts a client whose latest contract is %s (revoked)", async (statusType) => {
                 seed(
                     [storedClient({ eDocId: "doc-1" })],
-                    [contractDoc({ statusType: "040" })],
+                    [contractDoc({ statusType })],
                 );
 
-                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
             });
 
             it("counts a client with no contract at all", async () => {
