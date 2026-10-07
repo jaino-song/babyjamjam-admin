@@ -16,6 +16,7 @@ import {
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
     EformsignDocUnscopedResult,
+    EformsignDocStepWriteOptions,
     EformsignContractCandidateRow,
     IEformsignDocRepository,
     RecentEformsignDocRow,
@@ -630,15 +631,17 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     async update(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity> {
-        return (await this.updateDocument(branchid, doc, false)).document;
+        return (await this.updateDocument(branchid, doc, false, options)).document;
     }
 
     async updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
-        return this.updateDocument(branchid, doc, true);
+        return this.updateDocument(branchid, doc, true, options);
     }
 
     /**
@@ -1022,11 +1025,20 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         branchid: string,
         doc: EformsignDocEntity,
         onlyIfSourceNewer: boolean,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
-        const data = EformsignDocMapper.toPrismaUpdate(doc);
+        const { stepType, stepIndex, ...rest } = EformsignDocMapper.toPrismaUpdate(doc);
+        // A step column the caller did not supply holds the value it read earlier; leaving
+        // it out keeps whatever the mirror/backfill stored since, instead of reverting it.
+        // `data` feeds both the primary write and the pending-column retry below.
+        const data = {
+            ...rest,
+            ...(options?.updateStepType === false ? {} : { stepType }),
+            ...(options?.updateStepIndex === false ? {} : { stepIndex }),
+        };
         // Keep the purge/deleted fence in the UPDATE predicate for every write, not
         // only webhook CAS writes: a permanent purge can otherwise finish between
         // a caller's read and this write and let the stale payload restore scrubbed PII.
@@ -1130,8 +1142,8 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             statusType: doc.statusType,
             ...(options?.markMirrorPending ? { syncStatus: "pending" as const } : {}),
             ...(options?.updateStatusDetail === false ? {} : { statusDetail: doc.statusDetail }),
-            stepType: doc.stepType,
-            stepIndex: doc.stepIndex,
+            ...(options?.updateStepType === false ? {} : { stepType: doc.stepType }),
+            ...(options?.updateStepIndex === false ? {} : { stepIndex: doc.stepIndex }),
             stepName: doc.stepName,
             ...(options?.updateExpired === false ? {} : { expired: doc.expired }),
             ...(options?.updateExpiredDate === false ? {} : { expiredDate: doc.expiredDate }),

@@ -1252,8 +1252,12 @@ export class EformsignWebhookService {
         // A webhook carries no creation time; this entity copies it from the row we just
         // read. Writing it back would undo a creation-time repair the nightly sweep made
         // between that read and this write, and put the list's sort key wrong again.
+        // Likewise a step column the mirror did not supply is the value read above;
+        // leave it out of the write so a newer step stored since is not reverted.
         await this.eformsignDocRepository.upsertUnassignedByDocumentId(updated, {
             updateCreatedDate: false,
+            ...(mirrored.stepType === undefined ? { updateStepType: false } : {}),
+            ...(mirrored.stepIndex === undefined ? { updateStepIndex: false } : {}),
         });
         await this.bumpCompanySnapshotEpoch();
         trace.settle(EFORMSIGN_WEBHOOK_OUTCOME.APPLIED, "unassigned document updated");

@@ -107,7 +107,18 @@ export interface EformsignDocConditionalUpdateResult {
     applied: boolean;
 }
 
-export interface UpsertUnassignedEformsignDocOptions {
+/**
+ * The caller built its entity from a row it read earlier, so a step column the source did
+ * not actually supply holds that earlier value. Writing it back would overwrite a newer
+ * step the mirror/backfill stored in between and still pass the timestamp guard. Set a flag
+ * false to leave that column out of the UPDATE; the default (true) writes the entity's value.
+ */
+export interface EformsignDocStepWriteOptions {
+    updateStepType?: boolean;
+    updateStepIndex?: boolean;
+}
+
+export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWriteOptions {
     allowAssignedUpdate?: boolean;
     updateListDisplayFields?: boolean;
     /**
@@ -235,11 +246,13 @@ export interface IEformsignDocRepository {
     update(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity>;
     /** Atomically applies a vendor projection only when its generation is strictly newer. */
     updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocConditionalUpdateResult>;
     /**
      * Atomically assigns the live document to the client and updates the client's
