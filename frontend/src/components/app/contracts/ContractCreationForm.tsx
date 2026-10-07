@@ -138,6 +138,7 @@ function getAreaTemplateDisplayLabel(areaId: string, templateName?: string | nul
 }
 
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { useVoucherPriceInfos, useVoucherYears, useAreaTemplates } from "@/hooks";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { ContactInput } from "@/components/app/messages/forms/form-components/ContactInput";
@@ -632,6 +633,15 @@ export const ContractCreationForm = ({
   const router = useRouter();
   const locale = useLocale();
   const queryClient = useQueryClient();
+  // A sent or superseded contract changes the client's displayed documentStatus, so the client
+  // list and that client's detail must refetch together with the document list.
+  const invalidateContractQueries = useCallback((affectedClientId: number | null) => {
+    void queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+    void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+    if (affectedClientId !== null) {
+      void queryClient.invalidateQueries({ queryKey: clientKeys.detail(affectedClientId) });
+    }
+  }, [queryClient]);
   const { toast } = useToast();
   const { data: authUser } = useGetAuthUser();
   const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -1107,14 +1117,14 @@ export const ContractCreationForm = ({
     if (!initialClient || clientId !== initialClient.id) return;
     supersededRef.current = true;
     eformsignApi.supersedeDocument(supersedeDocumentId, clientId)
-      .then(() => queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() }))
+      .then(() => invalidateContractQueries(clientId))
       .catch(() => {
         toast({
           variant: "destructive",
           description: "새 계약서는 보냈지만 기존 계약서를 취소하지 못했어요. 전자문서 목록에서 확인해 주세요",
         });
       });
-  }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, queryClient, toast]);
+  }, [isCreationSuccessOpen, supersedeDocumentId, initialClient, clientId, invalidateContractQueries, toast]);
 
   const initialClientEmployeePrefillAppliedRef = useRef(false);
 
@@ -1556,7 +1566,7 @@ export const ContractCreationForm = ({
 
             if (headless.ok) {
               setCreationProgress({ step: "sent", completed: true, failed: false });
-              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+              invalidateContractQueries(finalClientId);
               setIsCreationSuccessOpen(true);
               return;
             }
@@ -1604,7 +1614,7 @@ export const ContractCreationForm = ({
                   finalClientId,
                 );
                 if (adopted.warnings?.includes("mirror_sync_failed")) {
-                  queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+                  invalidateContractQueries(finalClientId);
                   setSubmitError(
                     "문서는 생성·전송되었지만 전자문서와 PDF 동기화가 완료되지 않았습니다. "
                     + "새 계약서를 다시 만들지 말고 잠시 후 전자문서 목록에서 확인해 주세요.",
@@ -1613,7 +1623,7 @@ export const ContractCreationForm = ({
                   return;
                 }
                 setCreationProgress({ step: "sent", completed: true, failed: false });
-                queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+                invalidateContractQueries(finalClientId);
                 setIsCreationSuccessOpen(true);
               } catch {
                 setSubmitError("문서는 생성되었으나 등록에 실패했어요. 잠시 후 다시 시도해 주세요.");
@@ -1643,7 +1653,7 @@ export const ContractCreationForm = ({
                 const forced = await eformsignApi.dispatchHeadless(contractData, finalClientId, progressId, true);
                 if (forced.ok) {
                   setCreationProgress({ step: "sent", completed: true, failed: false });
-                  queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+                  invalidateContractQueries(finalClientId);
                   setIsCreationSuccessOpen(true);
                 }
               }
@@ -1733,7 +1743,7 @@ export const ContractCreationForm = ({
               }
 
               setCreationProgress({ step: "sent", completed: true, failed: false });
-              queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() });
+              invalidateContractQueries(finalClientId);
               handleDialogClose();
               setIsCreationSuccessOpen(true);
             },

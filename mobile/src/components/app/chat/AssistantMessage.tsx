@@ -122,7 +122,7 @@ export function AssistantMessage({
                                 remarkPlugins={[remarkGfm]}
                                 components={{
                                     ...AGENT_SAFE_MARKDOWN_LINK_COMPONENTS,
-                                    code: ({ className, children, ref: _ref, ...props }) => {
+                                    code: ({ className, children, ...props }) => {
                                         const match = /language-(\w+)/.exec(className || "");
                                         const language = match ? match[1] : "";
                                         const codeString = String(children).replace(/\n$/, "");

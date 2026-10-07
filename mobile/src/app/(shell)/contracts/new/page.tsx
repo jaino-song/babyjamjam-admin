@@ -1323,14 +1323,18 @@ export default function ContractCreationPage() {
             dto: clientUpdateMode === "assignment-only"
               ? { ...assignment }
               // 서비스 기록이 확정된 고객은 계약 기간을 계약서에만 반영해요. 키를 빼면 저장된 값이 그대로 남아요.
-              : omitPeriodFields
+              // 폼을 열 때 불러온 저장값(기준값)이 없으면 기간은 쓰지 않아요. 제출 직전에 다시 불러온 값을 기준으로 삼으면
+              // 그사이 바뀐 종료일을 그대로 덮어쓰게 돼요.
+              : omitPeriodFields || !loadedBaseline
                 ? Object.fromEntries(
                   Object.entries(clientData).filter(([key]) => !CLIENT_PERIOD_DTO_KEYS.has(key)),
                 ) as Partial<typeof clientData>
-                : clientData,
+                // 기간 값을 함께 보내는 저장은, 폼을 열 때의 종료일을 같이 보내 그사이 종료일이 바뀌었으면 덮어쓰지 않고 거절돼요.
+                : { ...clientData, expectedEndDate: loadedBaseline.snapshot.endDate.value ?? null },
           });
         } catch (error) {
-          showSubmissionFailure(error, "UNKNOWN");
+          // 고객 저장은 계약서 발송보다 앞서요. 여기서 실패하면 계약서는 만들어지지 않았으니 다시 제출할 수 있어야 해요.
+          showSubmissionFailure(error, "NOT_APPLIED");
           return;
         }
         // 저장된 값이 바뀌었으니 다음 비교는 방금 저장한 값을 기준으로 해요.

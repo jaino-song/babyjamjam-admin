@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ChangeEvent } from "react";
 
+import { createProblemDetails } from "@babyjamjam/shared";
+
 import type { Client } from "@/lib/client/types";
 import { useBusinessDayCalendar, type UseBusinessDayCalendarResult } from "@/hooks/useBusinessDayCalendar";
 import {
@@ -16,6 +18,7 @@ const mockStartNavigation = jest.fn();
 const mockDispatchHeadless = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
+const mockFetchClient = jest.fn();
 const mockToast = jest.fn();
 let mockClients: Client[] | undefined = [];
 // react-query hands back a stable reference; a fresh array per render would loop the price auto-fill effect.
@@ -74,6 +77,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/hooks/useClients", () => ({
+  fetchClient: (id: number) => mockFetchClient(id),
   useAllClients: () => ({ data: mockClients, isError: false, error: null, refetch: jest.fn(), isFetching: false }),
   useCreateClient: () => ({ mutateAsync: mockCreateClient }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient }),
@@ -268,6 +272,8 @@ beforeEach(() => {
   useFormStore.getState().resetAll();
   mockCreateClient.mockResolvedValue({ id: 8 });
   mockUpdateClient.mockResolvedValue({ id: 7 });
+  mockFetchClient.mockReset();
+  mockFetchClient.mockResolvedValue(makeClient());
   mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-1", durationMs: 1 });
 });
 
@@ -471,6 +477,32 @@ describe("mobile contract form - confirm before writing form edits back to the c
       dto: expect.objectContaining({ phone: "010-9999-0000", startDate: STORED_START, endDate: STORED_END }),
     }));
     expect(mockUpdateClient.mock.invocationCallOrder[0]).toBeLessThan(mockDispatchHeadless.mock.invocationCallOrder[0] ?? 0);
+  });
+
+  it("sends the end date the client was loaded with as expectedEndDate so a moved end date is refused, not overwritten", async () => {
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).toEqual(expect.objectContaining({ endDate: STORED_END, expectedEndDate: STORED_END }));
+  });
+
+  it("does not send expectedEndDate when a finalized client's update leaves the period out", async () => {
+    mockClients = [makeClient({ serviceRecordPeriodLocked: true })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).not.toHaveProperty("expectedEndDate");
   });
 
   it("does not ask, and skips the no-op client update, when nothing differs", async () => {
@@ -1094,5 +1126,122 @@ describe("mobile contract form - a picked client keeps its stored end date", () 
     next(); next(); next();
 
     expect(endDateInput()).toHaveValue("2026-10-16");
+  });
+});
+
+// 기간을 쓰는 저장의 expectedEndDate는 폼을 열 때 불러온 저장값이어야 해요. 제출 직전에 다시 불러온 값을
+// 기준으로 삼으면 항상 일치해서, 그사이 다른 곳에서 늘린 종료일을 오래된 폼이 덮어쓰게 돼요.
+describe("mobile contract form - period save is guarded by the end date the form was loaded with", () => {
+  const NEWER_STORED_END = "2026-10-30";
+
+  function prefillFromDetail(client: Client) {
+    useFormStore.getState().prefillFromContract({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      address: client.address ?? "",
+      employeeId: EMPLOYEE.id,
+      employeeName: EMPLOYEE.name,
+      employeePhone: EMPLOYEE.phone,
+      employee2Id: null,
+      employee2Name: "",
+      employee2Phone: "",
+      startDate: STORED_START,
+      endDate: STORED_END,
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      voucherType: client.type ?? "",
+      voucherDuration: client.duration != null ? String(client.duration) : "",
+      area: "",
+    });
+  }
+
+  async function submitFromDetail() {
+    prefillFromDetail(makeClient());
+    await renderPage();
+    fireEvent.change(areaSelect(), { target: { value: "Namdonggu" } });
+    next(); next(); next();
+    submit();
+  }
+
+  it("sends the originally loaded end date, never a value read at submit time, when the period is left unedited", async () => {
+    // The server moved to NEWER_STORED_END after the form loaded; the page only knows the loaded value.
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: `${NEWER_STORED_END}T00:00:00.000Z` }));
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockFetchClient).not.toHaveBeenCalled();
+    const dto = getUpdateDto();
+    expect(dto).toEqual(expect.objectContaining({ endDate: STORED_END, expectedEndDate: STORED_END }));
+    expect(dto.expectedEndDate).not.toBe(NEWER_STORED_END);
+  });
+
+  it("surfaces the backend's stale-period refusal, writes nothing further, and stays retryable", async () => {
+    mockUpdateClient.mockRejectedValueOnce({
+      response: {
+        status: 409,
+        data: createProblemDetails({
+          code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+          requestId: "req-end-date-moved",
+          status: 409,
+        }),
+      },
+    });
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    await renderOnStep(0);
+    fireEvent.change(phoneInput(), { target: { value: "01099990000" } });
+    next(); next(); next();
+    submit();
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(mockDispatchHeadless).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "계약서 생성" })).not.toBeDisabled());
+  });
+
+  it("keeps the period write out of the PATCH when the form never loaded a persisted end date (list missing)", async () => {
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: `${NEWER_STORED_END}T00:00:00.000Z` }));
+    mockClients = [];
+
+    await submitFromDetail();
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockFetchClient).not.toHaveBeenCalled();
+    const dto = getUpdateDto();
+    expect(dto).not.toHaveProperty("endDate");
+    expect(dto).not.toHaveProperty("startDate");
+    expect(dto).not.toHaveProperty("duration");
+    expect(dto).not.toHaveProperty("expectedEndDate");
+  });
+
+  it("keeps the period write out of the PATCH while the client list is still loading", async () => {
+    mockFetchClient.mockResolvedValue(makeClient({ endDate: `${NEWER_STORED_END}T00:00:00.000Z` }));
+    mockClients = undefined;
+
+    await submitFromDetail();
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockFetchClient).not.toHaveBeenCalled();
+    expect(getUpdateDto()).not.toHaveProperty("expectedEndDate");
+    expect(getUpdateDto()).not.toHaveProperty("endDate");
+  });
+
+  it("sends the user's edited end date together with the originally loaded one as expectedEndDate", async () => {
+    mockClients = [makeClient({ startDate: `${STORED_START}T00:00:00.000Z`, endDate: `${STORED_END}T00:00:00.000Z` })];
+    await renderOnStep(3);
+    const edited = "2026-10-02";
+    fireEvent.change(input("period-card_end-date-input"), { target: { value: edited } });
+    submit();
+    fireEvent.click(within(await screen.findByRole("dialog", { name: DIFF_TITLE })).getByRole("button", { name: UPDATE_CLIENT }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(getUpdateDto()).toEqual(expect.objectContaining({ endDate: edited, expectedEndDate: STORED_END }));
   });
 });
