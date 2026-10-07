@@ -761,6 +761,53 @@ describe("per-session administrator editing", () => {
         });
     });
 
+    describe("the reload after this tab's own 수정 확정", () => {
+        async function confirmWithHeldRefresh(refreshOutcome: "resolve" | "reject") {
+            let settleEditor!: () => void;
+            const editorLoaded = new Promise<void>((resolve) => { settleEditor = resolve; });
+            global.fetch = jest.fn().mockImplementation(async () => {
+                await editorLoaded;
+                if (refreshOutcome === "reject") throw new Error("network");
+                return { ok: true, json: async () => sessionOverview };
+            });
+            const result = open();
+            editNote(result.container);
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+            await startCommit();
+            confirmInPreview();
+            await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+            return { ...result, settleEditor };
+        }
+
+        it("shows no failure line or reload button while the refresh is still loading, and unlocks once it lands", async () => {
+            const { container, settleEditor } = await confirmWithHeldRefresh("resolve");
+
+            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1);
+            expect(container.querySelector('[data-slot="commit-error"]')).toBeNull();
+            expect(screen.queryByText(/수정 기준을 확인할 수 없습니다/)).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+
+            await act(async () => { settleEditor(); });
+
+            await waitFor(() => expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeEnabled());
+            expect(container.querySelector('[data-slot="commit-error"]')).toBeNull();
+            expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+            expect(container).not.toHaveTextContent("조회 가능");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("제출완료");
+        });
+
+        it("tells the user the edit was saved and offers the reload when the refresh fails", async () => {
+            const { settleEditor } = await confirmWithHeldRefresh("reject");
+            expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+
+            await act(async () => { settleEditor(); });
+
+            expect(await screen.findByText("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.")).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeEnabled();
+        });
+    });
+
     it("asks before 수정 취소 and clears only the local edits without a server call", async () => {
         const { container } = open();
         editNote(container);

@@ -915,10 +915,13 @@ export function ServiceRecordAdminWizard({
             commitRequest.current = null;
             setPending(EMPTY_PENDING);
             setPreviewOpen(false);
-            setNeedsReload(true);
             publishServiceRecordRevisionSync({ caseId: result.caseId, caseVersion: result.caseVersion });
+            // `busy` keeps the editor locked while this loads; only a failed load needs the reload prompt.
             try { await refresh(); }
-            catch { setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요."); }
+            catch {
+                setNeedsReload(true);
+                setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
+            }
         } catch (failure) {
             handleFailure(failure);
         } finally {
