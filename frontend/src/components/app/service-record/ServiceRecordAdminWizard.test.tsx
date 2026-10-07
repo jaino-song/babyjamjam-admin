@@ -669,6 +669,34 @@ describe("per-session administrator editing", () => {
         expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
     });
 
+    it("reports a failed discard on preview close and lets it be retried, keeping the local edits", async () => {
+        jest.mocked(adminServiceRecordEditApi.discardDraft).mockRejectedValueOnce(new AdminServiceRecordEditApiError(409, {}));
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        await startCommit();
+
+        fireEvent.click(within(previewDialog()).getByRole("button", { name: "닫기" }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("수정 초안을 정리하지 못했어요");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeEnabled();
+        expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledTimes(1);
+
+        // The retry reads the draft's current version and discards only this tab's draft.
+        jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(makeDraftState({}, 3));
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+        await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+        expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledTimes(2);
+        expect(adminServiceRecordEditApi.discardDraft).toHaveBeenLastCalledWith("draft-1", 3);
+        expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
+    });
+
     it("asks before 수정 취소 and clears only the local edits without a server call", async () => {
         const { container } = open();
         editNote(container);

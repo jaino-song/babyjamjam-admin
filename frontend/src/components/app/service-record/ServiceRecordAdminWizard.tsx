@@ -626,6 +626,7 @@ export function ServiceRecordAdminWizard({
     const [discardModalOpen, setDiscardModalOpen] = useState(false);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [refreshModalOpen, setRefreshModalOpen] = useState(false);
+    const [cleanupFailed, setCleanupFailed] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(initialDraftErrorStatus ? draftErrorMessage(initialDraftErrorStatus) : null);
     const [dateError, setDateError] = useState<string | null>(null);
@@ -700,6 +701,7 @@ export function ServiceRecordAdminWizard({
         setNeedsReload(state.sourceCaseVersion < foreignVersion.current);
         setPending(EMPTY_PENDING);
         commitRequest.current = null;
+        setCleanupFailed(false);
         resetLocal();
     };
     useEffect(() => { caseId.current = overview.record?.id ?? null; }, [overview]);
@@ -827,6 +829,7 @@ export function ServiceRecordAdminWizard({
         saving.current = true;
         setBusy(true);
         setError(null);
+        setCleanupFailed(false);
         commitRequest.current = null;
         let prepared: { id: string; version: number } | null = null;
         try {
@@ -926,19 +929,40 @@ export function ServiceRecordAdminWizard({
             setBusy(false);
         }
     };
+    /**
+     * Discard the draft behind the preview. Its identity is kept until the server
+     * confirms the discard, so a failure can be retried and is never silent. A
+     * retry reads the draft's current version first (the failure may have been a
+     * stale one) and only touches the draft this tab prepared.
+     */
+    const discardPrepared = async (readCurrentVersion: boolean) => {
+        const request = commitRequest.current;
+        if (!request || saving.current) return;
+        saving.current = true;
+        setBusy(true);
+        try {
+            if (readCurrentVersion) {
+                const state = await adminServiceRecordEditApi.getDraft(clientId);
+                if (state.draft?.status === "ACTIVE" && state.draft.id === request.draftId) {
+                    await adminServiceRecordEditApi.discardDraft(state.draft.id, state.draft.draftVersion);
+                }
+            } else {
+                await adminServiceRecordEditApi.discardDraft(request.draftId, request.draftVersion);
+            }
+            commitRequest.current = null;
+            if (cleanupFailed) setError(null);
+            setCleanupFailed(false);
+        } catch {
+            setCleanupFailed(true);
+            setError("수정 초안을 정리하지 못했어요. 다시 시도하거나 최신 기록을 불러와 주세요. 수정사항은 이 화면에 남아 있어요.");
+        } finally { saving.current = false; setBusy(false); }
+    };
     /** The preview was dismissed: leave no server draft behind and keep the local edits. */
     const closePreview = async () => {
         if (saving.current) return;
-        const request = commitRequest.current;
-        commitRequest.current = null;
         setPreviewOpen(false);
         setPreview(null);
-        if (!request) return;
-        saving.current = true;
-        setBusy(true);
-        try { await adminServiceRecordEditApi.discardDraft(request.draftId, request.draftVersion); }
-        catch { /* the next 수정 확정 discards whatever is still ACTIVE */ }
-        finally { saving.current = false; setBusy(false); }
+        await discardPrepared(false);
     };
     const cancelAllEdits = () => {
         setDiscardModalOpen(false);
@@ -973,9 +997,14 @@ export function ServiceRecordAdminWizard({
             <p role="alert" className="text-sm text-v3-burgundy">
                 {error ?? "수정 기준을 확인할 수 없습니다. 최신 기록을 다시 불러와 주세요."}
             </p>
-            {needsReload ? (
-                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error_reload`} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>최신 기록 불러오기</Button>
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+                {cleanupFailed ? (
+                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error_retry`} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void discardPrepared(true)}>다시 시도</Button>
+                ) : null}
+                {needsReload || cleanupFailed ? (
+                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error_reload`} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>최신 기록 불러오기</Button>
+                ) : null}
+            </div>
         </div>
     ) : null;
     return (
