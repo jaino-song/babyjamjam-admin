@@ -117,6 +117,8 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     // here the row reads as needing attention rather than as a draft.
     "고객 등록 필요": "review",
     "계약 완료": "completed",
+    // eformsign 040: cancellation requested, not done — warning tone, same as 검토 필요.
+    "철회 요청됨": "review",
     "기간 만료": "expired",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 

@@ -1,9 +1,12 @@
+import { stringFromUnknown } from "application/utils/eformsign-document-customer-name";
 import {
+    getCurrentStatus,
     getDocumentStatusCategory,
     isProviderReviewStep,
     type EformsignListDoc,
 } from "application/utils/eformsign-document-list";
 import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
+import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import {
     isoDateInKorea,
     type KrBusinessDayCalendar,
@@ -33,6 +36,12 @@ export type EformsignDocDisplayStatus =
     | "review"
     | "unassigned"
     | "completed"
+    /**
+     * eformsign 040 (doc_request_revoke): cancellation was requested, not done — it may still be
+     * refused (→ 060) or completed (→ 042). Display only: the document keeps the "expired"
+     * category for tabs, scope and stats; this is neither 기간 만료 (080) nor 철회됨 (042/090).
+     */
+    | "revoke_requested"
     | "expired"
     | "unknown";
 
@@ -82,6 +91,11 @@ export function resolveEformsignDocDisplayStatus(
     now: Date,
     calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
+    // Before the category checks: 040 sits in the expired bucket for filtering, but the document
+    // is not expired — independent of step, unassigned state and end date.
+    if (isRevokeRequestedStatus(stringFromUnknown(getCurrentStatus(document)?.["status_type"]))) {
+        return "revoke_requested";
+    }
     const category = getDocumentStatusCategory(document);
     if (category === "completed") return "completed";
     if (category === "expired") return "expired";

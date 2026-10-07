@@ -1,5 +1,6 @@
 import type { StatusBadgeVariant } from "../tokens/status-badge";
 import {
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     getEformsignStatusCategory,
     isDeletedEformsignStatusCode,
     normalizeEformsignStatusCode,
@@ -58,7 +59,7 @@ export type SignatureStatusMeta = ServiceRecordStatusMeta;
  * 저장된 statusDetail("거부" 등)이 무엇이든 무시한다.
  */
 /** eformsign doc_request_revoke — 문서 취소가 요청됐을 뿐 아직 철회되지 않은 비종료 상태. */
-export const SIGNATURE_REVOKE_REQUESTED_STATUS_CODE = "040";
+export const SIGNATURE_REVOKE_REQUESTED_STATUS_CODE = EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
 
 export function getSignatureStatusMeta(doc: SignatureStatusInput): SignatureStatusMeta {
     const detail = (doc.statusDetail ?? "").trim();
