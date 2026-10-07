@@ -1373,6 +1373,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // which that approved source is compared and the retry is claimed.
         if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) return null;
         return this.prisma.$transaction(async (transaction) => {
+            // Rule row first, then the source job row, then the retry INSERT (whose
+            // foreign key takes a KEY SHARE lock on its rule row): the same order as
+            // the dispatcher claim, the manual send fence and the automatic
+            // promotion. Taking the job row first and the rule only at INSERT time
+            // inverts it against a transaction that holds the rule row and waits on
+            // this failed row (PostgreSQL aborts one side with 40P01). The source's
+            // rule is re-verified against the locked row below (`sameRetrySource`);
+            // the retry job's rule, if it differs, is locked too, in id order.
+            const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_rule"
+                WHERE id IN (${Prisma.join(ruleIds)})
+                ORDER BY id
+                FOR UPDATE
+            `);
             const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
                 SELECT *
                 FROM "message_trigger_job"

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { ConfigService } from "@nestjs/config";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
@@ -653,6 +655,32 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             WHERE dedupe_key = ${`${RULE}:schedule:${SCHEDULE}:primary`}
         `)[0];
 
+        /** The lease an automatic claim would hold (a failed marker on the automatic dedupe key) and the job it would promote. */
+        const seedLease = async () => {
+            const dedupeKey = `${RULE}:schedule:${SCHEDULE}:primary`;
+            const [marker] = await db.$queryRaw<Array<{ id: string; claim_version: string }>>`
+                INSERT INTO message_trigger_job (branch_id, rule_id, status, scheduled_for, employee_schedule_id, client_id,
+                    recipient_type, recipient_phone, template_key, dedupe_key, cancel_reason, next_attempt_at, updated_at)
+                VALUES (${BRANCH}::uuid, ${RULE}, 'failed', now(), ${SCHEDULE}, 20, ${MessageTriggerRecipientType.PRIMARY_EMPLOYEE},
+                    '01011112222', ${MessageTriggerTemplateKey.SERVICE_RECORD_LINK}, ${dedupeKey},
+                    ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}, now() + interval '10 minutes', clock_timestamp())
+                RETURNING id, updated_at::text AS claim_version
+            `;
+            const automaticJob = MessageTriggerJobEntity.create({
+                branchId: BRANCH,
+                ruleId: RULE,
+                scheduledFor: new Date(),
+                clientId: 20,
+                employeeScheduleId: SCHEDULE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientPhone: "01011112222",
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey,
+                payload: { memberId: "employee:30", recipientName: "provider", recipientPhone: "01011112222", templateVariables: {} },
+            });
+            return { marker: marker!, automaticJob };
+        };
+
         /** Starts the automatic path and parks it holding its lease, between its claim and its promotion. */
         const automaticRun = async () => {
             const reached = defer();
@@ -725,28 +753,7 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         });
 
         it("a manual send arriving while the promotion holds the fence replaces the promoted job without deadlock", async () => {
-            // The lease an automatic claim would hold: a failed marker on the automatic dedupe key.
-            const dedupeKey = `${RULE}:schedule:${SCHEDULE}:primary`;
-            const [marker] = await db.$queryRaw<Array<{ id: string; claim_version: string }>>`
-                INSERT INTO message_trigger_job (branch_id, rule_id, status, scheduled_for, employee_schedule_id, client_id,
-                    recipient_type, recipient_phone, template_key, dedupe_key, cancel_reason, next_attempt_at, updated_at)
-                VALUES (${BRANCH}::uuid, ${RULE}, 'failed', now(), ${SCHEDULE}, 20, ${MessageTriggerRecipientType.PRIMARY_EMPLOYEE},
-                    '01011112222', ${MessageTriggerTemplateKey.SERVICE_RECORD_LINK}, ${dedupeKey},
-                    ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}, now() + interval '10 minutes', clock_timestamp())
-                RETURNING id, updated_at::text AS claim_version
-            `;
-            const automaticJob = MessageTriggerJobEntity.create({
-                branchId: BRANCH,
-                ruleId: RULE,
-                scheduledFor: new Date(),
-                clientId: 20,
-                employeeScheduleId: SCHEDULE,
-                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
-                recipientPhone: "01011112222",
-                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
-                dedupeKey,
-                payload: { memberId: "employee:30", recipientName: "provider", recipientPhone: "01011112222", templateVariables: {} },
-            });
+            const { marker, automaticJob } = await seedLease();
 
             const promoted = defer();
             const commit = defer();
@@ -772,6 +779,78 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(live).toHaveLength(1);
             expect(live[0]).toMatchObject({ status: "pending" });
             expect(live[0]!.id).not.toBe(marker!.id);
+        });
+
+        it("a provider-rejected retry holding its source row never deadlocks with the promotion; the promotion refuses", async () => {
+            const { marker, automaticJob } = await seedLease();
+            // A manual send that later failed with a provider rejection: a failed blocker for the schedule.
+            const rejectedSource = MessageTriggerJobEntity.create({
+                branchId: BRANCH,
+                ruleId: RULE,
+                scheduledFor: new Date(),
+                clientId: 20,
+                employeeScheduleId: SCHEDULE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientPhone: "01011112222",
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey: `${RULE}:schedule:${SCHEDULE}:primary:manual:rejected`,
+                payload: {
+                    memberId: "employee:30",
+                    recipientName: "provider",
+                    recipientPhone: "01011112222",
+                    templateVariables: { retrySafety: "provider-rejected" },
+                },
+            });
+            rejectedSource.markFailed("provider rejected");
+            const source = await repository.create(rejectedSource);
+            const snapshotHash = "h1-snapshot";
+            const version = createHash("sha256").update(JSON.stringify({
+                id: source.id, branchId: source.branchId, ruleId: source.ruleId, status: source.status,
+                scheduledFor: source.scheduledFor.toISOString(), sentAt: source.sentAt?.toISOString() ?? null,
+                canceledAt: source.canceledAt?.toISOString() ?? null, cancelReason: source.cancelReason,
+                clientId: source.clientId, employeeScheduleId: source.employeeScheduleId,
+                recipientType: source.recipientType, recipientPhone: source.recipientPhone, templateKey: source.templateKey,
+                payload: source.payload, attempts: source.attempts, nextAttemptAt: source.nextAttemptAt?.toISOString() ?? null,
+                createdAt: source.createdAt.toISOString(), updatedAt: source.updatedAt.toISOString(),
+                deliverySnapshotHash: snapshotHash,
+            })).digest("hex");
+            // The retry job is for another schedule, so the failed source is the only blocker the promotion can see.
+            const retryJob = MessageTriggerJobEntity.create({
+                branchId: BRANCH,
+                ruleId: RULE,
+                scheduledFor: new Date(),
+                clientId: 20,
+                employeeScheduleId: OTHER_SCHEDULE,
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipientPhone: "01011112222",
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey: "agent-sms-retry:h1-regression",
+                payload: source.payload,
+            });
+
+            // Park the retry once it has taken its locks (the source row lock is its last statement before the INSERT).
+            const holding = defer();
+            const release = defer();
+            const retryRepository = repositoryHolding(
+                (sql) => sql.includes('FROM "message_trigger_job"') && sql.includes("SELECT *") && sql.includes("FOR UPDATE"),
+                async () => { holding.resolve(); await release.promise; },
+            );
+            const retry = settle(retryRepository.claimProviderRejectedForRetry(BRANCH, source.id, version, snapshotHash, source, retryJob));
+            await reachedHold(holding.promise, retry);
+
+            const promotion = settle(new MessageAutomationBranchLockService(db as never).runExclusive(
+                BRANCH,
+                (tx) => repository.promoteAutomaticSchedulingClaim(marker.id, marker.claim_version, automaticJob, tx),
+            ));
+            await waitForLockWait("promotion behind the retry");
+            release.resolve();
+            const [retryResult, promotionResult] = await Promise.all([retry, promotion]);
+
+            expect(retryResult).toMatchObject({ ok: true, value: expect.objectContaining({ dedupeKey: retryJob.dedupeKey, status: "pending" }) });
+            expect(promotionResult).toEqual({ ok: true, value: null });
+            expect(await statusOf(marker.id)).toBe("failed");
+            expect(await liveJobs(RULE, OTHER_SCHEDULE)).toHaveLength(1);
+            expect(await liveJobs()).toHaveLength(0);
         });
     });
 });

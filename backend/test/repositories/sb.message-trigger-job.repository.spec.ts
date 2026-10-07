@@ -1230,7 +1230,12 @@ describe("SbMessageTriggerJobRepository", () => {
             source,
             retry,
         )).resolves.toEqual(expect.objectContaining({ id: "retry-1" }));
-        expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+        // Rule row first, then the source job row: rule -> job -> retry INSERT.
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+        const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
+        expect(ruleLock.sql.replace(/\s+/g, " ")).toContain('FROM "message_trigger_rule" WHERE id IN (?) ORDER BY id FOR UPDATE');
+        expect(ruleLock.values).toEqual(["rule-1"]);
+        expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
     });
 
