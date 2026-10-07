@@ -34,29 +34,35 @@
  * from the editor) and is held; Back or Forward onto E from any other entry (e.g.
  * #a <-> #b entries around E) is hash-only and passes.
  *
- * Hash entries pushed while armed ([E, G, H1, ...]): while armed, `history.pushState`
- * is wrapped so same-page pushes (Next's router, `<Link href="#x">`) are recorded with
- * their state and URL and tagged `role: "above"`. When the guard is released with such
- * entries above G, the guard entry cannot be deleted, so the history is rebuilt without
- * it: go back to E, push the recorded entries again (same URL, same state, Next's keys
- * intact), then step back to the entry the user was on. Every entry involved shares
- * the editor's pathname and search, so the user is never taken to another page. Entries
- * the guard could not see (plain `<a href="#x">` fragment navigations never call
- * `pushState`) make the position unverifiable; the rebuild is then skipped and G stays
- * as one extra same-URL entry (documented limitation, nothing navigates).
+ * Release (`release()`, run one tick later so a StrictMode remount can cancel it) never
+ * navigates anywhere the user did not ask to go. The controller does not wrap or patch
+ * `history.pushState` / `replaceState` and never rebuilds history. It takes G back out
+ * with exactly one `history.back()` only when the current entry is provably G
+ * (our tag in `history.state`, role "guard") AND the location still equals the editor
+ * URL it armed on, so that Back changes no page. In every other case release does
+ * nothing at all: no back, no push, no replace.
+ *
+ * Known limitation: a redundant same-URL guard entry can stay in the history after
+ * release (the user then needs one extra Back that lands on the editor URL again). It
+ * happens whenever the current entry is not G any more: in-page hash navigation made
+ * while armed (`<a href="#x">`, `location.hash`, a router's `pushState` / `replaceState`
+ * to the same page or another one), a router replacing the entry's state without our
+ * tag, or a second controller arming on top of this one. Not-provably-ours always means
+ * "leave it alone"; a leftover entry costs one Back press, a wrong guess moves the user.
  *
  * Entries are recognised by a tag stored next to Next's own keys in `history.state`
  * (`{ ...state, [KEY]: { id, role } }`); Next's `__NA` / `__PRIVATE_NEXTJS_INTERNALS_TREE`
  * are copied untouched, so Next keeps treating our entries as its own. Next preserves
- * custom history state on traversals and restores, but a `router.refresh()` replaces the
- * current entry's state without it, which would drop that entry's tag.
+ * custom history state on traversals and restores, but a `router.refresh()` or any other
+ * `replaceState` that drops the key removes the tag from that entry; a missing tag is
+ * treated as "not ours" everywhere (a hash-only traversal onto it passes, release leaves
+ * it alone).
  */
 
 const GUARD_STATE_KEY = "__serviceRecordLeaveGuard";
 
-type EntryRole = "editor" | "guard" | "above";
-/** `depth` (role "above" only): 1 = the first entry pushed above G. */
-interface EntryTag { id: string; role: EntryRole; depth?: number }
+type EntryRole = "editor" | "guard";
+interface EntryTag { id: string; role: EntryRole }
 /**
  * `vetoed` is set when the Navigation API stopped the traversal before it happened;
  * `destinationKey` is then the entry it was heading to (null = the single step back
@@ -98,10 +104,6 @@ interface Armed {
     editorKey: string | null;
     /** True while the user rests on G (the origin that makes Back-onto-E a departure). */
     onGuard: boolean;
-    /** Position within [G, ...above]: 0 = G, n = above[n - 1], -1 = not verifiably one of ours. */
-    pos: number;
-    /** Same-page entries pushed above G, in order (state is stored without our tag). */
-    above: Array<{ url: string; state: unknown }>;
 }
 
 export interface LeaveGuardController {
@@ -121,17 +123,9 @@ function readTag(state: unknown): EntryTag | null {
     if (typeof state !== "object" || state === null) return null;
     const tag = (state as Record<string, unknown>)[GUARD_STATE_KEY];
     if (typeof tag !== "object" || tag === null) return null;
-    const { id, role, depth } = tag as Partial<EntryTag>;
+    const { id, role } = tag as Partial<EntryTag>;
     if (typeof id !== "string") return null;
-    if (role === "editor" || role === "guard") return { id, role };
-    return role === "above" && typeof depth === "number" ? { id, role, depth } : null;
-}
-
-function stripTag(state: unknown): unknown {
-    if (typeof state !== "object" || state === null) return state;
-    const { [GUARD_STATE_KEY]: _tag, ...rest } = state as Record<string, unknown>;
-    void _tag;
-    return rest;
+    return role === "editor" || role === "guard" ? { id, role } : null;
 }
 
 function currentUrl(): string {
@@ -176,119 +170,20 @@ export function createLeaveGuardController({
     let pending: PendingNavigation | null = null;
     let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 
-    let tracking = false;
-    let internalWrite = false;
-    let restoreHistoryWrappers: (() => void) | null = null;
-
-    // Our own pushes/replaces must not be recorded as "above" entries.
-    const ownWrite = (write: () => void) => {
-        internalWrite = true;
-        try {
-            write();
-        } finally {
-            internalWrite = false;
-        }
-    };
-
     const pushGuardEntry = (a: Armed) => {
-        ownWrite(() => window.history.pushState(withTag(a.editorState, { id: a.id, role: "guard" }), "", a.href));
+        window.history.pushState(withTag(a.editorState, { id: a.id, role: "guard" }), "", a.href);
         a.onGuard = true;
-        a.pos = 0;
-        a.above = [];
-    };
-
-    const isSamePage = (url: string | URL | null | undefined, a: Armed): boolean => {
-        if (url === undefined || url === null) return true;
-        try {
-            const target = new URL(String(url), window.location.href);
-            return target.origin === window.location.origin && target.pathname === a.pathname && target.search === a.search;
-        } catch {
-            return false;
-        }
     };
 
     /**
-     * Wrap `pushState` / `replaceState` while armed so entries pushed above G are recorded
-     * (see header) and a router's `replaceState` cannot strip our tag from the current entry.
-     */
-    const installHistoryWrappers = () => {
-        if (restoreHistoryWrappers) return;
-        const history = window.history;
-        const originalPush = history.pushState;
-        const originalReplace = history.replaceState;
-
-        const wrappedPush = function (this: History, data: unknown, unused: string, url?: string | URL | null) {
-            const a = armed;
-            if (!tracking || internalWrite || !a || !isSamePage(url, a)) return originalPush.call(this, data, unused, url);
-            if (a.pos < 0) return originalPush.call(this, data, unused, url);
-            const depth = a.pos + 1;
-            const result = originalPush.call(this, withTag(data, { id: a.id, role: "above", depth }), unused, url);
-            a.above = [...a.above.slice(0, a.pos), { url: currentUrl(), state: stripTag(window.history.state) }];
-            a.pos = depth;
-            a.onGuard = false;
-            return result;
-        };
-        const wrappedReplace = function (this: History, data: unknown, unused: string, url?: string | URL | null) {
-            const a = armed;
-            const current = readTag(window.history.state);
-            if (!tracking || internalWrite || !a || current?.id !== a.id) return originalReplace.call(this, data, unused, url);
-            // Keep our tag on the entry even when a router replaces its state without it.
-            const next = readTag(data) === null ? withTag(data, current) : data;
-            const result = originalReplace.call(this, next, unused, url);
-            if (current.role === "above" && a.above[(current.depth ?? 0) - 1]) {
-                a.above[(current.depth ?? 0) - 1] = { url: currentUrl(), state: stripTag(window.history.state) };
-            } else if (current.role === "editor") {
-                a.editorState = window.history.state;
-            }
-            return result;
-        };
-        history.pushState = wrappedPush as typeof history.pushState;
-        history.replaceState = wrappedReplace as typeof history.replaceState;
-        restoreHistoryWrappers = () => {
-            // Only unwind what is still ours; if the router re-patched on top, ours goes inert.
-            if (history.pushState === wrappedPush) history.pushState = originalPush;
-            if (history.replaceState === wrappedReplace) history.replaceState = originalReplace;
-            restoreHistoryWrappers = null;
-        };
-    };
-
-    const waitForPopState = (then: () => void) => {
-        let done = false;
-        const finish = (run: boolean) => {
-            if (done) return;
-            done = true;
-            window.removeEventListener("popstate", onPop);
-            clearTimeout(timer);
-            if (run) then();
-        };
-        const onPop = () => finish(true);
-        const timer = setTimeout(() => finish(false), 1000);
-        window.addEventListener("popstate", onPop);
-    };
-
-    /**
-     * Release: drop G from the effective history without leaving the editor page.
-     * (The guard entry cannot be deleted, only traversed past or pushed over.)
+     * Release: take G back out of the effective history, but only when that is provably
+     * a same-page no-op (see header). Otherwise do nothing at all.
      */
     const dispose = (a: Armed) => {
         const tag = readTag(window.history.state);
-        if (!tag || tag.id !== a.id) return;
-        if (tag.role === "guard" && a.above.length === 0) {
-            window.history.back();
-            return;
-        }
-        const verified =
-            a.pos >= 0 && ((tag.role === "guard" && a.pos === 0) || (tag.role === "above" && tag.depth === a.pos));
-        if (!verified) return; // position unknown: leave G in place rather than guess
-        const entries = a.above;
-        const stepsBack = entries.length - a.pos;
-        waitForPopState(() => {
-            const landed = readTag(window.history.state);
-            if (landed?.id !== a.id || landed.role !== "editor") return;
-            for (const entry of entries) window.history.pushState(entry.state, "", entry.url);
-            if (stepsBack > 0) window.history.go(-stepsBack);
-        });
-        window.history.go(-(a.pos + 1));
+        if (tag?.id !== a.id || tag.role !== "guard") return;
+        if (currentUrl() !== a.href) return;
+        window.history.back();
     };
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -314,7 +209,6 @@ export function createLeaveGuardController({
         const ours = tag?.id === a.id ? tag : null;
         const cameFromGuard = a.onGuard;
         a.onGuard = ours?.role === "guard";
-        a.pos = ours?.role === "guard" ? 0 : ours?.role === "above" ? (ours.depth ?? -1) : -1;
 
         if (ours) {
             if (ours.role === "guard") {
@@ -326,7 +220,6 @@ export function createLeaveGuardController({
                 }
                 return;
             }
-            if (ours.role === "above") return; // hash-only entry pushed after arming
             // Landed on E. From G that is the single-step Back (the URL did not change);
             // from anywhere else (Back/Forward between hash-only entries) it is not a departure.
             if (!cameFromGuard) return;
@@ -342,9 +235,8 @@ export function createLeaveGuardController({
         // Multi-entry traversal to some other entry D. Keep Next's router from
         // rendering D, put the editor URL/entry back on top of D, then ask.
         event.stopImmediatePropagation();
-        ownWrite(() => window.history.pushState(withTag(a.editorState, { id: a.id, role: "editor" }), "", a.href));
+        window.history.pushState(withTag(a.editorState, { id: a.id, role: "editor" }), "", a.href);
         a.onGuard = false;
-        a.pos = -1;
         pending = { kind: "back" };
         onPromptChange(true);
     };
@@ -382,8 +274,6 @@ export function createLeaveGuardController({
         document.addEventListener("click", handleClick, true);
         window.addEventListener("popstate", handlePopState, true);
         getNavigation()?.addEventListener("navigate", handleNavigate);
-        tracking = true;
-        installHistoryWrappers();
     };
 
     const removeListeners = () => {
@@ -393,8 +283,6 @@ export function createLeaveGuardController({
         document.removeEventListener("click", handleClick, true);
         window.removeEventListener("popstate", handlePopState, true);
         getNavigation()?.removeEventListener("navigate", handleNavigate);
-        tracking = false;
-        restoreHistoryWrappers?.();
     };
 
     return {
@@ -408,7 +296,7 @@ export function createLeaveGuardController({
             } else if (armed === null) {
                 const id = `${Date.now().toString(36)}-${(nextId += 1)}`;
                 const { pathname, search, hash } = window.location;
-                ownWrite(() => window.history.replaceState(withTag(window.history.state, { id, role: "editor" }), ""));
+                window.history.replaceState(withTag(window.history.state, { id, role: "editor" }), "");
                 armed = {
                     id,
                     href: `${pathname}${search}${hash}`,
@@ -417,8 +305,6 @@ export function createLeaveGuardController({
                     editorState: window.history.state,
                     editorKey: getNavigation()?.currentEntry?.key ?? null,
                     onGuard: false,
-                    pos: -1,
-                    above: [],
                 };
                 pushGuardEntry(armed);
             }
@@ -437,7 +323,8 @@ export function createLeaveGuardController({
                 return;
             }
             // Dropping the guard without leaving: take the guard entry back out of the
-            // effective history (see `dispose`), never mid-StrictMode-remount.
+            // effective history when that is provably safe (see `dispose`), and never
+            // mid-StrictMode-remount.
             releaseTimer = setTimeout(() => {
                 releaseTimer = null;
                 armed = null;
