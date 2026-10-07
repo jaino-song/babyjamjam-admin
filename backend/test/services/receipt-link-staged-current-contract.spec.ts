@@ -58,8 +58,11 @@ function build(params: { contracts: ContractFixture[]; tokenDocId: number }) {
     } as unknown as IClientRepository;
 
     const eformsignDocRepository = {
+        // The real query orders by createdDate desc, id desc; the selector relies on that order.
         findContractCandidatesByClientId: jest.fn().mockResolvedValue(
-            params.contracts.map((c) => ({
+            [...params.contracts]
+                .sort((a, b) => b.createdDate.getTime() - a.createdDate.getTime() || b.id - a.id)
+                .map((c) => ({
                 id: c.id,
                 documentId: c.documentId,
                 documentKind: "contract",
