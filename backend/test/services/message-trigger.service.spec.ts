@@ -2428,6 +2428,98 @@ describe("MessageTriggerService", () => {
         expect(result.status).toBe("sent");
     });
 
+    describe("service-record link token fence before the dispatching CAS", () => {
+        const linkJob = (dedupeKey: string, payloadOverrides: Record<string, unknown> = {}) => createJob({
+            id: "link-job",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            employeeScheduleId: 10,
+            dedupeKey,
+            payload: {
+                memberId: "employee:30",
+                recipientName: "제공인력",
+                recipientPhone: "010-1234-5678",
+                buttonUrl: "https://mobile.test/service-record/efl_link",
+                templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" },
+                ...payloadOverrides,
+            } as MessageTriggerJobEntity["payload"],
+        });
+        const isSql = (query: unknown, fragment: string) => {
+            const strings = (query as { strings?: readonly string[] }).strings?.join("?") ?? "";
+            return strings.includes(fragment);
+        };
+        /** Routes the authorization transaction's statements: the token read answers `tokenRows`. */
+        const route = (transaction: { $queryRaw: jest.Mock }, tokenRows: unknown[], job: MessageTriggerJobEntity) => {
+            const seen: string[] = [];
+            transaction.$queryRaw.mockImplementation(async (query: unknown) => {
+                if (isSql(query, "service_record_token")) { seen.push("token"); return tokenRows; }
+                if (isSql(query, "SET status = 'canceled'")) { seen.push("cancel"); return [{ id: job.id }]; }
+                if (isSql(query, "SET status = 'dispatching'")) { seen.push("dispatching"); return [{ id: job.id }]; }
+                seen.push("claim");
+                return [{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }];
+            });
+            return seen;
+        };
+
+        it.each([
+            ["a manual link job", "system:service_record_link:schedule:10:primary:manual:abc"],
+            ["an agent retry copy of a failed link job", "agent-sms-retry:action-1"],
+        ])("cancels %s whose token is revoked instead of dispatching it", async (_label, dedupeKey) => {
+            const { service, deliveryService, jobRepository, transaction, messageSenderApprovalService } = createDispatchService();
+            const job = linkJob(dedupeKey);
+            jobRepository.findByIdInBranch.mockResolvedValue(job);
+            messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+            const seen = route(transaction, [], job);
+
+            const result = await service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
+
+            expect(seen).toEqual(["claim", "claim", "token", "cancel"]);
+            expect(seen).not.toContain("dispatching");
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(result.status).toBe("canceled");
+            expect(result.cancelReason).toBe("제공기록지 링크가 철회되어 발송하지 않았습니다");
+        });
+
+        it("dispatches as before when the token row is active (read after the job lock, before the CAS)", async () => {
+            const { service, deliveryService, jobRepository, transaction, messageSenderApprovalService } = createDispatchService();
+            const job = linkJob("agent-sms-retry:action-2");
+            jobRepository.findByIdInBranch.mockResolvedValue(job);
+            messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+            const seen = route(transaction, [{ id: "token-row" }], job);
+
+            const result = await service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
+
+            expect(seen).toEqual(["claim", "claim", "token", "dispatching"]);
+            expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
+            expect(result.status).toBe("sent");
+        });
+
+        it("fails closed when the job carries no readable link", async () => {
+            const { service, deliveryService, jobRepository, transaction, messageSenderApprovalService } = createDispatchService();
+            const job = linkJob("agent-sms-retry:action-3", { buttonUrl: null, templateVariables: {} });
+            jobRepository.findByIdInBranch.mockResolvedValue(job);
+            messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+            const seen = route(transaction, [{ id: "token-row" }], job);
+
+            const result = await service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
+
+            expect(seen).toEqual(["claim", "claim", "cancel"]);
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(result.status).toBe("canceled");
+        });
+
+        it("does not read the token table for other templates", async () => {
+            const { service, jobRepository, transaction, messageSenderApprovalService } = createDispatchService();
+            const job = createJob({ id: "other-job" });
+            jobRepository.findByIdInBranch.mockResolvedValue(job);
+            messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+            const seen = route(transaction, [], job);
+
+            await service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
+
+            expect(seen).not.toContain("token");
+        });
+    });
+
     it("dispatchPendingJobNow fails not-found when the job does not belong to the expected branch", async () => {
         const { service, deliveryService, jobRepository } = createDispatchService();
         jobRepository.findByIdInBranch.mockResolvedValue(null);

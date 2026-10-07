@@ -228,6 +228,8 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         SELECT link_token_hash, active, revoked_at FROM service_record_token ORDER BY link_token_hash
     `);
 
+    const allTokensInactive = async () => (await tokenStates()).every((row) => row.active === false);
+
     const linkService = (
         jobRepository: SbMessageTriggerJobRepository,
         duringLinkPreparation: () => Promise<void> = async () => undefined,
@@ -1228,6 +1230,122 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
                 SELECT recipient_phone FROM message_trigger_job WHERE id IN (${processing}, ${dispatching})
             `;
             expect(phones.map((row) => row.recipient_phone)).toEqual(["01011112222", "01011112222"]);
+        });
+    });
+
+    describe("dispatch authorization refuses a revoked service-record link (b5 review F1)", () => {
+        const REVOKED_REASON = "제공기록지 링크가 철회되어 발송하지 않았습니다";
+        const LINK_URL = "https://mobile.test/service-record/same-link";
+
+        /** The real `authorizeClaimedJobForDispatch` on the real database (manual jobs bypass the automatic authority gate). */
+        const dispatchService = () => {
+            const prisma = {
+                $transaction: <T>(work: (tx: Prisma.TransactionClient) => Promise<T>, options?: object) => db.$transaction(
+                    // A narrow transaction without the service-record case delegate, as the unit doubles do.
+                    (tx) => work(new Proxy(tx, {
+                        get(target, key) {
+                            if (key === "service_record_case") return undefined;
+                            const value = (target as unknown as Record<PropertyKey, unknown>)[key];
+                            return typeof value === "function" ? value.bind(target) : value;
+                        },
+                    })),
+                    options,
+                ),
+            };
+            const service = Object.create(MessageTriggerService.prototype) as {
+                prisma: unknown;
+                authorizeClaimedJobForDispatch: (job: MessageTriggerJobEntity) => Promise<{ kind: string; reason?: string }>;
+            };
+            service.prisma = prisma;
+            return service;
+        };
+
+        const seedLinkJob = async (dedupeKey: string, status = "processing", url: string | null = LINK_URL) => {
+            const payload = JSON.stringify({
+                memberId: "employee:30", recipientName: "provider", recipientPhone: "01011112222",
+                buttonUrl: url, templateVariables: { serviceRecordUrl: url ?? "" },
+            });
+            const [row] = await db.$queryRaw<Array<{ id: string }>>`
+                INSERT INTO message_trigger_job (branch_id, rule_id, status, scheduled_for, employee_schedule_id, client_id,
+                    recipient_type, recipient_phone, template_key, dedupe_key, claim_token, payload, updated_at)
+                VALUES (${BRANCH}::uuid, ${RULE}, ${status}, now(), ${SCHEDULE}, 20, ${MessageTriggerRecipientType.PRIMARY_EMPLOYEE},
+                    '01011112222', ${MessageTriggerTemplateKey.SERVICE_RECORD_LINK}, ${dedupeKey},
+                    ${status === "processing" ? "claim-processing" : null}, ${payload}::jsonb, now() - interval '1 hour')
+                RETURNING id
+            `;
+            return MessageTriggerJobEntity.reconstitute(
+                row!.id, BRANCH, RULE, status as never, new Date(), null, null, null, 20, SCHEDULE,
+                MessageTriggerRecipientType.PRIMARY_EMPLOYEE, "01011112222", MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey, JSON.parse(payload), new Date(), new Date(), 0, null, status === "processing" ? "claim-processing" : null,
+            );
+        };
+
+        const MANUAL_KEY = `${RULE}:schedule:${SCHEDULE}:primary:manual:00000000-0000-4000-8000-0000000000f1`;
+        const RETRY_KEY = "agent-sms-retry:f1-action";
+
+        it.each([["a manual job", MANUAL_KEY], ["an agent-sms-retry job", RETRY_KEY]])(
+            "%s with a revoked token is canceled, never dispatching",
+            async (_label, dedupeKey) => {
+                const job = await seedLinkJob(dedupeKey);
+                await revokeTokens(SCHEDULE);
+
+                const result = await dispatchService().authorizeClaimedJobForDispatch(job);
+
+                expect(result).toEqual({ kind: "stale", reason: REVOKED_REASON });
+                expect(await rowOf(job.id)).toMatchObject({ status: "canceled", claim_token: null, cancel_reason: REVOKED_REASON });
+            },
+        );
+
+        it.each([["a manual job", MANUAL_KEY], ["an agent-sms-retry job", RETRY_KEY]])(
+            "%s with an active token dispatches as before",
+            async (_label, dedupeKey) => {
+                const job = await seedLinkJob(dedupeKey);
+
+                const result = await dispatchService().authorizeClaimedJobForDispatch(job);
+
+                expect(result).toEqual({ kind: "allow" });
+                expect(await rowOf(job.id)).toMatchObject({ status: "dispatching", claim_token: "claim-processing" });
+            },
+        );
+
+        it("a retry created from a failed source AFTER the revoke is canceled (revoke does not touch failed sources)", async () => {
+            const source = await seedLinkJob(`${RULE}:schedule:${SCHEDULE}:primary:manual:00000000-0000-4000-8000-0000000000a1`, "failed");
+            await linkService(repository).revoke(SCHEDULE);
+            expect(await statusOf(source.id)).toBe("failed");
+            const retry = await seedLinkJob(RETRY_KEY);
+
+            const result = await dispatchService().authorizeClaimedJobForDispatch(retry);
+
+            expect(result).toMatchObject({ kind: "stale" });
+            expect(await statusOf(retry.id)).toBe("canceled");
+        });
+
+        it("a token of another schedule, or one that is missing, does not satisfy the fence", async () => {
+            await db.$executeRaw`UPDATE service_record_token SET schedule_id = ${OTHER_SCHEDULE} WHERE link_token_hash = 'same-link'`;
+            const otherSchedule = await seedLinkJob(RETRY_KEY);
+            const missing = await seedLinkJob(`${RULE}:schedule:${SCHEDULE}:primary:manual:00000000-0000-4000-8000-0000000000a2`, "processing", "https://mobile.test/service-record/nope");
+            const unreadable = await seedLinkJob(`${RULE}:schedule:${SCHEDULE}:primary:manual:00000000-0000-4000-8000-0000000000a3`, "processing", null);
+
+            for (const job of [otherSchedule, missing, unreadable]) {
+                expect(await dispatchService().authorizeClaimedJobForDispatch(job)).toMatchObject({ kind: "stale" });
+                expect(await statusOf(job.id)).toBe("canceled");
+            }
+        });
+
+        it("authorization and revoke racing for one processing job settle without a deadlock", async () => {
+            const job = await seedLinkJob(MANUAL_KEY);
+
+            const [authorization, revoke] = await Promise.all([
+                settle(dispatchService().authorizeClaimedJobForDispatch(job)),
+                settle(linkService(repository).revoke(SCHEDULE)),
+            ]);
+
+            expect(revoke).toEqual({ ok: true, value: undefined });
+            expect(authorization.ok).toBe(true);
+            // Either the revoke cancelled the claim first (authorization lost), or the
+            // authorization committed first and the revoke reported it in flight.
+            expect(["canceled", "dispatching"]).toContain(await statusOf(job.id));
+            expect(await allTokensInactive()).toBe(true);
         });
     });
 });
