@@ -281,6 +281,16 @@ export interface IEformsignDocRepository {
         doc: EformsignDocEntity,
         options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity>;
+    /**
+     * Same unguarded write as `update` (no source-timestamp predicate), but reports whether
+     * the UPDATE matched. A write pinned by `expectedStatusType` that finds the row moved
+     * returns the current document with `applied: false`.
+     */
+    updateWithOutcome(
+        branchid: string,
+        doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
+    ): Promise<EformsignDocConditionalUpdateResult>;
     /** Atomically applies a vendor projection only when its generation is strictly newer. */
     updateIfSourceNewer(
         branchid: string,

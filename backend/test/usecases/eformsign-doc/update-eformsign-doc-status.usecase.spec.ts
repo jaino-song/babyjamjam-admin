@@ -34,7 +34,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
 
     const eformsignDocRepository = {
         findByDocumentId: jest.fn(),
-        update: jest.fn(),
+        updateWithOutcome: jest.fn(),
         updateIfSourceNewer: jest.fn(),
     };
 
@@ -58,7 +58,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
                 statusDetail: "서명 페이지 열림",
             }),
         ).rejects.toThrow(NotFoundException);
-        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
     it("ignores a stale downgrade from a completed (terminal) status to a non-terminal status", async () => {
@@ -71,7 +71,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("050");
-        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
     it("keeps the existing branch-owned 062 terminal guard unchanged", async () => {
@@ -84,12 +84,14 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("062");
-        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
     it("allows a normal non-terminal -> non-terminal transition", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -98,12 +100,14 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("020");
-        expect(eformsignDocRepository.update).toHaveBeenCalledTimes(1);
+        expect(eformsignDocRepository.updateWithOutcome).toHaveBeenCalledTimes(1);
     });
 
     it("allows a terminal -> terminal transition (e.g. completed -> rejected)", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("050"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -112,7 +116,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("080");
-        expect(eformsignDocRepository.update).toHaveBeenCalledTimes(1);
+        expect(eformsignDocRepository.updateWithOutcome).toHaveBeenCalledTimes(1);
     });
 
     it("does not project an older webhook timestamp over a newer vendor mirror", async () => {
@@ -126,7 +130,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("071");
-        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
     it("keeps the authoritative mirror status when a conflicting webhook has the same timestamp", async () => {
@@ -141,7 +145,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.statusType).toBe("071");
-        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
     it("stores the vendor timestamp and enables the repository CAS for a current webhook", async () => {
@@ -205,7 +209,9 @@ describe("UpdateEformsignDocStatusUsecase", () => {
 
     it("stores webhook documentName without replacing the locally selected templateId", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -220,7 +226,9 @@ describe("UpdateEformsignDocStatusUsecase", () => {
 
     it("keeps existing documentName when the webhook value is empty", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -235,7 +243,9 @@ describe("UpdateEformsignDocStatusUsecase", () => {
 
     it("updates templateName while preserving the other list display fields", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -253,7 +263,9 @@ describe("UpdateEformsignDocStatusUsecase", () => {
 
     it("keeps the existing templateName when the webhook value is empty", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
-        eformsignDocRepository.update.mockImplementation((_branchid, doc) => Promise.resolve(doc));
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            (_branchid, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
 
         const result = await usecase.execute(branchId, {
             documentId,
@@ -263,5 +275,45 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         });
 
         expect(result.templateName).toBe("기존 템플릿명");
+    });
+
+    describe("outcome of the unguarded (no source timestamp) write", () => {
+        it("reports applied:false when the pinned UPDATE matched no row", async () => {
+            const moved = createDocEntity("080");
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
+            eformsignDocRepository.updateWithOutcome.mockResolvedValue({ document: moved, applied: false });
+
+            const result = await usecase.executeWithOutcome(branchId, {
+                documentId,
+                statusType: "060",
+                statusDetail: "서명 페이지 열림",
+                actionOnly: true,
+            });
+
+            expect(result.applied).toBe(false);
+            expect(result.document.statusType).toBe("080");
+            expect(eformsignDocRepository.updateWithOutcome).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType: "060" }),
+                expect.objectContaining({ expectedStatusType: "060" }),
+            );
+        });
+
+        it("reports applied:true when the pinned UPDATE matched", async () => {
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
+            eformsignDocRepository.updateWithOutcome.mockImplementation(
+                (_branchId, doc) => Promise.resolve({ document: doc, applied: true }),
+            );
+
+            const result = await usecase.executeWithOutcome(branchId, {
+                documentId,
+                statusType: "060",
+                statusDetail: "서명 페이지 열림",
+                actionOnly: true,
+            });
+
+            expect(result.applied).toBe(true);
+            expect(result.document.statusType).toBe("060");
+        });
     });
 });

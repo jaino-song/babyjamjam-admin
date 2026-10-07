@@ -636,6 +636,14 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return (await this.updateDocument(branchid, doc, false, options)).document;
     }
 
+    async updateWithOutcome(
+        branchid: string,
+        doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
+    ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
+        return this.updateDocument(branchid, doc, false, options);
+    }
+
     async updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,

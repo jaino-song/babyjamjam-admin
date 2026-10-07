@@ -136,9 +136,8 @@ export class UpdateEformsignDocStatusUsecase {
         if (params.sourceUpdatedDate) {
             return this.eformsignDocRepository.updateIfSourceNewer(branchid, updated, stepWriteOptions);
         }
-        return {
-            document: await this.eformsignDocRepository.update(branchid, updated, stepWriteOptions),
-            applied: true,
-        };
+        // No timestamp predicate here, but an `actionOnly` write is still pinned to the
+        // status it read: report whether that UPDATE actually matched.
+        return this.eformsignDocRepository.updateWithOutcome(branchid, updated, stepWriteOptions);
     }
 }
