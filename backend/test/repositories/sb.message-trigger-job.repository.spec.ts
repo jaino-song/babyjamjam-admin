@@ -594,6 +594,109 @@ describe("SbMessageTriggerJobRepository", () => {
                 }),
             }));
         });
+
+        it("applies the continuation cursor and the already-logged exclusion before the phone-id limit", async () => {
+            queryRaw.mockResolvedValue([]);
+            messageTriggerJobModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: "01012345678" },
+                { snapshotAt, after: { source: "job", nativeId: afterId }, limit: 11 },
+            );
+
+            const sql = queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
+            const text = sql.strings.join("?").replace(/\s+/g, " ");
+            expect(text).toContain("AND job.id < ?");
+            expect(text).toContain("NOT EXISTS ( SELECT 1 FROM \"message_log\" AS log WHERE log.trigger_job_id = job.id");
+            expect(text.indexOf("NOT EXISTS")).toBeLessThan(text.indexOf("LIMIT"));
+            expect(sql.values).toContain(afterId);
+            expect(sql.values[sql.values.length - 1]).toBe(11);
+        });
+
+        describe("an unowned phone match set larger than any fixed cap", () => {
+            type FakeJob = ReturnType<typeof createRow> & { logged: boolean };
+            const snapshot = new Date("2026-07-09T00:00:00.123Z");
+            const phoneKey = "01012345678";
+
+            // Rows stand in for terminal, unowned jobs that already match the client's phone;
+            // the fake driver models only the clauses this fix is about (cursor, log exclusion, limit).
+            const installFakeDatabase = (database: FakeJob[]) => {
+                const byIdDesc = (a: FakeJob, b: FakeJob) => (a.id < b.id ? 1 : -1);
+                queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
+                    const text = sql.strings.join("?");
+                    let rows = database.filter((job) => job.clientId === null);
+                    if (text.includes("job.id < ?")) {
+                        const after = sql.values.find((v) => typeof v === "string" && v.startsWith("job-")) as string;
+                        rows = rows.filter((job) => job.id < after);
+                    }
+                    if (text.includes("NOT EXISTS")) rows = rows.filter((job) => !job.logged);
+                    const limit = sql.values[sql.values.length - 1] as number;
+                    return rows.sort(byIdDesc).slice(0, limit).map((job) => ({ id: job.id }));
+                });
+                messageTriggerJobModel.findMany.mockImplementation(async (args: {
+                    where: { logs?: unknown; AND: Array<Record<string, unknown>> };
+                    take: number;
+                }) => {
+                    const matches = (job: FakeJob, clause: Record<string, unknown>): boolean => {
+                        if ("OR" in clause) return (clause["OR"] as Array<Record<string, unknown>>).some((c) => matches(job, c));
+                        if ("id" in clause) {
+                            const id = clause["id"] as { lt?: string; in?: string[] };
+                            if (id.lt !== undefined) return job.id < id.lt;
+                            if (id.in) return id.in.includes(job.id);
+                        }
+                        if ("clientId" in clause && job.clientId !== clause["clientId"]) return false;
+                        return true;
+                    };
+                    return database
+                        .filter((job) => (args.where.logs ? !job.logged : true))
+                        .filter((job) => args.where.AND.every((clause) => matches(job, clause)))
+                        .sort(byIdDesc)
+                        .slice(0, args.take);
+                });
+            };
+
+            const jobRow = (id: string, logged: boolean): FakeJob => ({
+                ...createRow({ id, clientId: null, status: "failed" }),
+                logged,
+            });
+
+            it("returns the only unlogged job when 2,000 newer jobs already have a log", async () => {
+                const logged = Array.from({ length: 2000 }, (_, i) => jobRow(`job-${String(i + 1).padStart(5, "0")}`, true));
+                installFakeDatabase([jobRow("job-00000", false), ...logged]);
+
+                const page = await repository.findClientHistoryPageByBranch(
+                    "branch-1",
+                    { clientId: 7, phoneKey },
+                    { snapshotAt: snapshot, after: null, limit: 11 },
+                );
+
+                expect(page.map((job) => job.id)).toEqual(["job-00000"]);
+            });
+
+            it("walks 2,001 unlogged unowned jobs page by page without dropping the oldest", async () => {
+                const all = Array.from({ length: 2001 }, (_, i) => jobRow(`job-${String(i).padStart(5, "0")}`, false));
+                installFakeDatabase(all);
+
+                const seen: string[] = [];
+                let after: { source: "job"; nativeId: string } | null = null;
+                for (let guard = 0; guard < 100; guard += 1) {
+                    const rows: MessageTriggerJobEntity[] = await repository.findClientHistoryPageByBranch(
+                        "branch-1",
+                        { clientId: 7, phoneKey },
+                        { snapshotAt: snapshot, after, limit: 51 },
+                    );
+                    const visible = rows.slice(0, 50);
+                    seen.push(...visible.map((job) => job.id));
+                    if (rows.length <= 50) break;
+                    after = { source: "job", nativeId: visible[visible.length - 1]!.id };
+                }
+
+                expect(seen).toHaveLength(2001);
+                expect(new Set(seen).size).toBe(2001);
+                expect(seen[seen.length - 1]).toBe("job-00000");
+            });
+        });
     });
 
     it("upsertPending falls back to findUnique when the guarded update matches no row (sent row stays immutable)", async () => {

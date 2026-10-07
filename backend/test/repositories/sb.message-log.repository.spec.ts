@@ -509,6 +509,27 @@ describe("SbMessageLogRepository", () => {
 
     describe("findClientHistoryPageByBranch", () => {
         const snapshotAt = new Date("2026-07-09T00:00:00.123Z");
+        const buildLogRow = (id: number) => ({
+            id,
+            branchId: "branch-1",
+            provider: "aligo_sms",
+            templateKey: "manual_sms",
+            triggerJobId: null,
+            receiver: "01012345678",
+            clientId: null,
+            recipientName: null,
+            recipientPhone: "01012345678",
+            messageBody: "message",
+            variables: {},
+            status: "sent",
+            aligoMid: null,
+            errorMessage: null,
+            attempts: 1,
+            lastAttemptAt: new Date("2026-08-29T00:00:00.000Z"),
+            nextRetryAt: null,
+            createdAt: new Date("2026-08-28T00:00:00.000Z"),
+            updatedAt: new Date("2026-08-29T00:00:00.000Z"),
+        });
         const sqlText = (call: unknown[]) =>
             (call[0] as { strings: string[] }).strings.join("?").replace(/\s+/g, " ");
 
@@ -579,6 +600,80 @@ describe("SbMessageLogRepository", () => {
             expect(messageLogModel.findMany).toHaveBeenCalledWith(expect.objectContaining({
                 where: expect.objectContaining({ AND: [{ clientId: 7 }] }),
             }));
+        });
+
+        it("applies the continuation cursor before the phone-id limit", async () => {
+            queryRaw.mockResolvedValue([]);
+            messageLogModel.findMany.mockResolvedValue([]);
+
+            await repository.findClientHistoryPageByBranch(
+                "branch-1",
+                { clientId: 7, phoneKey: "01012345678" },
+                { snapshotAt, after: { source: "log", nativeId: "42" }, limit: 11 },
+            );
+
+            const sql = queryRaw.mock.calls[0][0] as { strings: string[]; values: unknown[] };
+            const text = sql.strings.join("?").replace(/\s+/g, " ");
+            expect(text).toContain("AND id < ?");
+            expect(text.indexOf("AND id < ?")).toBeLessThan(text.indexOf("LIMIT"));
+            expect(sql.values).toContain(42);
+            expect(sql.values[sql.values.length - 1]).toBe(11);
+        });
+
+        it("walks 2,001 unowned phone-matched logs page by page, dropping none and ending with hasMore false", async () => {
+            // Ids 1..2001 are unowned rows that already match the client's phone; the fake driver
+            // models only the clauses this fix is about (cursor, limit).
+            const ids = Array.from({ length: 2001 }, (_, i) => i + 1);
+            queryRaw.mockImplementation(async (sql: { strings: string[]; values: unknown[] }) => {
+                const text = sql.strings.join("?");
+                let rows = ids;
+                if (text.includes("AND id < ?")) {
+                    const after = sql.values[2] as number;
+                    rows = rows.filter((id) => id < after);
+                }
+                const limit = sql.values[sql.values.length - 1] as number;
+                return [...rows].sort((a, b) => b - a).slice(0, limit).map((id) => ({ id }));
+            });
+            messageLogModel.findMany.mockImplementation(async (args: {
+                where: { AND: Array<Record<string, unknown>> };
+                take: number;
+            }) => {
+                const matches = (id: number, clause: Record<string, unknown>): boolean => {
+                    if ("OR" in clause) return (clause["OR"] as Array<Record<string, unknown>>).some((c) => matches(id, c));
+                    if ("id" in clause) {
+                        const idClause = clause["id"] as { lt?: number; in?: number[] };
+                        if (idClause.lt !== undefined) return id < idClause.lt;
+                        if (idClause.in) return idClause.in.includes(id);
+                    }
+                    if ("clientId" in clause && clause["clientId"] !== null) return false;
+                    return true;
+                };
+                return ids
+                    .filter((id) => args.where.AND.every((clause) => matches(id, clause)))
+                    .sort((a, b) => b - a)
+                    .slice(0, args.take)
+                    .map((id) => buildLogRow(id));
+            });
+
+            const seen: number[] = [];
+            let after: { source: "log"; nativeId: string } | null = null;
+            let hasMore = true;
+            for (let guard = 0; guard < 100 && hasMore; guard += 1) {
+                const rows: MessageLogEntity[] = await repository.findClientHistoryPageByBranch(
+                    "branch-1",
+                    { clientId: 7, phoneKey: "01012345678" },
+                    { snapshotAt, after, limit: 51 },
+                );
+                const visible = rows.slice(0, 50);
+                seen.push(...visible.map((row) => row.id));
+                hasMore = rows.length > 50;
+                if (hasMore) after = { source: "log", nativeId: String(visible[visible.length - 1]!.id) };
+            }
+
+            expect(hasMore).toBe(false);
+            expect(seen).toHaveLength(2001);
+            expect(new Set(seen).size).toBe(2001);
+            expect(seen[seen.length - 1]).toBe(1);
         });
     });
 

@@ -14,7 +14,6 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     koreanPhoneStoredDigitCandidates,
     storedPhoneMatchesSql,
-    UNOWNED_PHONE_MATCH_LIMIT,
 } from "./stored-phone-lookup";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
@@ -418,27 +417,36 @@ export class SbMessageLogRepository implements IMessageLogRepository {
      * `recipient_phone` or any number of a multi-recipient `receiver` — normalises
      * to the client's phone key. Filtered by branch first (the only usable index),
      * never by raw-string equality.
+     *
+     * The continuation cursor is applied here, before the limit, and the limit is
+     * the page size: a page can never need more than `limit` of these rows, and
+     * each page walks on from where the previous one stopped, so the whole
+     * history is reachable and nothing is dropped by a fixed global cap.
      */
     private async findUnownedIdsByPhone(
         branchId: string,
         phoneKey: string | null,
         snapshotAt: Date,
+        afterId: number | null,
+        limit: number,
     ): Promise<number[]> {
         const candidates = koreanPhoneStoredDigitCandidates(phoneKey);
         if (candidates.length === 0) return [];
 
+        const afterFilter = afterId === null ? Prisma.empty : Prisma.sql`AND id < ${afterId}`;
         const rows = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
             SELECT id
             FROM "message_log"
             WHERE branch_id = ${branchId}::uuid
               AND client_id IS NULL
               AND created_at <= ${snapshotAt}
+              ${afterFilter}
               AND (
                 ${storedPhoneMatchesSql(Prisma.sql`recipient_phone`, candidates)}
                 OR ${storedPhoneMatchesSql(Prisma.sql`receiver`, candidates, { splitList: true })}
               )
             ORDER BY id DESC
-            LIMIT ${UNOWNED_PHONE_MATCH_LIMIT}
+            LIMIT ${limit}
         `);
         return rows.map((row) => Number(row.id));
     }
@@ -452,7 +460,13 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const afterWhere = after?.source === "log"
             ? { id: { lt: Number(after.nativeId) } }
             : undefined;
-        const unownedIds = await this.findUnownedIdsByPhone(branchId, scope.phoneKey, query.snapshotAt);
+        const unownedIds = await this.findUnownedIdsByPhone(
+            branchId,
+            scope.phoneKey,
+            query.snapshotAt,
+            after?.source === "log" ? Number(after.nativeId) : null,
+            query.limit,
+        );
         const ownerWhere = unownedIds.length > 0
             ? { OR: [{ clientId: scope.clientId }, { clientId: null, id: { in: unownedIds } }] }
             : { clientId: scope.clientId };
