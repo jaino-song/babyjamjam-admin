@@ -723,22 +723,44 @@ function ClientFormContent({
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
             queueMicrotask(() => {
-                setFormData(prev => prev.voucherClient
-                    ? {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
-                        actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                setFormData(prev => {
+                    const next = prev.voucherClient
+                        ? {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
+                            actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                        }
+                        : {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "0",
+                            actualPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        };
+                    // While the price drivers are still what the form was opened with, this fill is the
+                    // form catching up with its own price table, not an edit: the saved client is not
+                    // being re-priced. Move the baseline's prices with it, so a save does not send them
+                    // back and overwrite a price someone else changed since. A fill caused by changing
+                    // the duration, service type or voucher fields is a real re-pricing and stays a change.
+                    const baseline = formDataBaselineRef.current;
+                    if (
+                        isEditMode
+                        && prev.voucherClient === baseline.voucherClient
+                        && prev.type === baseline.type
+                        && prev.duration === baseline.duration
+                    ) {
+                        formDataBaselineRef.current = {
+                            ...baseline,
+                            fullPrice: next.fullPrice,
+                            grant: next.grant,
+                            actualPrice: next.actualPrice,
+                        };
                     }
-                    : {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "0",
-                        actualPrice: parsePrice(selectedPriceInfo.fullPrice),
-                    });
+                    return next;
+                });
             });
         }
-    }, [selectedPriceInfo, pricesManuallyEdited]);
+    }, [isEditMode, selectedPriceInfo, pricesManuallyEdited]);
 
     // 종료일은 고객 정보로 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
     const {
