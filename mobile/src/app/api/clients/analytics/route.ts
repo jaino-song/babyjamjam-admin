@@ -1,13 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
-import {
-  errorResponse,
-  getAuthHeaders,
-  getAuthToken,
-  sanitizeUpstreamClientError,
-  withNoStore,
-} from "@/lib/api/route-utils";
-import { unauthorizedProblemResponse } from "@/lib/api/problem-responses";
+import { getAuthHeaders, getAuthToken, withNoStore } from "@/lib/api/route-utils";
+import { accessDeniedProblemResponse, unauthorizedProblemResponse } from "@/lib/api/problem-responses";
 import {
   deriveDashboardAnalyticsFromClients,
   normalizeDashboardAnalyticsPayload,
@@ -45,6 +39,18 @@ function thrownStatus(error: unknown): number | undefined {
   return typeof response?.status === "number" ? response.status : undefined;
 }
 
+/**
+ * Locally authored 401/403 response. The upstream body is never forwarded: auth failures from
+ * either upstream must not carry backend diagnostics (hostnames, file paths) to the client.
+ */
+function authFailureResponse(status: number): NextResponse {
+  return withNoStore(
+    status === 401
+      ? unauthorizedProblemResponse()
+      : accessDeniedProblemResponse("Failed to fetch dashboard analytics"),
+  );
+}
+
 function unknownAnalytics(): DashboardAnalytics {
   return {
     activeClients: null,
@@ -76,15 +82,7 @@ async function loadClients(
 
       if (response.status >= 400) {
         if (isAuthStatus(response.status)) {
-          return {
-            clients: null,
-            authFailure: withNoStore(
-              NextResponse.json(
-                sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics", response.status, "read"),
-                { status: response.status },
-              ),
-            ),
-          };
+          return { clients: null, authFailure: authFailureResponse(response.status) };
         }
         return { clients: null };
       }
@@ -104,8 +102,9 @@ async function loadClients(
       page += 1;
     }
   } catch (error) {
-    if (isAuthStatus(thrownStatus(error))) {
-      return { clients: null, authFailure: errorResponse(error, "fetch dashboard analytics", "read") };
+    const status = thrownStatus(error);
+    if (status !== undefined && isAuthStatus(status)) {
+      return { clients: null, authFailure: authFailureResponse(status) };
     }
     // Network error, timeout or 5xx: the list is simply unavailable.
     return { clients: null };
@@ -128,12 +127,7 @@ export async function GET(request: NextRequest) {
     // numbers match the badges the client list shows.
     const response = await serverAPIClient.get("/clients/stats", { headers });
     if (isAuthStatus(response.status)) {
-      return withNoStore(
-        NextResponse.json(
-          sanitizeUpstreamClientError(response.data, "Failed to fetch dashboard analytics", response.status, "read"),
-          { status: response.status },
-        ),
-      );
+      return authFailureResponse(response.status);
     }
     if (response.status < 400) {
       const normalized = normalizeDashboardAnalyticsPayload(response.data);
@@ -142,8 +136,9 @@ export async function GET(request: NextRequest) {
         normalized && Object.values(normalized).some((value) => value !== null) ? normalized : null;
     }
   } catch (error) {
-    if (isAuthStatus(thrownStatus(error))) {
-      return errorResponse(error, "fetch dashboard analytics", "read");
+    const status = thrownStatus(error);
+    if (status !== undefined && isAuthStatus(status)) {
+      return authFailureResponse(status);
     }
     // Unavailable stats: the contract counts stay unknown (rendered "-"), never a locally guessed number.
   }

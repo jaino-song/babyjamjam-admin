@@ -280,4 +280,35 @@ describe("clients analytics route", () => {
     expect(JSON.stringify(body)).not.toContain("analytics.internal");
     expect(JSON.stringify(body)).not.toContain("/tmp/clients");
   });
+
+  // Korean diagnostics pass the shared upstream sanitizer, so auth failures must never forward the upstream body.
+  const koreanDiagnostic = "인증 서비스 analytics.internal 확인 중 /srv/auth/verify.ts:88에서 오류가 발생했습니다.";
+  it.each([
+    ["stats", "thrown", 401],
+    ["stats", "thrown", 403],
+    ["stats", "returned", 401],
+    ["stats", "returned", 403],
+    ["list", "thrown", 401],
+    ["list", "thrown", 403],
+    ["list", "returned", 401],
+    ["list", "returned", 403],
+  ])("does not forward upstream diagnostics on a %s %s %i", async (endpoint, mode, status) => {
+    const failure = { status, data: { message: koreanDiagnostic } };
+    mockServerGet.mockImplementation(async (path: string) => {
+      const failing = endpoint === "stats" ? path === "/clients/stats" : path === "/clients";
+      if (!failing) {
+        return path === "/clients/stats" ? { status: 503, data: {} } : { status: 200, data: [] };
+      }
+      if (mode === "thrown") throw { response: failure };
+      return failure;
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(status);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    const text = JSON.stringify(await response.json());
+    expect(text).not.toContain("analytics.internal");
+    expect(text).not.toContain("/srv/auth/verify.ts");
+  });
 });
