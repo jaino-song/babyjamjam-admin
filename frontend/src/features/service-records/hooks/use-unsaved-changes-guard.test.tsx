@@ -145,6 +145,23 @@ describe("useUnsavedChangesGuard", () => {
             expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         });
 
+        it("does not prompt when a silent hash push after arming is followed by a traversal onto the editor entry", async () => {
+            render(<Harness active />);
+            // pushState fires no popstate: the real current entry is no longer the guard entry.
+            window.history.pushState({ __NA: true }, "", `${EDITOR}#x`);
+
+            await traverse(() => window.history.go(-2)); // EDITOR#x -> guard -> editor entry
+
+            expect(paths()).toBe(EDITOR);
+            expect(window.location.hash).toBe("");
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+            // The guard still holds a Back from its entry onto the editor entry.
+            await traverse(() => window.history.forward()); // editor -> guard
+            await traverse(() => window.history.back()); // guard -> editor
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+        });
+
         it("lets a hash-only Forward onto the editor entry pass without a prompt", async () => {
             // Entries: .., EDITOR#a, EDITOR#b (armed on #b, guard on top).
             window.history.replaceState(NEXT_STATE, "", `${EDITOR}#a`);
@@ -358,6 +375,17 @@ describe("useUnsavedChangesGuard", () => {
                 expect(paths()).toBe(EDITOR);
                 await traverse(() => window.history.back());
                 expect(paths()).toBe("/previous");
+            });
+
+            it("does nothing when a router copied history.state onto new entries ending on the editor URL", async () => {
+                // The copy carries our tag and the editor URL, but it is not the guard entry.
+                const result = await releaseAfter(() => {
+                    window.history.pushState(window.history.state, "", "/different");
+                    window.history.pushState(window.history.state, "", EDITOR);
+                });
+                expect(result.after.url).toBe(EDITOR);
+                expectUntouched(result);
+                expect(paths()).toBe(EDITOR);
             });
 
             it("does nothing after a plain <a href=\"#x\"> fragment navigation", async () => {

@@ -37,10 +37,23 @@
  * Release (`release()`, run one tick later so a StrictMode remount can cancel it) never
  * navigates anywhere the user did not ask to go. The controller does not wrap or patch
  * `history.pushState` / `replaceState` and never rebuilds history. It takes G back out
- * with exactly one `history.back()` only when the current entry is provably G
- * (our tag in `history.state`, role "guard") AND the location still equals the editor
- * URL it armed on, so that Back changes no page. In every other case release does
- * nothing at all: no back, no push, no replace.
+ * with exactly one `history.back()` only when the current entry is provably G:
+ * our tag in `history.state` (role "guard") AND the location still equals the editor
+ * URL it armed on AND the entry's real identity matches. A tag alone proves nothing,
+ * because a router can copy `history.state` onto a brand-new entry of the same URL.
+ * Identity is therefore taken from the browser: with the Navigation API the current
+ * entry's `key` must be the key recorded when G was pushed and the entry right before
+ * it must be E's key; without it `history.length` must still equal the length right
+ * after G was pushed (any later push grows it) and that length must have been
+ * trustworthy (arming grew the list; a list at the browser's cap never grows).
+ * Any doubt: release does nothing at all (no back, no push, no replace).
+ *
+ * "Is the user leaving G?" is never a cached boolean alone. A silent
+ * `history.pushState` (no popstate) can change the real current entry without us
+ * hearing about it. With the Navigation API the `navigate` event's
+ * `navigation.currentEntry` is the real origin entry. Without it the "resting on G"
+ * flag is stamped with `history.length` and only believed while the length is
+ * unchanged (a silent push grows it); landing on G again re-stamps it.
  *
  * Known limitation: a redundant same-URL guard entry can stay in the history after
  * release (the user then needs one extra Back that lands on the editor URL again). It
@@ -102,8 +115,16 @@ interface Armed {
     editorState: unknown;
     /** Navigation API key of the editor entry (only when the API exists). */
     editorKey: string | null;
+    /** Navigation API key of the guard entry we pushed last (null: none / no API). */
+    guardKey: string | null;
+    /** `history.length` right after G was pushed (release identity check, no API). */
+    guardLength: number;
+    /** False when arming did not grow the list (browser cap): length proves nothing. */
+    lengthTrusted: boolean;
     /** True while the user rests on G (the origin that makes Back-onto-E a departure). */
     onGuard: boolean;
+    /** `history.length` when `onGuard` was last set; the flag is stale if it changed. */
+    onGuardLength: number;
 }
 
 export interface LeaveGuardController {
@@ -171,8 +192,24 @@ export function createLeaveGuardController({
     let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 
     const pushGuardEntry = (a: Armed) => {
+        // The current entry is E when this runs: remember its real identity.
+        a.editorKey = getNavigation()?.currentEntry?.key ?? null;
         window.history.pushState(withTag(a.editorState, { id: a.id, role: "guard" }), "", a.href);
+        a.guardKey = getNavigation()?.currentEntry?.key ?? null;
+        a.guardLength = window.history.length;
         a.onGuard = true;
+        a.onGuardLength = window.history.length;
+    };
+
+    /** Is the user resting on G right now, as far as we can tell? */
+    const restingOnGuard = (a: Armed): boolean => {
+        const navigation = getNavigation();
+        if (navigation) {
+            const key = navigation.currentEntry?.key ?? null;
+            return key !== null && key === a.guardKey;
+        }
+        // No API: the flag was set when we last saw G; a silent push since then grew the list.
+        return a.onGuard && (!a.lengthTrusted || window.history.length === a.onGuardLength);
     };
 
     /**
@@ -183,6 +220,15 @@ export function createLeaveGuardController({
         const tag = readTag(window.history.state);
         if (tag?.id !== a.id || tag.role !== "guard") return;
         if (currentUrl() !== a.href) return;
+        const navigation = getNavigation();
+        if (navigation) {
+            const current = navigation.currentEntry;
+            if (!current || a.guardKey === null || a.editorKey === null || current.key !== a.guardKey) return;
+            const before = navigation.entries()[current.index - 1];
+            if (!before || before.key !== a.editorKey) return;
+        } else if (!a.lengthTrusted || window.history.length !== a.guardLength) {
+            return;
+        }
         window.history.back();
     };
 
@@ -207,8 +253,9 @@ export function createLeaveGuardController({
         if (bypass || !a) return;
         const tag = readTag(window.history.state);
         const ours = tag?.id === a.id ? tag : null;
-        const cameFromGuard = a.onGuard;
+        const cameFromGuard = restingOnGuard(a);
         a.onGuard = ours?.role === "guard";
+        a.onGuardLength = window.history.length;
 
         if (ours) {
             if (ours.role === "guard") {
@@ -236,6 +283,8 @@ export function createLeaveGuardController({
         // rendering D, put the editor URL/entry back on top of D, then ask.
         event.stopImmediatePropagation();
         window.history.pushState(withTag(a.editorState, { id: a.id, role: "editor" }), "", a.href);
+        a.editorKey = getNavigation()?.currentEntry?.key ?? null;
+        a.guardKey = null;
         a.onGuard = false;
         pending = { kind: "back" };
         onPromptChange(true);
@@ -249,8 +298,7 @@ export function createLeaveGuardController({
         if (!event.cancelable || !event.destination.sameDocument) return;
         // Back from G onto E is the departure we hold. Reaching E from any other entry
         // (Forward from #a, Back out of a hash entry above G) is a hash-only traversal.
-        const current = readTag(window.history.state);
-        const fromGuard = current?.id === a.id && current.role === "guard";
+        const fromGuard = restingOnGuard(a);
         const headingToEditorEntry = a.editorKey !== null && event.destination.key === a.editorKey && fromGuard;
         if (!headingToEditorEntry) {
             let url: URL;
@@ -303,10 +351,16 @@ export function createLeaveGuardController({
                     pathname,
                     search,
                     editorState: window.history.state,
-                    editorKey: getNavigation()?.currentEntry?.key ?? null,
+                    editorKey: null,
+                    guardKey: null,
+                    guardLength: 0,
+                    lengthTrusted: false,
                     onGuard: false,
+                    onGuardLength: 0,
                 };
+                const lengthBefore = window.history.length;
                 pushGuardEntry(armed);
+                armed.lengthTrusted = window.history.length > lengthBefore;
             }
             addListeners();
         },

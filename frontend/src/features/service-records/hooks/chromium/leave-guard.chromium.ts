@@ -281,6 +281,49 @@ for (const mode of MODES) {
             });
         }
 
+        test("release safety, history.state copied onto new same-URL entries: never goes back to /different", async ({ page }) => {
+            await setup(page, mode);
+            await arm(page);
+            // The copy carries our tag and the editor URL, but it is not the guard entry.
+            await page.evaluate((editor) => {
+                history.pushState(history.state, "", "/different");
+                history.pushState(history.state, "", editor);
+            }, EDITOR);
+            await settle(page);
+            const before = { url: await where(page), state: await historyState(page), length: await historyLength(page) };
+            expect(before.url).toBe(EDITOR);
+            await page.evaluate(() => {
+                const w = window as unknown as { pops: number };
+                w.pops = 0;
+                window.addEventListener("popstate", () => { w.pops += 1; });
+                (window as unknown as HarnessWindow).guard.release();
+            });
+            await page.waitForTimeout(400);
+            expect(await where(page)).toBe(EDITOR);
+            expect(await historyState(page)).toEqual(before.state);
+            expect(await historyLength(page)).toBe(before.length);
+            expect(await page.evaluate(() => (window as unknown as { pops: number }).pops)).toBe(0);
+        });
+
+        test("a silent hash push after arming, then a traversal onto the editor entry, does not prompt", async ({ page }) => {
+            await setup(page, mode);
+            await arm(page);
+            // pushState fires no popstate: the real current entry is no longer the guard entry.
+            await page.evaluate((editor) => history.pushState({ __NA: true }, "", `${editor}#x`), EDITOR);
+            await page.evaluate(() => history.go(-2)); // editor#x -> guard -> editor entry
+            await settle(page);
+            expect(await where(page)).toBe(EDITOR);
+            expect(await modalOpen(page)).toBe(false);
+
+            // Still guarded: Forward onto the guard entry, then Back onto the editor entry is held.
+            await page.evaluate(() => history.forward());
+            await settle(page);
+            await browserBack(page);
+            await settle(page);
+            expect(await modalOpen(page)).toBe(true);
+            expect(await where(page)).toBe(EDITOR);
+        });
+
         test("release safety, plain <a href=#x> fragment navigation: nothing moves", async ({ page }) => {
             await setup(page, mode);
             await arm(page);
