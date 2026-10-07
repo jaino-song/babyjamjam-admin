@@ -58,6 +58,19 @@ const REJECTED_STATUS_CODES = [
     "080",
 ] as const;
 
+/**
+ * "040" (doc_request_revoke): cancellation was requested but has not happened. It is not
+ * terminal (see above), yet nothing may treat the document as an ordinary live one:
+ * finalize must not report progress on it and must not start on it.
+ */
+export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE = "040";
+
+export function isRevokeRequestedStatus(
+    statusType: string | number | null | undefined,
+): boolean {
+    return normalizeEformsignStatusCode(statusType) === EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
+}
+
 // "090"(철회)·"099"(삭제됨)은 웹훅 상태 매핑이 합성해 영속화하는 종료 코드다.
 export const TERMINAL_STATUS_CODES = new Set<string>([
     ...EFORMSIGN_COMPLETED_STATUS_CODES,
@@ -123,6 +136,10 @@ export const UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE = new Set<string
     ...UNASSIGNED_TERMINAL_STATUS_CODES,
     ...UNASSIGNED_REVIEW_STAGE_STATUS_CODES,
     "070",
+    // 040 left the terminal set (a cancellation request does not end the document), which
+    // also dropped it from UNASSIGNED_TERMINAL_STATUS_CODES above. A newer revoke request
+    // is still a forward event after 062/071, so list it explicitly.
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
 ]);
 
 /** The one code that means the document passed its expiry date. */
