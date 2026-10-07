@@ -421,6 +421,137 @@ function getMessageTriggerParentConflictCode(error: unknown): string | undefined
     return nestedCode === MESSAGE_AUTOMATION_PARENT_DISABLED_CODE ? nestedCode : undefined;
 }
 
+const HANGUL_PATTERN = /[가-힣]/;
+
+const DIAGNOSTIC_MARKER_PATTERNS: readonly RegExp[] = [
+    // URLs
+    /\b[a-z][a-z0-9+.-]*:\/\//i,
+    /\bwww\./i,
+    // source files and file:line
+    /[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs)\b/i,
+    /\.[a-z]{1,5}:\d+/i,
+    // Windows paths
+    /\b[A-Za-z]:\\/,
+    // stack frames: "at fn (file:1:2)" / "at file:1:2"
+    /\bat\s+[\w$.<>[\]]+\s*\(/,
+    /\bat\s+\S+:\d+/,
+    // SQL in context
+    /\b(?:select|insert|update|delete)\b[\s\S]*\b(?:from|into|set|where)\b/i,
+    // Prisma / PostgreSQL
+    /\bP\d{4}\b/,
+    /sqlstate/i,
+    /prisma/i,
+    // exception class names
+    /\b\w*(?:Error|Exception)\b/,
+    // UUIDs
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+    // JSON / object dumps
+    /\{[\s\S]*:/,
+    /\[\s*\{/,
+    // hosts: IPv4, localhost, host:port
+    /\b\d{1,3}(?:\.\d{1,3}){3}\b/,
+    /\blocalhost\b/i,
+    /\b[a-z][a-z0-9.-]*:\d{2,5}\b/i,
+    // SCREAMING_SNAKE env-var / constant names (two or more segments)
+    /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/,
+    // lower snake_case column / variable names (two or more segments)
+    /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/,
+    // Nest/class identifiers and method references
+    /\b[A-Z][A-Za-z0-9]*(?:Guard|Service|Controller|Module|Repository|Usecase|UseCase|Provider|Interceptor|Filter|Pipe)\b/,
+    /\b[A-Za-z_$][\w$]*\.[a-z_$][\w$]*\(/,
+    /\b[a-z][a-z0-9]*[A-Z][\w$]*\(/,
+    // JavaScript runtime error phrases
+    /cannot read propert(?:y|ies)/i,
+    /\bis not (?:a function|defined|iterable|a constructor)\b/i,
+    /\b(?:undefined|NaN)\b/,
+    /\b(?:of|to|is)\s+(?:undefined|null)\b/i,
+    /\((?:reading|setting)\s/i,
+];
+
+/** A dotted identifier/hostname (needs a letter, so "3.5" and "2026.10.08" stay plain text). */
+const DOTTED_IDENTIFIER_PATTERN = /\b[a-z0-9_-]+(?:\.[a-z0-9_-]+)+\b/gi;
+
+function looksLikeFilePath(token: string): boolean {
+    if (!/[A-Za-z]/.test(token)) {
+        return false;
+    }
+    const slashes = token.split("/").length - 1;
+    if (slashes === 0) {
+        return false;
+    }
+    // "/srv/auth", "./x/y", "a/b/c" are paths; "SMS/MMS" and "예/아니오" are prose.
+    return /^\.{0,2}\/[A-Za-z0-9_@.-]/.test(token) || (slashes >= 2 && /^[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)+$/.test(token));
+}
+
+/**
+ * True when an upstream message carries a diagnostic fragment (file path or
+ * file:line, URL, host/IP/host:port, dotted or snake_case/SCREAMING_SNAKE
+ * identifier, Nest class or method reference, stack frame, JS runtime error
+ * phrase, SQL, Prisma or PostgreSQL code, exception class name, UUID,
+ * JSON/object dump). A message
+ * without any of these is ordinary business wording and is forwarded as-is.
+ */
+export function containsDiagnosticMarker(message: string): boolean {
+    if (DIAGNOSTIC_MARKER_PATTERNS.some((pattern) => pattern.test(message))) {
+        return true;
+    }
+    for (const match of message.matchAll(DOTTED_IDENTIFIER_PATTERN)) {
+        if (/[a-z]/i.test(match[0])) {
+            return true;
+        }
+    }
+    return message.split(/[\s()[\]"'`,;]+/).some(looksLikeFilePath);
+}
+
+function isDiagnosticKoreanText(value: unknown): boolean {
+    return typeof value === "string"
+        && HANGUL_PATTERN.test(value)
+        && containsDiagnosticMarker(value);
+}
+
+function withoutDiagnosticText(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.filter((entry) => !isDiagnosticKoreanText(entry));
+    }
+    return isDiagnosticKoreanText(value) ? undefined : value;
+}
+
+/**
+ * Raw (non-problem) upstream bodies are not an application contract, but the
+ * backend deliberately sends uncoded 4xx Korean business messages. Those keep
+ * reaching the user; a message that carries a diagnostic fragment is dropped
+ * before the message resolver sees the body, so the status-generic message
+ * answers instead.
+ */
+function legacyBodyForMessageResolution(upstreamData: unknown): unknown {
+    if (!upstreamData || typeof upstreamData !== "object" || Array.isArray(upstreamData)) {
+        return undefined;
+    }
+
+    const data = upstreamData as Record<string, unknown>;
+    return {
+        code: data.code,
+        field: data.field,
+        statusCode: data.statusCode,
+        message: withoutDiagnosticText(data.message),
+        error: withoutDiagnosticText(data.error),
+        issues: withoutDiagnosticText(data.issues),
+    };
+}
+
+/**
+ * Only an identifier-shaped code may reach the browser: capital letters, digits
+ * and underscores (no separators, paths, spaces or prose), or a Prisma code
+ * whose consumers key on it (the register duplicate-phone flow).
+ */
+function forwardableErrorCode(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    return /^(?:[A-Z][A-Z0-9_]{1,63}|P\d{4})$/.test(value) ? value : undefined;
+}
+
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
@@ -433,12 +564,15 @@ export function sanitizeUpstreamClientError(
         return { error: normalizeApiError({ response: { status, data: upstreamData } }, { operation }).message };
     }
     const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
-        error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
+        error: getUserErrorMessage(
+            { response: { status, data: legacyBodyForMessageResolution(upstreamData) } },
+            fallbackMessage,
+        ),
     };
 
     if (upstreamData && typeof upstreamData === "object") {
         const data = upstreamData as { code?: unknown; field?: unknown; hasKakaoAccount?: unknown };
-        const code = safeErrorCode(data.code);
+        const code = forwardableErrorCode(data.code);
         if (code) {
             payload.code = code;
             if (/^P\d{4}$/.test(code) && typeof data.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(data.field)) {
