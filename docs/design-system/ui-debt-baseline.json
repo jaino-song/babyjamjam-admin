@@ -821,14 +821,14 @@
     },
     "mobile/src/app/(shell)/clients/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "113:10-113:15|pageLocalComponent"
+        "120:10-120:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1225:13-1231:14|rawUiElement",
-        "1237:13-1243:14|rawUiElement",
-        "1616:25-1623:26|rawUiElement",
-        "1704:15-1709:16|rawUiElement",
-        "1712:15-1717:16|rawUiElement"
+        "1324:13-1330:14|rawUiElement",
+        "1336:13-1342:14|rawUiElement",
+        "1715:25-1722:26|rawUiElement",
+        "1803:15-1808:16|rawUiElement",
+        "1811:15-1816:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
