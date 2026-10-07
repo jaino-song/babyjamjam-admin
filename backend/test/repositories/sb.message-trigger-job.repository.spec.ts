@@ -1465,3 +1465,501 @@ describe("SbMessageTriggerJobRepository", () => {
         warnSpy.mockRestore();
     });
 });
+
+/**
+ * `replacePendingJobsUnlessInFlight` against a small in-memory database that
+ * evaluates the repository's real SQL (bound values and operators) and models
+ * the row, rule and advisory locks the fence relies on, including lock-order
+ * deadlock detection. The same races run against a real PostgreSQL in
+ * `sb.message-trigger-job.manual-send-concurrency.spec.ts` (env-gated).
+ */
+describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modelled row locks)", () => {
+    const RULE_ID = SERVICE_RECORD_LINK_RULE_ID;
+    const OTHER_RULE_ID = "system:another_rule";
+    const SCHEDULE_ID = 10;
+    const OTHER_SCHEDULE_ID = 11;
+    const CANCEL_REASON = "Service record link rescheduled";
+    const LIVE_STATUSES = ["pending", "processing", "dispatching"];
+
+    type FakeRow = {
+        id: string;
+        status: string;
+        ruleId: string;
+        scheduleId: number | null;
+        dedupeKey: string;
+        claimToken: string | null;
+        cancelReason: string | null;
+        scheduledFor: Date;
+        payload: unknown;
+    };
+    type Predicate = { column: string; op: string; value: unknown };
+    type RawQuery = { text: string; values: unknown[] };
+
+    const sqlText = (value: unknown): string => {
+        const candidate = value as { strings?: string[]; text?: string };
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ");
+    };
+
+    /** Column comparisons the selectors bind as `$n`, read from the real rendered SQL. */
+    const boundPredicates = (text: string, values: unknown[]): Predicate[] => (
+        [...text.matchAll(/\b(rule_id|employee_schedule_id|id)\s*(=|<>)\s*\$(\d+)/g)]
+            .map((match) => ({ column: match[1]!, op: match[2]!, value: values[Number(match[3]) - 1] }))
+    );
+
+    /**
+     * A small in-memory database that evaluates the repository's real SQL
+     * (bound values and operators, not fixed fixtures) and models the locking
+     * the manual-send fence depends on: exclusive row locks held to transaction
+     * end (job rows, rule rows for `FOR UPDATE`), the foreign-key KEY SHARE lock
+     * an INSERT takes on the rule row (it conflicts with `FOR UPDATE`),
+     * advisory transaction locks, deadlock detection (40P01), and READ COMMITTED
+     * re-evaluation of a blocked statement's WHERE clause after the wait.
+     */
+    class FakeDatabase {
+        readonly rows = new Map<string, FakeRow>();
+        readonly rules = new Set<string>([RULE_ID, OTHER_RULE_ID]);
+        private nextId = 1;
+        private readonly locks = new Map<string, object>();
+        private readonly keyShares = new Map<string, Set<object>>();
+        private readonly waitingOn = new Map<object, object[]>();
+        private readonly finished = new Map<object, { promise: Promise<void>; resolve: () => void }>();
+        /** Runs while a replacement transaction holds its job row locks, before it writes. */
+        afterRowLocks: (() => Promise<void>) | null = null;
+        /** Runs while a claim holds the rule and job locks, before it commits. */
+        beforeClaimCommit: (() => Promise<void>) | null = null;
+
+        seed(status: string, overrides: Partial<FakeRow> = {}): FakeRow {
+            const id = overrides.id ?? `job-${this.nextId++}`;
+            const row: FakeRow = {
+                id,
+                status,
+                ruleId: RULE_ID,
+                scheduleId: SCHEDULE_ID,
+                dedupeKey: `${overrides.ruleId ?? RULE_ID}:schedule:${overrides.scheduleId ?? SCHEDULE_ID}:primary:${id}`,
+                claimToken: status === "processing" || status === "dispatching" ? `claim-${id}` : null,
+                cancelReason: null,
+                scheduledFor: new Date("2026-07-09T01:00:00.000Z"),
+                payload: {},
+                ...overrides,
+            };
+            this.rows.set(row.id, row);
+            return row;
+        }
+
+        live(ruleId = RULE_ID, scheduleId = SCHEDULE_ID): FakeRow[] {
+            return [...this.rows.values()].filter((row) => (
+                LIVE_STATUSES.includes(row.status) && row.ruleId === ruleId && row.scheduleId === scheduleId
+            ));
+        }
+
+        private done(owner: object) {
+            let entry = this.finished.get(owner);
+            if (!entry) {
+                let resolve!: () => void;
+                const promise = new Promise<void>((settled) => { resolve = settled; });
+                entry = { promise, resolve };
+                this.finished.set(owner, entry);
+            }
+            return entry;
+        }
+
+        private blockers(key: string, owner: object, mode: "exclusive" | "share"): object[] {
+            const found: object[] = [];
+            const holder = this.locks.get(key);
+            if (holder && holder !== owner) found.push(holder);
+            if (mode === "exclusive") {
+                for (const sharer of this.keyShares.get(key) ?? []) if (sharer !== owner) found.push(sharer);
+            }
+            return found;
+        }
+
+        private reaches(from: object[], target: object, seen = new Set<object>()): boolean {
+            for (const owner of from) {
+                if (owner === target) return true;
+                if (seen.has(owner)) continue;
+                seen.add(owner);
+                if (this.reaches(this.waitingOn.get(owner) ?? [], target, seen)) return true;
+            }
+            return false;
+        }
+
+        private async acquire(key: string, owner: object, mode: "exclusive" | "share" = "exclusive"): Promise<void> {
+            for (;;) {
+                const blockers = this.blockers(key, owner, mode);
+                if (blockers.length === 0) break;
+                if (this.reaches(blockers, owner)) {
+                    this.waitingOn.delete(owner);
+                    throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+                }
+                this.waitingOn.set(owner, blockers);
+                await Promise.race(blockers.map((blocker) => this.done(blocker).promise));
+            }
+            this.waitingOn.delete(owner);
+            if (mode === "exclusive") {
+                this.locks.set(key, owner);
+            } else {
+                const sharers = this.keyShares.get(key) ?? new Set<object>();
+                sharers.add(owner);
+                this.keyShares.set(key, sharers);
+            }
+        }
+
+        private releaseAll(owner: object): void {
+            for (const [key, holder] of this.locks) if (holder === owner) this.locks.delete(key);
+            for (const sharers of this.keyShares.values()) sharers.delete(owner);
+            this.waitingOn.delete(owner);
+            this.done(owner).resolve();
+        }
+
+        private toRaw(row: FakeRow) {
+            return {
+                id: row.id,
+                branch_id: "branch-1",
+                rule_id: row.ruleId,
+                status: row.status,
+                scheduled_for: row.scheduledFor,
+                attempts: 0,
+                next_attempt_at: null,
+                sent_at: null,
+                canceled_at: null,
+                cancel_reason: row.cancelReason,
+                client_id: 20,
+                employee_schedule_id: row.scheduleId,
+                recipient_type: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                recipient_phone: "01011112222",
+                template_key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupe_key: row.dedupeKey,
+                payload: row.payload,
+                created_at: new Date("2026-07-01T00:00:00.000Z"),
+                updated_at: new Date("2026-07-01T00:00:00.000Z"),
+                claim_token: row.claimToken,
+            };
+        }
+
+        /** One statement; `owner` holds any locks it takes until its transaction (or autocommit statement) ends. */
+        private async statement(owner: object, query: unknown): Promise<unknown[]> {
+            const text = sqlText(query);
+            const { values } = query as RawQuery;
+            if (text.includes("SET status = 'processing'")) {
+                // Dispatcher claim: candidate read, then rule FOR UPDATE, then the job UPDATE.
+                expect(text).toContain("AND job.status = 'pending'");
+                expect(text).toContain("FOR UPDATE OF rule");
+                const id = values.find((value) => typeof value === "string" && this.rows.has(value)) as string;
+                const candidate = this.rows.get(id)!;
+                if (candidate.status !== "pending") return [];
+                await this.acquire(`rule:${candidate.ruleId}`, owner);
+                await this.acquire(`job:${id}`, owner);
+                const row = this.rows.get(id)!;
+                // READ COMMITTED: re-evaluate the WHERE clause on the row's latest version.
+                if (row.status !== "pending") return [];
+                await this.beforeClaimCommit?.();
+                row.status = "processing";
+                row.claimToken = `claim-${id}`;
+                return [{ id, claim_token: row.claimToken }];
+            }
+            if (text.includes('FROM "message_trigger_rule"') && text.includes("FOR UPDATE")) {
+                const ruleId = boundPredicates(text, values).find((predicate) => predicate.column === "id" && predicate.op === "=")?.value;
+                expect(typeof ruleId).toBe("string");
+                await this.acquire(`rule:${ruleId as string}`, owner);
+                return this.rules.has(ruleId as string) ? [{ id: ruleId }] : [];
+            }
+            if (text.includes("FOR UPDATE")) {
+                const predicates = boundPredicates(text, values);
+                // The selector must scope by rule AND schedule; dropping either would lock foreign rows.
+                for (const column of ["rule_id", "employee_schedule_id"]) {
+                    expect(predicates.some((predicate) => predicate.column === column && predicate.op === "=")).toBe(true);
+                }
+                const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!
+                    .split(",").map((status) => status.trim().replace(/'/g, ""));
+                const columnOf = (row: FakeRow, column: string) => (column === "rule_id" ? row.ruleId : row.scheduleId);
+                const matches = (row: FakeRow) => statuses.includes(row.status) && predicates.every((predicate) => (
+                    (columnOf(row, predicate.column) === predicate.value) === (predicate.op === "=")
+                ));
+                const locked: FakeRow[] = [];
+                for (const candidate of [...this.rows.values()].filter(matches).sort((left, right) => left.id.localeCompare(right.id))) {
+                    await this.acquire(`job:${candidate.id}`, owner);
+                    // Re-check after the lock wait, like PostgreSQL does.
+                    const current = this.rows.get(candidate.id)!;
+                    if (matches(current)) locked.push(current);
+                }
+                await this.afterRowLocks?.();
+                return locked.map((row) => ({ id: row.id, status: row.status }));
+            }
+            if (text.includes("SET status = 'canceled'")) {
+                expect(text).toContain("AND status = 'pending'");
+                const ids = values.filter((value) => typeof value === "string" && this.rows.has(value)) as string[];
+                const canceled: Array<{ id: string }> = [];
+                for (const id of ids) {
+                    const row = this.rows.get(id)!;
+                    if (row.status !== "pending") continue;
+                    row.status = "canceled";
+                    row.cancelReason = values.find((value) => value === CANCEL_REASON) as string;
+                    row.claimToken = null;
+                    canceled.push({ id });
+                }
+                return canceled;
+            }
+            if (text.includes('INSERT INTO "message_trigger_job"')) {
+                const [, ruleId, scheduledFor, , scheduleId, , , , dedupeKey, payload] = values;
+                // The foreign key takes a KEY SHARE lock on the rule row, which waits behind a FOR UPDATE holder.
+                await this.acquire(`rule:${ruleId as string}`, owner, "share");
+                expect(this.rules.has(ruleId as string)).toBe(true);
+                const row = this.seed("pending", {
+                    id: `new-${this.nextId}`,
+                    ruleId: ruleId as string,
+                    scheduleId: scheduleId as number,
+                    dedupeKey: dedupeKey as string,
+                    scheduledFor: scheduledFor as Date,
+                    payload: JSON.parse(payload as string),
+                });
+                return [this.toRaw(row)];
+            }
+            throw new Error(`Unmodelled statement: ${text}`);
+        }
+
+        asPrisma(): PrismaService {
+            const transactionClient = (owner: object) => ({
+                $executeRaw: async (query: unknown) => {
+                    expect(sqlText(query)).toContain("pg_advisory_xact_lock");
+                    await this.acquire(`advisory:${String((query as RawQuery).values[0])}`, owner);
+                    return 1;
+                },
+                $queryRaw: (query: unknown) => this.statement(owner, query),
+            });
+            return {
+                $queryRaw: async (query: unknown) => {
+                    const owner = {};
+                    try {
+                        return await this.statement(owner, query);
+                    } finally {
+                        this.releaseAll(owner);
+                    }
+                },
+                $transaction: async (work: (transaction: unknown) => Promise<unknown>) => {
+                    const owner = {};
+                    try {
+                        return await work(transactionClient(owner));
+                    } finally {
+                        this.releaseAll(owner);
+                    }
+                },
+            } as unknown as PrismaService;
+        }
+    }
+
+    const manualJob = (suffix: string) => MessageTriggerJobEntity.create({
+        branchId: "branch-1",
+        ruleId: RULE_ID,
+        scheduledFor: new Date("2026-07-09T02:00:00.000Z"),
+        clientId: 20,
+        employeeScheduleId: SCHEDULE_ID,
+        recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+        recipientPhone: "01011112222",
+        templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+        dedupeKey: `${RULE_ID}:schedule:${SCHEDULE_ID}:primary:manual:${suffix}`,
+        payload: {
+            memberId: "employee:30",
+            recipientName: "제공인력",
+            recipientPhone: "01011112222",
+            templateVariables: {},
+        },
+    });
+
+    let database: FakeDatabase;
+    let repository: SbMessageTriggerJobRepository;
+
+    beforeEach(() => {
+        database = new FakeDatabase();
+        repository = new SbMessageTriggerJobRepository(database.asPrisma());
+    });
+
+    it.each(["dispatching", "processing"])("refuses and writes nothing when a %s job already exists", async (status) => {
+        const original = database.seed(status);
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result).toEqual({ kind: "in_flight", inFlightJobIds: [original.id] });
+        expect(database.rows.size).toBe(1);
+        expect(original.status).toBe(status);
+        expect(original.cancelReason).toBeNull();
+    });
+
+    it("also refuses when the in-flight job sits next to a pending one, leaving the pending one untouched", async () => {
+        const pending = database.seed("pending");
+        const dispatching = database.seed("dispatching");
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result).toMatchObject({ kind: "in_flight", inFlightJobIds: [dispatching.id] });
+        expect(pending.status).toBe("pending");
+        expect(database.rows.size).toBe(2);
+    });
+
+    it("cancels pending jobs and enqueues exactly one replacement in the same transaction", async () => {
+        const first = database.seed("pending");
+        const second = database.seed("pending");
+        database.seed("sent");
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") return;
+        expect([...result.canceledJobIds].sort()).toEqual([first.id, second.id].sort());
+        expect(first).toMatchObject({ status: "canceled", cancelReason: CANCEL_REASON, claimToken: null });
+        expect(second.status).toBe("canceled");
+        expect(result.job.status).toBe("pending");
+        expect(database.live().map((row) => row.id)).toEqual([result.job.id]);
+    });
+
+    it("only looks at this schedule and this rule: other schedules' and other rules' jobs neither block nor get cancelled", async () => {
+        const otherScheduleInFlight = database.seed("dispatching", { scheduleId: OTHER_SCHEDULE_ID });
+        const otherScheduleProcessing = database.seed("processing", { scheduleId: OTHER_SCHEDULE_ID });
+        const otherRulePending = database.seed("pending", { ruleId: OTHER_RULE_ID });
+        const own = database.seed("pending");
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") return;
+        expect(result.canceledJobIds).toEqual([own.id]);
+        expect(own.status).toBe("canceled");
+        expect(otherScheduleInFlight.status).toBe("dispatching");
+        expect(otherScheduleProcessing.status).toBe("processing");
+        expect(otherRulePending).toMatchObject({ status: "pending", cancelReason: null });
+        expect(database.live()).toHaveLength(1);
+    });
+
+    it("refuses on this schedule's in-flight job and leaves other schedules' pending jobs alone", async () => {
+        const own = database.seed("dispatching");
+        const otherSchedulePending = database.seed("pending", { scheduleId: OTHER_SCHEDULE_ID });
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result).toEqual({ kind: "in_flight", inFlightJobIds: [own.id] });
+        expect(otherSchedulePending.status).toBe("pending");
+        expect(database.rows.size).toBe(2);
+    });
+
+    it("enqueues the replacement when nothing is live", async () => {
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result.kind).toBe("replaced");
+        expect(database.live()).toHaveLength(1);
+    });
+
+    it("takes the advisory lock, then the rule row, then row-locks the live jobs, then cancels, then inserts", async () => {
+        const calls: string[] = [];
+        const inner = database.asPrisma();
+        const spied = {
+            $transaction: (work: (transaction: unknown) => Promise<unknown>) => inner.$transaction(async (transaction) => {
+                const client = transaction as { $queryRaw: (q: unknown) => unknown; $executeRaw: (q: unknown) => unknown };
+                return work({
+                    $executeRaw: (query: unknown) => { calls.push(sqlText(query)); return client.$executeRaw(query); },
+                    $queryRaw: (query: unknown) => { calls.push(sqlText(query)); return client.$queryRaw(query); },
+                });
+            }),
+        } as unknown as PrismaService;
+        database.seed("pending");
+
+        await new SbMessageTriggerJobRepository(spied).replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(calls).toEqual([
+            expect.stringContaining("pg_advisory_xact_lock"),
+            expect.stringMatching(/FROM "message_trigger_rule".*FOR UPDATE/),
+            expect.stringMatching(/FROM "message_trigger_job".*FOR UPDATE/),
+            expect.stringContaining("SET status = 'canceled'"),
+            expect.stringContaining('INSERT INTO "message_trigger_job"'),
+        ]);
+    });
+
+    describe("a dispatcher claim racing the manual replacement", () => {
+        it("claim committed first: the replacement is refused and no second job exists", async () => {
+            const original = database.seed("pending");
+
+            const claimToken = await repository.claimPendingWithRuleFence(original.id, "branch-1");
+            original.status = "dispatching"; // scheduler advanced to the irreversible provider authorization
+            const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+            expect(claimToken).toBe(`claim-${original.id}`);
+            expect(result.kind).toBe("in_flight");
+            expect(database.live().map((row) => row.id)).toEqual([original.id]);
+            expect(database.rows.size).toBe(1);
+        });
+
+        it("claim holds the row lock when the replacement starts: the replacement waits, then refuses", async () => {
+            const original = database.seed("pending");
+            let claimIsHoldingLock!: () => void;
+            const lockHeld = new Promise<void>((resolve) => { claimIsHoldingLock = resolve; });
+            let letClaimCommit!: () => void;
+            const commitGate = new Promise<void>((resolve) => { letClaimCommit = resolve; });
+            database.beforeClaimCommit = async () => { claimIsHoldingLock(); await commitGate; };
+
+            const claim = repository.claimPendingWithRuleFence(original.id, "branch-1");
+            await lockHeld;
+            const replacement = repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+            await Promise.resolve();
+            letClaimCommit();
+            const [claimToken, result] = await Promise.all([claim, replacement]);
+
+            expect(claimToken).not.toBeNull();
+            expect(result).toEqual({ kind: "in_flight", inFlightJobIds: [original.id] });
+            expect(original.status).toBe("processing");
+            expect(database.rows.size).toBe(1);
+        });
+
+        it("replacement holds its locks when the claim starts: the claim waits at the rule lock, loses against the canceled row, no deadlock", async () => {
+            const original = database.seed("pending");
+            let replacementHoldsLocks!: () => void;
+            const locksHeld = new Promise<void>((resolve) => { replacementHoldsLocks = resolve; });
+            let letReplacementWrite!: () => void;
+            const writeGate = new Promise<void>((resolve) => { letReplacementWrite = resolve; });
+            database.afterRowLocks = async () => { replacementHoldsLocks(); await writeGate; };
+
+            const replacement = repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+            await locksHeld;
+            const claim = repository.claimPendingWithRuleFence(original.id, "branch-1");
+            await Promise.resolve();
+            letReplacementWrite();
+            const [result, claimToken] = await Promise.all([replacement, claim]);
+
+            expect(result.kind).toBe("replaced");
+            expect(claimToken).toBeNull();
+            expect(original.status).toBe("canceled");
+            expect(database.live()).toHaveLength(1);
+            expect(database.live()[0]!.status).toBe("pending");
+        });
+    });
+
+    it("two concurrent manual sends never leave two live jobs", async () => {
+        database.seed("pending");
+
+        const results = await Promise.all([
+            repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON),
+            repository.replacePendingJobsUnlessInFlight(manualJob("b"), CANCEL_REASON),
+        ]);
+
+        expect(results.map((result) => result.kind)).toEqual(["replaced", "replaced"]);
+        expect(database.live()).toHaveLength(1);
+    });
+
+    it("two concurrent manual sends with nothing live yet still leave exactly one live job", async () => {
+        await Promise.all([
+            repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON),
+            repository.replacePendingJobsUnlessInFlight(manualJob("b"), CANCEL_REASON),
+        ]);
+
+        expect(database.live()).toHaveLength(1);
+    });
+
+    it("refuses a reserved internal record and a job without a schedule scope", async () => {
+        const reserved = manualJob("a");
+        Object.assign(reserved, { ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID });
+        await expect(repository.replacePendingJobsUnlessInFlight(reserved, CANCEL_REASON))
+            .rejects.toThrow("Internal automation records are not delivery jobs");
+
+        const unscoped = manualJob("b");
+        unscoped.employeeScheduleId = null;
+        await expect(repository.replacePendingJobsUnlessInFlight(unscoped, CANCEL_REASON))
+            .rejects.toThrow("employee schedule scope");
+    });
+});
