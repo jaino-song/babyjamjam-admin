@@ -97,9 +97,8 @@ describe("POST /api/auth/login", () => {
         const response = await POST(createRequest(JSON.stringify(validBody)));
 
         expect(response.status).toBe(401);
-        // The backend's own wording is not forwarded; the 401 status copy replaces it.
         await expect(response.json()).resolves.toEqual({
-            error: "로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요.",
+            error: "이메일 또는 비밀번호가 올바르지 않아요.",
         });
         expect(cookieSet).not.toHaveBeenCalled();
     });

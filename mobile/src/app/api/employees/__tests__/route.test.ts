@@ -119,8 +119,8 @@ describe("employee API routes", () => {
     );
   });
 
-  it("surfaces a registered backend validation message through the employee error mapper", async () => {
-    const message = "phone must be a valid Korean phone number";
+  it("surfaces a safe backend validation message through the employee error mapper", async () => {
+    const message = "전화번호 형식이 올바르지 않습니다.";
     mockPost.mockRejectedValue({
       response: {
         status: 400,
@@ -138,7 +138,7 @@ describe("employee API routes", () => {
 
     expect(response.status).toBe(400);
     const body = await response.json();
-    expect(body).toEqual({ error: "연락처 항목에 올바른 국내 전화번호를 입력해 주세요." });
+    expect(body).toEqual({ error: "전화번호 형식이 올바르지 않아요." });
     expect(getErrorMessage({ response: { status: 400, data: body } }, "ko")).toBe(body.error);
   });
 

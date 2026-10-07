@@ -80,7 +80,7 @@ describe("PATCH /api/users/[id]/account-assignment", () => {
     );
   });
 
-  it("preserves an upstream optimistic-snapshot conflict's status and code without reflecting its wording", async () => {
+  it("preserves an upstream optimistic-snapshot conflict", async () => {
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
     mockPatch.mockRejectedValue(
       new AxiosError("Conflict", "ERR_BAD_RESPONSE", undefined, undefined, {
@@ -101,9 +101,8 @@ describe("PATCH /api/users/[id]/account-assignment", () => {
     consoleError.mockRestore();
 
     expect(response.status).toBe(409);
-    // The upstream Korean wording is not a registered message; the 409 status copy replaces it.
     await expect(response.json()).resolves.toEqual({
-      error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
+      error: "다른 곳에서 계정 정보가 변경됐어요.",
       code: "ACCOUNT_ASSIGNMENT_CONFLICT",
     });
   });

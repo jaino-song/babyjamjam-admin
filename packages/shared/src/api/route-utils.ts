@@ -5,13 +5,11 @@ import {
     createProblemDetails,
     normalizeApiError,
     parseProblemDetails,
-    PROBLEM_CATALOG,
     type ProblemDetails,
     type ProblemError,
     type ProblemErrorCode,
 } from "../errors/problem-details";
 
-import { KOREAN_ERROR_MESSAGES } from "../errors/korean-error-messages";
 import { sanitizeApiDisplayMessage } from "../errors/safe-api-error-message";
 import { getUserErrorMessage } from "../errors/user-error-message";
 import { systemTemplateKeySchema } from "../types/system-template";
@@ -423,37 +421,87 @@ function getMessageTriggerParentConflictCode(error: unknown): string | undefined
     return nestedCode === MESSAGE_AUTOMATION_PARENT_DISABLED_CODE ? nestedCode : undefined;
 }
 
-/**
- * Korean copy this codebase itself authored: every catalog detail/title plus the
- * registered legacy-message table. An upstream legacy body may repeat one of
- * these verbatim; any other Hangul is the backend's own wording.
- */
-const REGISTERED_KOREAN_COPY: ReadonlySet<string> = new Set([
-    ...Object.values(PROBLEM_CATALOG).flatMap((entry) => [entry.detail["ko-KR"], entry.title["ko-KR"]]),
-    ...Object.values(KOREAN_ERROR_MESSAGES),
-]);
-
 const HANGUL_PATTERN = /[가-힣]/;
 
-function isUnregisteredKoreanText(value: unknown): boolean {
-    return typeof value === "string"
-        && HANGUL_PATTERN.test(value)
-        && !REGISTERED_KOREAN_COPY.has(value.trim());
-}
+const DIAGNOSTIC_MARKER_PATTERNS: readonly RegExp[] = [
+    // URLs
+    /\b[a-z][a-z0-9+.-]*:\/\//i,
+    /\bwww\./i,
+    // source files and file:line
+    /[\w-]+\.(?:ts|tsx|js|jsx|mjs|cjs)\b/i,
+    /\.[a-z]{1,5}:\d+/i,
+    // Windows paths
+    /\b[A-Za-z]:\\/,
+    // stack frames: "at fn (file:1:2)" / "at file:1:2"
+    /\bat\s+[\w$.<>[\]]+\s*\(/,
+    /\bat\s+\S+:\d+/,
+    // SQL in context
+    /\b(?:select|insert|update|delete)\b[\s\S]*\b(?:from|into|set|where)\b/i,
+    // Prisma / PostgreSQL
+    /\bP\d{4}\b/,
+    /sqlstate/i,
+    /prisma/i,
+    // exception class names
+    /\b\w*(?:Error|Exception)\b/,
+    // UUIDs
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i,
+    // JSON / object dumps
+    /\{[\s\S]*:/,
+    /\[\s*\{/,
+];
 
-function withoutUnregisteredKorean(value: unknown): unknown {
-    if (Array.isArray(value)) {
-        return value.filter((entry) => !isUnregisteredKoreanText(entry));
+/** A dotted identifier/hostname (needs a letter, so "3.5" and "2026.10.08" stay plain text). */
+const DOTTED_IDENTIFIER_PATTERN = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/gi;
+
+function looksLikeFilePath(token: string): boolean {
+    if (!/[A-Za-z]/.test(token)) {
+        return false;
     }
-    return isUnregisteredKoreanText(value) ? undefined : value;
+    const slashes = token.split("/").length - 1;
+    if (slashes === 0) {
+        return false;
+    }
+    // "/srv/auth", "./x/y", "a/b/c" are paths; "SMS/MMS" and "예/아니오" are prose.
+    return /^\.{0,2}\/[A-Za-z0-9_@.-]/.test(token) || (slashes >= 2 && /^[A-Za-z0-9_@.-]+(?:\/[A-Za-z0-9_@.-]+)+$/.test(token));
 }
 
 /**
- * Raw (non-problem) upstream bodies are not an application contract. The
- * user-facing text for them comes only from registered sources (the status
- * table, the code table, the ValidationPipe rule translations, the registered
- * Korean copy). Hangul the backend wrote itself is diagnostic text and is
- * dropped before the message resolver sees the body.
+ * True when an upstream message carries a diagnostic fragment (file path or
+ * file:line, URL, dotted internal host/identifier, stack frame, SQL, Prisma or
+ * PostgreSQL code, exception class name, UUID, JSON/object dump). A message
+ * without any of these is ordinary business wording and is forwarded as-is.
+ */
+export function containsDiagnosticMarker(message: string): boolean {
+    if (DIAGNOSTIC_MARKER_PATTERNS.some((pattern) => pattern.test(message))) {
+        return true;
+    }
+    for (const match of message.matchAll(DOTTED_IDENTIFIER_PATTERN)) {
+        if (/[a-z]/i.test(match[0])) {
+            return true;
+        }
+    }
+    return message.split(/[\s()[\]"'`,;]+/).some(looksLikeFilePath);
+}
+
+function isDiagnosticKoreanText(value: unknown): boolean {
+    return typeof value === "string"
+        && HANGUL_PATTERN.test(value)
+        && containsDiagnosticMarker(value);
+}
+
+function withoutDiagnosticText(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.filter((entry) => !isDiagnosticKoreanText(entry));
+    }
+    return isDiagnosticKoreanText(value) ? undefined : value;
+}
+
+/**
+ * Raw (non-problem) upstream bodies are not an application contract, but the
+ * backend deliberately sends uncoded 4xx Korean business messages. Those keep
+ * reaching the user; a message that carries a diagnostic fragment is dropped
+ * before the message resolver sees the body, so the status-generic message
+ * answers instead.
  */
 function legacyBodyForMessageResolution(upstreamData: unknown): unknown {
     if (!upstreamData || typeof upstreamData !== "object" || Array.isArray(upstreamData)) {
@@ -465,9 +513,9 @@ function legacyBodyForMessageResolution(upstreamData: unknown): unknown {
         code: data.code,
         field: data.field,
         statusCode: data.statusCode,
-        message: withoutUnregisteredKorean(data.message),
-        error: withoutUnregisteredKorean(data.error),
-        issues: withoutUnregisteredKorean(data.issues),
+        message: withoutDiagnosticText(data.message),
+        error: withoutDiagnosticText(data.error),
+        issues: withoutDiagnosticText(data.issues),
     };
 }
 

@@ -134,7 +134,7 @@ describe("route-utils proxy body parsing", () => {
 
     it.each([
         ["create client", "duration must equal the Korean business-day count (15) for the submitted service period", "서비스 기간의 실제 이용일 수는 15일이에요. 입력한 이용일 수를 확인해 주세요."],
-        ["create employee", "phone must be a valid Korean phone number", "연락처 항목에 올바른 국내 전화번호를 입력해 주세요."],
+        ["create employee", "전화번호 형식이 올바르지 않습니다.", "전화번호 형식이 올바르지 않아요."],
     ])("passes a controlled 400 validation message through to the mapper (%s)", async (context, message, expected) => {
         const response = errorResponse(
             {
@@ -155,23 +155,6 @@ describe("route-utils proxy body parsing", () => {
         expect(body).toEqual({ error: expected });
         expect(getErrorMessage({ response: { status: response.status, data: body } }, "ko")).toBe(expected);
         expect(JSON.stringify(body)).not.toContain("api.internal");
-    });
-
-    it("does not reflect the backend's own Korean wording from a raw 400 body", async () => {
-        const response = errorResponse(
-            {
-                response: {
-                    status: 400,
-                    data: { message: "전화번호 형식이 올바르지 않습니다. 직원 4412 보정 실패", error: "Bad Request" },
-                },
-            },
-            "create employee",
-        );
-
-        expect(response.status).toBe(400);
-        const body = await response.json();
-        expect(body).toEqual({ error: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요." });
-        expect(JSON.stringify(body)).not.toContain("4412");
     });
 
     it("keeps safe Prisma metadata available for localized mapping", async () => {

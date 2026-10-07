@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createProblemDetails, normalizeApiError, PROBLEM_CATALOG } from "../errors/problem-details";
 import {
     buildSystemTemplatePath,
+    containsDiagnosticMarker,
     createRouteUtils,
     invalidSystemTemplateKeyResponse,
     logUpstreamError,
@@ -227,25 +228,14 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         });
     });
 
-    it("does not reflect the backend's own Korean wording from the upstream error field", async () => {
+    it("falls back to the upstream error field when no message is present", async () => {
         const response = errorResponse(
             upstreamError(409, { error: "자동 고객 등록이 꺼져 있습니다." }),
             "create client",
         );
 
         await expect(response.json()).resolves.toEqual({
-            error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
-        });
-    });
-
-    it("falls back to the upstream error field when it is a registered message", async () => {
-        const response = errorResponse(
-            upstreamError(404, { error: "Client not found" }),
-            "create client",
-        );
-
-        await expect(response.json()).resolves.toEqual({
-            error: "해당 고객을 찾을 수 없어요.",
+            error: "자동 고객 등록이 꺼져 있어요.",
         });
     });
 
@@ -451,47 +441,112 @@ describe("system-template route policy", () => {
     });
 });
 
-describe("sanitizeUpstreamClientError never forwards backend diagnostic text", () => {
-    const INTERNAL_KOREAN_DETAIL = "고객 9137의 계약 상태 전이(draft->sent) 보정 3단계에서 eformsign_doc 행 잠금 실패";
+describe("containsDiagnosticMarker", () => {
+    it.each([
+        ["file:line", "검증 중 verify.ts:88에서 오류가 발생했습니다."],
+        ["source file", "main.js 로드에 실패했습니다."],
+        ["absolute path", "/srv/auth/verify 확인 중 오류가 발생했습니다."],
+        ["relative multi-segment path", "dist/auth/verify 에서 실패했습니다."],
+        ["windows path", "C:\\app\\main 확인 실패입니다."],
+        ["dotted internal host", "인증 서비스 analytics.internal 확인 중 오류가 발생했습니다."],
+        ["URL", "https://api.internal/v1/verify 호출에 실패했습니다."],
+        ["stack frame with parens", "처리 실패입니다. at verify (file:1:2)"],
+        ["stack frame bare", "처리 실패입니다. at handler:42"],
+        ["SQL select", "조회 실패: SELECT id FROM client"],
+        ["SQL insert", "저장 실패: insert into client values"],
+        ["SQL update", "저장 실패: UPDATE client SET name"],
+        ["SQL delete", "삭제 실패: DELETE FROM client WHERE id"],
+        ["Prisma code", "저장 실패 P2002 입니다."],
+        ["SQLSTATE", "저장 실패 SQLSTATE 23505 입니다."],
+        ["PrismaClient", "PrismaClientKnownRequestError 가 발생했습니다."],
+        ["prisma invocation", "Invalid `prisma.client.create()` invocation 입니다."],
+        ["Error class", "TypeError: 처리 실패입니다."],
+        ["Exception class", "BadRequestException 이 발생했습니다."],
+        ["UUID", "고객 1f0c2b7e-3a4d-4b8e-9c1d-0a1b2c3d4e5f 를 찾을 수 없습니다."],
+        ["JSON dump", '실패: {"clientId":9137,"reason":"lock"}'],
+        ["array of objects", "실패: [{ id 7 }]"],
+    ])("flags %s", (_family, message) => {
+        expect(containsDiagnosticMarker(message)).toBe(true);
+    });
+
+    it.each([
+        "이메일 또는 비밀번호가 올바르지 않습니다.",
+        "2026-10-08 이후에는 수정할 수 없습니다.",
+        "2026.10.08 이후에는 수정할 수 없습니다.",
+        "2026/10/08 이후에는 수정할 수 없습니다.",
+        "서비스 기간은 15일 이상 3.5배 이내여야 합니다.",
+        "승인/반려 상태에서는 변경할 수 없습니다.",
+        "SMS/MMS 발송은 오전 9시부터 가능합니다.",
+        "이미 발송되었거나 취소할 수 없는 상태입니다",
+        "같은 전화번호의 고객이 이미 등록되어 있습니다.",
+    ])("keeps plain business wording (%s)", (message) => {
+        expect(containsDiagnosticMarker(message)).toBe(false);
+    });
+});
+
+describe("sanitizeUpstreamClientError forwards business wording but never diagnostic fragments", () => {
+    const G4_DIAGNOSTIC = "인증 서비스 analytics.internal 확인 중 /srv/auth/verify.ts:88에서 오류가 발생했습니다.";
+    const STATUS_400 = "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요.";
+
+    it("replaces the reviewed 4xx/401/403 diagnostic message with the status-generic message", () => {
+        expect(sanitizeUpstreamClientError({ message: G4_DIAGNOSTIC }, "Failed to x", 401))
+            .toEqual({ error: "로그인 인증을 확인할 수 없어요. 다시 로그인해 주세요." });
+        expect(sanitizeUpstreamClientError({ message: G4_DIAGNOSTIC, error: "Forbidden" }, "Failed to x", 403))
+            .toEqual({ error: "이 작업을 할 권한이 없어요." });
+        const payload = sanitizeUpstreamClientError({ message: G4_DIAGNOSTIC, error: "Bad Request" }, "Failed to x", 400);
+        expect(payload).toEqual({ error: STATUS_400 });
+        expect(JSON.stringify(payload)).not.toMatch(/analytics|\/srv|verify\.ts/);
+    });
+
+    it("strips the diagnostic message in the error field and in message arrays", () => {
+        expect(sanitizeUpstreamClientError({ error: G4_DIAGNOSTIC }, "Failed to x", 409))
+            .toEqual({ error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요." });
+        expect(sanitizeUpstreamClientError({ message: [G4_DIAGNOSTIC, "name must be a string"] }, "Failed to x", 400))
+            .toEqual({ error: "이름 항목은 문자로 입력해 주세요." });
+    });
+
+    it.each([
+        ["file:line", "검증 중 verify.ts:88에서 오류가 발생했습니다."],
+        ["path", "/srv/auth/verify 확인 중 오류가 발생했습니다."],
+        ["dotted host", "analytics.internal 확인 중 오류가 발생했습니다."],
+        ["URL", "https://api.internal/v1 호출에 실패했습니다."],
+        ["stack frame", "처리 실패입니다. at verify (file:1:2)"],
+        ["SQL", "조회 실패: SELECT id FROM client"],
+        ["Prisma code", "저장 실패 P2002 입니다."],
+        ["Error class", "TypeError: 처리 실패입니다."],
+        ["UUID", "고객 1f0c2b7e-3a4d-4b8e-9c1d-0a1b2c3d4e5f 를 찾을 수 없습니다."],
+        ["JSON dump", '실패: {"clientId":9137}'],
+    ])("answers a message carrying a %s marker with the status-generic message", (_family, message) => {
+        expect(sanitizeUpstreamClientError({ message, error: "Bad Request" }, "Failed to x", 400))
+            .toEqual({ error: STATUS_400 });
+    });
+
+    it("forwards the login credential message and a dated business message (converted to the app's copy style)", () => {
+        expect(sanitizeUpstreamClientError({ message: "이메일 또는 비밀번호가 올바르지 않습니다." }, "Failed to login", 401))
+            .toEqual({ error: "이메일 또는 비밀번호가 올바르지 않아요." });
+        expect(sanitizeUpstreamClientError({ message: "2026-10-08 이후에는 수정할 수 없습니다." }, "Failed to x", 409))
+            .toEqual({ error: "2026-10-08 이후에는 수정할 수 없어요." });
+    });
 
     it("replaces a registered problem's detail with the catalog message, whatever the upstream detail says", () => {
         const problem = createProblemDetails({ code: "CLIENT_PHONE_ALREADY_REGISTERED", requestId: "req-1", outcome: "NOT_APPLIED" });
-        const payload = sanitizeUpstreamClientError({ ...problem, detail: INTERNAL_KOREAN_DETAIL, title: INTERNAL_KOREAN_DETAIL }, "fallback", 409);
+        const payload = sanitizeUpstreamClientError({ ...problem, detail: G4_DIAGNOSTIC, title: G4_DIAGNOSTIC }, "fallback", 409);
 
         expect(payload.code).toBe("CLIENT_PHONE_ALREADY_REGISTERED");
-        expect(payload.detail).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"]);
         expect(payload.error).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"]);
-        expect(JSON.stringify(payload)).not.toContain("9137");
-        expect(JSON.stringify(payload)).not.toContain("eformsign_doc");
+        expect(JSON.stringify(payload)).not.toContain("analytics");
     });
 
-    it("keeps the catalog detail of every registered code verbatim (no code is allowed to keep upstream text)", () => {
+    it("keeps the catalog detail of every registered code verbatim", () => {
         for (const [code, entry] of Object.entries(PROBLEM_CATALOG)) {
             const problem = createProblemDetails({ code: code as keyof typeof PROBLEM_CATALOG, requestId: "req-all", status: entry.status });
-            const payload = sanitizeUpstreamClientError({ ...problem, detail: INTERNAL_KOREAN_DETAIL }, "fallback", entry.status);
+            const payload = sanitizeUpstreamClientError({ ...problem, detail: G4_DIAGNOSTIC }, "fallback", entry.status);
             expect(payload.error).toBe(entry.detail["ko-KR"]);
             expect(payload.code).toBe(code);
         }
     });
 
-    it("strips Korean free text from a raw legacy body and answers with the status message", () => {
-        const payload = sanitizeUpstreamClientError(
-            { message: INTERNAL_KOREAN_DETAIL, error: "Bad Request", statusCode: 400 },
-            "Failed to send contract",
-            400,
-        );
-
-        expect(payload).toEqual({ error: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요." });
-    });
-
-    it("strips Korean free text in the error field and in message arrays", () => {
-        expect(sanitizeUpstreamClientError({ error: INTERNAL_KOREAN_DETAIL }, "Failed to x", 409))
-            .toEqual({ error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요." });
-        expect(sanitizeUpstreamClientError({ message: [INTERNAL_KOREAN_DETAIL, "name must be a string"] }, "Failed to x", 400))
-            .toEqual({ error: "이름 항목은 문자로 입력해 주세요." });
-    });
-
-    it("still translates registered validation text (ValidationPipe rules and registered Korean copy)", () => {
+    it("still translates registered validation text", () => {
         expect(sanitizeUpstreamClientError(
             { message: ["phone must be a valid Korean phone number"], error: "Bad Request" },
             "Failed to x",
@@ -499,16 +554,11 @@ describe("sanitizeUpstreamClientError never forwards backend diagnostic text", (
         )).toEqual({ error: "연락처 항목에 올바른 국내 전화번호를 입력해 주세요." });
         expect(sanitizeUpstreamClientError({ message: "Client not found" }, "Failed to x", 404))
             .toEqual({ error: "해당 고객을 찾을 수 없어요." });
-        const registeredKorean = PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"];
-        expect(sanitizeUpstreamClientError({ message: registeredKorean }, "Failed to x", 409))
-            .toEqual({ error: registeredKorean });
     });
 
     it("turns a raw string body and a non-JSON body into the generic status message", () => {
-        expect(sanitizeUpstreamClientError(`<html>${INTERNAL_KOREAN_DETAIL} at /app/dist/main.js:1</html>`, "Failed to x", 400))
-            .toEqual({ error: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요." });
-        expect(sanitizeUpstreamClientError(INTERNAL_KOREAN_DETAIL, "Failed to x", 404))
-            .toEqual({ error: "요청한 정보를 찾을 수 없어요." });
+        expect(sanitizeUpstreamClientError(`<html>${G4_DIAGNOSTIC}</html>`, "Failed to x", 400)).toEqual({ error: STATUS_400 });
+        expect(sanitizeUpstreamClientError(G4_DIAGNOSTIC, "Failed to x", 404)).toEqual({ error: "요청한 정보를 찾을 수 없어요." });
         expect(sanitizeUpstreamClientError(undefined, "Failed to x", 502))
             .toEqual({ error: "연결된 서버에서 정상적인 응답을 받지 못했어요." });
     });
@@ -516,18 +566,20 @@ describe("sanitizeUpstreamClientError never forwards backend diagnostic text", (
     it("never reflects a 5xx body, a stack trace, SQL, or a Prisma message", () => {
         const body = {
             statusCode: 500,
-            message: `${INTERNAL_KOREAN_DETAIL}\n    at Object.<anonymous> (/app/dist/x.js:1:1) PrismaClientKnownRequestError SELECT * FROM "Client"`,
+            message: `${G4_DIAGNOSTIC}\n    at Object.<anonymous> (/app/dist/x.js:1:1) PrismaClientKnownRequestError SELECT * FROM "Client"`,
             stack: "Error: boom\n    at /app/dist/x.js",
-            error: INTERNAL_KOREAN_DETAIL,
+            error: G4_DIAGNOSTIC,
         };
         const payload = sanitizeUpstreamClientError(body, "Failed to x", 500);
 
         expect(payload).toEqual({ error: "서버 내부 오류로 요청을 처리하지 못했어요." });
-        expect(JSON.stringify(payload)).not.toMatch(/9137|Prisma|SELECT|\/app\/|boom/);
+        expect(JSON.stringify(payload)).not.toMatch(/analytics|Prisma|SELECT|\/app\/|boom/);
+        expect(sanitizeUpstreamClientError({ message: "이메일 또는 비밀번호가 올바르지 않습니다." }, "Failed to x", 500))
+            .toEqual({ error: "서버 내부 오류로 요청을 처리하지 못했어요." });
     });
 
     it("forwards only identifier-shaped codes: no separators, paths or free text", () => {
-        expect(sanitizeUpstreamClientError({ code: "EMAIL_EXISTS", message: INTERNAL_KOREAN_DETAIL }, "Failed to x", 409))
+        expect(sanitizeUpstreamClientError({ code: "EMAIL_EXISTS", message: G4_DIAGNOSTIC }, "Failed to x", 409))
             .toEqual({ error: "이미 등록된 이메일이에요.", code: "EMAIL_EXISTS" });
         expect(sanitizeUpstreamClientError({ code: "CLIENT:9137:LOCK_FAILED" }, "Failed to x", 409).code).toBeUndefined();
         expect(sanitizeUpstreamClientError({ code: "고객 9137 잠금 실패" }, "Failed to x", 409).code).toBeUndefined();
