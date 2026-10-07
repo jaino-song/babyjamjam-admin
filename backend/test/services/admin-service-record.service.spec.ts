@@ -1,8 +1,10 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { MESSAGE_AUTOMATION_PARENT_DISABLED_REASON } from "application/services/message-automation-activation.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
@@ -776,6 +778,47 @@ describe("AdminServiceRecordService", () => {
             expect(link.status).toBe("canceled");
             expect(link.sentCount).toBe(1);
             expect(link.lastSentAt).toEqual(at("1T06:00"));
+        });
+
+        describe("canceled scheduling lease (automation deactivation cleanup)", () => {
+            const leaseReason = SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON;
+            // Jul 1 lease created (createdAt) -> Jul 4 deactivation cancels it (updatedAt bumped).
+            const canceledLease = (extra: Record<string, unknown> = {}) => job(
+                "job-lease",
+                "canceled",
+                at("4T06:00"),
+                { createdAt: at("1T06:00"), cancelReason: leaseReason, canceledByUser: false, ...extra },
+            );
+
+            it("shows sent when deactivation canceled a never-sent lease after a newer manual success", async () => {
+                const link = await linkFor(
+                    [canceledLease(), job("job-manual", "sent", at("3T06:00"))],
+                    [log(1, "job-manual", "sent", at("3T06:00"))],
+                );
+                expect(link.status).toBe("sent");
+                expect(link.sentCount).toBe(1);
+                expect(link.lastSentAt).toEqual(at("3T06:00"));
+            });
+
+            it("still shows canceled for a lease cancel with no success after the lease", async () => {
+                expect((await linkFor([canceledLease()], [])).status).toBe("canceled");
+                const olderSuccess = await linkFor(
+                    [job("job-old", "sent", new Date("2026-06-20T06:00:00.000Z")), canceledLease()],
+                    [log(1, "job-old", "sent", new Date("2026-06-20T06:00:00.000Z"))],
+                );
+                expect(olderSuccess.status).toBe("canceled");
+            });
+
+            it("does not hide a genuine resend cancellation that shares no lease marker", async () => {
+                const link = await linkFor(
+                    [
+                        job("job-manual", "sent", at("3T06:00")),
+                        canceledLease({ cancelReason: MESSAGE_AUTOMATION_PARENT_DISABLED_REASON }),
+                    ],
+                    [log(1, "job-manual", "sent", at("3T06:00"))],
+                );
+                expect(link.status).toBe("canceled");
+            });
         });
 
         it("shows sent when a canceled job is older than a later success", async () => {

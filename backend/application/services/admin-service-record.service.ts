@@ -11,6 +11,7 @@ import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
@@ -67,6 +68,24 @@ type ServiceRecordLinkLog = message_log;
 type LinkAttempt =
     | { kind: "job"; time: number; job: ServiceRecordLinkJob }
     | { kind: "log"; time: number; log: ServiceRecordLinkLog };
+
+/**
+ * An unmaterialised scheduling lease that automation deactivation canceled.
+ *
+ * `service-record-link.service.ts` claims an automatic send by inserting a
+ * `failed` lease row (reason SCHEDULING_RETRY, no link, never dispatched). When
+ * the branch automation is switched off,
+ * `message-automation-activation.service.ts` cancels exactly those leases with
+ * SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON and `canceledByUser: false`; a
+ * job that had materialised (pending/processing) is canceled with a different
+ * reason. So this reason + no user cancel identifies a cancellation that is
+ * cleanup of a never-sent lease, not a canceled delivery attempt.
+ */
+function isCanceledSchedulingLease(job: ServiceRecordLinkJob): boolean {
+    return job.status === "canceled"
+        && job.cancelReason === SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON
+        && job.canceledByUser !== true;
+}
 
 function isInFlightLinkJob(job: ServiceRecordLinkJob): boolean {
     return job.status === "pending" || job.status === "processing" || job.status === "dispatching";
@@ -518,8 +537,22 @@ export class AdminServiceRecordService {
         const inFlightJobIds = new Set(
             jobs.filter((job) => isInFlightLinkJob(job)).map((job) => job.id),
         );
+        // A canceled scheduling lease is cleanup, not an attempt: its cancel
+        // bumps updatedAt, which would otherwise outrank a real delivery that
+        // succeeded after the lease was created (the lease's only real moment).
+        // It is skipped ONLY when such a success exists; with no later success
+        // it still counts and shows "canceled", and a genuine canceled resend
+        // (any other reason, or canceled by a user) is never skipped.
+        const latestSuccessTime = Math.max(
+            -Infinity,
+            ...logs.filter((log) => log.status === "sent").map((log) => this.logActivityTime(log)),
+            ...jobs.filter((job) => job.status === "sent").map((job) => this.jobActivityTime(job)),
+        );
+        const isSupersededLease = (job: ServiceRecordLinkJob): boolean => (
+            isCanceledSchedulingLease(job) && latestSuccessTime > job.createdAt.getTime()
+        );
         const attempts: LinkAttempt[] = [
-            ...jobs.map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...jobs.filter((job) => !isSupersededLease(job)).map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
             ...logs
                 .filter((log) => (
                     (log.status === "sent" || log.status === "failed")
