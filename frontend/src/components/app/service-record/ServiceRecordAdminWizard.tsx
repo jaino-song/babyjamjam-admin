@@ -39,6 +39,7 @@ import {
     type ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
 import { subscribeServiceRecordCaseChanges } from "@/features/service-records/case-events";
+import { normalizeHeaderChanges, normalizeSessionChanges } from "@/features/service-records/utils/admin-edit-normalization";
 import { useUnsavedChangesGuard } from "@/features/service-records/hooks/use-unsaved-changes-guard";
 import {
     publishServiceRecordRevisionSync,
@@ -794,9 +795,10 @@ export function ServiceRecordAdminWizard({
                     return;
                 }
             }
+            // Stage what the server will store, so the overlay shows it and the draft check stays exact.
             setPending((current) => ({
-                sessions: !editingHeader && Object.keys(patch).length > 1 ? mergeSessionPatch(current.sessions, patch) : current.sessions,
-                header: editingHeader ? { ...current.header, ...headerPatch } : current.header,
+                sessions: !editingHeader && Object.keys(patch).length > 1 ? mergeSessionPatch(current.sessions, normalizeSessionChanges(patch)) : current.sessions,
+                header: editingHeader ? { ...current.header, ...normalizeHeaderChanges(headerPatch) } : current.header,
                 moves: dateMove ? [...current.moves, dateMove] : current.moves,
                 vector: movedEntries ?? current.vector,
             }));

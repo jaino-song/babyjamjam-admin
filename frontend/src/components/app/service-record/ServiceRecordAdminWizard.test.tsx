@@ -460,15 +460,26 @@ describe("per-session administrator editing", () => {
     }
     let sentChanges: AdminServiceRecordEditChanges = {};
     let movedDates: Record<number, string> = {};
+    /** Same normalization the backend applies before storing a draft: trimmed header strings, etcService and notes. */
+    function serverNormalized(changes: AdminServiceRecordEditChanges): AdminServiceRecordEditChanges {
+        const trimmed = <T extends object>(value: T, keys: string[]): T => Object.fromEntries(
+            Object.entries(value).map(([key, item]) => [key, keys.includes(key) && typeof item === "string" ? item.trim() : item]),
+        ) as T;
+        return {
+            ...(changes.header ? { header: Object.fromEntries(Object.entries(changes.header).map(([key, item]) => [key, typeof item === "string" ? item.trim() : item])) } : {}),
+            ...(changes.sessions ? { sessions: changes.sessions.map((session) => trimmed(session, ["etcService", "notes"])) } : {}),
+        };
+    }
     function echoedDraft(version: number, withMoves: boolean) {
-        const sessions = new Map((sentChanges.sessions ?? []).map((session) => [session.sessionIndex, { ...session }]));
+        const stored = serverNormalized(sentChanges);
+        const sessions = new Map((stored.sessions ?? []).map((session) => [session.sessionIndex, { ...session }]));
         if (withMoves) {
             for (const [index, serviceDate] of Object.entries(movedDates)) {
                 sessions.set(Number(index), { ...sessions.get(Number(index)), sessionIndex: Number(index), serviceDate });
             }
         }
         return makeDraftState({
-            ...(sentChanges.header ? { header: sentChanges.header } : {}),
+            ...(stored.header ? { header: stored.header } : {}),
             sessions: [...sessions.values()],
         }, version);
     }
@@ -695,6 +706,59 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledTimes(2);
         expect(adminServiceRecordEditApi.discardDraft).toHaveBeenLastCalledWith("draft-1", 3);
         expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
+    });
+
+    describe("values the server normalizes before storing", () => {
+        async function expectPreviewNotRefresh() {
+            await startCommit();
+            expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1);
+        }
+
+        it("reaches the preview for etcService with trailing spaces and stages the trimmed value", async () => {
+            const { container } = open();
+            editNoteOn(container, "수정된 서비스  ");
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+
+            await expectPreviewNotRefresh();
+            expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", { sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }] });
+        });
+
+        it("reaches the preview for notes with surrounding whitespace", async () => {
+            const { container } = open();
+            fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[2]);
+            fireEvent.change(screen.getAllByRole("textbox")[1], { target: { value: "  특이사항\n" } });
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+
+            await expectPreviewNotRefresh();
+            expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", { sessions: [{ sessionIndex: 1, notes: "특이사항" }] });
+        });
+
+        it("never stages a header value with surrounding spaces, so the server's header trim cannot diverge", () => {
+            // The header validators reject any whitespace, which is why the header trim
+            // is covered by the unit test of the normalization helper rather than here.
+            render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+            fireEvent.click(screen.getByRole("button", { name: "기본정보 수정" }));
+            fireEvent.change(screen.getByLabelText("신생아 몸무게 (kg)"), { target: { value: " 3.5 " } });
+            expect(screen.getByRole("button", { name: "수정 확인" })).toBeDisabled();
+        });
+
+        it("keeps a numeric answer exactly as typed, since the server does not coerce answers", async () => {
+            const { container } = open();
+            fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[0]);
+            const input = screen.getAllByRole("spinbutton")[0] as HTMLInputElement;
+            fireEvent.change(input, { target: { value: "4" } });
+            fireEvent.click(screen.getByRole("button", { name: "다음" }));
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+
+            await expectPreviewNotRefresh();
+            const sent = jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0][1];
+            expect(sent?.sessions?.[0].answers).toEqual({ [Object.keys(sent?.sessions?.[0].answers ?? {})[0]]: "4" });
+        });
     });
 
     it("asks before 수정 취소 and clears only the local edits without a server call", async () => {
