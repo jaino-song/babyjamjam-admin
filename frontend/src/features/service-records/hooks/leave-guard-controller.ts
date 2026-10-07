@@ -5,11 +5,14 @@
  *
  *     ... , P, E, G        <- the user rests on G
  *
- * Why two strategies: Next's app router listens for `popstate` on `window` from the
- * moment the app boots, so its listener always runs before ours (window listeners run
- * in registration order, capture or not), and React flushes the resulting route change
- * synchronously inside that same event. A guard that only reacts to `popstate` is
- * therefore too late whenever Back lands on another URL: the editor is already gone.
+ * Why two strategies: Next's app router listens for `popstate` on `window` and React
+ * flushes the resulting route change synchronously inside that same event, so a guard
+ * that only reacts to `popstate` is too late whenever Back lands on another URL: the
+ * editor is already gone. Window listeners run in registration order (Chromium does
+ * not run a capture listener first when `window` is the target), so "ours" has to be
+ * registered before the router's. `leave-guard-popstate.ts` does that: one `popstate`
+ * listener added when the root layout's client tree is evaluated, which this
+ * controller's handler is plugged into while armed.
  *
  * 1. Navigation API (Chromium; any browser that has `window.navigation`): the `navigate`
  *    event fires *before* the traversal and is cancelable, so we veto it. Nothing moves,
@@ -21,10 +24,11 @@
  *    cancel):
  *    - Back from G lands on E (same URL, so Next re-renders the same page): modal;
  *      머무르기 pushes a fresh G, 나가기 goes back once more and lands exactly on P.
- *    - A multi-entry Back lands on another entry D. Where Next owns the router this is
- *      already too late (see above); where it does not, we push E' (copy of E: same URL
- *      and `history.state`) on top of D so the page never leaves the editor URL, 머무르기
- *      pushes G on top of E', and 나가기 goes back one entry from E', which is D itself.
+ *    - A multi-entry Back lands on another entry D. The early dispatcher runs us ahead
+ *      of the router and we stop the event there, so the router never renders D. We push
+ *      E' (copy of E: same URL and `history.state`) on top of D so the page never leaves
+ *      the editor URL, 머무르기 pushes G on top of E', and 나가기 goes back one entry
+ *      from E', which is D itself.
  *      The entries between D and E, and any forward entries, are dropped, as with any
  *      new navigation made from D.
  *
@@ -75,6 +79,8 @@
  * treated as "not ours" everywhere (a hash-only traversal onto it passes, release leaves
  * it alone).
  */
+
+import { addLeaveGuardPopStateHandler } from "./leave-guard-popstate";
 
 const GUARD_STATE_KEY = "__serviceRecordLeaveGuard";
 
@@ -198,6 +204,7 @@ export function createLeaveGuardController({
 }): LeaveGuardController {
     let armed: Armed | null = null;
     let listening = false;
+    let removePopState: () => void = () => undefined;
     let bypass = false;
     let pending: PendingNavigation | null = null;
     let releaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -328,7 +335,7 @@ export function createLeaveGuardController({
         listening = true;
         window.addEventListener("beforeunload", handleBeforeUnload);
         document.addEventListener("click", handleClick, true);
-        window.addEventListener("popstate", handlePopState, true);
+        removePopState = addLeaveGuardPopStateHandler(handlePopState);
         getNavigation()?.addEventListener("navigate", handleNavigate);
     };
 
@@ -337,7 +344,8 @@ export function createLeaveGuardController({
         listening = false;
         window.removeEventListener("beforeunload", handleBeforeUnload);
         document.removeEventListener("click", handleClick, true);
-        window.removeEventListener("popstate", handlePopState, true);
+        removePopState();
+        removePopState = () => undefined;
         getNavigation()?.removeEventListener("navigate", handleNavigate);
     };
 

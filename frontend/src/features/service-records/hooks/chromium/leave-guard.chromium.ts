@@ -8,7 +8,8 @@ import ts from "typescript";
  * Drives the real `createLeaveGuardController` (transpiled, no stubs) in Chromium
  * against genuine session history: back, long-press-style multi-entry traversal,
  * hash entries, and a stand-in for Next's popstate handler (registered first, as in
- * the app). Run twice: with the Navigation API (traversals are vetoed before they
+ * the app, after the guard's early popstate dispatcher, which the root layout evaluates
+ * at boot). Run twice: with the Navigation API (traversals are vetoed before they
  * happen) and with it removed (the popstate fallback used by browsers without it).
  */
 
@@ -16,10 +17,12 @@ const ORIGIN = "http://guard.test";
 const EDITOR = "/clients/42/records?tab=edit";
 const NEXT_STATE = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { marker: "editor-tree" } };
 
-const controllerJs = ts.transpileModule(
-    readFileSync(join(__dirname, "..", "leave-guard-controller.ts"), "utf8"),
-    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } },
-).outputText;
+const transpile = (file: string) =>
+    ts.transpileModule(readFileSync(join(__dirname, "..", file), "utf8"), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    }).outputText;
+const controllerJs = transpile("leave-guard-controller.ts");
+const popStateJs = transpile("leave-guard-popstate.ts");
 
 const pageHtml = `<!doctype html><html><body>
 <a id="hash" href="#section">hash</a>
@@ -27,11 +30,33 @@ const pageHtml = `<!doctype html><html><body>
   <button id="stay">머무르기</button><button id="leave">나가기</button>
 </div>
 <script>
-  window.exports = {};
-  (function (exports) { ${controllerJs} })(window.exports);
+  window.modules = {};
+  function load(name, code) {
+    const module = { exports: {} };
+    new Function("exports", "require", "module", code)(module.exports, (path) => window.modules[path], module);
+    window.modules[name] = module.exports;
+  }
+  // The root layout's client tree evaluates the early popstate dispatcher at boot,
+  // before Next's app router mounts and adds its own popstate listener.
+  load("./leave-guard-popstate", ${JSON.stringify(popStateJs)});
+  load("./leave-guard-controller", ${JSON.stringify(controllerJs)});
+  window.exports = window.modules["./leave-guard-controller"];
   window.nextPops = [];
-  // Stand-in for Next's app-router popstate handler (registered before the guard).
-  window.addEventListener("popstate", () => window.nextPops.push(location.pathname + location.search));
+  window.editorMounted = true;
+  window.routed = [];
+  // Stand-in for Next's app-router popstate handler (registered after the dispatcher,
+  // before the guard arms). Like the router it renders whatever route the traversal
+  // landed on from inside the event: leaving the editor URL unmounts the editor, which
+  // runs the guard's cleanup (React effect cleanup -> release).
+  window.addEventListener("popstate", () => {
+    const url = location.pathname + location.search;
+    window.nextPops.push(url);
+    if (url !== ${JSON.stringify(EDITOR)}) {
+      window.editorMounted = false;
+      window.routed.push(url);
+      window.guard.release();
+    }
+  });
   window.promptOpen = false;
   window.guard = window.exports.createLeaveGuardController({
     onPromptChange: (open) => { window.promptOpen = open; document.getElementById("modal").hidden = !open; },
@@ -44,6 +69,8 @@ interface HarnessWindow {
     guard: { arm: () => void; release: () => void };
     promptOpen: boolean;
     nextPops: string[];
+    editorMounted: boolean;
+    routed: string[];
     left?: boolean;
 }
 
@@ -71,6 +98,8 @@ const where = (page: Page) => page.evaluate(() => location.pathname + location.s
 const modalOpen = (page: Page) => page.evaluate(() => (window as unknown as HarnessWindow).promptOpen as boolean);
 const historyState = (page: Page) => page.evaluate(() => history.state);
 const historyLength = (page: Page) => page.evaluate(() => history.length);
+const editorMounted = (page: Page) => page.evaluate(() => (window as unknown as HarnessWindow).editorMounted);
+const routed = (page: Page) => page.evaluate(() => (window as unknown as HarnessWindow).routed);
 const nextPops = (page: Page) => page.evaluate(() => (window as unknown as HarnessWindow).nextPops as string[]);
 // Same-document traversals are async in Chromium; wait for the guard (or Next) to react.
 const settle = (page: Page) => page.waitForTimeout(150);
@@ -183,6 +212,45 @@ for (const mode of MODES) {
                 await settle(page);
                 expect(await where(page)).toBe("/previous");
             }
+        });
+
+        test("multi-entry Back past the router: prompt, editor stays mounted at the editor URL, 머무르기 keeps it", async ({ page }) => {
+            // e.g. auth callback -> login -> router.replace(editor): history [.., callback, E, G].
+            await setup(page, mode);
+            await arm(page);
+            await page.evaluate(() => history.go(-2)); // guard -> editor -> previous
+            await settle(page);
+            expect(await modalOpen(page)).toBe(true);
+            expect(await editorMounted(page)).toBe(true);
+            expect(await routed(page)).toEqual([]);
+            expect(await where(page)).toBe(EDITOR);
+            expect(await historyState(page)).toMatchObject(NEXT_STATE);
+            expect(await nextPops(page)).toEqual([]);
+
+            await page.click("#stay");
+            expect(await where(page)).toBe(EDITOR);
+            expect(await editorMounted(page)).toBe(true);
+            // Still guarded: Back holds again.
+            await browserBack(page);
+            await settle(page);
+            expect(await modalOpen(page)).toBe(true);
+            expect(await editorMounted(page)).toBe(true);
+            expect(await where(page)).toBe(EDITOR);
+        });
+
+        test("multi-entry Back past the router: 나가기 continues to the entry the user was heading to", async ({ page }) => {
+            await setup(page, mode);
+            await arm(page);
+            await page.evaluate(() => history.go(-2));
+            await settle(page);
+            expect(await editorMounted(page)).toBe(true);
+            await page.click("#leave");
+            await settle(page);
+            expect(await where(page)).toBe("/previous");
+            expect(await page.evaluate(() => (window as unknown as HarnessWindow).left)).toBe(true);
+            // Only now does the router render the destination and unmount the editor.
+            expect(await editorMounted(page)).toBe(false);
+            expect(await routed(page)).toEqual(["/previous"]);
         });
 
         test("release never navigates; with the Navigation API it also takes the guard entry out of the way", async ({ page }) => {
