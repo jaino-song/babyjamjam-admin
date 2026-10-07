@@ -59,7 +59,7 @@ describe("ContractCreationForm compensation flows", () => {
       branch.indexOf("markCreationProgressFailed()"),
     );
     expect(warningBranch).toContain(
-      "queryClient.invalidateQueries({ queryKey: eformsignQueryKeys.documents() })",
+      "invalidateContractQueries(finalClientId)",
     );
     expect(branch.indexOf('adopted.warnings?.includes("mirror_sync_failed")'))
       .toBeLessThan(branch.indexOf("setIsCreationSuccessOpen(true)"));
