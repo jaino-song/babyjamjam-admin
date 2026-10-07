@@ -1108,6 +1108,24 @@ export default function ClientsPage() {
                                             <Pencil className="w-4 h-4" />
                                             {t(locale, "common.edit")}
                                         </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
+                                            disabled={isPreparingScheduleChange}
+                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
+                                            className="gap-2"
+                                        >
+                                            <CalendarDays className="w-4 h-4" />
+                                            서비스 일정 변경
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
+                                            disabled={isSendingReceipt}
+                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+                                        </DropdownMenuItem>
                                         {canCreateNewContractDocument(activeSelectedClient) && (
                                             <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_create-maternity-contract"
@@ -1134,24 +1152,6 @@ export default function ClientsPage() {
                                                 </a>
                                             </DropdownMenuItem>
                                         )}
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
-                                            disabled={isSendingReceipt}
-                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className="gap-2"
-                                        >
-                                            <Send className="w-4 h-4" />
-                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
-                                            disabled={isPreparingScheduleChange}
-                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
-                                            className="gap-2"
-                                        >
-                                            <CalendarDays className="w-4 h-4" />
-                                            서비스 일정 변경
-                                        </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"
