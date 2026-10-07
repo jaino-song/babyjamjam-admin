@@ -3911,6 +3911,42 @@ describe("ClientService", () => {
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
         });
 
+        // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea. A UTC server must still
+        // count business days from the Korean date (Oct 1), not from Sep 30.
+        // 2026-10-01T03:00:00Z (12:00 KST) is the control: both readings agree.
+        // Stored start dates are calendar dates held as UTC midnight, so the filter is
+        // judged by which of those it admits, not by one particular lte/lt form.
+        describe.each([
+            ["2026-09-30T16:30:00.000Z", "just after Korean midnight"],
+            ["2026-10-01T03:00:00.000Z", "midday in Korea (control)"],
+        ])("send-window cutoff at %s (%s)", (instant) => {
+            it("admits start dates up to the 6th business day after the Korean date, no later", async () => {
+                jest.setSystemTime(new Date(instant));
+                prismaService.client.findMany.mockResolvedValue([]);
+
+                await service.getActionRequiredAlerts(branchId);
+
+                const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+                const { lte } = where.OR[1].startDate as { lte: Date };
+                const admits = (calendarDate: string) =>
+                    new Date(`${calendarDate}T00:00:00.000Z`).getTime() <= lte.getTime();
+                // 2026-10-01 (KST) + 6 business days over the built-in holidays = 2026-10-13.
+                expect(admits("2026-10-12")).toBe(true);
+                expect(admits("2026-10-13")).toBe(true);
+                expect(admits("2026-10-14")).toBe(false);
+            });
+        });
+
+        it("stores the cutoff as the UTC-midnight Date of the Korean-calendar business day", async () => {
+            jest.setSystemTime(new Date("2026-09-30T16:30:00.000Z"));
+            prismaService.client.findMany.mockResolvedValue([]);
+
+            await service.getActionRequiredAlerts(branchId);
+
+            const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+            expect(where.OR[1].startDate).toEqual({ lte: new Date("2026-10-13T00:00:00.000Z") });
+        });
+
         it("reports 발송 필요 when no document has been sent", async () => {
             prismaService.client.findMany.mockResolvedValue([
                 alertClient({ eDocId: null, startDate: new Date("2026-03-20T00:00:00.000Z") }),
@@ -3934,6 +3970,49 @@ describe("ClientService", () => {
             expect(alerts).toEqual([
                 expect.objectContaining({ id: 2, reason: "교체 요청", priority: 1 }),
             ]);
+        });
+    });
+
+    // ============================================
+    // getStats (dashboard counts)
+    // ============================================
+    describe("getStats month boundaries", () => {
+        type DateRangeFilter = { gte?: Date; gt?: Date; lte?: Date; lt?: Date };
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea; the server runs in UTC, so
+        // the runtime's own month would still be September. 2026-10-01T03:00:00Z is the
+        // control where both readings already agree.
+        it.each([
+            ["2026-09-30T16:30:00.000Z"],
+            ["2026-10-01T03:00:00.000Z"],
+        ])("counts upcoming clients by the Korean month at %s", async (instant) => {
+            jest.useFakeTimers().setSystemTime(new Date(instant));
+            prismaService.client.count.mockResolvedValue(0);
+            prismaService.client.findMany.mockResolvedValue([]);
+
+            await service.getStats(branchId);
+
+            // Stored start dates are calendar dates held as UTC midnight, so judge each
+            // filter by which of those it admits rather than by one lte/lt form.
+            const rangeFilters = prismaService.client.count.mock.calls
+                .map(([args]: [{ where: { startDate?: DateRangeFilter } }]) => args.where.startDate)
+                .filter((filter: unknown): filter is DateRangeFilter => filter !== undefined);
+            expect(rangeFilters).toHaveLength(2);
+            const admitted = (filter: DateRangeFilter, calendarDate: string) => {
+                const t = new Date(`${calendarDate}T00:00:00.000Z`).getTime();
+                return (filter.gte === undefined || t >= filter.gte.getTime())
+                    && (filter.gt === undefined || t > filter.gt.getTime())
+                    && (filter.lte === undefined || t <= filter.lte.getTime())
+                    && (filter.lt === undefined || t < filter.lt.getTime());
+            };
+            const probes = ["2026-09-30", "2026-10-01", "2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"];
+            const [thisMonth, nextMonth] = rangeFilters as [DateRangeFilter, DateRangeFilter];
+            expect(probes.filter((d) => admitted(thisMonth, d))).toEqual(["2026-10-01", "2026-10-31"]);
+            expect(probes.filter((d) => admitted(nextMonth, d))).toEqual(["2026-11-01", "2026-11-30"]);
         });
     });
 
