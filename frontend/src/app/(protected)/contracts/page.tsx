@@ -1190,10 +1190,13 @@ export function ContractDetail({
       full: ["계약 종료일", "계약종료일", "endDate", "contractEndDate"],
     }) ?? "",
   );
+  // The backend's serve-time display_status decides the label — the detail response carries it,
+  // and the list row stands in until the detail loads. Without it an unassigned document at the
+  // provider-review step resolved to 검토 필요 here and drew the finalize button the list hides.
   const statusLabel = mapDocStatusLabel(
     detailedDocument.current_status,
-    contractEndDateIso || null,
-    undefined,
+    detailedDocument.contract_end_date ?? (contractEndDateIso || null),
+    detailedDocument.display_status ?? doc.display_status,
     calendar,
   );
   const statusType: StatusType = contractStatusBadgeType(statusLabel);

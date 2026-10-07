@@ -371,6 +371,67 @@ describe("ContractDetail manual receipt-send interaction", () => {
     expect(screen.getByRole("button", { name: "문서 보기" })).toBeInTheDocument();
   });
 
+  // The detail response carries the backend's serve-time display_status. An unassigned
+  // contract (no client) at the provider-review step is 고객 등록 필요 in the list, which
+  // offers no finalize button; the detail must say the same instead of re-deriving 검토 필요.
+  describe("provider-review step contract", () => {
+    function providerReviewContractFixture(displayStatus: string | undefined): EformsignDocument {
+      return {
+        ...serviceRecordReviewNeededFixture(),
+        template: { id: "template-1", name: "산모 서비스 계약서" },
+        document_name: "산모신생아건강관리서비스 계약서",
+        current_status: {
+          ...(serviceRecordReviewNeededFixture().current_status as object),
+          status_type: "070",
+        },
+        ...(displayStatus === undefined ? {} : { display_status: displayStatus }),
+      } as unknown as EformsignDocument;
+    }
+
+    async function renderProviderReviewDetail(listRow: EformsignDocument, detail: EformsignDocument) {
+      jest.spyOn(eformsignApi, "getDocument").mockResolvedValue(detail as never);
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      render(
+        <QueryClientProvider client={queryClient}>
+          <ContractDetail data-component="desktop_contracts_detail" document={listRow} />
+        </QueryClientProvider>,
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("status", { name: "계약 작업 불러오는 중" })).not.toBeInTheDocument(),
+      );
+    }
+
+    it("offers no finalize button for an unassigned contract once the detail loads", async () => {
+      await renderProviderReviewDetail(
+        providerReviewContractFixture("unassigned"),
+        providerReviewContractFixture("unassigned"),
+      );
+
+      expect(screen.queryByRole("button", { name: "검토 완료 확인" })).not.toBeInTheDocument();
+      expect(screen.queryByText("검토 필요")).not.toBeInTheDocument();
+      expect(screen.getAllByText("고객 등록 필요").length).toBeGreaterThan(0);
+    });
+
+    it("lets the detail's display_status win over the list row's", async () => {
+      // The list row still says review; the detail (fresher) says the contract is unassigned.
+      await renderProviderReviewDetail(
+        providerReviewContractFixture("review"),
+        providerReviewContractFixture("unassigned"),
+      );
+
+      expect(screen.queryByRole("button", { name: "검토 완료 확인" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the finalize button for an assigned contract the backend resolves to review", async () => {
+      await renderProviderReviewDetail(
+        providerReviewContractFixture("review"),
+        providerReviewContractFixture("review"),
+      );
+
+      expect(await screen.findByRole("button", { name: "검토 완료 확인" })).toBeInTheDocument();
+    });
+  });
+
   it("clicking the trigger opens the confirm dialog without calling the send API", async () => {
     const sendReceiptLink = jest.spyOn(eformsignApi, "sendReceiptLink").mockResolvedValue({
       jobId: "job-1",
