@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
     DAY_PAGES,
@@ -38,7 +38,14 @@ import {
     type ServiceRecordEditPreviewBlockingReason,
     type ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
-import { publishServiceRecordRevisionSync } from "@/features/service-records/revision-sync";
+import { subscribeServiceRecordCaseChanges } from "@/features/service-records/case-events";
+import { normalizeHeaderChanges, normalizeSessionChanges } from "@/features/service-records/utils/admin-edit-normalization";
+import { useUnsavedChangesGuard } from "@/features/service-records/hooks/use-unsaved-changes-guard";
+import {
+    publishServiceRecordRevisionSync,
+    subscribeServiceRecordRevisionSync,
+    type ServiceRecordRevisionSyncEvent,
+} from "@/features/service-records/revision-sync";
 
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
@@ -410,12 +417,121 @@ function draftErrorMessage(status: number): string {
     return "초안을 저장하지 못했습니다. 입력은 유지됩니다.";
 }
 
-function hasDraftChanges(changes: AdminServiceRecordEditChanges): boolean {
-    const hasHeaderChanges = Boolean(changes.header && Object.keys(changes.header).length > 0);
-    const hasSessionChanges = Boolean(changes.sessions?.some((session) => (
-        Object.keys(session).some((key) => key !== "sessionIndex")
-    )));
-    return hasHeaderChanges || hasSessionChanges;
+type PlannedVector = ReturnType<typeof moveServiceRecordSessionDate>["entries"];
+
+/** Confirmed (수정 확인) edits that live in this tab until 수정 확정 saves them all. */
+interface PendingEdits {
+    /** Content patches, one merged entry per session. */
+    sessions: AdminServiceRecordEditSessionChanges[];
+    header: AdminServiceRecordEditHeaderChanges;
+    /** Date moves in the order they were made; the server applies each on top of the last. */
+    moves: AdminServiceRecordEditDateMove[];
+    /** Session dates after every move, as the editor calculated them. */
+    vector: PlannedVector | null;
+}
+
+const EMPTY_PENDING: PendingEdits = { sessions: [], header: {}, moves: [], vector: null };
+
+function mergeSessionPatch(
+    sessions: AdminServiceRecordEditSessionChanges[],
+    patch: AdminServiceRecordEditSessionChanges,
+): AdminServiceRecordEditSessionChanges[] {
+    const existing = sessions.find((session) => session.sessionIndex === patch.sessionIndex);
+    const merged: AdminServiceRecordEditSessionChanges = { ...existing, ...patch };
+    if (existing?.answers || patch.answers) merged.answers = { ...existing?.answers, ...patch.answers };
+    return [...sessions.filter((session) => session.sessionIndex !== patch.sessionIndex), merged]
+        .sort((left, right) => left.sessionIndex - right.sessionIndex);
+}
+
+/** What the screens show: content patches plus the moved dates. */
+function pendingToOverlay(pending: PendingEdits, baseVector: PlannedVector): AdminServiceRecordEditChanges {
+    const sessions = new Map(pending.sessions.map((session) => [session.sessionIndex, session]));
+    for (const entry of pending.vector ?? []) {
+        const base = baseVector.find((item) => item.sessionIndex === entry.sessionIndex);
+        if (!base || dateOnly(base.serviceDate) === dateOnly(entry.serviceDate)) continue;
+        sessions.set(entry.sessionIndex, {
+            ...sessions.get(entry.sessionIndex),
+            sessionIndex: entry.sessionIndex,
+            serviceDate: entry.serviceDate,
+        });
+    }
+    return { header: pending.header, sessions: [...sessions.values()] };
+}
+
+/** What `startDraft` receives; date moves go through `updateDraft` one by one. */
+function pendingToChanges(pending: PendingEdits): AdminServiceRecordEditChanges | undefined {
+    const changes: AdminServiceRecordEditChanges = {};
+    if (Object.keys(pending.header).length > 0) changes.header = pending.header;
+    if (pending.sessions.length > 0) changes.sessions = pending.sessions;
+    return changes.header || changes.sessions ? changes : undefined;
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (isRecord(value)) {
+        return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+            .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * `startDraft` RESUMES an ACTIVE draft another tab created in the meantime, so a
+ * returned draft is only this tab's batch when its content equals what was sent
+ * (nothing missing, nothing extra) and its effective session dates are the
+ * expected ones (an override, else the loaded date).
+ */
+function draftMatchesBatch(
+    draftChanges: AdminServiceRecordEditChanges,
+    sent: AdminServiceRecordEditChanges | undefined,
+    /** Dates the draft must resolve to; null while moves are still being applied. */
+    expectedDates: PlannedVector | null,
+    baseVector: PlannedVector,
+): boolean {
+    if (stableJson(draftChanges.header ?? {}) !== stableJson(sent?.header ?? {})) return false;
+    const content = (patch: AdminServiceRecordEditSessionChanges) => {
+        const rest: Record<string, unknown> = { ...patch };
+        delete rest.sessionIndex;
+        delete rest.serviceDate;
+        return stableJson(rest);
+    };
+    const draftContent = new Map<number, string>();
+    const overrides = new Map<number, string>();
+    for (const patch of draftChanges.sessions ?? []) {
+        const rest = content(patch);
+        if (rest !== "{}") draftContent.set(patch.sessionIndex, rest);
+        if (patch.serviceDate) overrides.set(patch.sessionIndex, dateOnly(patch.serviceDate));
+    }
+    const sentContent = new Map<number, string>();
+    for (const patch of sent?.sessions ?? []) {
+        const rest = content(patch);
+        if (rest !== "{}") sentContent.set(patch.sessionIndex, rest);
+    }
+    if (draftContent.size !== sentContent.size) return false;
+    for (const [index, rest] of sentContent) if (draftContent.get(index) !== rest) return false;
+    const knownIndexes = new Set(baseVector.map((entry) => entry.sessionIndex));
+    if ([...overrides.keys()].some((index) => !knownIndexes.has(index))) return false;
+    if (!expectedDates) return true;
+    return baseVector.every((entry) => {
+        const expected = expectedDates.find((item) => item.sessionIndex === entry.sessionIndex);
+        return (overrides.get(entry.sessionIndex) ?? dateOnly(entry.serviceDate)) === dateOnly(expected?.serviceDate ?? entry.serviceDate);
+    });
+}
+
+type BlockingOperationName = "contract_period" | "receipt_refresh" | "record_snapshot";
+
+/** A 409 that says an earlier edit's follow-up work is still running (not a stale record). */
+function readBlockingOperation(body: unknown): BlockingOperationName | null {
+    if (!isRecord(body) || !isRecord(body.blockingOperation)) return null;
+    const { operation } = body.blockingOperation;
+    return operation === "contract_period" || operation === "receipt_refresh" || operation === "record_snapshot"
+        ? operation : null;
+}
+
+function blockingOperationMessage(operation: BlockingOperationName): string {
+    if (operation === "contract_period") return "이전 수정의 계약서 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.";
+    if (operation === "receipt_refresh") return "이전 수정의 영수증 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.";
+    return "이전 수정의 기록 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요.";
 }
 
 function createIdempotencyKey(): string {
@@ -455,6 +571,10 @@ function overlayChanges(view: AdminServiceRecordView, changes: AdminServiceRecor
 export interface ServiceRecordAdminWizardProps {
     clientId: string;
     overview: AdminServiceRecordEditorOverview;
+    /**
+     * Only the source identity (`sourceFingerprint` / `sourceCaseVersion`) is
+     * used. An ACTIVE draft left by a closed session is ignored.
+     */
     initialDraftState?: AdminServiceRecordEditState | null;
     initialDraftErrorStatus?: number | null;
 }
@@ -480,42 +600,54 @@ export function ServiceRecordAdminWizard({
         retry: retryCalendar,
         refreshForSave,
     } = useBusinessDayCalendar({ extraYears: calendarYears });
-    const [draftState, setDraftState] = useState(initialDraftState);
     const [sourceIdentity, setSourceIdentity] = useState(initialDraftState);
-    const [recoveryChanges, setRecoveryChanges] = useState<AdminServiceRecordEditChanges | null>(
-        initialDraftState?.draft?.status === "ACTIVE" && hasDraftChanges(initialDraftState.draft.changes) ? initialDraftState.draft.changes : null,
-    );
-    const displayContext = overlayChanges(baseView, recoveryChanges);
+    // Nothing is saved until 수정 확정: confirmed edits wait here, in this tab only.
+    const [pending, setPending] = useState<PendingEdits>(EMPTY_PENDING);
+    const hasPending = pending.sessions.length > 0 || Object.keys(pending.header).length > 0 || pending.moves.length > 0;
+    const baseVector = baseView.plannedSessions.map((entry) => ({
+        ...entry,
+        serviceDate: dateOnly(baseView.context.sessions.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate) || entry.serviceDate,
+    }));
+    const vector: PlannedVector = pending.vector ?? baseVector;
+    const pendingChanges = hasPending ? pendingToOverlay(pending, baseVector) : null;
+    const displayContext = overlayChanges(baseView, pendingChanges);
+    const changedSessionIndexes = new Set((pendingChanges?.sessions ?? []).map((session) => session.sessionIndex));
     const [headerDraft, setHeaderDraft] = useState<Record<string, string>>(headerToInput(displayContext.header));
-    const [recoveryPreview, setRecoveryPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
-    const [recoveryOpen, setRecoveryOpen] = useState(false);
+    const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
+    const [previewOpen, setPreviewOpen] = useState(false);
     const [screen, setScreen] = useState<"overview" | "day" | "service">("overview");
     const [day, setDay] = useState(1);
     const [pageIdx, setPageIdx] = useState(DAY_PAGES.length - 1);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
-    const dateMoveEntriesRef = useRef<ReturnType<typeof moveServiceRecordSessionDate>["entries"] | null>(null);
+    const dateMoveEntriesRef = useRef<PlannedVector | null>(null);
     const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean; canShift: boolean } | null>(null);
     const [dateDialogOpen, setDateDialogOpen] = useState(false);
     const [discardModalOpen, setDiscardModalOpen] = useState(false);
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
+    const [refreshModalOpen, setRefreshModalOpen] = useState(false);
+    const [cleanupFailed, setCleanupFailed] = useState(false);
+    const [refreshFailed, setRefreshFailed] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(initialDraftErrorStatus ? draftErrorMessage(initialDraftErrorStatus) : null);
     const [dateError, setDateError] = useState<string | null>(null);
     const [needsReload, setNeedsReload] = useState(!initialDraftState?.sourceFingerprint);
-    const [saved, setSaved] = useState(false);
     const saving = useRef(false);
-    const prepared = useRef<{ draftId: string; draftVersion: number; previewId: string; idempotencyKey: string } | null>(null);
-    // Once a save request starts, preserve this session until success or explicit discard.
-    const [saveStarted, setSaveStarted] = useState(false);
+    // The draft prepared for the preview that is (or was) on screen; a retry reuses it as-is.
+    const commitRequest = useRef<{ draftId: string; draftVersion: number; previewId: string; idempotencyKey: string } | null>(null);
+    // Highest case version this tab has loaded or written itself.
+    const knownVersion = useRef(initialDraftState?.sourceCaseVersion ?? 0);
+    // Highest foreign case version announced to this tab; the data is current only once it catches up.
+    const foreignVersion = useRef(0);
+    const caseId = useRef<string | null>(overview.record?.id ?? null);
+    const confirmInFlight = useRef(false);
+    const bufferedEvents = useRef<ServiceRecordRevisionSyncEvent[]>([]);
     const supplemental = baseView.supplementalSessions.find((item) => item.key === supplementalKey);
     const currentSession = supplemental?.session ?? displayContext.sessions.find((item) => item.sessionIndex === day);
     const sourceDraft = draftForSession(currentSession);
     const sourceDate = dateOnly(currentSession?.serviceDate)
         || baseView.plannedSessions.find((item) => item.sessionIndex === day)?.serviceDate || "";
-    const activeDraft = draftState?.draft?.status === "ACTIVE" ? draftState.draft : null;
-    const priorChanges = Boolean(recoveryChanges);
     const patch: AdminServiceRecordEditSessionChanges = { sessionIndex: day };
     for (const [key, value] of Object.entries(draft)) {
         if (key === "_date" || JSON.stringify(value) === JSON.stringify(sourceDraft[key])) continue;
@@ -525,20 +657,16 @@ export function ServiceRecordAdminWizard({
     }
     const headerPatch: AdminServiceRecordEditHeaderChanges = {};
     for (const key of ["momName", "momBirth", "babyName", "babyBirth", "deliveryType", "babyWeight"] as const) {
-        if ((headerDraft[key] ?? "") !== (headerToInput(baseView.context.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
+        if ((headerDraft[key] ?? "") !== (headerToInput(displayContext.header)[key] ?? "")) headerPatch[key] = headerDraft[key] ?? "";
     }
     const editingHeader = screen === "service";
     // Validate every changed field without rewriting or rejecting untouched historic values.
     const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerChangesToValidationRecord(headerPatch));
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
     const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
-    const changed = !priorChanges && !supplemental && (editingHeader
+    const changed = !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
-    const locked = busy || saveStarted || needsReload || priorChanges || Boolean(supplemental);
-    const vector = baseView.plannedSessions.map((entry) => ({
-        ...entry,
-        serviceDate: dateOnly(baseView.context.sessions.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate) || entry.serviceDate,
-    }));
+    const locked = busy || needsReload || Boolean(supplemental);
     const resetLocal = () => {
         setScreen("overview");
         setDateMove(null);
@@ -547,19 +675,15 @@ export function ServiceRecordAdminWizard({
         setDateError(null);
         setDraft({});
         setSupplementalKey(null);
-        setSaveStarted(false);
-        setSaved(false);
-        prepared.current = null;
     };
     const openDay = (index: number) => {
-        if (busy || saveStarted) return;
+        if (busy) return;
         setDay(index);
         setPageIdx(DAY_PAGES.length - 1);
         setDraft(draftForSession(displayContext.sessions.find((item) => item.sessionIndex === index)));
         setSupplementalKey(null);
         setDateMove(null);
         setError(null);
-        setSaved(false);
         setScreen("day");
     };
     const refresh = async () => {
@@ -571,14 +695,18 @@ export function ServiceRecordAdminWizard({
         const state = await adminServiceRecordEditApi.getDraft(clientId);
         if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
-        setDraftState(state);
         setSourceIdentity(state);
-        setRecoveryChanges(state.draft?.status === "ACTIVE" && hasDraftChanges(state.draft.changes) ? state.draft.changes : null);
-        setRecoveryOpen(false);
-        setRecoveryPreview(null);
-        setNeedsReload(false);
+        knownVersion.current = Math.max(knownVersion.current, state.sourceCaseVersion);
+        setPreview(null);
+        setPreviewOpen(false);
+        // A newer change may have been announced while this load was in flight.
+        setNeedsReload(state.sourceCaseVersion < foreignVersion.current);
+        setPending(EMPTY_PENDING);
+        commitRequest.current = null;
+        setCleanupFailed(false);
         resetLocal();
     };
+    useEffect(() => { caseId.current = overview.record?.id ?? null; }, [overview]);
     const reload = async () => {
         if (saving.current) return;
         saving.current = true;
@@ -621,17 +749,17 @@ export function ServiceRecordAdminWizard({
         setFollowPrompt({ date: next, delta: Math.abs(result.deltaBusinessDays), canKeep: Boolean(kept), canShift: Boolean(shifted) });
         setDateDialogOpen(false);
     };
-    const confirm = async (recover = false) => {
-        if (saving.current || supplemental || (priorChanges && saveStarted && !recover)) return;
-        if (priorChanges && !recover) { resetLocal(); return; }
-        if (!recover && !changed && !saveStarted) { resetLocal(); return; }
+    /** 수정 확인: keep this session / basic-information edit in the browser only. */
+    const accept = async () => {
+        if (saving.current || supplemental) return;
+        if (!changed) { resetLocal(); return; }
         if (needsReload) return;
         if (dateMove && !calendarReady) return;
-        if (!recover && !editingHeader && hasInvalidNumericAnswers) {
+        if (!editingHeader && hasInvalidNumericAnswers) {
             setError("숫자 입력값을 확인해 주세요.");
             return;
         }
-        if (!recover && editingHeader) {
+        if (editingHeader) {
             if (!hasServiceRecordHeaderValues(headerDraft)) {
                 setError("필수 기본정보를 모두 입력해 주세요.");
                 return;
@@ -644,17 +772,14 @@ export function ServiceRecordAdminWizard({
         saving.current = true;
         setBusy(true);
         setError(null);
-        setSaveStarted(true);
         try {
-            let saveCalendar = calendar;
-            if (dateMove && !recover && !prepared.current) {
+            let movedEntries: PlannedVector | null = null;
+            if (dateMove) {
                 const fresh = await refreshForSave();
                 if (!fresh.ok) {
                     setError("공휴일 정보를 불러오지 못했어요.");
-                    setSaveStarted(false);
                     return;
                 }
-                saveCalendar = fresh.calendar;
                 try {
                     const next = moveServiceRecordSessionDate(vector, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), fresh.calendar).entries;
                     const previous = dateMoveEntriesRef.current;
@@ -662,157 +787,236 @@ export function ServiceRecordAdminWizard({
                         previous.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
                     dateMoveEntriesRef.current = next;
                     if (fresh.changed || recalculated) {
-                        setError("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 확인 후 다시 저장해 주세요.");
-                        setSaveStarted(false);
+                        setError("공휴일 정보가 바뀌어 날짜를 다시 계산했어요. 수정 확인을 다시 눌러 주세요.");
                         return;
                     }
+                    movedEntries = next;
                 } catch {
                     setError("앞 회차보다 늦은 영업일을 선택해 주세요. 회차 순서와 예정일을 확인해 주세요.");
-                    setSaveStarted(false);
                     return;
                 }
             }
-            let request = prepared.current;
-            if (!request) {
-                if (recover) throw new Error("이전 수정사항을 다시 검토해 주세요.");
-                let state = draftState;
-                if (!state?.draft || state.draft.status !== "ACTIVE") {
-                    state = await adminServiceRecordEditApi.startDraft(clientId);
-                    setDraftState(state);
-                    if (state.draft && hasDraftChanges(state.draft.changes)) {
-                        setNeedsReload(true);
-                        throw new Error("다른 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
-                    }
-                }
-                if (!sameSource(sourceIdentity, state) || state?.sourceChanged
-                    || state?.draft?.sourceFingerprint !== sourceIdentity?.sourceFingerprint
-                    || state?.draft?.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
-                    setNeedsReload(true);
-                    throw new Error("기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요.");
-                }
-                if (!state?.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
-                state = await adminServiceRecordEditApi.updateDraft(
-                    state.draft.id, state.draft.draftVersion,
-                    editingHeader ? { header: headerPatch } : { sessions: [patch] }, dateMove ?? undefined,
-                );
-                setDraftState(state);
-                if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정 내용을 저장하지 못했습니다.");
-                const preview = await adminServiceRecordEditApi.previewDraft(state.draft.id, state.draft.draftVersion);
-                if (preview.blockingReasons.length) throw new Error(preview.blockingReasons.map((reason) => reason.message).join(" "));
-                if (preview.draftId !== state.draft.id || preview.draftVersion !== state.draft.draftVersion) {
-                    setNeedsReload(true);
-                    throw new Error("기록이 변경되었습니다. 최신 기록을 다시 불러와 주세요.");
-                }
-                if (dateMove && (preview.before.sessions.length !== vector.length || preview.before.sessions.some((entry) =>
-                    vector.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate))) {
-                    setNeedsReload(true);
-                    throw new Error("예정일이 변경되었습니다. 최신 기록을 다시 불러와 날짜 이동을 확인해 주세요.");
-                }
-                // Never confirm a header or another session's content as a side effect.
-                const allowedDateIndexes = new Set(dateMove
-                    ? preview.before.sessions.filter((entry) => entry.sessionIndex === day || (dateMove.shiftFollowing && entry.sessionIndex > day)).map((entry) => entry.sessionIndex)
-                    : []);
-                const foreignContent = state.draft.changes.sessions?.some((entry) => entry.sessionIndex !== day
-                    && Object.keys(entry).some((key) => key !== "sessionIndex" && key !== "serviceDate"));
-                if (editingHeader
-                    ? Boolean(state.draft.changes.sessions?.length || preview.contentChanges.changedSessionIndexes.length)
-                    : foreignContent || preview.contentChanges.headerChanged || Boolean(state.draft.changes.header && Object.keys(state.draft.changes.header).length)
-                        || preview.contentChanges.changedSessionIndexes.some((index) => index !== day && !allowedDateIndexes.has(index))) {
-                    setNeedsReload(true);
-                    throw new Error("다른 회차의 수정사항이 있습니다. 최신 기록을 불러와 확인해 주세요.");
-                }
-                const expectedDates = dateMove
-                    ? moveServiceRecordSessionDate(preview.before.sessions, day, dateMove.toDate, Boolean(dateMove.shiftFollowing), saveCalendar).entries
-                    : preview.before.sessions;
-                const unexpectedDates = preview.after.sessions.length !== expectedDates.length
-                    || new Set(preview.after.sessions.map((entry) => entry.sessionIndex)).size !== expectedDates.length
-                    || preview.after.sessions.some((entry) => expectedDates.find((item) => item.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
-                if (unexpectedDates) { setNeedsReload(true); throw new Error("예정일이 변경되었습니다. 최신 기록을 다시 불러와 주세요."); }
-                request = { draftId: state.draft.id, draftVersion: state.draft.draftVersion, previewId: preview.previewId, idempotencyKey: createIdempotencyKey() };
-                prepared.current = request;
-            }
-            const result = await adminServiceRecordEditApi.confirmDraft(request.draftId, request.draftVersion, request.previewId, request.idempotencyKey);
-            setSaved(true);
-            setNeedsReload(true);
-            publishServiceRecordRevisionSync({ caseId: result.caseId, caseVersion: result.caseVersion });
-            try { await refresh(); }
-            catch { setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요."); }
-        } catch (failure) {
-            // An uncertain PATCH is recovered by reloading its durable draft,
-            // not by submitting an obsolete draft version again.
-            if (!prepared.current) setNeedsReload(true);
-            if (failure instanceof AdminServiceRecordEditApiError) {
-                if (failure.status === 409) setNeedsReload(true);
-                setError(failure.status === 409 ? "기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요."
-                    : failure.status === 403 ? "수정 권한이 없습니다. 입력은 보관되어 있습니다."
-                    : failure.status === 401 ? "로그인이 필요합니다. 입력은 보관되어 있습니다."
-                    : prepared.current ? "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요." : "저장 결과를 확인하지 못했습니다. 입력은 보관되어 있습니다. 최신 기록을 불러와 이전 수정사항을 검토해 주세요.");
-            } else setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message
-                : prepared.current ? "저장 결과를 확인하지 못했습니다. 수정 확인을 다시 눌러 주세요." : "저장 결과를 확인하지 못했습니다. 입력은 보관되어 있습니다. 최신 기록을 불러와 이전 수정사항을 검토해 주세요.");
+            // Stage what the server will store, so the overlay shows it and the draft check stays exact.
+            setPending((current) => ({
+                sessions: !editingHeader && Object.keys(patch).length > 1 ? mergeSessionPatch(current.sessions, normalizeSessionChanges(patch)) : current.sessions,
+                header: editingHeader ? { ...current.header, ...normalizeHeaderChanges(headerPatch) } : current.header,
+                moves: dateMove ? [...current.moves, dateMove] : current.moves,
+                vector: movedEntries ?? current.vector,
+            }));
+            resetLocal();
         } finally { saving.current = false; setBusy(false); }
     };
-    const openRecovery = async () => {
-        if (saving.current || !activeDraft) return;
-        if (prepared.current) { setRecoveryOpen(true); return; }
+    const showRefreshModal = () => {
+        setPreviewOpen(false);
+        setRefreshModalOpen(true);
+    };
+    const handleFailure = (failure: unknown) => {
+        if (failure instanceof AdminServiceRecordEditApiError) {
+            if (failure.status === 409) {
+                const blocking = readBlockingOperation(failure.body);
+                if (blocking) setError(blockingOperationMessage(blocking));
+                else showRefreshModal();
+                return;
+            }
+            setError(failure.status === 403 ? "수정 권한이 없습니다. 수정사항은 이 화면에 남아 있어요."
+                : failure.status === 401 ? "로그인이 필요합니다. 수정사항은 이 화면에 남아 있어요."
+                : "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요.");
+            return;
+        }
+        setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message
+            : "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요.");
+    };
+    /** 수정 확정, step 1: turn every pending edit into one server draft and open its preview. */
+    const startCommit = async () => {
+        if (saving.current || !hasPending || needsReload || refreshModalOpen) return;
         saving.current = true;
         setBusy(true);
         setError(null);
+        setCleanupFailed(false);
+        commitRequest.current = null;
+        let prepared: { id: string; version: number } | null = null;
         try {
-            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            const existing = await adminServiceRecordEditApi.getDraft(clientId);
+            if (!sameSource(sourceIdentity, existing)) { showRefreshModal(); return; }
+            // A draft left by an earlier session must not leak into this one.
+            if (existing.draft?.status === "ACTIVE") {
+                await adminServiceRecordEditApi.discardDraft(existing.draft.id, existing.draft.draftVersion);
+            }
+            const changes = pendingToChanges(pending);
+            let state = await adminServiceRecordEditApi.startDraft(clientId, changes);
+            if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
+            // Not this tab's batch (another session got there first): never preview, confirm
+            // or discard it, and never merge local edits into it.
+            if (!draftMatchesBatch(state.draft.changes, changes, baseVector, baseVector)) { showRefreshModal(); return; }
+            prepared = { id: state.draft.id, version: state.draft.draftVersion };
             if (!sameSource(sourceIdentity, state) || state.sourceChanged
-                || state.draft?.id !== activeDraft.id || state.draft.draftVersion !== activeDraft.draftVersion
-                || JSON.stringify(state.draft.changes) !== JSON.stringify(recoveryChanges)) {
-                setNeedsReload(true);
-                throw new Error("기록이 변경되었습니다. 최신 기록을 불러와 이전 수정사항을 다시 확인해 주세요.");
+                || state.draft.sourceFingerprint !== sourceIdentity?.sourceFingerprint
+                || state.draft.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
+                await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
+                showRefreshModal();
+                return;
             }
-            const preview = await adminServiceRecordEditApi.previewDraft(activeDraft.id, activeDraft.draftVersion);
-            if (preview.draftId !== activeDraft.id || preview.draftVersion !== activeDraft.draftVersion
-                || preview.sourceFingerprint !== sourceIdentity?.sourceFingerprint
-                || preview.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
-                setNeedsReload(true);
-                throw new Error("기록이 변경되었습니다. 최신 기록을 다시 불러와 주세요.");
+            for (const [index, move] of pending.moves.entries()) {
+                state = await adminServiceRecordEditApi.updateDraft(state.draft.id, state.draft.draftVersion, {}, move);
+                if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정 내용을 저장하지 못했습니다.");
+                const last = index === pending.moves.length - 1;
+                if (!draftMatchesBatch(state.draft.changes, changes, last ? vector : null, baseVector)) {
+                    prepared = null;
+                    showRefreshModal();
+                    return;
+                }
+                prepared = { id: state.draft.id, version: state.draft.draftVersion };
             }
-            setRecoveryPreview(preview);
-            setRecoveryOpen(true);
-            if (!preview.blockingReasons.length) prepared.current = {
-                draftId: activeDraft.id, draftVersion: activeDraft.draftVersion,
-                previewId: preview.previewId, idempotencyKey: createIdempotencyKey(),
-            };
+            const result = await adminServiceRecordEditApi.previewDraft(prepared.id, prepared.version);
+            if (result.draftId !== prepared.id || result.draftVersion !== prepared.version) {
+                await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
+                showRefreshModal();
+                return;
+            }
+            commitRequest.current = { draftId: prepared.id, draftVersion: prepared.version, previewId: result.previewId, idempotencyKey: createIdempotencyKey() };
+            setPreview(result);
+            setPreviewOpen(true);
         } catch (failure) {
-            setError(failure instanceof Error && /[가-힣]/.test(failure.message) ? failure.message : "이전 수정사항을 불러오지 못했습니다. 다시 검토해 주세요.");
+            if (prepared) await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
+            handleFailure(failure);
         } finally { saving.current = false; setBusy(false); }
     };
-    const discard = async () => {
-        if (saving.current) return;
+    /** Open the blocking refresh modal for a case event that is newer than this tab's data. */
+    const applyCaseEvent = (event: ServiceRecordRevisionSyncEvent) => {
+        if (event.caseVersion <= knownVersion.current) return;
+        foreignVersion.current = Math.max(foreignVersion.current, event.caseVersion);
+        showRefreshModal();
+    };
+    const handleCaseEvent = useEffectEvent((event: ServiceRecordRevisionSyncEvent) => {
+        if (event.caseId !== caseId.current) return;
+        // The server emits before the confirm response reaches this tab, so a
+        // confirm in flight may be about to explain this very event.
+        if (confirmInFlight.current) { bufferedEvents.current.push(event); return; }
+        applyCaseEvent(event);
+    });
+    useEffect(() => {
+        const unsubscribeRevision = subscribeServiceRecordRevisionSync((event) => handleCaseEvent(event));
+        const unsubscribeCase = subscribeServiceRecordCaseChanges((event) => handleCaseEvent(event));
+        return () => { unsubscribeRevision(); unsubscribeCase(); };
+    }, []);
+    /** 수정 확정, step 2: the preview was approved. */
+    const confirmCommit = async () => {
+        const request = commitRequest.current;
+        if (!request || saving.current) return;
+        saving.current = true;
+        setBusy(true);
+        setError(null);
+        confirmInFlight.current = true;
+        let confirmedVersion: number | null = null;
+        try {
+            const result = await adminServiceRecordEditApi.confirmDraft(request.draftId, request.draftVersion, request.previewId, request.idempotencyKey);
+            confirmedVersion = result.caseVersion;
+            knownVersion.current = Math.max(knownVersion.current, result.caseVersion);
+            commitRequest.current = null;
+            setPending(EMPTY_PENDING);
+            setPreviewOpen(false);
+            publishServiceRecordRevisionSync({ caseId: result.caseId, caseVersion: result.caseVersion });
+            // `busy` keeps the editor locked while this loads; only a failed load needs the reload prompt.
+            try { await refresh(); }
+            catch {
+                setNeedsReload(true);
+                setError("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
+            }
+        } catch (failure) {
+            handleFailure(failure);
+        } finally {
+            confirmInFlight.current = false;
+            const buffered = bufferedEvents.current;
+            bufferedEvents.current = [];
+            for (const event of buffered) {
+                if (confirmedVersion === null || event.caseVersion > confirmedVersion) applyCaseEvent(event);
+            }
+            saving.current = false;
+            setBusy(false);
+        }
+    };
+    /**
+     * Discard the draft behind the preview. Its identity is kept until the server
+     * confirms the discard, so a failure can be retried and is never silent. A
+     * retry reads the draft's current version first (the failure may have been a
+     * stale one) and only touches the draft this tab prepared.
+     */
+    const discardPrepared = async (readCurrentVersion: boolean) => {
+        const request = commitRequest.current;
+        if (!request || saving.current) return;
         saving.current = true;
         setBusy(true);
         try {
-            if (activeDraft) setDraftState(await adminServiceRecordEditApi.discardDraft(activeDraft.id, activeDraft.draftVersion));
-            setDiscardModalOpen(false);
-            await refresh();
-        } catch { setError("이전 수정사항을 취소하지 못했습니다. 최신 기록을 다시 불러와 주세요."); setNeedsReload(true); }
-        finally { saving.current = false; setBusy(false); }
+            if (readCurrentVersion) {
+                const state = await adminServiceRecordEditApi.getDraft(clientId);
+                if (state.draft?.status === "ACTIVE" && state.draft.id === request.draftId) {
+                    await adminServiceRecordEditApi.discardDraft(state.draft.id, state.draft.draftVersion);
+                }
+            } else {
+                await adminServiceRecordEditApi.discardDraft(request.draftId, request.draftVersion);
+            }
+            commitRequest.current = null;
+            if (cleanupFailed) setError(null);
+            setCleanupFailed(false);
+        } catch {
+            setCleanupFailed(true);
+            setError("수정 초안을 정리하지 못했어요. 다시 시도하거나 최신 기록을 불러와 주세요. 수정사항은 이 화면에 남아 있어요.");
+        } finally { saving.current = false; setBusy(false); }
     };
+    /** The preview was dismissed: leave no server draft behind and keep the local edits. */
+    const closePreview = async () => {
+        if (saving.current) return;
+        setPreviewOpen(false);
+        setPreview(null);
+        await discardPrepared(false);
+    };
+    const cancelAllEdits = () => {
+        setDiscardModalOpen(false);
+        setPending(EMPTY_PENDING);
+        resetLocal();
+    };
+    const acceptRefresh = async () => {
+        if (saving.current) return;
+        saving.current = true;
+        setBusy(true);
+        setRefreshFailed(false);
+        try {
+            await refresh();
+            // Stay blocked if the data just loaded is already older than a change announced meanwhile.
+            if (knownVersion.current >= foreignVersion.current) setRefreshModalOpen(false);
+        } catch {
+            // The old data is still on screen: keep the modal blocking and let 확인 retry.
+            setNeedsReload(true);
+            setRefreshFailed(true);
+        } finally { saving.current = false; setBusy(false); }
+    };
+    const leaveGuard = useUnsavedChangesGuard({
+        active: hasPending && !refreshModalOpen,
+        onLeave: () => setPending(EMPTY_PENDING),
+    });
     const back = () => {
-        if (busy || saveStarted) return;
+        if (busy) return;
         if (changed) setLeaveModalOpen(true);
         else resetLocal();
     };
+    const errorLine = error || needsReload ? (
+        <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error`} data-slot="commit-error" className="flex flex-col items-start gap-2">
+            <p role="alert" className="text-sm text-v3-burgundy">
+                {error ?? "수정 기준을 확인할 수 없습니다. 최신 기록을 다시 불러와 주세요."}
+            </p>
+            <div className="flex flex-wrap gap-2">
+                {cleanupFailed ? (
+                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error_retry`} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void discardPrepared(true)}>다시 시도</Button>
+                ) : null}
+                {needsReload || cleanupFailed ? (
+                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error_reload`} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void reload()}>최신 기록 불러오기</Button>
+                ) : null}
+            </div>
+        </div>
+    ) : null;
     return (
         <>
-            {error || priorChanges || needsReload ? (
-                <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_save-error`} variant="warning">
-                    <AlertTitle>{saved ? "수정 저장 완료" : priorChanges ? "이전 수정사항이 있습니다" : "수정 확인 필요"}</AlertTitle>
-                    <AlertDescription>
-                        <p>{error ?? (priorChanges ? "화면에 이전 수정사항이 반영되어 있습니다. 회차와 기본정보를 확인한 뒤 전체 변경을 검토·확정하거나 취소해 주세요." : "수정 기준을 확인할 수 없습니다. 최신 기록을 다시 불러와 주세요.")}</p>
-                        {priorChanges ? <Button data-component={`${ADMIN_WIZARD_COMPONENT}_save-error_review`} type="button" disabled={busy || needsReload} onClick={() => void openRecovery()}>이전 수정사항 검토</Button> : null}
-                        {(priorChanges || (saveStarted && !prepared.current && !saved)) && activeDraft ? (
-                            <Button data-component={`${ADMIN_WIZARD_COMPONENT}_save-error_discard`} type="button" disabled={busy} onClick={() => setDiscardModalOpen(true)}>이전 수정사항 취소</Button>
-                        ) : null}
-                        {needsReload ? <Button data-component={`${ADMIN_WIZARD_COMPONENT}_save-error_reload`} type="button" disabled={busy} onClick={() => void reload()}>최신 기록 불러오기</Button> : null}
-                    </AlertDescription>
-                </Alert>
-            ) : null}
+            {screen !== "overview" ? errorLine : null}
             {baseView.scheduleProjectionBlockingReasons.length ? (
                 <Alert data-component={`${ADMIN_WIZARD_COMPONENT}_schedule-blocked`} variant="warning">
                     <AlertTitle>제공일 수정 불가</AlertTitle>
@@ -831,6 +1035,7 @@ export function ServiceRecordAdminWizard({
                 data-component={ADMIN_WIZARD_COMPONENT}
                 screen={screen} phone="" phoneError={null}
                 context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
+                changedSessionIndexes={changedSessionIndexes}
                 header={screen === "service" ? headerDraft : headerToInput(displayContext.header)}
                 headerErrors={screen === "service" && !locked ? headerErrors : undefined}
                 day={day} pageIdx={pageIdx} draft={draft}
@@ -845,7 +1050,7 @@ export function ServiceRecordAdminWizard({
                 onBack={back}
                 onHeaderChange={(key, value) => { if (!locked) setHeaderDraft((current) => ({ ...current, [key]: value })); }}
                 onDeliveryTypeChange={(value) => { if (!locked) setHeaderDraft((current) => ({ ...current, deliveryType: value })); }}
-                onSaveHeader={() => void confirm()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
+                onSaveHeader={() => void accept()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
                 onOpenServiceDateEditor={() => { if (!locked && calendarReady && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
                 onServiceDateChange={selectDate}
                 onFieldChange={(key, value) => { if (!locked) setDraft((current) => ({ ...current, [key]: value })); }}
@@ -858,20 +1063,34 @@ export function ServiceRecordAdminWizard({
                 }}
                 onSignatureChange={() => undefined}
                 onNextPage={() => setPageIdx(DAY_PAGES.length - 1)}
-                onOpenSubmitModal={() => void confirm()} onEditSection={setPageIdx}
+                onOpenSubmitModal={() => void accept()} onEditSection={setPageIdx}
                 slots={{
                     provider: ({ "data-component": component }) => <span data-component={component} data-slot="provider" className="org">관리자 {supplemental ? "조회" : "편집"}</span>,
                     signature: (props) => <ReadOnlySignature {...props} />,
+                    adminCommitActions: hasPending || error || needsReload ? (
+                        <>
+                            {hasPending ? (
+                                <>
+                                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
+                                        disabled={busy || needsReload} onClick={() => void startCommit()}>수정 확정</Button>
+                                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_cancel`} type="button" variant="outline"
+                                        className="text-v3-burgundy hover:text-v3-burgundy"
+                                        disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
+                                </>
+                            ) : null}
+                            {screen === "overview" ? errorLine : null}
+                        </>
+                    ) : null,
                     adminConfirmAction: (
-                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} type="button" variant="outline" disabled={busy || saveStarted}
+                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} type="button" variant="outline" disabled={busy}
                             onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
-                            {priorChanges ? "기본정보 확인" : "기본정보 수정"}
+                            기본정보 수정
                         </Button>
                     ),
                     adminHeaderAction: ({ isHeaderComplete, headerErrors: slotHeaderErrors }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" className="btn submit"
-                            disabled={busy || (changed && (needsReload || !isHeaderComplete || Object.keys(slotHeaderErrors).length > 0))} onClick={() => priorChanges || !changed && !saveStarted ? resetLocal() : void confirm()}>
-                            {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
+                            disabled={busy || (changed && (needsReload || !isHeaderComplete || Object.keys(slotHeaderErrors).length > 0))} onClick={() => !changed ? resetLocal() : void accept()}>
+                            {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                         </Button>
                     ),
                     serviceDateDisplay: ({ "data-component": component, sessionIndex, serviceDate }) => {
@@ -886,9 +1105,9 @@ export function ServiceRecordAdminWizard({
                     ),
                     adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
-                            disabled={busy || slotHasInvalidNumericAnswers || (!calendarReady && changed) || (priorChanges && saveStarted) || (needsReload && (changed || saveStarted))}
-                            onClick={() => supplemental ? resetLocal() : void confirm()}>
-                            {busy ? "저장 중…" : changed || saveStarted ? "수정 확인" : "확인"}
+                            disabled={busy || slotHasInvalidNumericAnswers || (!calendarReady && changed) || (needsReload && changed)}
+                            onClick={() => supplemental ? resetLocal() : void accept()}>
+                            {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                         </Button>
                     ),
                     overviewSupplemental: baseView.supplementalSessions.length ? (
@@ -904,9 +1123,9 @@ export function ServiceRecordAdminWizard({
                     ) : null,
                 }}
             />
-            <ServiceRecordEditPreviewDialog open={recoveryOpen} onOpenChange={(open) => { if (!busy) setRecoveryOpen(open); }}
-                preview={recoveryPreview} onConfirm={needsReload || !prepared.current ? undefined : () => confirm(true)}
-                confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_recovery-preview`} />
+            <ServiceRecordEditPreviewDialog open={previewOpen} onOpenChange={(open) => { if (!open) void closePreview(); }}
+                preview={preview} onConfirm={confirmCommit}
+                confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
@@ -946,9 +1165,34 @@ export function ServiceRecordAdminWizard({
                 approvalLabel="나가기" onApprove={() => { setLeaveModalOpen(false); resetLocal(); }}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_leave-modal`} />
             <TwoButtonModal open={discardModalOpen} onOpenChange={setDiscardModalOpen}
-                title="이전 수정사항을 취소할까요?" description="확정하지 않은 기존 수정사항을 취소합니다. 확정된 기록은 그대로 유지됩니다."
-                approvalLabel="수정 취소" isPending={busy} onApprove={() => void discard()}
+                title="모든 수정사항을 취소할까요?" description="확정하지 않은 모든 수정사항이 사라집니다. 확정된 기록은 그대로 유지됩니다."
+                cancelLabel="닫기" approvalLabel="수정 취소" onApprove={cancelAllEdits}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_discard-modal`} />
+            <TwoButtonModal open={leaveGuard.leavePromptOpen} onOpenChange={(open) => { if (!open) leaveGuard.stay(); }}
+                title="페이지를 나가시겠어요?" description="수정이 저장되지 않았어요." isDescriptionVisuallyHidden={false}
+                cancelLabel="머무르기" approvalLabel="나가기" onApprove={leaveGuard.leave}
+                data-component={`${ADMIN_WIZARD_COMPONENT}_page-leave-modal`} />
+            {/* Blocking: the only way out is 확인, so close requests (outside click, Escape) are ignored. */}
+            <Dialog open={refreshModalOpen} onOpenChange={() => undefined}>
+                <FormDialogShell mobileSheet size="compact" showCloseButton={false} title="새로운 수정 사항이 있어서 새로고침이 필요해요"
+                    description="다른 곳에서 이 기록이 수정되었어요. 최신 내용을 불러온 뒤 다시 수정해 주세요."
+                    data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal`}
+                    footerClassName="grid grid-cols-1 gap-2.5 px-[22px] pb-[max(22px,env(safe-area-inset-bottom))]"
+                    footer={(
+                        <Button type="button" variant="positive" className="h-[52px] rounded-xl text-base" disabled={busy}
+                            data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal_actions_confirm`}
+                            onClick={() => void acceptRefresh()}>확인</Button>
+                    )}>
+                    <p className="text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal_content_description`}>
+                        확인을 누르면 최신 기록을 불러오고, 저장하지 않은 수정사항은 사라져요.
+                    </p>
+                    {refreshFailed ? (
+                        <p role="alert" className="mt-2 text-sm text-v3-burgundy" data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal_content_error`}>
+                            최신 기록을 불러오지 못했어요. 다시 시도해 주세요.
+                        </p>
+                    ) : null}
+                </FormDialogShell>
+            </Dialog>
         </>
     );
 }
