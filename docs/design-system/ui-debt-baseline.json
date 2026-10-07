@@ -162,7 +162,7 @@
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
         "1010:79-1010:166|visualTailwindInPage",
-        "1103:69-1103:97|visualTailwindInPage",
+        "1108:69-1108:97|visualTailwindInPage",
         "901:39-905:30|visualTailwindInPage",
         "963:193-963:355|visualTailwindInPage",
         "964:78-964:180|visualTailwindInPage",
