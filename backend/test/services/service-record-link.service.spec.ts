@@ -77,7 +77,7 @@ describe("ServiceRecordLinkService", () => {
         )),
     });
     const createJobRepository = () => ({
-        findPendingByRuleIdsAndEmployeeScheduleId: jest.fn().mockResolvedValue([]),
+        cancelPendingByRuleAndEmployeeSchedule: jest.fn().mockResolvedValue({ canceledJobIds: [], inFlightJobIds: [] }),
         update: jest.fn(),
         promoteAutomaticSchedulingClaim: jest.fn().mockImplementation(async (
             _markerId: string,
@@ -311,7 +311,7 @@ describe("ServiceRecordLinkService", () => {
             expiresAt: expect.any(Date),
         });
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
-        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
         expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
     });
@@ -368,9 +368,10 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
         expect(tokenService.activatePreparedLink).not.toHaveBeenCalled();
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
-        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).toHaveBeenCalledWith(
-            [SERVICE_RECORD_LINK_RULE_ID],
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
+            SERVICE_RECORD_LINK_RULE_ID,
             10,
+            "Service record link reset without resend",
         );
         expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10);
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
@@ -425,7 +426,7 @@ describe("ServiceRecordLinkService", () => {
 
         await expect(service.sendNow(10, "efl_invalid")).rejects.toBeInstanceOf(BadRequestException);
         expect(tokenService.issueLink).not.toHaveBeenCalled();
-        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
         expect(jobRepository.update).not.toHaveBeenCalled();
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
         expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
@@ -659,6 +660,107 @@ describe("ServiceRecordLinkService", () => {
         expect(releaseSql?.strings?.join("?")).toContain("canceled_by_user = false");
     });
 
+    describe("cancel fence: a job the dispatcher already moved to dispatching", () => {
+        const IN_FLIGHT = { canceledJobIds: [], inFlightJobIds: ["dispatching-job"] };
+        const build = (jobRepository: ReturnType<typeof createJobRepository>, withBranchLock = false) => {
+            const prisma = createPrisma();
+            const tokenService = createTokenService();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                tokenService as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                createLogRepository() as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                ...(withBranchLock
+                    ? [undefined, undefined, createBranchLock(prisma) as never, createAutomationActivationService() as never] as const
+                    : []),
+            );
+            return { service, prisma, tokenService };
+        };
+
+        it("revoke kills the token first, keeps the dispatching job and does not throw", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            const { service, tokenService } = build(jobRepository);
+
+            await expect(service.revoke(10)).resolves.toBeUndefined();
+
+            expect(tokenService.revokeForSchedule.mock.invocationCallOrder[0]).toBeLessThan(
+                jobRepository.cancelPendingByRuleAndEmployeeSchedule.mock.invocationCallOrder[0]!,
+            );
+            expect(jobRepository.update).not.toHaveBeenCalled();
+        });
+
+        it("resetLink still issues the fresh link, keeps the dispatching job and does not throw", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            const { service, tokenService } = build(jobRepository);
+
+            await expect(service.resetLink(10)).resolves.toEqual({
+                serviceRecordUrl: "https://mobile.test/service-record/efl_token",
+                expiresAt: expect.any(Date),
+            });
+
+            expect(tokenService.issueLink).toHaveBeenCalledTimes(1);
+            expect(jobRepository.update).not.toHaveBeenCalled();
+        });
+
+        it("the automatic path promotes nothing, releases its claim and reports no job enqueued", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            const { service, prisma } = build(jobRepository, true);
+
+            await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
+
+            expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+            expect(jobRepository.upsertPending).not.toHaveBeenCalled();
+            expect(jobRepository.update).not.toHaveBeenCalled();
+            const releaseSql = prisma.$executeRaw.mock.calls
+                .map((call: unknown[]) => call[0] as { strings?: readonly string[] })
+                .find((sql) => sql.strings?.join("?").includes("next_attempt_at"));
+            expect(releaseSql).toBeDefined();
+        });
+
+        it("the automatic path still promotes when nothing is in flight", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue({ canceledJobIds: ["old"], inFlightJobIds: [] });
+            const { service } = build(jobRepository, true);
+
+            await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
+
+            expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
+                SERVICE_RECORD_LINK_RULE_ID,
+                10,
+                "Service record link rescheduled",
+            );
+            expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
+        });
+
+        it("a manual send whose replacement hit the lock timeout answers the same 409 as an in-flight job", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.replacePendingJobsUnlessInFlight.mockResolvedValue({ kind: "lock_timeout" });
+            const logRepository = createLogRepository();
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            );
+
+            await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
+            await expect(service.sendNow(10)).rejects.toMatchObject({
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT" }),
+            });
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        });
+    });
+
     it("supersedes retryable stale SMS logs once the replacement job is enqueued", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
@@ -737,7 +839,7 @@ describe("ServiceRecordLinkService", () => {
             });
             expect(jobRepository.upsertPending).not.toHaveBeenCalled();
             // No unconditional pre-cancel outside the atomic repository call.
-            expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).not.toHaveBeenCalled();
+            expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
             expect(jobRepository.update).not.toHaveBeenCalled();
             // A refused send must not supersede retryable logs either.
             expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
@@ -833,11 +935,12 @@ describe("ServiceRecordLinkService", () => {
 
             await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
 
-            // advisory lock, rule lock, job lock + read only: no cancel, no insert, no unconditional by-id update
-            expect(statements).toHaveLength(3);
-            expect(statements[0]).toContain("pg_advisory_xact_lock");
-            expect(statements[1]).toContain('FROM "message_trigger_rule"');
-            expect(statements[2]).toContain('FROM "message_trigger_job"');
+            // lock_timeout, advisory lock, rule lock, job lock + read only: no cancel, no insert, no unconditional by-id update
+            expect(statements).toHaveLength(4);
+            expect(statements[0]).toContain("SET LOCAL lock_timeout");
+            expect(statements[1]).toContain("pg_advisory_xact_lock");
+            expect(statements[2]).toContain('FROM "message_trigger_rule"');
+            expect(statements[3]).toContain('FROM "message_trigger_job"');
             expect(lockedRules).toEqual([SERVICE_RECORD_LINK_RULE_ID]);
             expect([...rows.keys()]).toEqual(["automatic-in-flight"]);
             expect(rows.get("automatic-in-flight")!.status).toBe("dispatching");
@@ -1082,9 +1185,10 @@ describe("ServiceRecordLinkService", () => {
         await service.revoke(10);
 
         expect(tokenService.revokeForSchedule).toHaveBeenCalledWith(10);
-        expect(jobRepository.findPendingByRuleIdsAndEmployeeScheduleId).toHaveBeenCalledWith(
-            [SERVICE_RECORD_LINK_RULE_ID],
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
+            SERVICE_RECORD_LINK_RULE_ID,
             10,
+            "Service record access revoked",
         );
     });
 
