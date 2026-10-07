@@ -1,7 +1,10 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
-import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
+import {
+    ServiceRecordEditConflictError,
+    ServiceRecordRevisionOperationUnresolvedError,
+} from "domain/errors/service-record-edit.error";
 import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type {
     ServiceRecordEditRevisionFactsSource,
@@ -248,6 +251,7 @@ function createHarness(options: {
     activeDraft?: ReturnType<typeof draft> | null;
     targetDraft?: { serviceRecordCaseId: string } | null;
     calendar?: KrBusinessDayCalendar;
+    caseEventBus?: { emit: jest.Mock };
 } = {}) {
     const repository = {
         createOrResumeDraft: jest.fn().mockImplementation((input: { sourceFingerprint: string; sourceSnapshot: unknown; changes?: unknown }) => Promise.resolve(draft({
@@ -269,7 +273,11 @@ function createHarness(options: {
     const holidayCalendar = createHolidayCalendarStub();
     const { calendar } = options;
     if (calendar) (holidayCalendar.forBranch as jest.Mock).mockImplementation(async () => calendar);
-    const service = new AdminServiceRecordEditService(repository as never, holidayCalendar);
+    const service = new AdminServiceRecordEditService(
+        repository as never,
+        holidayCalendar,
+        options.caseEventBus as never,
+    );
     return { service, repository, holidayCalendar };
 }
 
@@ -1507,6 +1515,104 @@ describe("AdminServiceRecordEditService", () => {
             idempotencyKey: "11111111-1111-4111-8111-111111111111",
         })).rejects.toBeInstanceOf(BadRequestException);
         expect(harness.repository.confirmDraft).not.toHaveBeenCalled();
+    });
+
+    describe("confirm guard reason and case-changed event", () => {
+        const confirmDto = {
+            expectedDraftVersion: 1,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "11111111-1111-4111-8111-111111111111",
+        };
+        const confirmed = {
+            status: "confirmed" as const,
+            caseId: CASE_ID,
+            clientId: CLIENT_ID,
+            draftId: DRAFT_ID,
+            draftVersion: 2,
+            caseVersion: 9,
+            revisionId: "55555555-5555-4555-8555-555555555555",
+            revisionNumber: 2,
+            documentStatus: "capability_unverified" as const,
+            confirmedAt: "2026-09-08T01:02:03.000Z",
+        };
+
+        it("names the blocking operation in the 409 body without changing the problem code", async () => {
+            const harness = createHarness();
+            harness.repository.confirmDraft.mockRejectedValue(new ServiceRecordRevisionOperationUnresolvedError(
+                "A revision document operation is unresolved",
+                "contract_period",
+                "processing",
+                null,
+            ));
+
+            const error = await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto)
+                .catch((caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getStatus()).toBe(409);
+            expect((error as ConflictException).getResponse()).toMatchObject({
+                code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                blockingOperation: { operation: "contract_period", status: "processing", lastErrorCode: null },
+            });
+        });
+
+        it("keeps a plain repository conflict free of blockingOperation", async () => {
+            const harness = createHarness();
+            harness.repository.confirmDraft.mockRejectedValue(new ServiceRecordEditConflictError());
+
+            const error = await harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto)
+                .catch((caught: unknown) => caught);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            const body = (error as ConflictException).getResponse() as Record<string, unknown>;
+            expect(body["code"]).toBe("SERVICE_RECORD_WRITE_TARGET_CHANGED");
+            expect(body).not.toHaveProperty("blockingOperation");
+        });
+
+        it("emits the new case version once after a successful confirm", async () => {
+            const caseEventBus = { emit: jest.fn() };
+            const harness = createHarness({ caseEventBus });
+            harness.repository.confirmDraft.mockResolvedValue(confirmed);
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto))
+                .resolves.toEqual(confirmed);
+
+            expect(caseEventBus.emit).toHaveBeenCalledTimes(1);
+            expect(caseEventBus.emit).toHaveBeenCalledWith({
+                branchId: BRANCH_ID,
+                clientId: CLIENT_ID,
+                caseId: CASE_ID,
+                caseVersion: 9,
+            });
+        });
+
+        it("does not emit when the confirm is refused", async () => {
+            const caseEventBus = { emit: jest.fn() };
+            const harness = createHarness({ caseEventBus });
+            harness.repository.confirmDraft.mockRejectedValue(new ServiceRecordEditConflictError());
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto))
+                .rejects.toBeInstanceOf(ConflictException);
+            expect(caseEventBus.emit).not.toHaveBeenCalled();
+        });
+
+        it("never fails the confirm when the event bus throws", async () => {
+            const caseEventBus = { emit: jest.fn().mockImplementation(() => { throw new Error("bus down"); }) };
+            const harness = createHarness({ caseEventBus });
+            harness.repository.confirmDraft.mockResolvedValue(confirmed);
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto))
+                .resolves.toEqual(confirmed);
+            expect(caseEventBus.emit).toHaveBeenCalledTimes(1);
+        });
+
+        it("still confirms when no event bus is provided", async () => {
+            const harness = createHarness();
+            harness.repository.confirmDraft.mockResolvedValue(confirmed);
+
+            await expect(harness.service.confirmDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, confirmDto))
+                .resolves.toEqual(confirmed);
+        });
     });
 
     describe("registered problem contract bodies", () => {
