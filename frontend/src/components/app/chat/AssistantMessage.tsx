@@ -8,6 +8,7 @@ import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from "./agent-markdown-link-compo
 import { MarkdownContent } from "./MarkdownContent";
 import { ToolIndicator } from "./tool-indicator";
 import { MessageFeedback } from "./message-feedback";
+import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import type { ChatMessage } from "@/hooks/useChatStream";
 import ClientRegistrationWizard, { type CreatedClient } from "./ClientRegistrationWizard";
 import ContractSendWizard from "./ContractSendWizard";
@@ -73,7 +74,7 @@ export function AssistantMessage({
                     return (
                         <div data-component="desktop_chat_page_wizard-contract-status-result" className="space-y-1 py-1">
                             <div>
-                                계약서 상태: <strong>{String(contractStatus.documentStatus)}</strong>
+                                계약서 상태: <strong>{getClientDocumentStatusMeta(contractStatus.documentStatus, { hasSigned: contractStatus.hasSigned }).label}</strong>
                             </div>
                             <div className="text-sm text-muted-foreground">
                                 산모: {contractStatus.clientName} (ID: {contractStatus.clientId})
