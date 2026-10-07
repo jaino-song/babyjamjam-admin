@@ -199,7 +199,109 @@ for (const mode of MODES) {
             expect(await where(page)).toBe("/previous");
         });
 
-        test("release after a hash entry was pushed drops the guard entry without moving the user", async ({ page }) => {
+        // Release must never navigate or rewrite history: arm, tamper with the history the
+        // way a router or a plain link would, release, and compare before/after.
+        const SAFETY_SCENARIOS: Array<{ name: string; tamper: (editor: string) => void; url: string }> = [
+            {
+                name: "replace-hash: replaceState(state, '', editor#new)",
+                tamper: (editor) => history.replaceState(history.state, "", `${editor}#new`),
+                url: `${EDITOR}#new`,
+            },
+            {
+                name: "replace-hash with router state lacking our tag",
+                tamper: (editor) => history.replaceState({ __NA: true, marker: "r" }, "", `${editor}#new`),
+                url: `${EDITOR}#new`,
+            },
+            {
+                name: "replace-other: replaceState(state, '', /different)",
+                tamper: () => history.replaceState(history.state, "", "/different"),
+                url: "/different",
+            },
+            {
+                name: "replace-other with router state lacking our tag",
+                tamper: () => history.replaceState({ __NA: true, marker: "r" }, "", "/different"),
+                url: "/different",
+            },
+            {
+                name: "replace-above-other: push editor#a, then replace to /different",
+                tamper: (editor) => {
+                    history.pushState({ n: 1 }, "", `${editor}#a`);
+                    history.replaceState({ n: 2 }, "", "/different");
+                },
+                url: "/different",
+            },
+            {
+                name: "router hash push above the guard entry",
+                tamper: (editor) => history.pushState({ __NA: true, marker: "hash-tree" }, "", `${editor}#x`),
+                url: `${EDITOR}#x`,
+            },
+            {
+                name: "tag lost, URL kept (router.refresh-style replace)",
+                tamper: (editor) => history.replaceState({ __NA: true, marker: "refresh" }, "", editor),
+                url: EDITOR,
+            },
+        ];
+
+        for (const scenario of SAFETY_SCENARIOS) {
+            test(`release safety, ${scenario.name}: nothing moves`, async ({ page }) => {
+                await setup(page, mode);
+                await page.evaluate(() => {
+                    const w = window as unknown as Record<string, unknown>;
+                    w.origPush = history.pushState;
+                    w.origReplace = history.replaceState;
+                });
+                await arm(page);
+                await page.evaluate(`(${scenario.tamper.toString()})(${JSON.stringify(EDITOR)})`);
+                await settle(page);
+                const before = {
+                    url: await where(page),
+                    state: await historyState(page),
+                    length: await historyLength(page),
+                };
+                await page.evaluate(() => {
+                    const w = window as unknown as { pops: number };
+                    w.pops = 0;
+                    window.addEventListener("popstate", () => { w.pops += 1; });
+                    (window as unknown as HarnessWindow).guard.release();
+                });
+                await page.waitForTimeout(400);
+
+                expect(before.url).toBe(scenario.url);
+                expect(await where(page)).toBe(before.url);
+                expect(await historyState(page)).toEqual(before.state);
+                expect(await historyLength(page)).toBe(before.length);
+                expect(await page.evaluate(() => (window as unknown as { pops: number }).pops)).toBe(0);
+                expect(
+                    await page.evaluate(() => {
+                        const w = window as unknown as { origPush: unknown; origReplace: unknown };
+                        return history.pushState === w.origPush && history.replaceState === w.origReplace;
+                    }),
+                ).toBe(true);
+                expect(await modalOpen(page)).toBe(false);
+            });
+        }
+
+        test("release safety, plain <a href=#x> fragment navigation: nothing moves", async ({ page }) => {
+            await setup(page, mode);
+            await arm(page);
+            await page.click("#hash");
+            await settle(page);
+            const before = { url: await where(page), state: await historyState(page), length: await historyLength(page) };
+            expect(before.url).toBe(`${EDITOR}#section`);
+            await page.evaluate(() => {
+                const w = window as unknown as { pops: number };
+                w.pops = 0;
+                window.addEventListener("popstate", () => { w.pops += 1; });
+                (window as unknown as HarnessWindow).guard.release();
+            });
+            await page.waitForTimeout(400);
+            expect(await where(page)).toBe(before.url);
+            expect(await historyState(page)).toEqual(before.state);
+            expect(await historyLength(page)).toBe(before.length);
+            expect(await page.evaluate(() => (window as unknown as { pops: number }).pops)).toBe(0);
+        });
+
+        test("release after a router hash push leaves a redundant guard entry but never moves the user", async ({ page }) => {
             const hashState = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { marker: "hash-tree" } };
             await setup(page, mode);
             await arm(page);
@@ -210,18 +312,42 @@ for (const mode of MODES) {
             await page.evaluate(() => (window as unknown as HarnessWindow).guard.release());
             await page.waitForTimeout(400);
 
-            // Same URL and Next-style state, still on the hash entry.
             expect(await where(page)).toBe(`${EDITOR}#x`);
-            expect(await historyState(page)).toMatchObject(hashState);
+            expect(await historyState(page)).toEqual(hashState);
             expect(await modalOpen(page)).toBe(false);
 
-            // No extra entry: hash entry -> editor entry -> previous page.
-            await browserBack(page);
+            // Documented limitation: hash entry -> redundant guard entry -> editor entry -> previous page.
+            for (const expected of [EDITOR, EDITOR, "/previous"]) {
+                await browserBack(page);
+                await settle(page);
+                expect(await where(page)).toBe(expected);
+            }
+        });
+
+        test("two controllers released in reverse order never leave the editor page", async ({ page }) => {
+            await setup(page, mode);
+            await page.evaluate(() => {
+                const w = window as unknown as Record<string, unknown> & { exports: { createLeaveGuardController: (o: object) => { arm: () => void; release: () => void } } };
+                const make = () => w.exports.createLeaveGuardController({ onPromptChange: () => undefined });
+                const first = make();
+                const second = make();
+                first.arm();
+                second.arm();
+                w.pair = { first, second };
+                w.pops = 0;
+                window.addEventListener("popstate", () => { (w.pops as number) += 1; });
+            });
             await settle(page);
+            const lengthBefore = await historyLength(page);
+            await page.evaluate(() => {
+                const { first, second } = (window as unknown as { pair: Record<"first" | "second", { release: () => void }> }).pair;
+                second.release();
+                first.release();
+            });
+            await page.waitForTimeout(400);
             expect(await where(page)).toBe(EDITOR);
-            await browserBack(page);
-            await settle(page);
-            expect(await where(page)).toBe("/previous");
+            expect(await historyLength(page)).toBe(lengthBefore);
+            expect(await page.evaluate(() => (window as unknown as { pops: number }).pops)).toBeLessThanOrEqual(1);
         });
 
         test("release immediately followed by arm (StrictMode) keeps a single guard entry", async ({ page }) => {
