@@ -78,6 +78,8 @@ interface ClientServiceRecordsTabProps {
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
 const SEND_LINK_FAILURE_DESCRIPTION = "제공기록지 링크 발송에 실패했어요";
+const SEND_LINK_IN_PROGRESS_DESCRIPTION = "발송 처리 중이에요";
+const SEND_LINK_DEFERRED_DESCRIPTION = "잠시 후 다시 발송돼요";
 const CANCELED_LINK_HINT = "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.";
 const MISSING_RECORD_ALERT_SESSION_COUNT = 2;
 const MISSING_RECORD_ALERT_HOUR_KST = 18;
@@ -105,6 +107,7 @@ const LINK_STATUS_META: Record<ServiceRecordLinkStatus, {
 }> = {
     none: { label: "발송 전", variant: "neutral" },
     scheduled: { label: "발송 예약", variant: "primary" },
+    sending: { label: "발송 중", variant: "neutral" },
     sent: { label: "발송됨", variant: "success" },
     failed: { label: "발송 실패", variant: "danger" },
     canceled: { label: "발송 취소", variant: "neutral" },
@@ -183,15 +186,28 @@ function ClientServiceRecordsTabContent({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
             });
-            if (!result.ok || result.status !== "sent") {
-                toast({
-                    variant: "destructive",
-                    description: SEND_LINK_FAILURE_DESCRIPTION,
-                });
-                return false;
+            // The outcome is decided by the job status alone: `ok` is false for
+            // every non-sent job, including one the scheduler is already
+            // delivering, and treating that as a failure makes staff resend
+            // (the caregiver then gets two SMS).
+            switch (result.status) {
+                case "sent":
+                    toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
+                    return true;
+                case "processing":
+                case "dispatching":
+                    toast({ description: SEND_LINK_IN_PROGRESS_DESCRIPTION });
+                    return true;
+                case "pending":
+                    toast({ description: SEND_LINK_DEFERRED_DESCRIPTION });
+                    return true;
+                default:
+                    toast({
+                        variant: "destructive",
+                        description: SEND_LINK_FAILURE_DESCRIPTION,
+                    });
+                    return false;
             }
-            toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
-            return true;
         } catch (error) {
             toast({
                 description: getErrorDescription(error),

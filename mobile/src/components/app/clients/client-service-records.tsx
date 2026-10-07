@@ -77,6 +77,7 @@ type SessionTone = "green" | "orange" | "muted";
 const LINK_STATUS_META: Record<ServiceRecordLinkStatus, { label: string; tone: LinkBadgeTone }> = {
     none: { label: "발송 전", tone: "gray" },
     scheduled: { label: "발송 예약", tone: "blue" },
+    sending: { label: "발송 중", tone: "gray" },
     sent: { label: "발송됨", tone: "green" },
     failed: { label: "발송 실패", tone: "burgundy" },
     canceled: { label: "발송 취소", tone: "gray" },
@@ -296,11 +297,29 @@ function LinkCard({
     const sendLink = async () => {
         setIsSending(true);
         try {
-            await sendLinkMutation.mutateAsync({
+            const result = await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId,
             });
-            toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
+            // The outcome is decided by the job status alone: `ok` is false for
+            // every non-sent job, including one the scheduler is already
+            // delivering, and treating that as a failure makes staff resend
+            // (the caregiver then gets two SMS).
+            switch (result.status) {
+                case "sent":
+                    toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
+                    break;
+                case "processing":
+                case "dispatching":
+                    toast({ description: "발송 처리 중이에요" });
+                    break;
+                case "pending":
+                    toast({ description: "잠시 후 다시 발송돼요" });
+                    break;
+                default:
+                    toast({ variant: "destructive", description: "제공기록지 링크 발송에 실패했어요" });
+                    break;
+            }
         } catch (error) {
             toast({
                 description: getErrorDescription(error),

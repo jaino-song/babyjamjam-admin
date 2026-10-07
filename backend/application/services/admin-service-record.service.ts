@@ -11,6 +11,7 @@ import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
@@ -64,6 +65,31 @@ type CaseForOverview = Prisma.service_record_caseGetPayload<{
 
 type ServiceRecordLinkJob = message_trigger_job;
 type ServiceRecordLinkLog = message_log;
+type LinkAttempt =
+    | { kind: "job"; time: number; job: ServiceRecordLinkJob }
+    | { kind: "log"; time: number; log: ServiceRecordLinkLog };
+
+/**
+ * An unmaterialised scheduling lease that automation deactivation canceled.
+ *
+ * `service-record-link.service.ts` claims an automatic send by inserting a
+ * `failed` lease row (reason SCHEDULING_RETRY, no link, never dispatched). When
+ * the branch automation is switched off,
+ * `message-automation-activation.service.ts` cancels exactly those leases with
+ * SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON and `canceledByUser: false`; a
+ * job that had materialised (pending/processing) is canceled with a different
+ * reason. So this reason + no user cancel identifies a cancellation that is
+ * cleanup of a never-sent lease, not a canceled delivery attempt.
+ */
+function isCanceledSchedulingLease(job: ServiceRecordLinkJob): boolean {
+    return job.status === "canceled"
+        && job.cancelReason === SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON
+        && job.canceledByUser !== true;
+}
+
+function isInFlightLinkJob(job: ServiceRecordLinkJob): boolean {
+    return job.status === "pending" || job.status === "processing" || job.status === "dispatching";
+}
 type SignatureDocRow = Prisma.eformsign_docGetPayload<{
     select: {
         employeeScheduleId: true;
@@ -484,6 +510,17 @@ export class AdminServiceRecordService {
         };
     }
 
+    /**
+     * The status follows the NEWEST attempt, not the whole history: a failed
+     * resend after an old success is a failure, a job that failed while being
+     * prepared (no log row) is a failure, a job the scheduler is currently
+     * delivering is "sending", and a newer canceled job is "canceled" even
+     * after an older success. `sentCount`/`lastSentAt` stay all-time history.
+     *
+     * Attempt time is `updatedAt` for a job (it moves on every claim, retry
+     * and terminal transition) and `lastAttemptAt ?? createdAt` for a log.
+     * Rows are compared by that time, never by query order.
+     */
     private deriveLink(
         jobs: ServiceRecordLinkJob[],
         logs: ServiceRecordLinkLog[],
@@ -492,22 +529,69 @@ export class AdminServiceRecordService {
         const sentLogs = logs
             .filter((log) => log.status === "sent")
             .sort((left, right) => this.logActivityTime(right) - this.logActivityTime(left));
-        const pendingJob = jobs.find((job) => job.status === "pending") ?? null;
-        const newestLog = logs[0] ?? null;
-        const newestJob = jobs[0] ?? null;
         const sentCount = sentLogs.length;
+
+        // A log never outranks its own job while that job is still in flight:
+        // a retried job is pending/processing/dispatching even though its
+        // earlier attempt logged a failure.
+        const inFlightJobIds = new Set(
+            jobs.filter((job) => isInFlightLinkJob(job)).map((job) => job.id),
+        );
+        // A canceled scheduling lease is cleanup, not an attempt: its cancel
+        // bumps updatedAt, which would otherwise outrank a real delivery that
+        // succeeded after the lease was created (the lease's only real moment).
+        // It is skipped ONLY when such a success exists; with no later success
+        // it still counts and shows "canceled", and a genuine canceled resend
+        // (any other reason, or canceled by a user) is never skipped.
+        const latestSuccessTime = Math.max(
+            -Infinity,
+            ...logs.filter((log) => log.status === "sent").map((log) => this.logActivityTime(log)),
+            ...jobs.filter((job) => job.status === "sent").map((job) => this.jobActivityTime(job)),
+        );
+        const isSupersededLease = (job: ServiceRecordLinkJob): boolean => (
+            isCanceledSchedulingLease(job) && latestSuccessTime > job.createdAt.getTime()
+        );
+        const attempts: LinkAttempt[] = [
+            ...jobs.filter((job) => !isSupersededLease(job)).map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...logs
+                .filter((log) => (
+                    (log.status === "sent" || log.status === "failed")
+                    && !(log.triggerJobId !== null && inFlightJobIds.has(log.triggerJobId))
+                ))
+                .map((log): LinkAttempt => ({ kind: "log", time: this.logActivityTime(log), log })),
+        ];
+        // Equal timestamps: prefer the job (it carries the in-flight state).
+        attempts.sort((left, right) => (
+            right.time - left.time || Number(right.kind === "job") - Number(left.kind === "job")
+        ));
+        const newest = attempts[0] ?? null;
+
         let status: AdminServiceRecordLinkStatus = "none";
         let scheduledFor: Date | null = null;
-
-        if (sentCount > 0) {
-            status = "sent";
-        } else if (pendingJob) {
-            status = "scheduled";
-            scheduledFor = pendingJob.scheduledFor;
-        } else if (newestLog?.status === "failed") {
-            status = "failed";
-        } else if (newestJob?.status === "canceled") {
-            status = "canceled";
+        if (newest?.kind === "log") {
+            status = newest.log.status === "sent" ? "sent" : "failed";
+        } else if (newest?.kind === "job") {
+            switch (newest.job.status) {
+                case "pending":
+                    status = "scheduled";
+                    scheduledFor = newest.job.scheduledFor;
+                    break;
+                case "processing":
+                case "dispatching":
+                    status = "sending";
+                    break;
+                case "sent":
+                    status = "sent";
+                    break;
+                case "failed":
+                    status = "failed";
+                    break;
+                case "canceled":
+                    status = "canceled";
+                    break;
+                default:
+                    break;
+            }
         }
 
         return {
@@ -588,6 +672,10 @@ export class AdminServiceRecordService {
 
     private logActivityTime(log: ServiceRecordLinkLog): number {
         return (log.lastAttemptAt ?? log.createdAt).getTime();
+    }
+
+    private jobActivityTime(job: ServiceRecordLinkJob): number {
+        return (job.updatedAt ?? job.createdAt).getTime();
     }
 
     private async findServiceRecordSignatureDocs(
