@@ -235,19 +235,6 @@ const CONTRACT_OPEN_KEYWORDS = ["doc_open", "open_participant", "open_outsider",
 function isAbortErrorLike(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
-const CONTRACT_SIGNATURE_CODES = new Set(["032", "062", "092"]);
-const CONTRACT_SIGNATURE_KEYWORDS = [
-  "doc_accept_outsider",
-  "doc_accept_participant",
-  "participant_accept",
-  "outside_accept",
-  "signed",
-  "signature",
-  "서명 완료",
-  "서명완료",
-  "참여자 승인",
-  "외부자 승인",
-];
 const CONTRACT_SEND_FAILURE_KEYWORDS = ["fail", "failed", "failure", "error", "실패", "오류"];
 const CONTRACT_SEND_EVENT_KEYWORDS = [
   "send",
@@ -564,20 +551,16 @@ function hasOpenedDocument(doc: EformsignDocument): boolean {
   return CONTRACT_OPEN_CODES.has(normalizeStatusCode(doc.current_status?.status_type));
 }
 
-function hasSignatureEventRecord(record: UnknownRecord): boolean {
-  const eventTokens = eventTokensFromRecord(record);
-
-  return eventTokens.some((token) => {
-    if (CONTRACT_SIGNATURE_CODES.has(normalizeStatusCode(token))) return true;
-    return CONTRACT_SIGNATURE_KEYWORDS.some((keyword) => token.includes(keyword));
-  });
-}
-
-function hasCustomerSignatureDocument(doc: EformsignDocument): boolean {
-  for (const source of [doc.histories, doc.previous_status]) {
-    if (collectRecords(source).some(hasSignatureEventRecord)) return true;
-  }
-  return CONTRACT_SIGNATURE_CODES.has(normalizeStatusCode(doc.current_status?.status_type));
+/**
+ * "The customer has signed" is decided only by the document's current
+ * categorisation (backend display_status first). Event history is never
+ * scanned: a signature that was rejected and re-requested leaves signature
+ * events behind while the document is back at the customer's step.
+ * "in-progress" here is only the provider-review stage — categorize() files a
+ * document under it solely at the review step or for display_status "review".
+ */
+function isCustomerSignedCategory(category: ContractCategory): boolean {
+  return category === "completed" || category === "signed" || category === "in-progress";
 }
 
 function hasSendFailureEventRecord(record: UnknownRecord): boolean {
@@ -628,7 +611,7 @@ function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar):
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
   if (isReviewNeeded(doc, calendar)) return "5/6 - 제공기관 검토 필요";
-  if (categorize(doc, calendar) === "signed" || hasCustomerSignatureDocument(doc)) return "4/6 - 이용자 서명 완료";
+  if (isCustomerSignedCategory(category)) return "4/6 - 이용자 서명 완료";
   if (hasOpenedDocument(doc)) return "4/6 - 이용자 서명 대기";
   return "3/6 - 이용자 문서 열람 대기";
 }
@@ -1157,8 +1140,7 @@ function contractStageItems(
   const sendFailed = hasDocumentSendFailure(doc);
   const hasOpened = hasOpenedDocument(doc);
   const reviewNeeded = isReviewNeeded(doc, calendar);
-  const hasCustomerSigned =
-    category === "completed" || category === "signed" || reviewNeeded || hasCustomerSignatureDocument(doc);
+  const hasCustomerSigned = isCustomerSignedCategory(category);
   const items: ContractStageItem[] = [
     {
       icon: FileText,
