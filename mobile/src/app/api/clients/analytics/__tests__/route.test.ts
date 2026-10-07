@@ -111,6 +111,78 @@ describe("clients analytics route", () => {
     });
   });
 
+  it("returns 200 with all-unknown counts when both upstreams are unreachable", async () => {
+    mockServerGet.mockRejectedValue(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3001"), { code: "ECONNREFUSED" }));
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    await expect(response.json()).resolves.toEqual({
+      activeClients: null,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: null,
+    });
+  });
+
+  it("returns 200 with unknown counts when both upstreams answer 5xx (thrown by axios)", async () => {
+    mockServerGet.mockRejectedValue({ response: { status: 503, data: { message: "down" } } });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ activeClients: null, contractsNotSent: null });
+  });
+
+  it("derives only list-based counts when the stats request fails but the list loads", async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-06-10T12:00:00+09:00"));
+
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") throw new Error("connect ECONNREFUSED");
+      return weekClients;
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      activeClients: 2,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: 0,
+      upcomingWithinWeek: 3,
+    });
+  });
+
+  it("does not mask an upstream 401 on the stats request", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") {
+        throw { response: { status: 401, data: { message: "Unauthorized" } } };
+      }
+      return weekClients;
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(401);
+  });
+
+  it("does not mask an upstream 403 on the client list", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") throw new Error("connect ECONNREFUSED");
+      throw { response: { status: 403, data: { message: "Forbidden" } } };
+    });
+
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(403);
+  });
+
   it("keeps the backend stats when the client list fails", async () => {
     mockServerGet.mockImplementation(async (path: string) => {
       if (path === "/clients/stats") {
@@ -152,7 +224,7 @@ describe("clients analytics route", () => {
     );
   });
 
-  it("does not expose raw backend details when client-derived analytics fail", async () => {
+  it("does not expose raw backend details when the stats and the client list are both unavailable", async () => {
     mockServerGet.mockImplementation(async (path: string) => {
       if (path === "/clients/stats") {
         return { status: 404, data: { message: "missing analytics endpoint" } };
@@ -170,18 +242,42 @@ describe("clients analytics route", () => {
 
     const response = await GET(createRequest());
 
-    expect(response.status).toBe(502);
+    expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
-    await expect(response.json()).resolves.toEqual({
-      error: expect.stringMatching(/[가-힣].*요[.!]?$/),
-      code: "CLIENT_ANALYTICS_ERROR",
+    const body = await response.json();
+    expect(body).toEqual({
+      activeClients: null,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: null,
+    });
+    expect(JSON.stringify(body)).not.toContain("analytics.internal");
+  });
+
+  it("sanitizes an authorization failure on the client list instead of leaking upstream details", async () => {
+    mockServerGet.mockImplementation(async (path: string) => {
+      if (path === "/clients/stats") {
+        return { status: 404, data: { message: "missing analytics endpoint" } };
+      }
+
+      return {
+        status: 403,
+        data: {
+          message: "database host analytics.internal returned /tmp/clients",
+          code: "CLIENT_ANALYTICS_ERROR",
+          diagnostics: { host: "analytics.internal" },
+        },
+      };
     });
 
-    const logged = consoleErrorSpy.mock.calls
-      .flat()
-      .map((entry) => (typeof entry === "string" ? entry : JSON.stringify(entry)))
-      .join(" ");
-    expect(logged).not.toContain("/tmp/clients");
-    expect(logged).not.toContain("analytics.internal");
+    const response = await GET(createRequest());
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get("Cache-Control")).toBe("no-store, max-age=0");
+    const body = await response.json();
+    expect(JSON.stringify(body)).not.toContain("analytics.internal");
+    expect(JSON.stringify(body)).not.toContain("/tmp/clients");
   });
 });

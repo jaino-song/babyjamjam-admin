@@ -88,6 +88,10 @@ export function isServiceStartingWithinWeek(
   return startDate >= windowStart && startDate <= windowEnd;
 }
 
+/**
+ * A well-formed payload whose counts are all missing/null is valid: it means "everything unknown"
+ * (backend unavailable) and renders as "-". Only a non-object payload is rejected.
+ */
 export function normalizeDashboardAnalyticsPayload(payload: unknown): DashboardAnalytics | null {
   if (!isRecord(payload)) return null;
 
@@ -113,16 +117,6 @@ export function normalizeDashboardAnalyticsPayload(payload: unknown): DashboardA
     numberValue(payload.upcomingNextMonth) ??
     numberValue(schedules.startingNextMonth);
   const upcomingWithinWeek = numberValue(payload.upcomingWithinWeek);
-
-  if (
-    activeClients === undefined &&
-    contractsNotSent === undefined &&
-    contractsPendingSignature === undefined &&
-    upcomingThisMonth === undefined &&
-    upcomingWithinWeek === undefined
-  ) {
-    return null;
-  }
 
   return {
     activeClients: activeClients ?? null,

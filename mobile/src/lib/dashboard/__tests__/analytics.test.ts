@@ -130,9 +130,27 @@ describe("normalizeDashboardAnalyticsPayload", () => {
     });
   });
 
-  it("returns null when the payload carries no usable count", () => {
-    expect(normalizeDashboardAnalyticsPayload({})).toBeNull();
+  it("accepts a well-formed all-null payload as all-unknown instead of rejecting it", () => {
+    const allUnknown = {
+      activeClients: null,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: null,
+    };
+
+    expect(normalizeDashboardAnalyticsPayload(allUnknown)).toEqual(allUnknown);
+    expect(normalizeDashboardAnalyticsPayload({})).toEqual(allUnknown);
+    expect(
+      Object.values(normalizeDashboardAnalyticsPayload(allUnknown) ?? {}).map(formatAnalyticsCount),
+    ).toEqual(["-", "-", "-", "-", "-", "-"]);
+  });
+
+  it("rejects a payload that is not an object", () => {
     expect(normalizeDashboardAnalyticsPayload(null)).toBeNull();
+    expect(normalizeDashboardAnalyticsPayload("down")).toBeNull();
+    expect(normalizeDashboardAnalyticsPayload([])).toBeNull();
   });
 
   it("reads an explicit zero as a real zero", () => {
