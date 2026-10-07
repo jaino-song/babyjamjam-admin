@@ -494,8 +494,9 @@ export class AdminServiceRecordService {
     /**
      * The status follows the NEWEST attempt, not the whole history: a failed
      * resend after an old success is a failure, a job that failed while being
-     * prepared (no log row) is a failure, and a job the scheduler is currently
-     * delivering is "sending". `sentCount`/`lastSentAt` stay all-time history.
+     * prepared (no log row) is a failure, a job the scheduler is currently
+     * delivering is "sending", and a newer canceled job is "canceled" even
+     * after an older success. `sentCount`/`lastSentAt` stay all-time history.
      *
      * Attempt time is `updatedAt` for a job (it moves on every claim, retry
      * and terminal transition) and `lastAttemptAt ?? createdAt` for a log.
@@ -518,11 +519,7 @@ export class AdminServiceRecordService {
             jobs.filter((job) => isInFlightLinkJob(job)).map((job) => job.id),
         );
         const attempts: LinkAttempt[] = [
-            ...jobs
-                // An unsent job that was canceled is not a delivery attempt;
-                // it only matters when nothing was ever sent.
-                .filter((job) => job.status !== "canceled" || sentCount === 0)
-                .map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...jobs.map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
             ...logs
                 .filter((log) => (
                     (log.status === "sent" || log.status === "failed")

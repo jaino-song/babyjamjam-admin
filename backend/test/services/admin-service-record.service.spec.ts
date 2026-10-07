@@ -720,6 +720,38 @@ describe("AdminServiceRecordService", () => {
             expect(link.status).toBe("sending");
         });
 
+        it.each([
+            ["pending", "scheduled"],
+            ["processing", "sending"],
+            ["dispatching", "sending"],
+        ])(
+            "keeps an in-flight %s job as %s even when its own failure log is newer than the job row",
+            async (jobStatus, expected) => {
+                const link = await linkFor(
+                    [job("job-retry", jobStatus, at("3T06:00"), { scheduledFor: at("9T06:00") })],
+                    [log(2, "job-retry", "failed", at("3T07:00"))],
+                );
+                expect(link.status).toBe(expected);
+                expect(link.scheduledFor).toEqual(expected === "scheduled" ? at("9T06:00") : null);
+            },
+        );
+
+        it("orders an unrelated newer failure log chronologically against an in-flight job", async () => {
+            const link = await linkFor(
+                [job("job-other", "failed", at("2T06:00")), job("job-inflight", "processing", at("3T06:00"))],
+                [log(2, "job-other", "failed", at("3T07:00"))],
+            );
+            expect(link.status).toBe("failed");
+        });
+
+        it("orders an unrelated older failure log chronologically against an in-flight job", async () => {
+            const link = await linkFor(
+                [job("job-other", "failed", at("2T06:00")), job("job-inflight", "processing", at("3T06:00"))],
+                [log(2, "job-other", "failed", at("3T05:00"))],
+            );
+            expect(link.status).toBe("sending");
+        });
+
         it("shows sent when the newest attempt succeeded after an older failure", async () => {
             const link = await linkFor(
                 [job("job-old", "failed", at("1T06:00")), job("job-new", "sent", at("3T06:00"))],
@@ -729,13 +761,29 @@ describe("AdminServiceRecordService", () => {
             expect(link.lastSentAt).toEqual(at("3T06:00"));
         });
 
-        it("shows canceled only when nothing was ever sent", async () => {
+        it("shows canceled when nothing was ever sent", async () => {
             expect((await linkFor([job("job-1", "canceled", at("3T06:00"))], [])).status).toBe("canceled");
-            const withHistory = await linkFor(
-                [job("job-old", "sent", at("1T06:00")), job("job-new", "canceled", at("3T06:00"))],
+        });
+
+        it("shows canceled when a newer resend was canceled after an older success", async () => {
+            const link = await linkFor(
+                [
+                    job("job-old", "sent", at("1T06:00")),
+                    job("job-new", "canceled", at("3T06:00"), { canceledByUser: true }),
+                ],
                 [log(1, "job-old", "sent", at("1T06:00"))],
             );
-            expect(withHistory.status).toBe("sent");
+            expect(link.status).toBe("canceled");
+            expect(link.sentCount).toBe(1);
+            expect(link.lastSentAt).toEqual(at("1T06:00"));
+        });
+
+        it("shows sent when a canceled job is older than a later success", async () => {
+            const link = await linkFor(
+                [job("job-old", "canceled", at("1T06:00")), job("job-new", "sent", at("3T06:00"))],
+                [log(1, "job-new", "sent", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sent");
         });
 
         it("shows none when there is no job and no log", async () => {
