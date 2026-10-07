@@ -30,6 +30,8 @@ import {
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
@@ -103,6 +105,48 @@ function isLockNotAvailable(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError
         && error.code === "P2010"
         && (error.meta as { code?: unknown } | undefined)?.code === "55P03";
+}
+
+/**
+ * Per-schedule advisory lock key shared by every taker of the schedule fence:
+ * a manual send (`replacePendingJobsUnlessInFlight`) and the promotion of an
+ * automatic scheduling claim (`promoteAutomaticSchedulingClaim`).
+ */
+function scheduleFenceLockKey(ruleId: string, employeeScheduleId: number): string {
+    return `message-trigger-job-replace:${ruleId}:${employeeScheduleId}`;
+}
+
+/**
+ * Rows that make an automatic service-record scheduling claim impossible, or
+ * that mean a send now exists for the schedule. The claim INSERT refuses to
+ * start behind any such row and the claim promotion refuses to proceed when
+ * one appeared after the claim, so both decide with this one predicate.
+ * `columns` are the (qualified) columns of the candidate blocker row.
+ */
+export function serviceRecordScheduleBlockerSql(columns: {
+    status: Prisma.Sql;
+    cancelReason: Prisma.Sql;
+    canceledByUser: Prisma.Sql;
+}): Prisma.Sql {
+    return Prisma.sql`(
+        ${columns.status} IN ('pending', 'processing', 'dispatching', 'sent')
+        OR (
+            ${columns.status} = 'failed'
+            AND ${columns.cancelReason} IS DISTINCT FROM ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
+        )
+        OR (
+            ${columns.status} = 'canceled'
+            AND (
+                ${columns.canceledByUser} = true
+                OR ${columns.cancelReason} IS NULL
+                OR ${columns.cancelReason} NOT IN (
+                    ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
+                    ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
+                )
+            )
+        )
+    )`;
 }
 
 function stableJson(value: unknown): string {
@@ -988,7 +1032,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 // case where no live row exists yet to lock (a row lock cannot stop
                 // two double-clicks from both inserting).
                 await transaction.$executeRaw(Prisma.sql`
-                    SELECT pg_advisory_xact_lock(hashtextextended(${`message-trigger-job-replace:${ruleId}:${employeeScheduleId}`}, 0))
+                    SELECT pg_advisory_xact_lock(hashtextextended(${scheduleFenceLockKey(ruleId, employeeScheduleId)}, 0))
                 `);
                 // Lock order is rule row, then job rows: the same order as the
                 // dispatcher claim (`claimPendingWithRuleFence` takes
@@ -1074,41 +1118,79 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // prevents an expired owner from reviving a newer claim.
         if (!job.branchId || job.employeeScheduleId === null || !expectedClaimVersion) return null;
 
-        const client = transaction ?? this.prisma;
-        const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
-            UPDATE "message_trigger_job"
-            SET status = 'pending',
-                scheduled_for = ${job.scheduledFor},
-                sent_at = NULL,
-                canceled_at = NULL,
-                cancel_reason = NULL,
-                canceled_by_user = false,
-                client_id = ${job.clientId},
-                employee_schedule_id = ${job.employeeScheduleId},
-                recipient_type = ${job.recipientType},
-                recipient_phone = ${job.recipientPhone},
-                template_key = ${job.templateKey},
-                payload = ${JSON.stringify(job.payload)}::jsonb,
-                attempts = 0,
-                next_attempt_at = NULL,
-                claim_token = NULL,
-                updated_at = clock_timestamp()
-            WHERE id = ${markerId}
-              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
-              AND branch_id = ${job.branchId}::uuid
-              AND rule_id = ${job.ruleId}
-              AND client_id = ${job.clientId}
-              AND employee_schedule_id = ${job.employeeScheduleId}
-              AND dedupe_key = ${job.dedupeKey}
-              AND status = 'failed'
-              AND cancel_reason = ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
-              AND canceled_by_user = false
-              AND updated_at = ${expectedClaimVersion}::timestamptz
-            RETURNING *;
-        `);
+        const { branchId, ruleId, employeeScheduleId } = job;
+        const promote = async (client: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
+            // Same schedule fence as a manual send, in the same order: schedule
+            // advisory lock -> rule row -> job rows. The caller's branch lock (the
+            // outermost lock, never taken by a manual send) is held already. A
+            // manual send that landed while the link was being prepared is either
+            // committed and seen below, or waits for this transaction and then
+            // replaces the job promoted here.
+            await client.$executeRaw(Prisma.sql`
+                SELECT pg_advisory_xact_lock(hashtextextended(${scheduleFenceLockKey(ruleId, employeeScheduleId)}, 0))
+            `);
+            await client.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_rule"
+                WHERE id = ${ruleId}
+                FOR UPDATE
+            `);
+            // The claim only started because no blocker existed, so any row seen
+            // here appeared afterwards: a manual send, a dispatcher claim of one,
+            // or a message that already went out. Promoting would queue a second
+            // send, so refuse and let the caller release the lease.
+            const blockers = await client.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT blocker.id
+                FROM "message_trigger_job" AS blocker
+                WHERE blocker.rule_id = ${ruleId}
+                  AND blocker.employee_schedule_id = ${employeeScheduleId}
+                  AND blocker.id <> ${markerId}
+                  AND ${serviceRecordScheduleBlockerSql({
+                      status: Prisma.sql`blocker."status"`,
+                      cancelReason: Prisma.sql`blocker."cancel_reason"`,
+                      canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                  })}
+                ORDER BY blocker.id
+                FOR UPDATE
+            `);
+            if (blockers.length > 0) return null;
 
-        const [row] = rows;
-        return row ? this.rawRowToDomain(row) : null;
+            const rows = await client.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
+                UPDATE "message_trigger_job"
+                SET status = 'pending',
+                    scheduled_for = ${job.scheduledFor},
+                    sent_at = NULL,
+                    canceled_at = NULL,
+                    cancel_reason = NULL,
+                    canceled_by_user = false,
+                    client_id = ${job.clientId},
+                    employee_schedule_id = ${employeeScheduleId},
+                    recipient_type = ${job.recipientType},
+                    recipient_phone = ${job.recipientPhone},
+                    template_key = ${job.templateKey},
+                    payload = ${JSON.stringify(job.payload)}::jsonb,
+                    attempts = 0,
+                    next_attempt_at = NULL,
+                    claim_token = NULL,
+                    updated_at = clock_timestamp()
+                WHERE id = ${markerId}
+                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
+                  AND branch_id = ${branchId}::uuid
+                  AND rule_id = ${ruleId}
+                  AND client_id = ${job.clientId}
+                  AND employee_schedule_id = ${employeeScheduleId}
+                  AND dedupe_key = ${job.dedupeKey}
+                  AND status = 'failed'
+                  AND cancel_reason = ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
+                  AND canceled_by_user = false
+                  AND updated_at = ${expectedClaimVersion}::timestamptz
+                RETURNING *;
+            `);
+
+            const [row] = rows;
+            return row ? this.rawRowToDomain(row) : null;
+        };
+        return transaction ? promote(transaction) : this.prisma.$transaction(promote);
     }
 
     async upsertPendingForRuleGeneration(
@@ -1291,6 +1373,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         // which that approved source is compared and the retry is claimed.
         if (!expectedTargetVersion || jobTargetVersion(expectedSource, expectedSnapshotHash) !== expectedTargetVersion) return null;
         return this.prisma.$transaction(async (transaction) => {
+            // Rule row first, then the source job row, then the retry INSERT (whose
+            // foreign key takes a KEY SHARE lock on its rule row): the same order as
+            // the dispatcher claim, the manual send fence and the automatic
+            // promotion. Taking the job row first and the rule only at INSERT time
+            // inverts it against a transaction that holds the rule row and waits on
+            // this failed row (PostgreSQL aborts one side with 40P01). The source's
+            // rule is re-verified against the locked row below (`sameRetrySource`);
+            // the retry job's rule, if it differs, is locked too, in id order.
+            const ruleIds = [...new Set([expectedSource.ruleId, retryJob.ruleId])].sort();
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_rule"
+                WHERE id IN (${Prisma.join(ruleIds)})
+                ORDER BY id
+                FOR UPDATE
+            `);
             const rows = await transaction.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
                 SELECT *
                 FROM "message_trigger_job"

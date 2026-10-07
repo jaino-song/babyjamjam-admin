@@ -259,6 +259,7 @@ describe("SbMessageTriggerJobRepository", () => {
 
     let messageTriggerJobModel: ReturnType<typeof createMockPrismaMessageTriggerJob>;
     let queryRaw: jest.Mock;
+    let executeRaw: jest.Mock;
     let prisma: PrismaService;
     let repository: SbMessageTriggerJobRepository;
 
@@ -266,9 +267,11 @@ describe("SbMessageTriggerJobRepository", () => {
         jest.useFakeTimers().setSystemTime(now);
         messageTriggerJobModel = createMockPrismaMessageTriggerJob();
         queryRaw = jest.fn();
+        executeRaw = jest.fn().mockResolvedValue(1);
         prisma = {
             message_trigger_job: messageTriggerJobModel,
             $queryRaw: queryRaw,
+            $executeRaw: executeRaw,
             $transaction: jest.fn(),
         } as unknown as PrismaService;
         (prisma.$transaction as jest.Mock).mockImplementation(async (operation: (tx: unknown) => Promise<unknown>) => operation(prisma));
@@ -833,7 +836,8 @@ describe("SbMessageTriggerJobRepository", () => {
                 templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_token" },
             },
         });
-        queryRaw.mockResolvedValueOnce([{
+        // rule lock, blocker scan (none), then the lease UPDATE
+        queryRaw.mockResolvedValueOnce([{ id: SERVICE_RECORD_LINK_RULE_ID }]).mockResolvedValueOnce([]).mockResolvedValueOnce([{
             id: "claim-1",
             branch_id: "branch-1",
             rule_id: SERVICE_RECORD_LINK_RULE_ID,
@@ -867,7 +871,7 @@ describe("SbMessageTriggerJobRepository", () => {
             ruleId: SERVICE_RECORD_LINK_RULE_ID,
             employeeScheduleId: 42,
         });
-        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        const sqlText = getSqlText(queryRaw.mock.calls[2][0]).replace(/\s+/g, " ");
         expect(sqlText).toContain('UPDATE "message_trigger_job"');
         expect(sqlText).toContain("SET status = 'pending'");
         expect(sqlText).toContain("status = 'failed'");
@@ -899,7 +903,7 @@ describe("SbMessageTriggerJobRepository", () => {
                 templateVariables: {},
             },
         });
-        queryRaw.mockResolvedValueOnce([]);
+        queryRaw.mockResolvedValueOnce([{ id: SERVICE_RECORD_LINK_RULE_ID }]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
         await expect(repository.promoteAutomaticSchedulingClaim(
             "claim-1",
@@ -907,10 +911,52 @@ describe("SbMessageTriggerJobRepository", () => {
             job,
         )).resolves.toBeNull();
         expect(messageTriggerJobModel.findUnique).not.toHaveBeenCalled();
-        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        const sqlText = getSqlText(queryRaw.mock.calls[2][0]).replace(/\s+/g, " ");
         expect(sqlText).toContain("updated_at = ");
         expect(sqlText).toContain("dedupe_key = ");
         expect(sqlText).toContain("employee_schedule_id = ");
+    });
+
+    it("refuses to promote an automatic scheduling claim when another send appeared after the claim", async () => {
+        const job = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: SERVICE_RECORD_LINK_RULE_ID,
+            scheduledFor: new Date("2026-07-09T01:00:00.000Z"),
+            clientId: 1,
+            employeeScheduleId: 42,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01012345678",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:42:primary`,
+            payload: {
+                clientId: 1,
+                memberId: "employee:7",
+                recipientName: "홍제공",
+                recipientPhone: "01012345678",
+                templateVariables: {},
+            },
+        });
+        queryRaw.mockResolvedValueOnce([{ id: SERVICE_RECORD_LINK_RULE_ID }]).mockResolvedValueOnce([{ id: "manual-1" }]);
+
+        await expect(repository.promoteAutomaticSchedulingClaim(
+            "claim-1",
+            "2026-07-09 00:00:00.123456+00",
+            job,
+        )).resolves.toBeNull();
+
+        // schedule advisory lock -> rule row -> blocker scan, and no lease UPDATE.
+        expect(executeRaw).toHaveBeenCalledTimes(1);
+        const lockSql = (executeRaw.mock.calls[0][0] as Prisma.Sql);
+        expect(lockSql.sql).toContain("pg_advisory_xact_lock");
+        expect(lockSql.values).toContain(`message-trigger-job-replace:${SERVICE_RECORD_LINK_RULE_ID}:42`);
+        expect(queryRaw).toHaveBeenCalledTimes(2);
+        const ruleSql = (queryRaw.mock.calls[0][0] as Prisma.Sql).sql.replace(/\s+/g, " ");
+        expect(ruleSql).toContain('FROM "message_trigger_rule"');
+        expect(ruleSql).toContain("FOR UPDATE");
+        const blockerSql = (queryRaw.mock.calls[1][0] as Prisma.Sql).sql.replace(/\s+/g, " ");
+        expect(blockerSql).toContain("blocker.id <> ");
+        expect(blockerSql).toContain("'pending', 'processing', 'dispatching', 'sent'");
+        expect(blockerSql).toContain("ORDER BY blocker.id FOR UPDATE");
     });
 
     it("upsertPendingForRuleGeneration locks and verifies the rule before writing the pending job", async () => {
@@ -1184,7 +1230,12 @@ describe("SbMessageTriggerJobRepository", () => {
             source,
             retry,
         )).resolves.toEqual(expect.objectContaining({ id: "retry-1" }));
-        expect(transaction.$queryRaw).toHaveBeenCalledTimes(1);
+        // Rule row first, then the source job row: rule -> job -> retry INSERT.
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+        const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
+        expect(ruleLock.sql.replace(/\s+/g, " ")).toContain('FROM "message_trigger_rule" WHERE id IN (?) ORDER BY id FOR UPDATE');
+        expect(ruleLock.values).toEqual(["rule-1"]);
+        expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
     });
 
