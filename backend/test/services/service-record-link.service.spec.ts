@@ -743,30 +743,69 @@ describe("ServiceRecordLinkService", () => {
             expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
         });
 
-        /** Real service + real repository over a recording database boundary. */
-        const buildWithRealRepository = (liveRows: Array<{ id: string; status: string }>) => {
+        /**
+         * Real service + real repository over a database boundary that evaluates
+         * the repository's real SQL: bound values and operators decide which rows
+         * a statement sees, so a selector that picks the wrong schedule or rule
+         * changes the outcome (a fixed fixture would hide that).
+         */
+        type FakeJob = { id: string; status: string; ruleId: string; scheduleId: number };
+        const OTHER_RULE_ID = "system:another_rule";
+        const buildWithRealRepository = (initialRows: FakeJob[]) => {
+            const rows = new Map(initialRows.map((row) => [row.id, { ...row }]));
             const statements: string[] = [];
+            const lockedRules: string[] = [];
             const prisma = createPrisma();
             prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
-            const rawJobRow = (id: string, status: string) => ({
-                id, branch_id: "branch-1", rule_id: SERVICE_RECORD_LINK_RULE_ID, status,
+            const rawJobRow = (row: FakeJob) => ({
+                id: row.id, branch_id: "branch-1", rule_id: row.ruleId, status: row.status,
                 scheduled_for: new Date(), attempts: 0, next_attempt_at: null, sent_at: null,
-                canceled_at: null, cancel_reason: null, client_id: 20, employee_schedule_id: 10,
+                canceled_at: null, cancel_reason: null, client_id: 20, employee_schedule_id: row.scheduleId,
                 recipient_type: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipient_phone: "01011112222",
-                template_key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupe_key: `manual-${id}`,
+                template_key: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupe_key: `manual-${row.id}`,
                 payload: {}, created_at: new Date(), updated_at: new Date(), claim_token: null,
             });
-            const record = (query: { strings?: string[] }) => statements.push((query.strings ?? []).join("?").replace(/\s+/g, " "));
+            const render = (query: { text: string; values: unknown[] }) => {
+                const text = query.text.replace(/\s+/g, " ");
+                statements.push(text);
+                return { text, values: query.values };
+            };
+            const comparisons = (text: string, values: unknown[]) => (
+                [...text.matchAll(/\b(rule_id|employee_schedule_id|id)\s*(=|<>)\s*\$(\d+)/g)]
+                    .map((match) => ({ column: match[1]!, equal: match[2] === "=", value: values[Number(match[3]) - 1] }))
+            );
             const transaction = {
-                $executeRaw: jest.fn().mockImplementation(async (query) => { record(query); return 1; }),
+                $executeRaw: jest.fn().mockImplementation(async (query) => { render(query); return 1; }),
                 $queryRaw: jest.fn().mockImplementation(async (query) => {
-                    record(query);
-                    const text = statements[statements.length - 1]!;
-                    if (text.includes("FOR UPDATE")) return liveRows;
-                    if (text.includes("SET status = 'canceled'")) {
-                        return liveRows.filter((row) => row.status === "pending").map(({ id }) => ({ id }));
+                    const { text, values } = render(query);
+                    if (text.includes('FROM "message_trigger_rule"') && text.includes("FOR UPDATE")) {
+                        const ruleId = comparisons(text, values).find((entry) => entry.column === "id" && entry.equal)?.value as string;
+                        lockedRules.push(ruleId);
+                        return ruleId === SERVICE_RECORD_LINK_RULE_ID ? [{ id: ruleId }] : [];
                     }
-                    return [rawJobRow("new-manual", "pending")];
+                    if (text.includes("FOR UPDATE")) {
+                        const predicates = comparisons(text, values);
+                        const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!.split(",").map((status) => status.trim().replace(/'/g, ""));
+                        return [...rows.values()]
+                            .filter((row) => statuses.includes(row.status) && predicates.every((predicate) => (
+                                ((predicate.column === "rule_id" ? row.ruleId : row.scheduleId) === predicate.value) === predicate.equal
+                            )))
+                            .map(({ id, status }) => ({ id, status }));
+                    }
+                    if (text.includes("SET status = 'canceled'")) {
+                        const canceled: Array<{ id: string }> = [];
+                        for (const value of values) {
+                            const row = typeof value === "string" ? rows.get(value) : undefined;
+                            if (row && row.status === "pending") {
+                                row.status = "canceled";
+                                canceled.push({ id: row.id });
+                            }
+                        }
+                        return canceled;
+                    }
+                    const inserted: FakeJob = { id: "new-manual", status: "pending", ruleId: values[1] as string, scheduleId: values[4] as number };
+                    rows.set(inserted.id, inserted);
+                    return [rawJobRow(inserted)];
                 }),
             };
             const databaseBoundary = {
@@ -783,27 +822,32 @@ describe("ServiceRecordLinkService", () => {
                 logRepository as unknown as IMessageLogRepository,
                 createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
             );
-            return { service, statements, databaseBoundary, logRepository };
+            return { service, statements, lockedRules, rows, databaseBoundary, logRepository };
         };
+        const ownJob = (id: string, status: string): FakeJob => ({ id, status, ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 10 });
 
         it("real repository: a job the scheduler advanced to dispatching blocks the manual send before any write", async () => {
-            const { service, statements, databaseBoundary, logRepository } = buildWithRealRepository([
-                { id: "automatic-in-flight", status: "dispatching" },
+            const { service, statements, lockedRules, rows, databaseBoundary, logRepository } = buildWithRealRepository([
+                ownJob("automatic-in-flight", "dispatching"),
             ]);
 
             await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
 
-            // lock + read only: no cancel, no insert, no unconditional by-id update
-            expect(statements).toHaveLength(2);
+            // advisory lock, rule lock, job lock + read only: no cancel, no insert, no unconditional by-id update
+            expect(statements).toHaveLength(3);
             expect(statements[0]).toContain("pg_advisory_xact_lock");
-            expect(statements[1]).toContain("FOR UPDATE");
+            expect(statements[1]).toContain('FROM "message_trigger_rule"');
+            expect(statements[2]).toContain('FROM "message_trigger_job"');
+            expect(lockedRules).toEqual([SERVICE_RECORD_LINK_RULE_ID]);
+            expect([...rows.keys()]).toEqual(["automatic-in-flight"]);
+            expect(rows.get("automatic-in-flight")!.status).toBe("dispatching");
             expect(databaseBoundary.message_trigger_job.update).not.toHaveBeenCalled();
             expect(databaseBoundary.message_trigger_job.updateMany).not.toHaveBeenCalled();
             expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
         });
 
         it("real repository: only pending jobs -> cancelled and exactly one new job inserted", async () => {
-            const { service, statements } = buildWithRealRepository([{ id: "old-pending", status: "pending" }]);
+            const { service, statements, rows } = buildWithRealRepository([ownJob("old-pending", "pending")]);
 
             const result = await service.sendNow(10);
 
@@ -812,6 +856,35 @@ describe("ServiceRecordLinkService", () => {
             expect(statements.filter((text) => text.includes("SET status = 'canceled'"))).toHaveLength(1);
             expect(statements.findIndex((text) => text.includes("SET status = 'canceled'")))
                 .toBeLessThan(statements.findIndex((text) => text.includes("INSERT INTO")));
+            expect(rows.get("old-pending")!.status).toBe("canceled");
+            expect([...rows.values()].filter((row) => row.status === "pending").map((row) => row.id)).toEqual(["new-manual"]);
+        });
+
+        it("real repository: another schedule's in-flight job and another rule's pending job neither block nor get cancelled", async () => {
+            const { service, rows } = buildWithRealRepository([
+                { id: "other-schedule-in-flight", status: "dispatching", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 11 },
+                { id: "other-rule-pending", status: "pending", ruleId: OTHER_RULE_ID, scheduleId: 10 },
+                ownJob("own-pending", "pending"),
+            ]);
+
+            const result = await service.sendNow(10);
+
+            expect(result.jobId).toBe("new-manual");
+            expect(rows.get("own-pending")!.status).toBe("canceled");
+            expect(rows.get("other-schedule-in-flight")!.status).toBe("dispatching");
+            expect(rows.get("other-rule-pending")!.status).toBe("pending");
+        });
+
+        it("real repository: this schedule's in-flight job still blocks when unrelated pending jobs exist", async () => {
+            const { service, rows } = buildWithRealRepository([
+                ownJob("own-in-flight", "processing"),
+                { id: "other-schedule-pending", status: "pending", ruleId: SERVICE_RECORD_LINK_RULE_ID, scheduleId: 11 },
+            ]);
+
+            await expect(service.sendNow(10)).rejects.toBeInstanceOf(ConflictException);
+
+            expect(rows.get("other-schedule-pending")!.status).toBe("pending");
+            expect(rows.size).toBe(2);
         });
 
         it("hands the repository the whole replacement so cancel and enqueue are one atomic step", async () => {

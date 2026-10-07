@@ -921,10 +921,32 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             await transaction.$executeRaw(Prisma.sql`
                 SELECT pg_advisory_xact_lock(hashtextextended(${`message-trigger-job-replace:${ruleId}:${employeeScheduleId}`}, 0))
             `);
-            // Row-lock every live job. A dispatcher claim (`UPDATE ... WHERE
-            // status = 'pending'`) either committed before this read, so it is
-            // seen here as processing, or it queues behind these locks and
-            // re-evaluates against the canceled row below and claims nothing.
+            // Lock order is rule row, then job rows: the same order as the
+            // dispatcher claim (`claimPendingWithRuleFence` takes
+            // `FOR UPDATE OF rule` before its job UPDATE) and as
+            // `cancelPendingForRuleGeneration`. It is also what the replacement's
+            // own INSERT needs: the foreign key takes a KEY SHARE lock on the
+            // rule row, which conflicts with the dispatcher's FOR UPDATE. Locking
+            // job rows first and the rule only at INSERT time is a lock-order
+            // inversion (replacement: job -> rule, claim: rule -> job) that
+            // PostgreSQL resolves by aborting one side with 40P01.
+            //
+            // Serialization with a claim, in both orders:
+            //  - claim first: it holds the rule lock, so this statement waits; once
+            //    the claim commits, the job read below sees it as processing and
+            //    the send is refused with nothing written.
+            //  - replacement first: it holds the rule lock to commit, so a claim
+            //    waits at its own rule lock (it has not touched the job row yet);
+            //    when it resumes the candidate job is canceled, `status = 'pending'`
+            //    no longer matches and it claims nothing.
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM "message_trigger_rule"
+                WHERE id = ${ruleId}
+                FOR UPDATE
+            `);
+            // Row-lock every live job. A claim that already committed is seen here
+            // as processing (refuse); none can start while the rule lock is held.
             const live = await transaction.$queryRaw<Array<{ id: string; status: string }>>(Prisma.sql`
                 SELECT id, status
                 FROM "message_trigger_job"

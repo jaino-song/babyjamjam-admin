@@ -1468,14 +1468,16 @@ describe("SbMessageTriggerJobRepository", () => {
 
 /**
  * `replacePendingJobsUnlessInFlight` against a small in-memory database that
- * models what the fix relies on: `FOR UPDATE` row locks held to transaction
- * end, advisory transaction locks, and READ COMMITTED re-evaluation of a
- * blocked statement's WHERE clause after the lock holder commits (a
- * `status = 'pending'` claim must not match a row that was canceled meanwhile).
+ * evaluates the repository's real SQL (bound values and operators) and models
+ * the row, rule and advisory locks the fence relies on, including lock-order
+ * deadlock detection. The same races run against a real PostgreSQL in
+ * `sb.message-trigger-job.manual-send-concurrency.spec.ts` (env-gated).
  */
 describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modelled row locks)", () => {
     const RULE_ID = SERVICE_RECORD_LINK_RULE_ID;
+    const OTHER_RULE_ID = "system:another_rule";
     const SCHEDULE_ID = 10;
+    const OTHER_SCHEDULE_ID = 11;
     const CANCEL_REASON = "Service record link rescheduled";
     const LIVE_STATUSES = ["pending", "processing", "dispatching"];
 
@@ -1490,21 +1492,40 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         scheduledFor: Date;
         payload: unknown;
     };
-    type Lock = { owner: object; released: Promise<void>; release: () => void };
+    type Predicate = { column: string; op: string; value: unknown };
+    type RawQuery = { text: string; values: unknown[] };
 
     const sqlText = (value: unknown): string => {
-        const candidate = value as { strings?: string[]; sql?: string };
-        return (candidate.strings?.join("?") ?? candidate.sql ?? String(value)).replace(/\s+/g, " ");
+        const candidate = value as { strings?: string[]; text?: string };
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ");
     };
 
+    /** Column comparisons the selectors bind as `$n`, read from the real rendered SQL. */
+    const boundPredicates = (text: string, values: unknown[]): Predicate[] => (
+        [...text.matchAll(/\b(rule_id|employee_schedule_id|id)\s*(=|<>)\s*\$(\d+)/g)]
+            .map((match) => ({ column: match[1]!, op: match[2]!, value: values[Number(match[3]) - 1] }))
+    );
+
+    /**
+     * A small in-memory database that evaluates the repository's real SQL
+     * (bound values and operators, not fixed fixtures) and models the locking
+     * the manual-send fence depends on: exclusive row locks held to transaction
+     * end (job rows, rule rows for `FOR UPDATE`), the foreign-key KEY SHARE lock
+     * an INSERT takes on the rule row (it conflicts with `FOR UPDATE`),
+     * advisory transaction locks, deadlock detection (40P01), and READ COMMITTED
+     * re-evaluation of a blocked statement's WHERE clause after the wait.
+     */
     class FakeDatabase {
         readonly rows = new Map<string, FakeRow>();
+        readonly rules = new Set<string>([RULE_ID, OTHER_RULE_ID]);
         private nextId = 1;
-        private readonly rowLocks = new Map<string, Lock>();
-        private readonly advisoryLocks = new Map<string, Lock>();
-        /** Runs while a replacement transaction holds its row locks, before it writes. */
+        private readonly locks = new Map<string, object>();
+        private readonly keyShares = new Map<string, Set<object>>();
+        private readonly waitingOn = new Map<object, object[]>();
+        private readonly finished = new Map<object, { promise: Promise<void>; resolve: () => void }>();
+        /** Runs while a replacement transaction holds its job row locks, before it writes. */
         afterRowLocks: (() => Promise<void>) | null = null;
-        /** Runs while a claim holds the row lock, before it commits. */
+        /** Runs while a claim holds the rule and job locks, before it commits. */
         beforeClaimCommit: (() => Promise<void>) | null = null;
 
         seed(status: string, overrides: Partial<FakeRow> = {}): FakeRow {
@@ -1514,7 +1535,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 status,
                 ruleId: RULE_ID,
                 scheduleId: SCHEDULE_ID,
-                dedupeKey: `${RULE_ID}:schedule:${SCHEDULE_ID}:primary:${id}`,
+                dedupeKey: `${overrides.ruleId ?? RULE_ID}:schedule:${overrides.scheduleId ?? SCHEDULE_ID}:primary:${id}`,
                 claimToken: status === "processing" || status === "dispatching" ? `claim-${id}` : null,
                 cancelReason: null,
                 scheduledFor: new Date("2026-07-09T01:00:00.000Z"),
@@ -1525,30 +1546,69 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             return row;
         }
 
-        live(): FakeRow[] {
-            return [...this.rows.values()].filter((row) => LIVE_STATUSES.includes(row.status));
+        live(ruleId = RULE_ID, scheduleId = SCHEDULE_ID): FakeRow[] {
+            return [...this.rows.values()].filter((row) => (
+                LIVE_STATUSES.includes(row.status) && row.ruleId === ruleId && row.scheduleId === scheduleId
+            ));
         }
 
-        private async acquire(table: Map<string, Lock>, key: string, owner: object): Promise<void> {
-            for (;;) {
-                const held = table.get(key);
-                if (!held || held.owner === owner) break;
-                await held.released;
+        private done(owner: object) {
+            let entry = this.finished.get(owner);
+            if (!entry) {
+                let resolve!: () => void;
+                const promise = new Promise<void>((settled) => { resolve = settled; });
+                entry = { promise, resolve };
+                this.finished.set(owner, entry);
             }
-            if (table.get(key)?.owner === owner) return;
-            let release!: () => void;
-            const released = new Promise<void>((resolve) => { release = resolve; });
-            table.set(key, { owner, released, release });
+            return entry;
+        }
+
+        private blockers(key: string, owner: object, mode: "exclusive" | "share"): object[] {
+            const found: object[] = [];
+            const holder = this.locks.get(key);
+            if (holder && holder !== owner) found.push(holder);
+            if (mode === "exclusive") {
+                for (const sharer of this.keyShares.get(key) ?? []) if (sharer !== owner) found.push(sharer);
+            }
+            return found;
+        }
+
+        private reaches(from: object[], target: object, seen = new Set<object>()): boolean {
+            for (const owner of from) {
+                if (owner === target) return true;
+                if (seen.has(owner)) continue;
+                seen.add(owner);
+                if (this.reaches(this.waitingOn.get(owner) ?? [], target, seen)) return true;
+            }
+            return false;
+        }
+
+        private async acquire(key: string, owner: object, mode: "exclusive" | "share" = "exclusive"): Promise<void> {
+            for (;;) {
+                const blockers = this.blockers(key, owner, mode);
+                if (blockers.length === 0) break;
+                if (this.reaches(blockers, owner)) {
+                    this.waitingOn.delete(owner);
+                    throw Object.assign(new Error("deadlock detected"), { code: "40P01" });
+                }
+                this.waitingOn.set(owner, blockers);
+                await Promise.race(blockers.map((blocker) => this.done(blocker).promise));
+            }
+            this.waitingOn.delete(owner);
+            if (mode === "exclusive") {
+                this.locks.set(key, owner);
+            } else {
+                const sharers = this.keyShares.get(key) ?? new Set<object>();
+                sharers.add(owner);
+                this.keyShares.set(key, sharers);
+            }
         }
 
         private releaseAll(owner: object): void {
-            for (const table of [this.rowLocks, this.advisoryLocks]) {
-                for (const [key, lock] of table) {
-                    if (lock.owner !== owner) continue;
-                    table.delete(key);
-                    lock.release();
-                }
-            }
+            for (const [key, holder] of this.locks) if (holder === owner) this.locks.delete(key);
+            for (const sharers of this.keyShares.values()) sharers.delete(owner);
+            this.waitingOn.delete(owner);
+            this.done(owner).resolve();
         }
 
         private toRaw(row: FakeRow) {
@@ -1579,12 +1639,16 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         /** One statement; `owner` holds any locks it takes until its transaction (or autocommit statement) ends. */
         private async statement(owner: object, query: unknown): Promise<unknown[]> {
             const text = sqlText(query);
-            const values = (query as { values: unknown[] }).values;
+            const { values } = query as RawQuery;
             if (text.includes("SET status = 'processing'")) {
-                // Dispatcher claim: UPDATE ... WHERE job.id = ? AND job.status = 'pending'.
+                // Dispatcher claim: candidate read, then rule FOR UPDATE, then the job UPDATE.
                 expect(text).toContain("AND job.status = 'pending'");
+                expect(text).toContain("FOR UPDATE OF rule");
                 const id = values.find((value) => typeof value === "string" && this.rows.has(value)) as string;
-                await this.acquire(this.rowLocks, id, owner);
+                const candidate = this.rows.get(id)!;
+                if (candidate.status !== "pending") return [];
+                await this.acquire(`rule:${candidate.ruleId}`, owner);
+                await this.acquire(`job:${id}`, owner);
                 const row = this.rows.get(id)!;
                 // READ COMMITTED: re-evaluate the WHERE clause on the row's latest version.
                 if (row.status !== "pending") return [];
@@ -1593,23 +1657,36 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 row.claimToken = `claim-${id}`;
                 return [{ id, claim_token: row.claimToken }];
             }
+            if (text.includes('FROM "message_trigger_rule"') && text.includes("FOR UPDATE")) {
+                const ruleId = boundPredicates(text, values).find((predicate) => predicate.column === "id" && predicate.op === "=")?.value;
+                expect(typeof ruleId).toBe("string");
+                await this.acquire(`rule:${ruleId as string}`, owner);
+                return this.rules.has(ruleId as string) ? [{ id: ruleId }] : [];
+            }
             if (text.includes("FOR UPDATE")) {
-                expect(text).toContain("status IN ('pending', 'processing', 'dispatching')");
-                const candidates = [...this.rows.values()]
-                    .filter((row) => row.ruleId === RULE_ID && row.scheduleId === SCHEDULE_ID)
-                    .sort((left, right) => left.id.localeCompare(right.id));
+                const predicates = boundPredicates(text, values);
+                // The selector must scope by rule AND schedule; dropping either would lock foreign rows.
+                for (const column of ["rule_id", "employee_schedule_id"]) {
+                    expect(predicates.some((predicate) => predicate.column === column && predicate.op === "=")).toBe(true);
+                }
+                const statuses = /status IN \(([^)]*)\)/.exec(text)![1]!
+                    .split(",").map((status) => status.trim().replace(/'/g, ""));
+                const columnOf = (row: FakeRow, column: string) => (column === "rule_id" ? row.ruleId : row.scheduleId);
+                const matches = (row: FakeRow) => statuses.includes(row.status) && predicates.every((predicate) => (
+                    (columnOf(row, predicate.column) === predicate.value) === (predicate.op === "=")
+                ));
                 const locked: FakeRow[] = [];
-                for (const candidate of candidates) {
-                    if (!LIVE_STATUSES.includes(candidate.status)) continue;
-                    await this.acquire(this.rowLocks, candidate.id, owner);
+                for (const candidate of [...this.rows.values()].filter(matches).sort((left, right) => left.id.localeCompare(right.id))) {
+                    await this.acquire(`job:${candidate.id}`, owner);
                     // Re-check after the lock wait, like PostgreSQL does.
                     const current = this.rows.get(candidate.id)!;
-                    if (LIVE_STATUSES.includes(current.status)) locked.push(current);
+                    if (matches(current)) locked.push(current);
                 }
                 await this.afterRowLocks?.();
                 return locked.map((row) => ({ id: row.id, status: row.status }));
             }
             if (text.includes("SET status = 'canceled'")) {
+                expect(text).toContain("AND status = 'pending'");
                 const ids = values.filter((value) => typeof value === "string" && this.rows.has(value)) as string[];
                 const canceled: Array<{ id: string }> = [];
                 for (const id of ids) {
@@ -1624,6 +1701,9 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             }
             if (text.includes('INSERT INTO "message_trigger_job"')) {
                 const [, ruleId, scheduledFor, , scheduleId, , , , dedupeKey, payload] = values;
+                // The foreign key takes a KEY SHARE lock on the rule row, which waits behind a FOR UPDATE holder.
+                await this.acquire(`rule:${ruleId as string}`, owner, "share");
+                expect(this.rules.has(ruleId as string)).toBe(true);
                 const row = this.seed("pending", {
                     id: `new-${this.nextId}`,
                     ruleId: ruleId as string,
@@ -1641,11 +1721,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             const transactionClient = (owner: object) => ({
                 $executeRaw: async (query: unknown) => {
                     expect(sqlText(query)).toContain("pg_advisory_xact_lock");
-                    await this.acquire(
-                        this.advisoryLocks,
-                        String((query as { values: unknown[] }).values[0]),
-                        owner,
-                    );
+                    await this.acquire(`advisory:${String((query as RawQuery).values[0])}`, owner);
                     return 1;
                 },
                 $queryRaw: (query: unknown) => this.statement(owner, query),
@@ -1735,6 +1811,35 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         expect(database.live().map((row) => row.id)).toEqual([result.job.id]);
     });
 
+    it("only looks at this schedule and this rule: other schedules' and other rules' jobs neither block nor get cancelled", async () => {
+        const otherScheduleInFlight = database.seed("dispatching", { scheduleId: OTHER_SCHEDULE_ID });
+        const otherScheduleProcessing = database.seed("processing", { scheduleId: OTHER_SCHEDULE_ID });
+        const otherRulePending = database.seed("pending", { ruleId: OTHER_RULE_ID });
+        const own = database.seed("pending");
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") return;
+        expect(result.canceledJobIds).toEqual([own.id]);
+        expect(own.status).toBe("canceled");
+        expect(otherScheduleInFlight.status).toBe("dispatching");
+        expect(otherScheduleProcessing.status).toBe("processing");
+        expect(otherRulePending).toMatchObject({ status: "pending", cancelReason: null });
+        expect(database.live()).toHaveLength(1);
+    });
+
+    it("refuses on this schedule's in-flight job and leaves other schedules' pending jobs alone", async () => {
+        const own = database.seed("dispatching");
+        const otherSchedulePending = database.seed("pending", { scheduleId: OTHER_SCHEDULE_ID });
+
+        const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
+
+        expect(result).toEqual({ kind: "in_flight", inFlightJobIds: [own.id] });
+        expect(otherSchedulePending.status).toBe("pending");
+        expect(database.rows.size).toBe(2);
+    });
+
     it("enqueues the replacement when nothing is live", async () => {
         const result = await repository.replacePendingJobsUnlessInFlight(manualJob("a"), CANCEL_REASON);
 
@@ -1742,7 +1847,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         expect(database.live()).toHaveLength(1);
     });
 
-    it("takes the advisory lock, then row-locks the live rows, then cancels, then inserts", async () => {
+    it("takes the advisory lock, then the rule row, then row-locks the live jobs, then cancels, then inserts", async () => {
         const calls: string[] = [];
         const inner = database.asPrisma();
         const spied = {
@@ -1760,7 +1865,8 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
 
         expect(calls).toEqual([
             expect.stringContaining("pg_advisory_xact_lock"),
-            expect.stringMatching(/FOR UPDATE/),
+            expect.stringMatching(/FROM "message_trigger_rule".*FOR UPDATE/),
+            expect.stringMatching(/FROM "message_trigger_job".*FOR UPDATE/),
             expect.stringContaining("SET status = 'canceled'"),
             expect.stringContaining('INSERT INTO "message_trigger_job"'),
         ]);
@@ -1801,7 +1907,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
             expect(database.rows.size).toBe(1);
         });
 
-        it("replacement holds the row lock when the claim starts: the claim loses against the canceled row", async () => {
+        it("replacement holds its locks when the claim starts: the claim waits at the rule lock, loses against the canceled row, no deadlock", async () => {
             const original = database.seed("pending");
             let replacementHoldsLocks!: () => void;
             const locksHeld = new Promise<void>((resolve) => { replacementHoldsLocks = resolve; });
