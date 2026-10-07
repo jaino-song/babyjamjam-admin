@@ -73,9 +73,19 @@ type DraftState = {
     sourceFingerprint: string;
 };
 
+/**
+ * How the next confirm request fails (it fails once, then confirms normally):
+ * - "closed-by-other-tab": 409 without a blockingOperation; the server draft is
+ *   gone but the case source is unchanged.
+ * - "source-changed": 409 without a blockingOperation; the case moved on (new
+ *   version and fingerprint), so the editor must refresh.
+ * - "contract_period" / "receipt_refresh": 409 carrying a blockingOperation.
+ */
+type ConfirmConflict = "closed-by-other-tab" | "source-changed" | "contract_period" | "receipt_refresh";
+
 type MockOptions = {
     initialDraft?: DraftState;
-    conflictOnNextSave?: boolean;
+    confirmConflict?: ConfirmConflict;
     generationFailure?: boolean;
 };
 
@@ -84,8 +94,15 @@ type MockEvidence = {
     requests: Array<{ method: string; pathname: string; body: unknown }>;
     unsafeRequests: string[];
     unhandledApiRequests: string[];
+    /** Draft writes in the order they were sent: start, update, preview, confirm, discard. */
+    writeSteps: () => string[];
+    /** Another admin confirmed the case: the server moves to `caseVersion` and announces it on the event stream. */
+    announceCaseChange: (caseVersion: number) => Promise<void>;
     assertSafe: () => void;
 };
+
+const CONFIRMED_FINGERPRINT = "phase6-confirmed-fingerprint";
+const EVENTS_PATHNAME = "/api/admin/service-records/events";
 
 function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -205,6 +222,16 @@ function makeDraftState(
             updatedAt: now,
             discardedAt: null,
         },
+        sourceChanged: false,
+        sourceCaseVersion: 7,
+        sourceFingerprint: "phase6-source-fingerprint",
+    };
+}
+
+/** The server holds no draft: what a case with no earlier edit session reports. */
+function makeEmptyDraftState(): DraftState {
+    return {
+        draft: null,
         sourceChanged: false,
         sourceCaseVersion: 7,
         sourceFingerprint: "phase6-source-fingerprint",
@@ -341,14 +368,15 @@ function json(route: Route, status: number, body: unknown): Promise<void> {
 }
 
 async function installMocks(page: Page, options: MockOptions = {}): Promise<MockEvidence> {
-    const state = clone(options.initialDraft ?? makeDraftState());
+    const state = clone(options.initialDraft ?? makeEmptyDraftState());
     const requests: MockEvidence["requests"] = [];
     const unsafeRequests: string[] = [];
     const unhandledApiRequests: string[] = [];
-    let conflictOnNextSave = options.conflictOnNextSave === true;
-    let generationFailure = options.generationFailure === true;
-    let conflictOnConfirm = false;
+    let confirmConflict = options.confirmConflict ?? null;
+    const generationFailure = options.generationFailure === true;
     let previewSequence = 0;
+    // The app keeps one EventSource open; its request stays pending until a test announces a case change.
+    const heldEventStreams: Route[] = [];
     let confirmedChanges: Draft["changes"] = {};
 
     page.on("request", (request) => {
@@ -411,6 +439,10 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             });
             return json(route, 200, overview);
         }
+        if (pathname === EVENTS_PATHNAME && method === "GET") {
+            heldEventStreams.push(route);
+            return;
+        }
         if (pathname === `/api/admin/service-records/client/${CLIENT_ID}/draft` && method === "GET") {
             return json(route, 200, state);
         }
@@ -430,18 +462,6 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                 changes?: Draft["changes"];
                 dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
             };
-            if (conflictOnNextSave) {
-                conflictOnNextSave = false;
-                const latest = makeDraftState({ sessions: [{ sessionIndex: 1, notes: "서버 최신 입력" }] }, state.draft.draftVersion + 1);
-                state.draft = latest.draft;
-                return json(route, 409, {
-                    code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
-                    latestDraft: latest.draft,
-                    sourceChanged: true,
-                    sourceCaseVersion: latest.sourceCaseVersion,
-                    sourceFingerprint: latest.sourceFingerprint,
-                });
-            }
             if (patch.expectedDraftVersion !== state.draft.draftVersion) {
                 return json(route, 409, {
                     code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
@@ -459,17 +479,34 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             previewSequence += 1;
             return json(route, 200, { ...previewFor(state), previewId: `preview-phase6-${previewSequence}` });
         }
+        if (pathname === `/api/admin/service-records/drafts/${DRAFT_ID}/discard` && method === "POST") {
+            state.draft = null;
+            return json(route, 200, state);
+        }
         if (pathname === `/api/admin/service-records/drafts/${DRAFT_ID}/confirm` && method === "POST") {
-            if (!state.draft) return json(route, 404, { code: "DRAFT_NOT_FOUND" });
-            if (conflictOnConfirm) {
-                conflictOnConfirm = false;
-                return json(route, 409, { code: "STALE_PREVIEW" });
+            if (confirmConflict) {
+                const conflict = confirmConflict;
+                confirmConflict = null;
+                if (conflict === "contract_period" || conflict === "receipt_refresh") {
+                    return json(route, 409, {
+                        code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
+                        blockingOperation: { operation: conflict, status: "RUNNING", lastErrorCode: null },
+                    });
+                }
+                // Either way the server no longer has this draft open.
+                state.draft = null;
+                if (conflict === "source-changed") {
+                    state.sourceCaseVersion = 8;
+                    state.sourceFingerprint = CONFIRMED_FINGERPRINT;
+                }
+                return json(route, 409, { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
             }
+            if (!state.draft) return json(route, 404, { code: "DRAFT_NOT_FOUND" });
             const result = confirmResponse(state, generationFailure);
             confirmedChanges = clone(state.draft.changes);
             state.draft = null;
             state.sourceCaseVersion = 8;
-            state.sourceFingerprint = "phase6-confirmed-fingerprint";
+            state.sourceFingerprint = CONFIRMED_FINGERPRINT;
             return json(route, 200, result);
         }
         unhandledApiRequests.push(`${method} ${pathname}`);
@@ -490,21 +527,35 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
         requests,
         unsafeRequests,
         unhandledApiRequests,
+        writeSteps: () => requests
+            .filter((request) => request.method !== "GET")
+            .map((request) => {
+                if (request.pathname.endsWith("/preview")) return "preview";
+                if (request.pathname.endsWith("/confirm")) return "confirm";
+                if (request.pathname.endsWith("/discard")) return "discard";
+                if (request.method === "POST" && request.pathname.endsWith("/draft")) return "start";
+                if (request.method === "PATCH") return "update";
+                return `${request.method} ${request.pathname}`;
+            }),
+        announceCaseChange: async (caseVersion) => {
+            state.sourceCaseVersion = caseVersion;
+            state.sourceFingerprint = CONFIRMED_FINGERPRINT;
+            await expect.poll(() => heldEventStreams.length, { message: "the editor opens the case event stream" }).toBeGreaterThan(0);
+            // A development double-mount leaves one closed stream in the list; fulfilling it throws and is skipped.
+            for (const stream of heldEventStreams.splice(0)) {
+                await stream.fulfill({
+                    status: 200,
+                    contentType: "text/event-stream",
+                    headers: { "cache-control": "no-cache" },
+                    body: `event: case-changed\ndata: ${JSON.stringify({ caseId: CASE_ID, caseVersion })}\n\n`,
+                }).catch(() => undefined);
+            }
+        },
         assertSafe: () => {
             expect(unhandledApiRequests, "unexpected API route").toEqual([]);
             expect(unsafeRequests, "live auth/vendor/external request").toEqual([]);
         },
     };
-    // Keep these controls available to tests without exposing a public app
-    // hook. The fixture itself remains the only stateful boundary.
-    Object.defineProperty(evidence, "setConfirmConflict", {
-        value: () => { conflictOnConfirm = true; },
-        enumerable: false,
-    });
-    Object.defineProperty(evidence, "setGenerationFailure", {
-        value: (value: boolean) => { generationFailure = value; },
-        enumerable: false,
-    });
     return evidence;
 }
 
@@ -555,12 +606,43 @@ async function applyDateMove(page: Page, day: string): Promise<void> {
     await expect(followModal).toBeHidden();
 }
 
+const REFRESH_MODAL_TITLE = "새로운 수정 사항이 있어서 새로고침이 필요해요";
+const PREVIEW_TITLE = "초안 변경 미리보기";
+const CLOSED_DRAFT_MESSAGE = "다른 화면에서 수정 확정을 시작해서 이 확인이 취소되었어요. 수정 확정을 다시 눌러 주세요.";
+
+/** From an open day screen: change the service note and keep it with 수정 확인 (browser only). */
+async function editNoteAndAccept(page: Page, note: string): Promise<void> {
+    await goToServicePage(page);
+    await page.getByRole("textbox", { name: "특이사항 (필요 시 기재)", exact: true }).fill(note);
+    await page.getByRole("button", { name: "다음" }).click();
+    await page.getByRole("button", { name: "수정 확인", exact: true }).click();
+    await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+}
+
+async function stageNote(page: Page, note: string): Promise<void> {
+    await openDay(page, 1);
+    await editNoteAndAccept(page, note);
+}
+
+function commitButton(page: Page) {
+    return page.locator('[data-component$="_body_overview-commit_confirm"]');
+}
+
+/** 수정 확정 on the overview: starts the server draft and opens its preview. */
+async function startCommit(page: Page) {
+    await commitButton(page).click();
+    const preview = page.getByRole("dialog", { name: PREVIEW_TITLE });
+    await expect(preview).toBeVisible();
+    return preview;
+}
+
 test.beforeEach(async ({ page }) => {
     await enableLocalAdminAuth(page);
 });
 
 test("session review retains all fields and dates and writes only after confirmation", async ({ page }, testInfo: TestInfo) => {
-    const evidence = await installMocks(page, { initialDraft: makeDraftState() });
+    const evidence = await installMocks(page);
     await openEditor(page);
     await expect(page.locator('[data-slot="admin-toolbar"]')).toHaveCount(0);
     await openDay(page, 1);
@@ -576,11 +658,28 @@ test("session review retains all fields and dates and writes only after confirma
     await goToServicePage(page);
     await page.getByRole("textbox", { name: "특이사항 (필요 시 기재)", exact: true }).fill("회차 수정 테스트 메모");
     await page.getByRole("button", { name: "다음" }).click();
-    expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
+    expect(evidence.writeSteps()).toEqual([]);
+
+    // 수정 확인 keeps the edit in the browser: no request of any kind leaves the page.
+    const requestsBeforeAccept = evidence.requests.length;
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    expect(evidence.requests.filter((request) => request.method === "PATCH")).toHaveLength(1);
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
+    expect(evidence.requests).toHaveLength(requestsBeforeAccept);
+    expect(evidence.writeSteps()).toEqual([]);
+
+    // 수정 확정 writes the staged edits and previews them; nothing is confirmed yet.
+    const preview = await startCommit(page);
+    await expect(preview).toContainText("변경 전");
+    expect(evidence.writeSteps()).toEqual(["start", "update", "preview"]);
+
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(preview).toBeHidden();
+    await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
+    await expect(commitButton(page)).toHaveCount(0);
+    expect(evidence.writeSteps()).toEqual(["start", "update", "preview", "confirm"]);
+
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
     await openDay(page, 1);
@@ -590,75 +689,160 @@ test("session review retains all fields and dates and writes only after confirma
     evidence.assertSafe();
 });
 
-test("a durable previous draft is reviewed explicitly before confirmation", async ({ page }) => {
+test("a durable previous draft is ignored at load and discarded before the new edits are saved", async ({ page }) => {
     const evidence = await installMocks(page, { initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "재개된 초안 메모" }] }) });
     await openEditor(page);
+    await expect(page.getByRole("button", { name: "이전 수정사항 검토" })).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(commitButton(page)).toHaveCount(0);
     await openDay(page, 1);
-    await expect(page.locator('[data-slot="review"]')).toContainText("재개된 초안 메모");
-    await expect(page.locator('[data-slot="review"] [data-slot="sec-edit"]')).toHaveCount(0);
-    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
-    const preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
-    await expect(preview).toContainText("변경 전");
+    await expect(page.locator('[data-slot="review"]')).not.toContainText("재개된 초안 메모");
+
+    await editNoteAndAccept(page, "새로 입력한 메모");
+    expect(evidence.writeSteps()).toEqual([]);
+
+    const preview = await startCommit(page);
+    expect(evidence.writeSteps()).toEqual(["discard", "start", "preview"]);
+    const discard = evidence.requests.find((request) => request.pathname.endsWith("/discard"));
+    expect(discard?.body).toMatchObject({ expectedDraftVersion: 1 });
+    const start = evidence.requests.find((request) => request.method === "POST" && request.pathname.endsWith("/draft"));
+    expect((start?.body as { changes: { sessions: unknown[] } }).changes.sessions).toMatchObject([{ sessionIndex: 1, notes: "새로 입력한 메모" }]);
+    expect(JSON.stringify(start?.body)).not.toContain("재개된 초안 메모");
+
     await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
     await expect(preview).toBeHidden();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
+    expect(evidence.writeSteps()).toEqual(["discard", "start", "preview", "confirm"]);
     evidence.assertSafe();
 });
 
-test("a conflict preserves input and requires reload before reviewing the latest draft", async ({ page }) => {
-    const evidence = await installMocks(page, { initialDraft: makeDraftState(), conflictOnNextSave: true });
+test("closing the preview discards the server draft and keeps the local edits", async ({ page }) => {
+    const evidence = await installMocks(page);
     await openEditor(page);
+    await stageNote(page, "닫아도 남는 메모");
+    const preview = await startCommit(page);
+    await preview.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(preview).toBeHidden();
+    await expect.poll(() => evidence.writeSteps()).toEqual(["start", "preview", "discard"]);
+    expect(evidence.state.draft).toBeNull();
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(commitButton(page)).toBeEnabled();
     await openDay(page, 1);
-    await goToServicePage(page);
-    await page.getByRole("textbox", { name: "특이사항 (필요 시 기재)", exact: true }).fill("내 입력 보존");
-    await page.getByRole("button", { name: "다음" }).click();
-    await page.getByRole("button", { name: "수정 확인", exact: true }).click();
-    await expect(page.getByText("기록이 변경되었습니다. 입력은 보관되어 있습니다. 최신 기록을 다시 불러와 주세요.")).toBeVisible();
+    await expect(page.locator('[data-slot="review"]')).toContainText("닫아도 남는 메모");
+    evidence.assertSafe();
+});
+
+test("a confirm conflict on an unchanged source keeps the edits and asks to confirm again", async ({ page }) => {
+    const evidence = await installMocks(page, { confirmConflict: "closed-by-other-tab" });
+    await openEditor(page);
+    await stageNote(page, "내 입력 보존");
+    const preview = await startCommit(page);
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(preview).toBeHidden();
+    await expect(page.locator('[data-slot="commit-error"]')).toContainText(CLOSED_DRAFT_MESSAGE);
+    await expect(page.getByRole("dialog", { name: REFRESH_MODAL_TITLE })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(commitButton(page)).toBeEnabled();
+    await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("내 입력 보존");
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(0);
-    await page.getByRole("button", { name: "최신 기록 불러오기" }).click();
-    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
-    await expect(page.getByRole("dialog", { name: "초안 변경 미리보기" })).toBeVisible();
+    await page.getByRole("button", { name: "확인", exact: true }).click();
+
+    // Pressing 수정 확정 again saves the same edits from scratch.
+    const retryPreview = await startCommit(page);
+    await retryPreview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    await expect(retryPreview).toBeHidden();
+    await expect(commitButton(page)).toHaveCount(0);
+    await expect(page.locator('[data-slot="commit-error"]')).toHaveCount(0);
+    expect(evidence.writeSteps()).toEqual(["start", "preview", "confirm", "start", "preview", "confirm"]);
+    evidence.assertSafe();
+});
+
+test("a confirm conflict on a changed source requires a refresh that drops the local edits", async ({ page }) => {
+    const evidence = await installMocks(page, { confirmConflict: "source-changed" });
+    await openEditor(page);
+    await stageNote(page, "곧 사라질 입력");
+    const preview = await startCommit(page);
+    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+    const refreshModal = page.getByRole("dialog", { name: REFRESH_MODAL_TITLE });
+    await expect(refreshModal).toBeVisible();
+    await expect(preview).toBeHidden();
+    // The modal is blocking: Escape does not close it.
+    await page.keyboard.press("Escape");
+    await expect(refreshModal).toBeVisible();
+    expect(evidence.writeSteps().filter((step) => step === "confirm")).toHaveLength(1);
+
+    await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
+    await expect(refreshModal).toBeHidden();
+    await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(commitButton(page)).toHaveCount(0);
+    await openDay(page, 1);
+    await expect(page.locator('[data-slot="review"]')).not.toContainText("곧 사라질 입력");
+    expect(evidence.writeSteps().filter((step) => step === "confirm")).toHaveLength(1);
     evidence.assertSafe();
 });
 
 test("unverified document generation does not become a false document completion claim", async ({ page }) => {
-    const evidence = await installMocks(page, {
-        initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "문서 처리 확인" }] }),
-        generationFailure: true,
-    });
+    const evidence = await installMocks(page, { generationFailure: true });
     await openEditor(page);
-    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
-    const preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
+    await stageNote(page, "문서 처리 확인");
+    const preview = await startCommit(page);
     await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
     await expect(preview).toBeHidden();
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
+    expect(evidence.writeSteps().filter((step) => step === "confirm")).toHaveLength(1);
     await expect(page.getByText("전자문서 처리 완료")).toHaveCount(0);
     evidence.assertSafe();
 });
 
-test("a stale confirm blocks another confirm until the latest draft is reloaded", async ({ page }) => {
-    const evidence = await installMocks(page, { initialDraft: makeDraftState({ sessions: [{ sessionIndex: 1, notes: "재확인 필요" }] }) });
-    (evidence as MockEvidence & { setConfirmConflict: () => void }).setConfirmConflict();
+for (const [operation, message] of [
+    ["contract_period", "이전 수정의 계약서 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요."],
+    ["receipt_refresh", "이전 수정의 영수증 반영이 아직 진행 중이라 저장할 수 없어요. 잠시 후 다시 시도해 주세요."],
+] as const) {
+    test(`a confirm blocked by ${operation} explains itself without asking for a refresh`, async ({ page }) => {
+        const evidence = await installMocks(page, { confirmConflict: operation });
+        await openEditor(page);
+        await stageNote(page, "반영 대기 중 메모");
+        const preview = await startCommit(page);
+        await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
+        await expect(preview.getByText(message)).toBeVisible();
+        await expect(page.getByRole("dialog", { name: REFRESH_MODAL_TITLE })).toHaveCount(0);
+
+        // Closing the preview leaves the line on the overview and the edits in place.
+        await preview.getByRole("button", { name: "닫기", exact: true }).click();
+        await expect(preview).toBeHidden();
+        await expect(page.locator('[data-slot="commit-error"]')).toContainText(message);
+        await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+        await expect(commitButton(page)).toBeEnabled();
+
+        // Once the earlier follow-up work is done, the same edits go through.
+        const retryPreview = await startCommit(page);
+        await retryPreview.getByRole("button", { name: "수정 확정", exact: true }).click();
+        await expect(retryPreview).toBeHidden();
+        await expect(commitButton(page)).toHaveCount(0);
+        await expect(page.locator('[data-slot="commit-error"]')).toHaveCount(0);
+        expect(evidence.writeSteps()).toEqual(["start", "preview", "confirm", "discard", "start", "preview", "confirm"]);
+        evidence.assertSafe();
+    });
+}
+
+test("a case change announced on the event stream blocks the editor until it is refreshed", async ({ page }) => {
+    const evidence = await installMocks(page);
     await openEditor(page);
-    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
-    let preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
-    await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
-    await expect(preview).toContainText("기록이 변경되었습니다.");
-    await expect(preview.getByRole("button", { name: "수정 확정", exact: true })).toHaveCount(0);
-    await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "최신 기록 불러오기" }).click();
-    await page.getByRole("button", { name: "이전 수정사항 검토" }).click();
-    preview = page.getByRole("dialog", { name: "초안 변경 미리보기" });
-    await expect(preview).toBeVisible();
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/confirm"))).toHaveLength(1);
-    expect(evidence.requests.filter((request) => request.pathname.endsWith("/preview"))).toHaveLength(2);
+    await stageNote(page, "다른 관리자가 먼저 확정");
+    await evidence.announceCaseChange(8);
+    const refreshModal = page.getByRole("dialog", { name: REFRESH_MODAL_TITLE });
+    await expect(refreshModal).toBeVisible();
+    await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
+    await expect(refreshModal).toBeHidden();
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(commitButton(page)).toHaveCount(0);
+    expect(evidence.writeSteps()).toEqual([]);
     evidence.assertSafe();
 });
 
 test("mobile date editing uses a bottom sheet and cancellation leaves data unchanged", async ({ page }, testInfo: TestInfo) => {
-    const evidence = await installMocks(page, { initialDraft: makeDraftState() });
+    const evidence = await installMocks(page);
     await page.setViewportSize({ width: 375, height: 812 });
     await openEditor(page);
     await openDay(page, 1);
