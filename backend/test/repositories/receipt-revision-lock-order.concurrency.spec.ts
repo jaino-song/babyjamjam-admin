@@ -1,5 +1,9 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 
+import { ClientService } from "application/services/client.service";
+import { ClientEntity } from "domain/entities/client.entity";
+import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
+
 import type { PromoteReceiptLinkRevisionArtifactInput } from "domain/repositories/receipt-link-token.repository.interface";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { SbEformsignDocumentMirrorRepository } from "infrastructure/database/repositories/sb.eformsign-document-mirror.repository";
@@ -17,6 +21,9 @@ import { lockClientOwnedContractDocuments } from "infrastructure/database/reposi
  *   G3_CONCURRENCY_DATABASE_URL="postgresql://postgres@127.0.0.1:62301/g3_concurrency_fix2" \
  *     NODE_OPTIONS=--experimental-vm-modules pnpm exec jest \
  *     test/repositories/receipt-revision-lock-order.concurrency.spec.ts
+ *
+ * The `ClientService.linkContractDocumentsByPhone` scenarios (G11) run the real service method against
+ * the real `linkClientIfActive`, in both arrival orders.
  *
  * The spec DROPS and recreates the handful of tables it uses, so it refuses anything that is not a
  * loopback host and a database named `g3_concurrency_*`. Without the variable the suite is skipped
@@ -75,7 +82,8 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
                 sync_error text, sync_error_at timestamptz, expired_date timestamptz DEFAULT '2030-01-01',
                 auto_finalize_attempts int DEFAULT 0, auto_finalize_last_attempt_at timestamptz, auto_finalize_last_error text)`,
             `ALTER TABLE client ADD FOREIGN KEY (e_doc_id) REFERENCES eformsign_doc(document_id)`,
-            `CREATE TABLE eformsign_doc_file (id int PRIMARY KEY, eformsign_doc_id int REFERENCES eformsign_doc(id))`,
+            `CREATE TABLE eformsign_doc_file (id int PRIMARY KEY, eformsign_doc_id int REFERENCES eformsign_doc(id),
+                file_type text, source_updated_date timestamptz)`,
             `CREATE TABLE service_record_case (id uuid PRIMARY KEY, branch_id uuid, client_id int,
                 current_revision_id uuid, current_usable_revision_id uuid, current_usable_document_version int)`,
             `CREATE TABLE service_record_revision (id uuid PRIMARY KEY, branch_id uuid, service_record_case_id uuid)`,
@@ -576,5 +584,224 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
             expect(outcomes[0]).toEqual({ status: "fulfilled", value: false });
             expect((await docA())?.statusType).toBe("049");
         }, 30000);
+    });
+
+    describe("ClientService phone link vs linkClientIfActive (G11)", () => {
+        const PHONE = "01012345678";
+        const OTHER = 7; // old owner / pointer holder
+        const TARGET = 8; // the phone-link target
+
+        const freshDocument = (id: number, documentId: string, clientId: number | null, created: string, updated: string) => db.$executeRaw(Prisma.sql`
+            INSERT INTO eformsign_doc
+                (id, document_id, client_id, branch_id, document_kind, template_id, created_date, updated_date, status_type,
+                 customer_phone, detail_payload, detail_source_updated_date, detail_synced_at, sync_status)
+            VALUES (${id}, ${documentId}, ${clientId}, ${BRANCH}::uuid, 'contract', 'template-1', ${created}::timestamptz, ${updated}::timestamptz, '070',
+                    ${PHONE}, '{}'::jsonb, '2026-09-01T00:00:00Z'::timestamptz, '2026-09-01T00:00:10Z'::timestamptz, 'ready')`);
+
+        const mirrorFiles = async (...docIds: number[]) => {
+            for (const docId of docIds) {
+                await db.$executeRaw(Prisma.sql`INSERT INTO eformsign_doc_file VALUES (${docId * 10 + 1}, ${docId}, 'document', '2026-09-01T00:00:00Z'::timestamptz)`);
+                await db.$executeRaw(Prisma.sql`INSERT INTO eformsign_doc_file VALUES (${docId * 10 + 2}, ${docId}, 'audit_trail', '2026-09-01T00:00:00Z'::timestamptz)`);
+            }
+        };
+
+        beforeEach(async () => {
+            await db.$executeRawUnsafe(
+                "TRUNCATE receipt_link_token, service_record_revision_document_state, service_record_revision, service_record_case, eformsign_doc_file, eformsign_doc, client CASCADE",
+            );
+            await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at)
+                VALUES (${OTHER}, ${BRANCH}::uuid, NULL, now()), (${TARGET}, ${BRANCH}::uuid, NULL, now())`);
+        });
+
+        const targetEntity = () => new ClientEntity(
+            TARGET, "Phone Client", "address", "010-1234-5678", "A", 15, "100000", "50000", "50000",
+            new Date("2024-01-01"), new Date("2024-06-01"), false, true, "900101", "pending", false, null,
+        );
+
+        /** A ClientService on `db` whose transactions run with the hook and record every failure. */
+        function phoneLinkService(
+            onQuery: (query: Prisma.Sql) => Promise<void> | void,
+            options: { deadlockTimeout?: boolean } = {},
+        ) {
+            const failures: string[] = [];
+            const shim = shimFor(db, onQuery, options);
+            const prisma = new Proxy(db, {
+                get(target, key) {
+                    if (key === "$transaction") {
+                        return async (fn: (tx: unknown) => unknown) => {
+                            try {
+                                return await shim.$transaction(fn);
+                            } catch (error) {
+                                failures.push(String(error));
+                                throw error;
+                            }
+                        };
+                    }
+                    return Reflect.get(target, key);
+                },
+            });
+            const noop = {} as never;
+            const service = new ClientService(
+                noop, noop, noop, noop, noop, noop,
+                prisma as never,
+                noop,
+                noop,
+                { bumpVersion: async () => undefined, bumpCompanyEpoch: async () => undefined } as never,
+                noop,
+                { forBranch: async () => KR_BUILTIN_CALENDAR } as never,
+            );
+            const run = () => (service as unknown as {
+                linkContractDocumentsByPhone(branchId: string, client: ClientEntity, phone: string): Promise<void>;
+            }).linkContractDocumentsByPhone(BRANCH, targetEntity(), PHONE);
+            return { run, failures };
+        }
+
+        const pointerOf = async (clientId: number) => (await db.$queryRaw<Array<{ e_doc_id: string | null }>>(
+            Prisma.sql`SELECT e_doc_id FROM client WHERE id = ${clientId}`))[0]?.e_doc_id ?? null;
+        const ownerOf = async (documentId: string) => (await db.$queryRaw<Array<{ client_id: number | null }>>(
+            Prisma.sql`SELECT client_id FROM eformsign_doc WHERE document_id = ${documentId}`))[0]?.client_id ?? null;
+        const expectNoDeadlock = (failures: string[]) =>
+            expect(failures.filter((failure) => /40P01|deadlock detected/.test(failure))).toEqual([]);
+
+        /** The phone link's transaction, paused once it holds its document rows (its mirror-file proof query). */
+        const isPhoneLinkDocumentLock = (query: Prisma.Sql) =>
+            isAnyDocumentLock(query) && query.text.includes("eformsign_doc_file");
+
+        describe("document moves from another client to the phone target", () => {
+            beforeEach(async () => {
+                // doc-B belongs to client 7 (no pointer); the phone link and the linker both hand it to client 8.
+                await freshDocument(20, "doc-B", OTHER, "2026-08-10", "2026-09-01");
+                await mirrorFiles(20);
+            });
+
+            it("phone link holds its documents first, the linker arrives second: no deadlock, document ends on the target", async () => {
+                const phoneHoldsDocuments = deferred();
+                const releasePhone = deferred();
+                let paused = false;
+                const phone = phoneLinkService(async (query) => {
+                    if (!paused && isPhoneLinkDocumentLock(query)) {
+                        paused = true;
+                        phoneHoldsDocuments.resolve();
+                        await releasePhone.promise;
+                    }
+                }, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+
+                await phoneHoldsDocuments.promise;
+                const link = new SbEformsignDocRepository(shimFor(other, () => undefined, { deadlockTimeout: true }) as never)
+                    .linkClientIfActive(BRANCH, "doc-B", TARGET);
+                await sleep(600);
+                releasePhone.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expect(phone.failures).toEqual([]);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                expect(await ownerOf("doc-B")).toBe(TARGET);
+                expect(await pointerOf(TARGET)).toBe("doc-B");
+                expect(await pointerOf(OTHER)).toBeNull();
+            }, 30000);
+
+            it("the linker holds the client rows first, the phone link arrives second: no deadlock, document ends on the target", async () => {
+                const linkerHoldsClients = deferred();
+                const releaseLinker = deferred();
+                let paused = false;
+                const link = new SbEformsignDocRepository(shimFor(other, async (query) => {
+                    if (!paused && isClientLock(query)) {
+                        paused = true;
+                        linkerHoldsClients.resolve();
+                        await releaseLinker.promise;
+                    }
+                }, { deadlockTimeout: true }) as never).linkClientIfActive(BRANCH, "doc-B", TARGET);
+
+                await linkerHoldsClients.promise;
+                const phone = phoneLinkService(() => undefined, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+                await sleep(600);
+                releaseLinker.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expect(phone.failures).toEqual([]);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                expect(await ownerOf("doc-B")).toBe(TARGET);
+                expect(await pointerOf(TARGET)).toBe("doc-B");
+                expect(await pointerOf(OTHER)).toBeNull();
+            }, 30000);
+        });
+
+        describe("both candidate documents unowned, the linker's client points at the lower-id candidate", () => {
+            // Phone target 8 matches doc-A (id 10) and doc-B (id 20), neither owned. Client 7 points at doc-A
+            // and the linker links doc-B to client 7: it locks client 7, then doc-B, then its pointed doc-A -
+            // the reverse of the phone link's id order unless the phone link locks client 7 (the pointer
+            // client of doc-A) first.
+            beforeEach(async () => {
+                await freshDocument(10, "doc-A", null, "2026-08-01", "2026-09-01");
+                await freshDocument(20, "doc-B", null, "2026-08-10", "2026-09-01");
+                await mirrorFiles(10, 20);
+                await db.$executeRawUnsafe(`UPDATE client SET e_doc_id = 'doc-A' WHERE id = ${OTHER}`);
+            });
+
+            const expectLinkerWon = async () => {
+                // doc-B ends on client 7 (the linker's target) in both arrival orders
+                expect(await ownerOf("doc-B")).toBe(OTHER);
+                expect(await pointerOf(OTHER)).toBe("doc-B");
+                const pointers = await db.$queryRaw<Array<{ e_doc_id: string }>>(
+                    Prisma.sql`SELECT e_doc_id FROM client WHERE e_doc_id IS NOT NULL`);
+                expect(new Set(pointers.map((row) => row.e_doc_id)).size).toBe(pointers.length);
+            };
+
+            it("the linker holds client 7 and doc-B first, the phone link arrives second: no deadlock", async () => {
+                const linkerHoldsDocument = deferred();
+                const releaseLinker = deferred();
+                let paused = false;
+                const link = new SbEformsignDocRepository(shimFor(other, async (query) => {
+                    // after the linker's own document lock, before it locks the pointed doc-A
+                    if (!paused && isDocumentLock(query)) {
+                        paused = true;
+                        linkerHoldsDocument.resolve();
+                        await releaseLinker.promise;
+                    }
+                }, { deadlockTimeout: true }) as never).linkClientIfActive(BRANCH, "doc-B", OTHER);
+
+                await linkerHoldsDocument.promise;
+                const phone = phoneLinkService(() => undefined, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+                await sleep(600);
+                releaseLinker.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expectNoDeadlock(phone.failures);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                await expectLinkerWon();
+            }, 30000);
+
+            it("the phone link holds its documents first, the linker arrives second: no deadlock", async () => {
+                const phoneHoldsDocuments = deferred();
+                const releasePhone = deferred();
+                let paused = false;
+                const phone = phoneLinkService(async (query) => {
+                    if (!paused && isPhoneLinkDocumentLock(query)) {
+                        paused = true;
+                        phoneHoldsDocuments.resolve();
+                        await releasePhone.promise;
+                    }
+                }, { deadlockTimeout: true });
+                const phoneLink = phone.run();
+
+                await phoneHoldsDocuments.promise;
+                const link = new SbEformsignDocRepository(shimFor(other, () => undefined, { deadlockTimeout: true }) as never)
+                    .linkClientIfActive(BRANCH, "doc-B", OTHER);
+                await sleep(600);
+                releasePhone.resolve();
+
+                const outcomes = await Promise.allSettled([phoneLink, link]);
+                expectBothCompleted(outcomes);
+                expectNoDeadlock(phone.failures);
+                expect(outcomes[1]).toEqual({ status: "fulfilled", value: true });
+                await expectLinkerWon();
+            }, 30000);
+        });
     });
 });
