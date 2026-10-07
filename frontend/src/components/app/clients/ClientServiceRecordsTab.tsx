@@ -5,9 +5,8 @@ import { getUserErrorMessage } from "@babyjamjam/shared";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-    formatSignatureStatus,
     getServiceRecordStatusMeta,
-    getSignatureStatusVariant,
+    getSignatureStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -80,6 +79,9 @@ const ClientServiceRecordsDataComponentContext = createContext<string | null>(nu
 const SEND_LINK_FAILURE_DESCRIPTION = "제공기록지 링크 발송에 실패했어요";
 const SEND_LINK_IN_PROGRESS_DESCRIPTION = "발송 처리 중이에요";
 const SEND_LINK_DEFERRED_DESCRIPTION = "잠시 후 다시 발송돼요";
+// A link in "sending" is already being delivered by the scheduler; a manual send
+// would queue a second SMS, so the button stays disabled until the job settles.
+const SEND_LINK_BLOCKED_HINT = "발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요.";
 const CANCELED_LINK_HINT = "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.";
 const MISSING_RECORD_ALERT_SESSION_COUNT = 2;
 const MISSING_RECORD_ALERT_HOUR_KST = 18;
@@ -220,6 +222,7 @@ function ClientServiceRecordsTabContent({
     };
 
     const handleSendLink = async (assignment: ServiceRecordAssignment) => {
+        if (assignment.link.status === "sending") return;
         const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
         if (isResend) {
             setPendingResendAssignment(assignment);
@@ -947,7 +950,11 @@ function LinkStatusCard({
     const canEditServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
+    const isLinkSending = link.status === "sending";
     const usesResendLayout = isResend || isSendingResend;
+    // "scheduled" stays sendable on purpose: a manual send cancels the pending job
+    // and queues its replacement, so it is "send now", never a second delivery.
+    // Only an in-flight job (sending) cannot be cancelled and must block the button.
     const expiryDate = new Date(`${assignment.endDate?.slice(0, 10)}T00:00:00.000Z`);
     expiryDate.setUTCDate(expiryDate.getUTCDate() + 7);
     const expiresAt = link.token?.expiresAt ?? (Number.isNaN(expiryDate.getTime())
@@ -982,14 +989,16 @@ function LinkStatusCard({
             <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-col items-end">
                 {/* Stays mounted and collapses so the button glides up instead of jumping. */}
                 <div
-                    aria-hidden={usesResendLayout || layout === "mobile"}
+                    aria-hidden={(usesResendLayout || layout === "mobile") && !isLinkSending}
                     className={cn(
                         "grid w-full transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none",
-                        usesResendLayout || layout === "mobile" ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
+                        (usesResendLayout || layout === "mobile") && !isLinkSending ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
                     )}
                 >
                     <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                        {link.status === "canceled"
+                        {isLinkSending
+                            ? SEND_LINK_BLOCKED_HINT
+                            : link.status === "canceled"
                             ? CANCELED_LINK_HINT
                             : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
@@ -1004,7 +1013,7 @@ function LinkStatusCard({
                         "shrink-0 duration-500 ease-out motion-reduce:transition-none",
                         layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
-                    disabled={isPending}
+                    disabled={isPending || isLinkSending}
                     aria-busy={isPending}
                     onClick={onSendLink}
                     data-component={isResend
@@ -1553,6 +1562,7 @@ function EmptyValue() {
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
     const dataComponent = useClientServiceRecordsDataComponent("signature-card");
+    const signatureStatus = getSignatureStatusMeta(signatureDoc);
     return (
         <InfoCard
             data-component={dataComponent}
@@ -1562,7 +1572,7 @@ function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }
             description="서비스 종료 후 자동 생성 · 제공기관 검토"
             titleTrailing={
                 <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
-                    <StatusPill variant={getSignatureVariant(signatureDoc.statusDetail)}>{formatSignatureStatus(signatureDoc.statusDetail)}</StatusPill>
+                    <StatusPill variant={signatureStatus.variant === "info" ? "primary" : signatureStatus.variant}>{signatureStatus.label}</StatusPill>
                 </div>
             }
         >
@@ -1727,8 +1737,6 @@ function formatUnknownValue(value: unknown): string {
     if (typeof value === "object" && value !== null) return JSON.stringify(value);
     return String(value);
 }
-
-const getSignatureVariant = getSignatureStatusVariant;
 
 function getErrorDescription(error: unknown): string {
     // Registered problem message (verified) or locally authored copy —

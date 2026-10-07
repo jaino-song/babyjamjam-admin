@@ -311,6 +311,12 @@ export interface ServiceRecordRevisionDocumentState {
 }
 export interface SignatureDocStatus {
     documentId: string;
+    /**
+     * eformsign status code (`eformsign_doc.statusType`, e.g. "050"). Tone and
+     * label come from this code; `statusDetail` is display text only. Optional
+     * so a client talking to a backend that predates the field still renders.
+     */
+    statusType?: string | null;
     statusDetail: string;
     stepName: string;
     createdDate: string;

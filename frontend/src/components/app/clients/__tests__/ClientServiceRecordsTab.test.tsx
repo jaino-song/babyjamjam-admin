@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
+import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import type {
@@ -565,6 +566,42 @@ describe("ClientServiceRecordsTab", () => {
         });
     });
 
+    it("disables the manual send with a reason while a link is sending, on both layouts", () => {
+        for (const layout of ["desktop", "mobile"] as const) {
+            const { unmount } = render(
+                <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                    layout={layout}
+                    overview={{ assignments: [createAssignment(1, "sending")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            const button = screen.getByRole("button", { name: layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송" });
+            expect(button).toBeDisabled();
+            const reason = screen.getByText(/발송 처리 중이에요\. 끝난 뒤에/);
+            expect(reason.parentElement).not.toHaveAttribute("aria-hidden", "true");
+            fireEvent.click(button);
+            expect(mutateAsync).not.toHaveBeenCalled();
+            unmount();
+        }
+    });
+
+    it("keeps the manual send enabled for a scheduled link (it replaces the pending job)", () => {
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [createAssignment(1, "scheduled")] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
+        expect(screen.queryByText(/발송 처리 중이에요\. 끝난 뒤에/)).not.toBeInTheDocument();
+    });
+
     it("labels an in-flight link as sending and keeps it on the first-send layout", () => {
         render(
             <ClientServiceRecordsTab data-component={TEST_COMPONENT}
@@ -675,11 +712,38 @@ describe("ClientServiceRecordsTab", () => {
         );
     });
 
-    it("normalizes uppercase completed document statuses", () => {
+    it("shows a rejected document as danger from its status code, with the Korean detail as text", () => {
         const assignment = createAssignment(1, "sent");
         assignment.signatureDoc = {
-            documentId: "service-record-document-uppercase",
-            statusDetail: "COMPLETED",
+            documentId: "service-record-document-rejected",
+            statusType: "071",
+            statusDetail: "검토 반려",
+            stepName: "제공기관 검토",
+            createdDate: "2026-07-05T18:30:00+09:00",
+            updatedDate: "2026-07-05T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        };
+
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        const pill = screen.getByText("검토 반려");
+        expect(pill).toHaveClass(...STATUS_SURFACE.danger.split(" "));
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("labels a completed document from its status code", () => {
+        const assignment = createAssignment(1, "sent");
+        assignment.signatureDoc = {
+            documentId: "service-record-document-complete",
+            statusType: "050",
+            statusDetail: "완료",
             stepName: "완료",
             createdDate: "2026-07-05T18:30:00+09:00",
             updatedDate: "2026-07-05T19:00:00+09:00",
@@ -696,7 +760,6 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("서명 완료")).toBeInTheDocument();
-        expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
     });
 
     it("uses the Korean business-day calendar for empty session placeholders", () => {

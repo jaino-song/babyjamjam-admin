@@ -4,8 +4,9 @@ import { normalizeApiError } from "@babyjamjam/shared";
 
 import { createContext, useContext, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
-    formatSignatureStatus,
     getServiceRecordStatusMeta,
+    getSignatureStatusMeta,
+    type ServiceRecordStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { RefreshCw } from "lucide-react";
 
@@ -88,6 +89,14 @@ const LINK_STATUS_TEXT_CLASS: Record<LinkBadgeTone, string> = {
     blue: "info-row-value-primary",
     green: "info-row-value-green",
     burgundy: "info-row-value-burgundy",
+};
+const SIGNATURE_STATUS_TEXT_CLASS: Record<ServiceRecordStatusMeta["variant"], string> = {
+    neutral: "info-row-value-muted",
+    primary: "info-row-value-primary",
+    info: "info-row-value-primary",
+    success: "info-row-value-green",
+    warning: "info-row-value-primary",
+    danger: "info-row-value-burgundy",
 };
 const SERVICE_RECORD_SKELETON_CLASS = "service-record-skeleton-loader";
 
@@ -293,6 +302,10 @@ function LinkCard({
         ? assignment.link.token.state === "expired" || isPastDate(expiresAt)
         : false;
     const isPending = isSending || sendLinkMutation.isPending;
+    // A link in "sending" is already being delivered by the scheduler; a manual send
+    // would queue a second SMS. "scheduled" stays sendable on purpose: a manual send
+    // cancels the pending job and queues its replacement ("send now").
+    const isLinkSending = assignment.link.status === "sending";
 
     const sendLink = async () => {
         setIsSending(true);
@@ -331,6 +344,7 @@ function LinkCard({
     };
 
     const handleSendClick = () => {
+        if (isLinkSending) return;
         if (isResend) {
             setResendModalOpen(true);
             return;
@@ -396,11 +410,16 @@ function LinkCard({
                     data-component={isResend
                         ? `${dataComponent}_actions_resend`
                         : `${dataComponent}_actions_send`}
-                    disabled={isPending}
+                    disabled={isPending || isLinkSending}
                     onClick={handleSendClick}
                 >
                     {isPending ? "발송 중..." : "제공기록지 링크 발송"}
                 </button>
+                {isLinkSending ? (
+                    <p className="info-row-value-muted" role="status">
+                        발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요.
+                    </p>
+                ) : null}
                 {canEditServiceRecord ? (
                     <Button
                         asChild
@@ -444,11 +463,15 @@ function SignatureDocumentCard({ signatureDoc }: { signatureDoc: SignatureDocSta
     const title = signatureDoc.snapshotChunkIndex
         ? `제공기록지 전자문서 ${signatureDoc.snapshotChunkIndex}`
         : "제공기록지 전자문서";
+    const signatureStatus = getSignatureStatusMeta(signatureDoc);
 
     return (
         <div data-component={dataComponent}>
             <InfoCard data-component={`${dataComponent}_info-card`} title={title}>
-                <InfoRow label="상태" value={formatSignatureStatus(signatureDoc.statusDetail)} />
+                <InfoRow
+                    label="상태"
+                    value={<span className={SIGNATURE_STATUS_TEXT_CLASS[signatureStatus.variant]}>{signatureStatus.label}</span>}
+                />
                 <InfoRow label="문서 발송" value={formatDateTimeKo(signatureDoc.createdDate)} />
                 <InfoRow label="상태 갱신" value={formatDateTimeKo(signatureDoc.updatedDate)} />
                 <InfoRow label="단계" value={signatureDoc.stepName || "-"} />

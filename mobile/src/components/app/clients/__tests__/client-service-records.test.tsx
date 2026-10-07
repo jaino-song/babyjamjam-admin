@@ -242,7 +242,8 @@ describe("ClientServiceRecords", () => {
         const record = createRecord("COMPLETED");
         record.signatureDocs = [{
             documentId: "service-record-document-1",
-            statusDetail: "COMPLETED",
+            statusType: "050",
+            statusDetail: "완료",
             stepName: "완료",
             createdDate: "2026-07-30T18:30:00+09:00",
             updatedDate: "2026-07-30T19:00:00+09:00",
@@ -263,12 +264,13 @@ describe("ClientServiceRecords", () => {
         expect(documentCard).toHaveTextContent("service-record-document-1");
     });
 
-    it("normalizes uppercase completed document statuses", () => {
-        const record = createRecord("COMPLETED");
+    it("tones a rejected document from its status code, not from English keywords in the Korean detail", () => {
+        const record = createRecord("DOCUMENTS_CREATED");
         record.signatureDocs = [{
-            documentId: "service-record-document-uppercase",
-            statusDetail: "COMPLETED",
-            stepName: "완료",
+            documentId: "service-record-document-rejected",
+            statusType: "071",
+            statusDetail: "검토 반려",
+            stepName: "제공기관 검토",
             createdDate: "2026-07-30T18:30:00+09:00",
             updatedDate: "2026-07-30T19:00:00+09:00",
             snapshotChunkIndex: 1,
@@ -276,8 +278,26 @@ describe("ClientServiceRecords", () => {
 
         renderComponent({ record, assignments: [createAssignment(1, "sent")] });
 
-        expect(screen.getByText("서명 완료")).toBeInTheDocument();
-        expect(screen.queryByText("COMPLETED")).not.toBeInTheDocument();
+        const label = screen.getByText("검토 반려");
+        expect(label).toHaveClass("info-row-value-burgundy");
+        expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+    });
+
+    it("shows an in-progress document with its Korean detail and a primary tone", () => {
+        const record = createRecord("DOCUMENTS_CREATED");
+        record.signatureDocs = [{
+            documentId: "service-record-document-review",
+            statusType: "070",
+            statusDetail: "검토 요청",
+            stepName: "제공기관 검토",
+            createdDate: "2026-07-30T18:30:00+09:00",
+            updatedDate: "2026-07-30T19:00:00+09:00",
+            snapshotChunkIndex: 1,
+        }];
+
+        renderComponent({ record, assignments: [createAssignment(1, "sent")] });
+
+        expect(screen.getByText("검토 요청")).toHaveClass("info-row-value-primary");
     });
 
     it("shows the document lifecycle even when no assignment remains", () => {
@@ -392,6 +412,25 @@ describe("ClientServiceRecords", () => {
         await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
 
         expect(screen.queryByRole("dialog", { name: "제공기록지 메시지를 재전송하시겠습니까?" })).not.toBeInTheDocument();
+    });
+
+    it("disables the send button with a reason while a link is sending, so staff cannot double-send", async () => {
+        const user = userEvent.setup();
+        renderComponent({ assignments: [createAssignment(1, "sending")] });
+
+        const sendButton = screen.getByRole("button", { name: "제공기록지 링크 발송" });
+        expect(sendButton).toBeDisabled();
+        expect(screen.getByText(/발송 처리 중이에요/)).toBeInTheDocument();
+
+        await user.click(sendButton);
+        expect(mockMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it("keeps send-now available for a scheduled link (the manual send replaces the pending job)", () => {
+        renderComponent({ assignments: [createAssignment(1, "scheduled")] });
+
+        expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
+        expect(screen.queryByText(/발송 처리 중이에요/)).not.toBeInTheDocument();
     });
 
     it("opens a submitted session detail from the session list", async () => {

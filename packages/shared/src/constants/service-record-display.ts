@@ -1,4 +1,5 @@
 import type { StatusBadgeVariant } from "../tokens/status-badge";
+import { getEformsignStatusCategory, isDeletedEformsignStatusCode } from "./eformsign-status-codes";
 
 /**
  * 제공기록지 상태/서명 문서 상태의 표시 규칙 — frontend/mobile이 각자 들고 있던
@@ -35,21 +36,31 @@ export function getServiceRecordStatusMeta(status: string | null | undefined): S
     return (status && SERVICE_RECORD_STATUS_META[status]) || SERVICE_RECORD_STATUS_FALLBACK_META;
 }
 
-/** 제공기록지 서명 문서(statusDetail 원문)의 표시 라벨. */
-export function formatSignatureStatus(statusDetail: string): string {
-    const normalized = statusDetail.trim().toLowerCase();
-    if (!normalized) return "상태 확인";
-    if (normalized.includes("complete")) return "서명 완료";
-    if (normalized.includes("created")) return "발송됨";
-    return statusDetail.trim();
+export interface SignatureStatusInput {
+    statusType?: string | null;
+    statusDetail?: string | null;
 }
 
-export function getSignatureStatusVariant(
-    statusDetail: string,
-): "neutral" | "primary" | "success" | "warning" | "danger" {
-    const normalized = statusDetail.trim().toLowerCase();
-    if (normalized.includes("complete")) return "success";
-    if (normalized.includes("reject") || normalized.includes("fail")) return "danger";
-    if (normalized.includes("created")) return "primary";
-    return "neutral";
+export type SignatureStatusMeta = ServiceRecordStatusMeta;
+
+/**
+ * 제공기록지 서명 문서의 표시 규칙. tone/label은 eformsign status code(statusType)로만
+ * 정한다. statusDetail은 백엔드가 한국어로 저장하는 표시용 원문("완료", "거부", 단계명 등)이라
+ * 영어 키워드로 분기하면 거부 문서가 중립 톤으로 새어 나간다 — 라벨 본문으로만 쓴다.
+ * 코드 집합은 eformsign-status-codes의 정본(완료/거부·만료/삭제/진행 중)을 그대로 쓴다.
+ */
+export function getSignatureStatusMeta(doc: SignatureStatusInput): SignatureStatusMeta {
+    const detail = (doc.statusDetail ?? "").trim();
+    const hasType = (doc.statusType ?? "").toString().trim() !== "";
+    const category = hasType ? getEformsignStatusCategory(doc.statusType) : "unknown";
+
+    if (category === "completed") return { label: "서명 완료", variant: "success" };
+    if (category === "expired") {
+        if (isDeletedEformsignStatusCode(doc.statusType)) {
+            return { label: detail || "삭제됨", variant: "neutral" };
+        }
+        return { label: detail || "거부·만료", variant: "danger" };
+    }
+    if (category === "in-progress") return { label: detail || "진행 중", variant: "primary" };
+    return { label: detail || "상태 확인", variant: "neutral" };
 }

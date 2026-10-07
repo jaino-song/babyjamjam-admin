@@ -96,6 +96,7 @@ export interface AdminServiceRecordSessionDto {
 
 export interface AdminServiceRecordSignatureDocDto {
     documentId: string;
+    statusType: string;
     statusDetail: string;
     stepName: string;
     createdDate: Date;
