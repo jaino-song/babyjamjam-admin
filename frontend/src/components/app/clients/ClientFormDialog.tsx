@@ -116,6 +116,18 @@ const CLIENT_END_DATE_CHANGED_MESSAGE =
 const PANEL_STEP_CONTENT_CLASS_NAME =
     "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
+// Fields that are the price fields or that the price table is looked up by (the voucher year
+// defaults from the end date, which follows the start date and duration).
+const PRICE_BASELINE_FREEZING_FIELDS: ReadonlySet<keyof CreateClientDto> = new Set<keyof CreateClientDto>([
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "duration",
+    "type",
+    "voucherClient",
+    "startDate",
+    "endDate",
+]);
 export const CLIENT_FORM_STEPPER_STEPS = [
     { label: "이용자\n정보" },
     { label: "제공인력\n정보" },
@@ -545,6 +557,10 @@ function ClientFormContent({
     const contentRef = useRef<HTMLDivElement>(null);
     const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
     const formDataBaselineRef = useRef<ClientFormData>(formData);
+    // Turns on the first time staff touch a price field or anything the price table is looked up by,
+    // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
+    // catching up with its own table on open; once on, the price baseline stays what was stored.
+    const priceBaselineFrozenRef = useRef(false);
     const [initializedEditClientId, setInitializedEditClientId] = useState<number | null>(null);
     const [hasUserEditedSinceOpen, setHasUserEditedSinceOpen] = useState(false);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -737,20 +753,15 @@ function ClientFormContent({
                             grant: "0",
                             actualPrice: parsePrice(selectedPriceInfo.fullPrice),
                         };
-                    // While the price drivers are still what the form was opened with, this fill is the
-                    // form catching up with its own price table, not an edit: the saved client is not
-                    // being re-priced. Move the baseline's prices with it, so a save does not send them
-                    // back and overwrite a price someone else changed since. A fill caused by changing
-                    // the duration, service type or voucher fields is a real re-pricing and stays a change.
-                    const baseline = formDataBaselineRef.current;
-                    if (
-                        isEditMode
-                        && prev.voucherClient === baseline.voucherClient
-                        && prev.type === baseline.type
-                        && prev.duration === baseline.duration
-                    ) {
+                    // Until staff touch a price field or a price driver, this fill is the form catching up
+                    // with its own price table, not an edit: the saved client is not being re-priced. Move
+                    // the baseline's prices with it, so a save does not send them back and overwrite a
+                    // price someone else changed since. After the first such touch the baseline stays what
+                    // was stored, so every price shown at save time is compared against it. A driver that
+                    // merely matches its opening value again does not prove nothing was touched.
+                    if (isEditMode && !priceBaselineFrozenRef.current) {
                         formDataBaselineRef.current = {
-                            ...baseline,
+                            ...formDataBaselineRef.current,
                             fullPrice: next.fullPrice,
                             grant: next.grant,
                             actualPrice: next.actualPrice,
@@ -819,6 +830,7 @@ function ClientFormContent({
     // Reset duration/prices when the voucher year changes (same semantics as handleTypeChange)
     const handleVoucherYearChange = (newYear: string) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         const parsedYear = Number(newYear);
         setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
         setFormData(prev => ({
@@ -836,6 +848,7 @@ function ClientFormContent({
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         setFormData(prev => ({
             ...prev,
             type: newType,
@@ -851,6 +864,7 @@ function ClientFormContent({
 
     const handleVoucherClientChange = (voucherClient: boolean) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         setPricesManuallyEdited(false);
         setFormData(prev => ({
             ...prev,
@@ -950,6 +964,7 @@ function ClientFormContent({
             }
             queueMicrotask(() => {
                 formDataBaselineRef.current = nextFormData;
+                priceBaselineFrozenRef.current = false;
                 setFormData(nextFormData);
                 setIsEndDateUnsupported(false);
                 setInitializedEditClientId(client?.id ?? null);
@@ -1018,6 +1033,7 @@ function ClientFormContent({
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
+        if (PRICE_BASELINE_FREEZING_FIELDS.has(field)) priceBaselineFrozenRef.current = true;
         setFormData(prev => ({ ...prev, [field]: value }));
         if (isClientFormField(field)) {
             setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
