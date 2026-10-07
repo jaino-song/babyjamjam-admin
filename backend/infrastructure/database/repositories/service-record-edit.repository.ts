@@ -1646,6 +1646,19 @@ async function assertNoBlockingRevisionDocumentStates(
  * than the (possibly lagging) `e_doc_id` pointer; that document must be locked for the same
  * reason the pointer's document always was.  Rows are locked in `id` order so overlapping
  * transactions cannot invert the order.
+ *
+ * Lock order across the paths that take both a client row and document rows: client row FIRST,
+ * document rows after it, for every path that cooperates with this one -
+ *  - confirmation (here): client -> ... -> these documents (`id` order) -> draft -> revisions;
+ *  - receipt promotion (`SbReceiptLinkTokenRepository`): client -> case -> revision -> state ->
+ *    the client's documents (`id` order) -> receipt tokens;
+ *  - `SbEformsignDocRepository.linkClientIfActive`: client row(s) (`id` order) -> the document ->
+ *    case rows; it used to take the document first, which deadlocked with this lock;
+ *  - receipt-link issue (`createOrRefreshContractLink`): client row -> token insert (key-share on
+ *    the document row it references).
+ * Paths that still take a document before the client (`isCurrentContractDocument`, the phone
+ * based link in `ClientService`, permanent purge) are not changed by this lock and keep their
+ * pre-existing order.
  */
 export async function lockClientOwnedContractDocuments(
     tx: Prisma.TransactionClient,

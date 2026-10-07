@@ -83,6 +83,8 @@ function scenario(options: {
             outputProof: proof,
             status: "processing",
         }])
+        // The client's document rows, locked in id order before the target is read.
+        .mockResolvedValueOnce([])
         .mockResolvedValueOnce(options.targetDocument ? [options.targetDocument] : [])
         .mockResolvedValueOnce(options.candidates)
         .mockResolvedValueOnce([{
@@ -141,6 +143,25 @@ describe("receipt revision promotion follows the current contract, not client.eD
         expect(updateMany).toHaveBeenCalledTimes(1);
     });
 
+    it("stable links: a token still attached to the older contract A is refreshed with the current contract B's receipt", async () => {
+        const { repository, input, updateMany } = scenario({
+            eDocId: "doc-A",
+            candidates: [contract(20, "doc-B"), contract(10, "doc-A")],
+            targetDocument: { id: 20, documentId: "doc-B" },
+            targetDocumentId: "doc-B",
+            tokenDocRowId: 10,
+        });
+
+        const result = await repository.promoteReceiptRevisionArtifact(input);
+
+        // Product decision: the sent link keeps its token and document (A); only the target
+        // (the receipt facts' source) has to be the current contract.
+        expect(result).toEqual({ disposition: "promoted", tokenIds: [TOKEN_ID], stateVersion: 2 });
+        expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: expect.objectContaining({ eformsignDocId: 10 }),
+        }));
+    });
+
     it("refuses a target A while the current contract is the newer B, even though client.eDocId still points at A", async () => {
         const { repository, input, updateMany, queryRaw } = scenario({
             eDocId: "doc-A",
@@ -155,7 +176,7 @@ describe("receipt revision promotion follows the current contract, not client.eD
         expect(result).toMatchObject({ disposition: "stale", tokenIds: [] });
         expect(updateMany).not.toHaveBeenCalled();
         // Stopped at the currency check: neither the token rows nor the state completion ran.
-        expect(queryRaw).toHaveBeenCalledTimes(6);
+        expect(queryRaw).toHaveBeenCalledTimes(7);
     });
 
     it("keeps working when client.eDocId, the target and the current contract all agree", async () => {
@@ -241,15 +262,22 @@ describe("receipt revision promotion follows the current contract, not client.eD
             const sql = queryRaw.mock.calls[call]?.[0] as { strings: string[] };
             return sql.strings.join("?");
         };
-        // 0 client lock (no pointer read) -> ... -> 4 target document lock -> 5 candidates.
+        // 0 client lock (no pointer read) -> ... -> 4 every document row of the client locked in
+        // id order -> 5 target document lock -> 6 candidates.
         expect(text(0)).toContain("FOR UPDATE");
         expect(text(0)).not.toContain("e_doc_id");
         expect(text(4)).toContain("FROM eformsign_doc");
+        expect(text(4)).toContain("WHERE client_id =");
+        expect(text(4)).toContain("ORDER BY id");
         expect(text(4)).toContain("FOR UPDATE");
-        expect(text(5)).toContain("ORDER BY created_date DESC, id DESC");
-        expect(text(5)).toContain("service_record_case_id IS NULL");
-        expect(text(5)).not.toContain("e_doc_id");
-        expect(tx.$queryRaw.mock.invocationCallOrder[4]).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[5]!);
+        expect(text(5)).toContain("FROM eformsign_doc");
+        expect(text(5)).toContain("FOR UPDATE");
+        expect(text(6)).toContain("ORDER BY created_date DESC, id DESC");
+        expect(text(6)).toContain("service_record_case_id IS NULL");
+        expect(text(6)).not.toContain("e_doc_id");
+        // The client row is locked before any document row; the document rows before the check.
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[4]!);
+        expect(tx.$queryRaw.mock.invocationCallOrder[4]).toBeLessThan(tx.$queryRaw.mock.invocationCallOrder[6]!);
     });
 
     it("rejects an envelope without the service-record template ids before opening a transaction", async () => {

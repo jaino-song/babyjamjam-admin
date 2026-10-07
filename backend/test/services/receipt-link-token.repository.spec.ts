@@ -221,6 +221,7 @@ describe("SbReceiptLinkTokenRepository", () => {
                 outputProof: proof,
                 status: "processing",
             }])
+            .mockResolvedValueOnce([]) // every document row of the client, locked in id order
             .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
             .mockResolvedValueOnce([{
                 id: 99,
@@ -306,6 +307,7 @@ describe("SbReceiptLinkTokenRepository", () => {
                 targetDocumentId: "target-document", documentVersion: 3, templateId: "template-1", templateVersion: "v3",
                 mirrorGeneration: "mirror-1", outputProof: proof, status: "processing",
             }])
+            .mockResolvedValueOnce([]) // every document row of the client, locked in id order
             .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
             .mockResolvedValueOnce([{
                 id: 99,
