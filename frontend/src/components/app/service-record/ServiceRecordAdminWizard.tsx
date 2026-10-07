@@ -916,9 +916,22 @@ export function ServiceRecordAdminWizard({
         if (confirmInFlight.current) { bufferedEvents.current.push(event); return; }
         applyCaseEvent(event);
     });
+    /**
+     * The event stream drops and reconnects, and the server keeps no history, so
+     * a confirm emitted in that gap is never delivered. On every (re)open, ask
+     * the server for the current case version and treat a newer one like an
+     * event. Failures are ignored; the next open tries again.
+     */
+    const catchUpOnOpen = useEffectEvent(async () => {
+        try {
+            const state = await adminServiceRecordEditApi.getDraft(clientId);
+            if (caseId.current === null || state.sourceCaseVersion <= knownVersion.current) return;
+            handleCaseEvent({ caseId: caseId.current, caseVersion: state.sourceCaseVersion });
+        } catch { /* best effort */ }
+    });
     useEffect(() => {
         const unsubscribeRevision = subscribeServiceRecordRevisionSync((event) => handleCaseEvent(event));
-        const unsubscribeCase = subscribeServiceRecordCaseChanges((event) => handleCaseEvent(event));
+        const unsubscribeCase = subscribeServiceRecordCaseChanges((event) => handleCaseEvent(event), () => { void catchUpOnOpen(); });
         return () => { unsubscribeRevision(); unsubscribeCase(); };
     }, []);
     /** 수정 확정, step 2: the preview was approved. */

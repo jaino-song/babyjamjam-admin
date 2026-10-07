@@ -25,6 +25,10 @@ class FakeEventSource {
         this.closed = true;
     }
 
+    emitOpen() {
+        for (const listener of this.listeners.get("open") ?? []) listener({} as Event);
+    }
+
     emit(type: string, data: unknown) {
         for (const listener of this.listeners.get(type) ?? []) listener({ data } as MessageEvent);
     }
@@ -87,6 +91,39 @@ describe("service-record case change subscription", () => {
 
         expect(source.closed).toBe(true);
         expect(listener).not.toHaveBeenCalled();
+    });
+
+    it("calls onOpen on the first open and again on every reconnect", () => {
+        const onOpen = jest.fn();
+        subscribeServiceRecordCaseChanges(jest.fn(), onOpen);
+        const source = FakeEventSource.instances[0];
+
+        source.emitOpen();
+        expect(onOpen).toHaveBeenCalledTimes(1);
+
+        source.emitOpen();
+        expect(onOpen).toHaveBeenCalledTimes(2);
+    });
+
+    it("stops calling onOpen after unsubscribe", () => {
+        const onOpen = jest.fn();
+        const unsubscribe = subscribeServiceRecordCaseChanges(jest.fn(), onOpen);
+        const source = FakeEventSource.instances[0];
+
+        unsubscribe();
+        source.emitOpen();
+
+        expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it("works without an onOpen callback", () => {
+        const listener = jest.fn();
+        subscribeServiceRecordCaseChanges(listener);
+        const source = FakeEventSource.instances[0];
+
+        expect(() => source.emitOpen()).not.toThrow();
+        source.emit("case-changed", JSON.stringify({ caseId: "case-1", caseVersion: 2 }));
+        expect(listener).toHaveBeenCalledWith({ caseId: "case-1", caseVersion: 2 });
     });
 
     it("is a no-op when EventSource is unavailable", () => {

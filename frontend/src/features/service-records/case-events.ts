@@ -23,11 +23,15 @@ function parseCaseChanged(data: unknown): ServiceRecordCaseChangedEvent | null {
 
 /**
  * Subscribe to "a service-record case was confirmed" server events. The browser
- * reconnects a dropped EventSource by itself, so the proxy closing its stream
- * before the platform limit needs no handling here. Returns an unsubscribe.
+ * reconnects a dropped EventSource by itself (the proxy closes its stream
+ * before the platform limit), but the server keeps no history, so a change
+ * emitted during the reconnect gap is lost. `onOpen` fires on the first open
+ * and on every reconnect, letting the caller catch up on what it missed.
+ * Returns an unsubscribe.
  */
 export function subscribeServiceRecordCaseChanges(
     listener: (event: ServiceRecordCaseChangedEvent) => void,
+    onOpen?: () => void,
 ): () => void {
     if (typeof window === "undefined" || typeof EventSource === "undefined") {
         return () => undefined;
@@ -38,9 +42,12 @@ export function subscribeServiceRecordCaseChanges(
         const parsed = parseCaseChanged((event as MessageEvent<unknown>).data);
         if (parsed) listener(parsed);
     };
+    const handleOpen = () => onOpen?.();
     source.addEventListener(SERVICE_RECORD_CASE_CHANGED_EVENT, handleMessage);
+    source.addEventListener("open", handleOpen);
 
     return () => {
+        source.removeEventListener("open", handleOpen);
         source.removeEventListener(SERVICE_RECORD_CASE_CHANGED_EVENT, handleMessage);
         source.close();
     };

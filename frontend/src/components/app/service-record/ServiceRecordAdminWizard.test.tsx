@@ -514,6 +514,12 @@ describe("per-session administrator editing", () => {
         const listener = calls[calls.length - 1][0];
         act(() => { listener(event); });
     };
+    /** Simulates the EventSource opening or reconnecting; resolves once the catch-up settles. */
+    const emitStreamOpen = async () => {
+        const calls = jest.mocked(subscribeServiceRecordCaseChanges).mock.calls;
+        const onOpen = calls[calls.length - 1][1]!;
+        await act(async () => { onOpen(); });
+    };
     beforeEach(() => {
         jest.mocked(subscribeServiceRecordCaseChanges).mockReset();
         jest.mocked(subscribeServiceRecordCaseChanges).mockImplementation(() => () => undefined);
@@ -1410,6 +1416,62 @@ describe("per-session administrator editing", () => {
             await act(async () => { rejectConfirm(new Error("network")); });
 
             await screen.findByRole("dialog", { name: refreshModalTitle });
+        });
+
+        describe("catch-up when the event stream (re)opens", () => {
+            const newerSource = { ...makeDraftState(), draft: null, sourceFingerprint: "source-2", sourceCaseVersion: 2 };
+
+            it("opens the modal for a newer case version missed during the gap and keeps the edits until 확인", async () => {
+                await openWithPending();
+                jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(newerSource);
+
+                await emitStreamOpen();
+
+                const modal = await screen.findByRole("dialog", { name: refreshModalTitle });
+                expect(screen.getByRole("button", { name: "수정 확정", hidden: true })).toBeInTheDocument();
+
+                fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+                await waitFor(() => expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument());
+                expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
+            });
+
+            it("opens no modal when the server version equals the loaded one", async () => {
+                await openWithPending();
+                jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue({ ...makeDraftState(), draft: null });
+
+                await emitStreamOpen();
+
+                expect(adminServiceRecordEditApi.getDraft).toHaveBeenCalled();
+                expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+            });
+
+            it("ignores a failed check silently", async () => {
+                await openWithPending();
+                jest.mocked(adminServiceRecordEditApi.getDraft).mockRejectedValue(new Error("network"));
+
+                await emitStreamOpen();
+
+                expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+                expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+                expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument();
+            });
+
+            it("lets this tab's own in-flight confirm explain the version the open reports", async () => {
+                let resolveConfirm!: (value: Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>) => void;
+                jest.mocked(adminServiceRecordEditApi.confirmDraft).mockReturnValue(new Promise((resolve) => { resolveConfirm = resolve; }));
+                await openWithPending();
+                await startCommit();
+                confirmInPreview();
+                await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+                jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(newerSource);
+
+                await emitStreamOpen();
+                expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+
+                await act(async () => { resolveConfirm(confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>); });
+                await waitFor(() => expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument());
+                expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
+            });
         });
 
         const closedDraftMessage = "다른 화면에서 수정 확정을 시작해서 이 확인이 취소되었어요. 수정 확정을 다시 눌러 주세요.";
