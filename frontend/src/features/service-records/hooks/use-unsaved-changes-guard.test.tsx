@@ -144,6 +144,26 @@ describe("useUnsavedChangesGuard", () => {
             expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
         });
 
+        it("lets a hash-only Forward onto the editor entry pass without a prompt", async () => {
+            // Entries: .., EDITOR#a, EDITOR#b (armed on #b, guard on top).
+            window.history.replaceState(NEXT_STATE, "", `${EDITOR}#a`);
+            window.history.pushState(NEXT_STATE, "", `${EDITOR}#b`);
+            render(<Harness active />);
+
+            await traverse(() => window.history.go(-2)); // guard -> editor -> #a
+            expect(window.location.hash).toBe("#a");
+            await traverse(() => window.history.forward()); // #a -> the editor entry (#b)
+
+            expect(window.location.hash).toBe("#b");
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+            // Still guarded: Back from the guard entry onto the editor entry is held.
+            await traverse(() => window.history.forward()); // onto the guard entry
+            await traverse(() => window.history.back());
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(`${EDITOR}`);
+        });
+
         it("holds a single Back, and 머무르기 keeps the editor URL and re-arms", async () => {
             render(<Harness active />);
 
@@ -223,6 +243,61 @@ describe("useUnsavedChangesGuard", () => {
             await traverse(() => window.history.back());
             expect(paths()).toBe("/previous");
             expect(window.history.length).toBe(lengthWhileArmed);
+        });
+
+        it("drops the guard entry from under a hash entry pushed while armed", async () => {
+            const hashState = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { marker: "hash-tree" } };
+            const { rerender } = render(<Harness active />);
+            act(() => { window.history.pushState(hashState, "", `${EDITOR}#x`); });
+
+            rerender(<Harness active={false} />);
+            await settle();
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 80)); });
+
+            // Same URL and state as before, still on the hash entry.
+            expect(paths()).toBe(EDITOR);
+            expect(window.location.hash).toBe("#x");
+            expect(window.history.state).toMatchObject(hashState);
+            expect(window.history.state).not.toHaveProperty("__serviceRecordLeaveGuard");
+
+            // No extra entry: hash entry -> editor entry -> previous page.
+            await traverse(() => window.history.back());
+            expect(paths()).toBe(EDITOR);
+            expect(window.location.hash).toBe("");
+            await traverse(() => window.history.back());
+            expect(paths()).toBe("/previous");
+        });
+
+        it("rebuilds several hash entries and keeps the one the user is on", async () => {
+            const { rerender } = render(<Harness active />);
+            act(() => { window.history.pushState({ n: 1 }, "", `${EDITOR}#x`); });
+            act(() => { window.history.pushState({ n: 2 }, "", `${EDITOR}#y`); });
+            await traverse(() => window.history.back()); // rest on #x
+
+            rerender(<Harness active={false} />);
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+
+            expect(window.location.hash).toBe("#x");
+            expect(window.history.state).toMatchObject({ n: 1 });
+            await traverse(() => window.history.forward());
+            expect(window.location.hash).toBe("#y");
+            expect(window.history.state).toMatchObject({ n: 2 });
+            await traverse(() => window.history.go(-2));
+            expect(window.location.hash).toBe("");
+            await traverse(() => window.history.back());
+            expect(paths()).toBe("/previous");
+        });
+
+        it("never navigates away when a fragment navigation hid the guard's position", async () => {
+            const { rerender } = render(<Harness active />);
+            await act(async () => { window.location.hash = "#plain"; }); // no pushState call: not tracked
+
+            rerender(<Harness active={false} />);
+            await settle();
+
+            // Documented limitation: the guard entry stays, but the user is not moved.
+            expect(paths()).toBe(EDITOR);
+            expect(window.location.hash).toBe("#plain");
         });
 
         it("does not queue a prompt after being deactivated", async () => {

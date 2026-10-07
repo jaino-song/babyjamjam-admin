@@ -89,6 +89,34 @@ for (const mode of MODES) {
             expect(await where(page)).toBe(EDITOR);
         });
 
+        test("hash-only Forward onto the editor entry does not prompt", async ({ page }) => {
+            await setup(page, mode);
+            await page.evaluate(
+                ({ editor, state }) => {
+                    history.replaceState(state, "", `${editor}#a`);
+                    history.pushState(state, "", `${editor}#b`);
+                },
+                { editor: EDITOR, state: NEXT_STATE },
+            );
+            await arm(page);
+            await page.evaluate(() => history.go(-2)); // guard -> editor(#b) -> #a
+            await settle(page);
+            expect(await where(page)).toBe(`${EDITOR}#a`);
+            expect(await modalOpen(page)).toBe(false);
+
+            await page.evaluate(() => history.forward()); // #a -> editor(#b)
+            await settle(page);
+            expect(await where(page)).toBe(`${EDITOR}#b`);
+            expect(await modalOpen(page)).toBe(false);
+
+            // Still guarded: Back from the guard entry onto the editor entry is held.
+            await page.evaluate(() => history.forward());
+            await settle(page);
+            await browserBack(page);
+            await settle(page);
+            expect(await modalOpen(page)).toBe(true);
+        });
+
         test("single Back: prompt, 머무르기 keeps the editor URL, still guarded", async ({ page }) => {
             await setup(page, mode);
             await arm(page);
@@ -167,6 +195,31 @@ for (const mode of MODES) {
             expect(await historyState(page)).toMatchObject(NEXT_STATE);
             expect(await historyLength(page)).toBe(lengthBefore + 1); // the guard entry stays in the list...
             await browserBack(page); // ...but is no longer between the editor and the previous page
+            await settle(page);
+            expect(await where(page)).toBe("/previous");
+        });
+
+        test("release after a hash entry was pushed drops the guard entry without moving the user", async ({ page }) => {
+            const hashState = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { marker: "hash-tree" } };
+            await setup(page, mode);
+            await arm(page);
+            await page.evaluate(
+                ({ editor, state }) => history.pushState(state, "", `${editor}#x`),
+                { editor: EDITOR, state: hashState },
+            );
+            await page.evaluate(() => (window as unknown as HarnessWindow).guard.release());
+            await page.waitForTimeout(400);
+
+            // Same URL and Next-style state, still on the hash entry.
+            expect(await where(page)).toBe(`${EDITOR}#x`);
+            expect(await historyState(page)).toMatchObject(hashState);
+            expect(await modalOpen(page)).toBe(false);
+
+            // No extra entry: hash entry -> editor entry -> previous page.
+            await browserBack(page);
+            await settle(page);
+            expect(await where(page)).toBe(EDITOR);
+            await browserBack(page);
             await settle(page);
             expect(await where(page)).toBe("/previous");
         });
