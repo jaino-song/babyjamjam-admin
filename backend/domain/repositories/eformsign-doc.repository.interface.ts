@@ -36,6 +36,23 @@ export interface RecentEformsignDocRow {
     expired: boolean;
 }
 
+/**
+ * The plain row set the "current contract" rule judges (see
+ * `selectCurrentContractDocument`): exactly the fields it reads, no entity mapping.
+ */
+export interface EformsignContractCandidateRow {
+    id: number;
+    documentId: string;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    templateId: string | null;
+    createdDate: Date;
+    statusType: string;
+    stepType: string;
+    stepName: string;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 export class EformsignDocMappingError extends Error {
     readonly originalError: unknown;
 
@@ -157,6 +174,14 @@ export interface IEformsignDocRepository {
         params: EformsignDocCompletionClaimParams,
     ): Promise<EformsignDocCompletionClaimResult>;
     findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]>;
+    /**
+     * Every contract-or-unclassified, non-service-record row linked to the client, INCLUDING
+     * purge-requested ones and regardless of artifact sync state — the same row set the client
+     * summary judges. Unordered: pass it to `selectCurrentContractDocument`. Unlike
+     * `findByClientId` it must not drop purge-requested rows, or a purge-requested newest
+     * contract would silently fall back to an older one.
+     */
+    findContractCandidatesByClientId(clientId: number): Promise<EformsignContractCandidateRow[]>;
     /**
      * The `take` most recently updated contract-or-unclassified documents for the
      * branch (never a service-record snapshot, never a permanently-purged or

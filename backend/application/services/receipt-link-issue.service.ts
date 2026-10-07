@@ -21,6 +21,8 @@ import {
 } from "domain/repositories/eformsign-document-mirror.repository.interface";
 import { IReceiptLinkTokenIssuanceRepository } from "domain/repositories/receipt-link-token.repository.interface";
 import { PdfPageRasterizerService } from "infrastructure/pdf/pdf-page-rasterizer.service";
+import { selectCurrentContractDocument } from "application/utils/current-contract-document";
+import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EformsignDocumentMirrorService } from "./eformsign-document-mirror.service";
 import { normalizeBirthdayInput, ReceiptLinkSource, ReceiptLinkTokenService } from "./receipt-link-token.service";
@@ -81,8 +83,9 @@ export interface IssueReceiptLinkParams {
      * The exact contract document the caller already resolved (numeric `eformsign_doc.id`), when
      * one is known — e.g. a manual send pins the document the staff selected in the UI. When
      * present, `preflight` renders THIS document instead of re-deriving one from
-     * `client.eDocId`/newest-contract, which can point elsewhere after a contract re-issue. When
-     * absent, the client-derived auto path is unchanged.
+     * the client's current contract, which can differ from the staff's selection after a contract
+     * re-issue. When absent, the auto path judges the client's current contract (the one the
+     * client summary shows).
      */
     eformsignDocId?: number;
 }
@@ -137,7 +140,7 @@ export class ReceiptLinkIssueService {
 
         const doc = params.eformsignDocId !== undefined
             ? await this.findExplicitContractDocument(params.branchId, params.eformsignDocId, client.id)
-            : await this.findContractDocument(params.branchId, client);
+            : await this.findContractDocument(client);
         if (!doc) throw new ReceiptLinkSkipError("no_contract_document");
 
         // The receipt link may only be minted once the customer has finished
@@ -212,7 +215,7 @@ export class ReceiptLinkIssueService {
                 const doc = client
                     ? target.eformsignDocId !== undefined
                         ? await this.findExplicitContractDocument(target.branchId, target.eformsignDocId, client.id)
-                        : await this.findContractDocument(target.branchId, client)
+                        : await this.findContractDocument(client)
                     : null;
                 documentId = doc?.documentId ?? null;
             }
@@ -314,24 +317,22 @@ export class ReceiptLinkIssueService {
         return `${base.replace(/\/+$/, "")}/receipt/${linkToken}`;
     }
 
-    private async findContractDocument(branchId: string, client: ClientEntity): Promise<ContractDocumentRef | null> {
-        if (client.eDocId) {
-            const byEDocId = await this.eformsignDocRepository.findByDocumentId(branchId, client.eDocId);
-            if (
-                byEDocId
-                && byEDocId.id !== undefined
-                && byEDocId.documentKind === "contract"
-                && byEDocId.clientId === client.id
-            ) {
-                return { id: byEDocId.id, documentId: byEDocId.documentId };
-            }
-        }
-
-        const docs = await this.eformsignDocRepository.findByClientId(branchId, client.id);
-        const latest = docs
-            .filter((doc) => doc.documentKind === "contract" && doc.id !== undefined)
-            .sort((a, b) => b.createdDate.getTime() - a.createdDate.getTime())[0];
-        return latest ? { id: latest.id as number, documentId: latest.documentId } : null;
+    /**
+     * The AUTO path's contract: the client's CURRENT contract by the exact rule the client
+     * summary uses (`selectCurrentContractDocument`) over the exact same row set
+     * (`findContractCandidatesByClientId`). `client.eDocId` is deliberately not consulted: it can
+     * lag behind a re-issued contract, and a receipt must never be minted from an older signed
+     * contract while the screen shows the newer one still waiting for a signature. A
+     * purge-requested current contract fails closed (`null` -> no_contract_document).
+     */
+    private async findContractDocument(client: ClientEntity): Promise<ContractDocumentRef | null> {
+        const rows = await this.eformsignDocRepository.findContractCandidatesByClientId(client.id);
+        const current = selectCurrentContractDocument(
+            rows,
+            configuredServiceRecordTemplateIds(this.configService),
+        );
+        if (!current || current.permanentPurgeRequestedAt != null) return null;
+        return { id: current.id, documentId: current.documentId };
     }
 
     /**

@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
+import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import {
@@ -649,7 +650,11 @@ export class ClientService {
         }
     }
 
-    /** Latest non-service-record contract document per client. */
+    /**
+     * Latest non-service-record contract document per client. The selection rule lives in
+     * `selectCurrentContractDocument`, shared with the receipt-link automatic path so the
+     * screen and the receipt always judge the same "current" contract.
+     */
     private async findLatestContractByClientId(
         clientIds: number[],
     ): Promise<Map<number, LatestContractSignal>> {
@@ -670,11 +675,9 @@ export class ClientService {
                     { documentKind: null },
                 ],
             },
-            orderBy: [
-                { createdDate: "desc" },
-                { id: "desc" },
-            ],
             select: {
+                id: true,
+                createdDate: true,
                 clientId: true,
                 documentId: true,
                 statusType: true,
@@ -688,21 +691,25 @@ export class ClientService {
             },
         });
 
+        const docsByClientId = new Map<number, typeof contractDocs>();
         for (const doc of contractDocs) {
             if (doc.clientId === null) continue;
-            if (isServiceRecordEformsignDocument(doc, serviceRecordTemplateIds)) {
-                continue;
-            }
-            if (!latestContractMap.has(doc.clientId)) {
-                latestContractMap.set(doc.clientId, {
-                    statusType: doc.statusType,
-                    permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
-                    documentId: doc.documentId,
-                    stepType: doc.stepType,
-                    stepName: doc.stepName,
-                    detailPayload: doc.detailPayload,
-                });
-            }
+            const docs = docsByClientId.get(doc.clientId);
+            if (docs) docs.push(doc);
+            else docsByClientId.set(doc.clientId, [doc]);
+        }
+
+        for (const [clientId, docs] of docsByClientId) {
+            const doc = selectCurrentContractDocument(docs, serviceRecordTemplateIds);
+            if (!doc) continue;
+            latestContractMap.set(clientId, {
+                statusType: doc.statusType,
+                permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
+                documentId: doc.documentId,
+                stepType: doc.stepType,
+                stepName: doc.stepName,
+                detailPayload: doc.detailPayload,
+            });
         }
 
         return latestContractMap;

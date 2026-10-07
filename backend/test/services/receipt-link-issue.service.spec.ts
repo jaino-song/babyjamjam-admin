@@ -42,6 +42,9 @@ interface DocFixture {
     documentKind?: string | null;
     createdDate?: Date;
     clientId?: number | null;
+    serviceRecordCaseId?: string | null;
+    templateId?: string | null;
+    permanentPurgeRequestedAt?: Date | null;
 }
 
 interface MakeServiceOverrides {
@@ -123,6 +126,21 @@ function makeService(overrides: MakeServiceOverrides = {}) {
         findByClientId: jest
             .fn()
             .mockResolvedValue((overrides.docsByClient ?? (doc ? [doc] : [])) as unknown as EformsignDocEntity[]),
+        // The AUTO path's row set: every contract-or-unclassified row of the client (no purge filter).
+        findContractCandidatesByClientId: jest.fn().mockResolvedValue(
+            (overrides.docsByClient ?? (doc ? [doc] : [])).map((row, index) => ({
+                id: row.id ?? index + 1,
+                documentId: row.documentId,
+                documentKind: row.documentKind === undefined ? "contract" : row.documentKind,
+                serviceRecordCaseId: row.serviceRecordCaseId ?? null,
+                templateId: row.templateId ?? null,
+                createdDate: row.createdDate ?? new Date("2026-01-01"),
+                statusType: "070",
+                stepType: "06",
+                stepName: "제공기관 확인",
+                permanentPurgeRequestedAt: row.permanentPurgeRequestedAt ?? null,
+            })),
+        ),
     } as unknown as IEformsignDocRepository;
 
     const mirrorRepository = {
@@ -265,8 +283,7 @@ describe("ReceiptLinkIssueService", () => {
         ["missing_birthday", { client: { id: 7, name: "김산모", phone: null, voucherClient: true, birthday: "9403", eDocId: null } }],
         ["no_contract_document", { doc: null }],
         ["no_contract_document", { client: null }],
-        // eDocId points at a real document, but it's the wrong kind (a service-record snapshot,
-        // not a contract) and the findByClientId fallback finds nothing either.
+        // The only row is a service-record snapshot, not a contract.
         [
             "no_contract_document",
             {
@@ -274,8 +291,7 @@ describe("ReceiptLinkIssueService", () => {
                 docsByClient: [],
             },
         ],
-        // eDocId points at a real contract, but it belongs to a different client (a stale/foreign
-        // pointer), and the fallback finds nothing either.
+        // No candidate row belongs to this client.
         [
             "no_contract_document",
             {
@@ -471,7 +487,7 @@ describe("ReceiptLinkIssueService", () => {
         await expect(service.preflight({ branchId: BRANCH, clientId: 7 })).rejects.toMatchObject({ skipReason: "pdf_unavailable" });
     });
 
-    it("picks the latest contract document by createdDate when falling back to findByClientId", async () => {
+    it("picks the latest contract document by createdDate on the auto path", async () => {
         const client: ClientFixture = { id: 7, name: "김산모", phone: "01012345678", voucherClient: true, birthday: "940315", eDocId: null };
         const docs: DocFixture[] = [
             { id: 10, documentId: "old", documentKind: "contract", createdDate: new Date("2025-01-01"), clientId: 7 },
@@ -518,11 +534,115 @@ describe("ReceiptLinkIssueService", () => {
             .rejects.toMatchObject({ skipReason: "no_contract_document" });
     });
 
-    it("falls back to client-derived selection when eformsignDocId is absent (auto path unchanged)", async () => {
+    it("derives the current contract from the client's rows when eformsignDocId is absent", async () => {
         const { service, eformsignDocRepository } = makeService();
         const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
         expect(eformsignDocRepository.findById).not.toHaveBeenCalled();
         expect(preflight.doc).toEqual({ id: 42, documentId: "doc-ext-1" });
+    });
+
+    describe("auto path uses the same current contract as the client summary", () => {
+        const CLIENT: ClientFixture = { id: 7, name: "김산모", phone: "01012345678", voucherClient: true, birthday: "940315", eDocId: "doc-old" };
+        const OLD: DocFixture = { id: 10, documentId: "doc-old", documentKind: "contract", createdDate: new Date("2026-01-01"), clientId: 7 };
+        const NEW: DocFixture = { id: 20, documentId: "doc-new", documentKind: "contract", createdDate: new Date("2026-06-01"), clientId: 7 };
+        const SIGNED = { statusType: "070", stepName: "제공기관 확인", stepType: "06" };
+        const UNSIGNED = { statusType: "060", stepName: "이용자 서명", stepType: "05" };
+
+        /** Per-document mirror state: the signature gate reads the status of the document it is given. */
+        function withStatuses(
+            made: ReturnType<typeof makeService>,
+            byDocumentId: Record<string, { statusType: string; stepName: string; stepType: string }>,
+        ) {
+            (made.mirrorRepository.findState as jest.Mock).mockImplementation(async (documentId: string) => {
+                const status = byDocumentId[documentId];
+                if (!status) return null;
+                return {
+                    documentId,
+                    ...SIGNED_MIRROR_STATE,
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: status.statusType,
+                            step_type: status.stepType,
+                            step_name: status.stepName,
+                        },
+                    },
+                };
+            });
+            return made;
+        }
+
+        it("refuses contract_not_signed when a stale eDocId points at a signed contract but the newest is unsigned", async () => {
+            const made = withStatuses(
+                makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, NEW] }),
+                { "doc-old": SIGNED, "doc-new": UNSIGNED },
+            );
+            await expect(made.service.preflight({ branchId: BRANCH, clientId: 7 })).rejects.toMatchObject({ skipReason: "contract_not_signed" });
+            // eDocId is not consulted at all, and nothing is rendered or minted.
+            expect(made.eformsignDocRepository.findByDocumentId).not.toHaveBeenCalled();
+            expect(made.rasterizer.renderPageToPng).not.toHaveBeenCalled();
+            expect(made.tokenService.issue).not.toHaveBeenCalled();
+        });
+
+        it("passes the gate on the newest signed contract even when a stale eDocId points at an unsigned one", async () => {
+            const made = withStatuses(
+                makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, NEW] }),
+                { "doc-old": UNSIGNED, "doc-new": SIGNED },
+            );
+            const preflight = await made.service.preflight({ branchId: BRANCH, clientId: 7 });
+            expect(preflight.doc).toEqual({ id: 20, documentId: "doc-new" });
+        });
+
+        it("accepts a legacy documentKind=null row, exactly like the summary", async () => {
+            const legacy: DocFixture = { ...NEW, documentKind: null };
+            const { service } = makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, legacy] });
+            const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+            expect(preflight.doc).toEqual({ id: 20, documentId: "doc-new" });
+        });
+
+        it("ignores a newer service-record snapshot and a service-record-case row", async () => {
+            const snapshot: DocFixture = { id: 30, documentId: "doc-snap", documentKind: "service_record_snapshot", createdDate: new Date("2026-08-01"), clientId: 7 };
+            const caseRow: DocFixture = { id: 31, documentId: "doc-case", documentKind: "contract", serviceRecordCaseId: "case-1", createdDate: new Date("2026-09-01"), clientId: 7 };
+            const { service } = makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, NEW, snapshot, caseRow] });
+            const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+            expect(preflight.doc).toEqual({ id: 20, documentId: "doc-new" });
+        });
+
+        it("breaks a createdDate tie by the higher id", async () => {
+            const tie: DocFixture = { ...NEW, id: 21, documentId: "doc-tie" };
+            const { service } = makeService({ client: CLIENT, doc: OLD, docsByClient: [tie, NEW, OLD] });
+            const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+            expect(preflight.doc).toEqual({ id: 21, documentId: "doc-tie" });
+        });
+
+        it("fails closed with no_contract_document when the newest contract is purge-requested (no fallback to an older signed one)", async () => {
+            const purged: DocFixture = { ...NEW, permanentPurgeRequestedAt: new Date("2026-07-01") };
+            const { service, rasterizer } = makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, purged] });
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 })).rejects.toMatchObject({ skipReason: "no_contract_document" });
+            expect(rasterizer.renderPageToPng).not.toHaveBeenCalled();
+        });
+
+        it("uses the same current contract at the delivery-readiness boundary (assertDocumentSyncReady)", async () => {
+            const made = withStatuses(
+                makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, NEW] }),
+                { "doc-old": SIGNED, "doc-new": UNSIGNED },
+            );
+            await expect(
+                made.service.assertDocumentSyncReady({ branchId: BRANCH, clientId: 7 }),
+            ).rejects.toMatchObject({ skipReason: "contract_not_signed" });
+            expect(made.mirrorRepository.findFile).toHaveBeenCalledWith("doc-new", "document");
+        });
+
+        it("keeps the explicit path pinned to the staff-selected document, whatever the current contract is", async () => {
+            const made = withStatuses(
+                makeService({ client: CLIENT, doc: OLD, docsByClient: [OLD, NEW], docById: OLD }),
+                { "doc-old": SIGNED, "doc-new": UNSIGNED },
+            );
+            const preflight = await made.service.preflight({ branchId: BRANCH, clientId: 7, eformsignDocId: 10 });
+            expect(preflight.doc).toEqual({ id: 10, documentId: "doc-old" });
+            expect(made.eformsignDocRepository.findContractCandidatesByClientId).not.toHaveBeenCalled();
+        });
     });
 
     it("maps renderer and storage failures to skip reasons", async () => {

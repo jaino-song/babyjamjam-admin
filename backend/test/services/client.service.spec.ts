@@ -32,6 +32,18 @@ const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
     { supportedYears: [2026], version: "branch-test" },
 );
 
+/**
+ * Contract-document rows as the client summary query returns them, newest first. The shared
+ * `selectCurrentContractDocument` orders by createdDate desc then id desc, so mocked rows must carry both.
+ */
+function newestFirst<T extends Record<string, unknown>>(rows: T[]): Array<T & { id: number; createdDate: Date }> {
+    return rows.map((row, index) => ({
+        ...row,
+        id: 1000 - index,
+        createdDate: new Date(Date.UTC(2026, 6, 20) - index * 86_400_000),
+    }));
+}
+
 describe("ClientService", () => {
     // ============================================
     // Test Fixtures & Setup
@@ -3253,11 +3265,9 @@ describe("ClientService", () => {
                             { documentKind: null },
                         ],
                     },
-                    orderBy: [
-                        { createdDate: "desc" },
-                        { id: "desc" },
-                    ],
                     select: {
+                        id: true,
+                        createdDate: true,
                         clientId: true,
                         documentId: true,
                         statusType: true,
@@ -3275,10 +3285,10 @@ describe("ClientService", () => {
             it("should not fall back to an older completed contract when the newest mirror artifacts are not ready", async () => {
                 const client = createWaitingClient("2026-07-16", "new-requested-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
-                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                prismaService.eformsign_doc.findMany.mockResolvedValue(newestFirst([
                     { clientId: 1, statusType: "060" },
                     { clientId: 1, statusType: "003" },
-                ]);
+                ]));
 
                 const [result] = await service.findAll(branchId);
 
@@ -3292,10 +3302,10 @@ describe("ClientService", () => {
             it("should not fall back to an older completed contract when the newest contract is deleted", async () => {
                 const client = createWaitingClient("2026-07-16", "deleted-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
-                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                prismaService.eformsign_doc.findMany.mockResolvedValue(newestFirst([
                     { clientId: 1, statusType: "049", permanentPurgeRequestedAt: null },
                     { clientId: 1, statusType: "003", permanentPurgeRequestedAt: null },
-                ]);
+                ]));
 
                 const [result] = await service.findAll(branchId);
 
@@ -3350,10 +3360,10 @@ describe("ClientService", () => {
                 listClientsUsecase.execute.mockResolvedValue([
                     createWaitingClient("2026-07-16", "old-document"),
                 ]);
-                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                prismaService.eformsign_doc.findMany.mockResolvedValue(newestFirst([
                     { clientId: 1, documentId: "latest-document", statusType },
                     { clientId: 1, documentId: "old-document", statusType: "080" },
-                ]);
+                ]));
 
                 const [result] = await service.findAll(branchId);
 
@@ -3367,10 +3377,10 @@ describe("ClientService", () => {
             it("should use the latest contract instead of the pinned eDocId for the badge", async () => {
                 const client = createWaitingClient("2026-07-16", "old-rejected-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
-                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                prismaService.eformsign_doc.findMany.mockResolvedValue(newestFirst([
                     { clientId: 1, statusType: "003" },
                     { clientId: 1, statusType: "080" },
-                ]);
+                ]));
 
                 const [result] = await service.findAll(branchId);
 
@@ -3386,11 +3396,9 @@ describe("ClientService", () => {
                             { documentKind: null },
                         ],
                     },
-                    orderBy: [
-                        { createdDate: "desc" },
-                        { id: "desc" },
-                    ],
                     select: {
+                        id: true,
+                        createdDate: true,
                         clientId: true,
                         documentId: true,
                         statusType: true,
@@ -3676,10 +3684,10 @@ describe("ClientService", () => {
             prismaService.client.findMany.mockResolvedValue([alertClient()]);
             // Newest first: the latest document was revoked even though an older
             // one had completed — the client needs a new contract sent.
-            prismaService.eformsign_doc.findMany.mockResolvedValue([
+            prismaService.eformsign_doc.findMany.mockResolvedValue(newestFirst([
                 { clientId: 1, statusType: "042" },
                 { clientId: 1, statusType: "003" },
-            ]);
+            ]));
 
             const alerts = await service.getActionRequiredAlerts(branchId);
 
