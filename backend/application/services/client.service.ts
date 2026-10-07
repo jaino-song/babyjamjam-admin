@@ -2794,13 +2794,15 @@ export class ClientService {
         const calendar = await this.holidayCalendar.forBranch(branchid);
 
         // The window is business days, which spans more calendar days than its
-        // count. Translate it into the exact calendar date it reaches so this
-        // pre-filter only narrows the scan — computeActionRequired still decides
-        // (it alone knows whether the latest document is active).
-        const businessDayCutoff = (businessDays: number): Date =>
-            new Date(`${calendar.addBusinessDays(today, businessDays)}T00:00:00.000Z`);
-
-        const sendThresholdDate = businessDayCutoff(CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD);
+        // count. computeActionRequired counts the business days in (today, start],
+        // so a start inside the window is any date before the business day just past
+        // it — including a weekend or holiday after the last one. Translate that into
+        // an exclusive calendar bound so this pre-filter only narrows the scan;
+        // computeActionRequired still decides (it alone knows whether the latest
+        // document is active).
+        const sendWindowEndExclusive = new Date(
+            `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+        );
 
         const clients = await this.prismaService.client.findMany({
             where: {
@@ -2812,7 +2814,7 @@ export class ClientService {
                             { serviceStatus: null },
                             { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
                         ],
-                        startDate: { lte: sendThresholdDate },
+                        startDate: { lt: sendWindowEndExclusive },
                     },
                 ],
             },

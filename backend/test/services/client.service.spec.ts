@@ -3894,7 +3894,7 @@ describe("ClientService", () => {
         it("uses one branch calendar for both the scan cutoff and the per-client decision", async () => {
             const lteOf = (): Date => {
                 const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
-                return where.OR[1].startDate.lte as Date;
+                return where.OR[1].startDate.lt as Date;
             };
             const client = alertClient({ eDocId: null, startDate: new Date("2026-03-26T00:00:00.000Z") });
             prismaService.client.findMany.mockResolvedValue([client]);
@@ -3927,9 +3927,9 @@ describe("ClientService", () => {
                 await service.getActionRequiredAlerts(branchId);
 
                 const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
-                const { lte } = where.OR[1].startDate as { lte: Date };
+                const { lt } = where.OR[1].startDate as { lt: Date };
                 const admits = (calendarDate: string) =>
-                    new Date(`${calendarDate}T00:00:00.000Z`).getTime() <= lte.getTime();
+                    new Date(`${calendarDate}T00:00:00.000Z`).getTime() < lt.getTime();
                 // 2026-10-01 (KST) + 6 business days over the built-in holidays = 2026-10-13.
                 expect(admits("2026-10-12")).toBe(true);
                 expect(admits("2026-10-13")).toBe(true);
@@ -3937,14 +3937,31 @@ describe("ClientService", () => {
             });
         });
 
-        it("stores the cutoff as the UTC-midnight Date of the Korean-calendar business day", async () => {
+        it("stores the cutoff as the UTC-midnight Date of the business day just past the window", async () => {
             jest.setSystemTime(new Date("2026-09-30T16:30:00.000Z"));
             prismaService.client.findMany.mockResolvedValue([]);
 
             await service.getActionRequiredAlerts(branchId);
 
             const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
-            expect(where.OR[1].startDate).toEqual({ lte: new Date("2026-10-13T00:00:00.000Z") });
+            expect(where.OR[1].startDate).toEqual({ lt: new Date("2026-10-14T00:00:00.000Z") });
+        });
+
+        // 2026-03-12 (Thu) + 6 business days = 2026-03-20 (Fri). A start on Saturday 03-21
+        // is still 6 business days out, so it is due — the scan must not drop it.
+        it("scans a weekend start that the per-client decision counts as inside the window", async () => {
+            jest.setSystemTime(new Date("2026-03-12T03:00:00.000Z"));
+            prismaService.client.findMany.mockResolvedValue([
+                alertClient({ eDocId: null, startDate: new Date("2026-03-21T00:00:00.000Z") }),
+            ]);
+
+            const alerts = await service.getActionRequiredAlerts(branchId);
+
+            expect(alerts).toEqual([expect.objectContaining({ reason: "발송 필요", priority: 3 })]);
+            const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+            const { lt } = where.OR[1].startDate as { lt: Date };
+            expect(new Date("2026-03-21T00:00:00.000Z").getTime()).toBeLessThan(lt.getTime());
+            expect(new Date("2026-03-23T00:00:00.000Z").getTime()).toBeGreaterThanOrEqual(lt.getTime());
         });
 
         it("reports 발송 필요 when no document has been sent", async () => {
