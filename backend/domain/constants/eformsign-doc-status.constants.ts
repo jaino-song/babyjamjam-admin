@@ -36,11 +36,19 @@ export const EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES: readonly string[] = [
     "face_signature_complete",
 ];
 
+/**
+ * "040" (doc_request_revoke) is deliberately absent. It records that cancellation was
+ * REQUESTED, not that it happened: the document stays live, and eformsign can still
+ * refuse the request (doc_refuse_revoke, 041) or the signer can carry on (060). The
+ * revoked ending is "042". Treating 040 as terminal froze the row at 040 — the
+ * terminal-downgrade guard then refused the later 060 and the client read "revoked" for a
+ * document that is still signable — and let a delete purge a document whose
+ * cancellation the vendor had not completed.
+ */
 const REJECTED_STATUS_CODES = [
     "011",
     "021",
     "031",
-    "040",
     "042",
     "045",
     "047",
