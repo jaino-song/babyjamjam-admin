@@ -887,8 +887,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                   AND branch_id = ${branchid}::uuid
                 FOR UPDATE
             `);
+            // A missing client is not an answer yet: the document may have moved to another client
+            // (and the peeked one been deleted) since the unlocked read. The ownership comparison
+            // under the document lock below decides between a retry and `false`.
             client = clients?.[0];
-            if (!client) return false;
         }
 
         const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`

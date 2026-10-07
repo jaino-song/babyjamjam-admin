@@ -397,6 +397,33 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
                 expect(await guard.isCurrentContractDocument(BRANCH, "doc-C")).toBe(true);
                 expect(await guard.isCurrentContractDocument(BRANCH, "doc-missing")).toBe(false);
             }, 30000);
+
+            it("re-checks ownership when its peeked owner is deleted after C moved to another client", async () => {
+                // Legacy contract (no case/revision evidence needed): C stays current throughout.
+                await db.$executeRawUnsafe("DELETE FROM receipt_link_token");
+                await db.$executeRawUnsafe("DELETE FROM service_record_case");
+                await db.$executeRawUnsafe(`UPDATE eformsign_doc SET revision_id = NULL, service_record_case_id = NULL
+                    WHERE document_id = 'doc-C'`);
+                expect(await new SbEformsignDocRepository(db as never).isCurrentContractDocument(BRANCH, "doc-C")).toBe(true);
+
+                let moved = false;
+                const guard = new SbEformsignDocRepository(shimFor(db, async (query) => {
+                    if (!moved && query.text.includes('SELECT client_id AS "clientId"') && !query.text.includes("FOR UPDATE")) {
+                        moved = true;
+                        // After the unlocked owner read: C moves to client 8 and the old owner is deleted.
+                        await other.$transaction([
+                            other.$executeRaw(Prisma.sql`INSERT INTO client VALUES (8, ${BRANCH}::uuid, NULL, now())`),
+                            other.$executeRawUnsafe(`UPDATE client SET e_doc_id = NULL WHERE id = ${CLIENT_ID}`),
+                            other.$executeRawUnsafe("UPDATE eformsign_doc SET client_id = 8 WHERE document_id = 'doc-C'"),
+                            other.$executeRawUnsafe("UPDATE client SET e_doc_id = 'doc-C' WHERE id = 8"),
+                            other.$executeRawUnsafe(`DELETE FROM client WHERE id = ${CLIENT_ID}`),
+                        ]);
+                    }
+                }) as never);
+
+                expect(await guard.isCurrentContractDocument(BRANCH, "doc-C")).toBe(true);
+                expect(moved).toBe(true);
+            }, 30000);
         });
 
         it("promotes B (not the token's own document A) while the pointer lags and nothing else changes", async () => {
