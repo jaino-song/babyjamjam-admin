@@ -11,6 +11,8 @@ export interface ContractStatusResult {
     clientName: string;
     documentStatus: DocumentStatus;
     serviceStatus: string | null;
+    /** Step-aware signed flag from the selected client; documentStatus alone cannot tell 060 from 070. */
+    hasSigned: boolean;
 }
 
 interface ContractStatusWizardProps {
@@ -34,6 +36,7 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
             clientName: selectedClient.name,
             documentStatus: selectedClient.documentStatus,
             serviceStatus: selectedClient.serviceStatus,
+            hasSigned: selectedClient.hasSigned,
         });
     }, [selectedClient, onCheck]);
 

@@ -17,6 +17,7 @@ import ContractSendWizard from "@/components/app/chat/ContractSendWizard";
 import ContractStatusWizard, {
   type ContractStatusResult,
 } from "@/components/app/chat/ContractStatusWizard";
+import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import { useChatStream, type ChatMessage } from "@/hooks/useChatStream";
 import { useInitialUser } from "@/providers/UserProvider";
 import { LegacyTypingIndicator } from "@/components/app/chat/LegacyTypingIndicator";
@@ -89,7 +90,7 @@ function AssistantMessage({ message }: { message: ChatDisplayMessage }) {
           return (
             <div data-component="mobile_chat_page_content_messages_message-assistant_body_bubble_wizard-contract-status-result" className={styles.wizardResult}>
               <div data-component="mobile_chat_page_content_messages_message-assistant_body_bubble_wizard-contract-status-result_state">
-                계약서 상태: <strong>{String(contractStatus.documentStatus)}</strong>
+                계약서 상태: <strong>{getClientDocumentStatusMeta(contractStatus.documentStatus, { hasSigned: contractStatus.hasSigned }).label}</strong>
               </div>
               <div data-component="mobile_chat_page_content_messages_message-assistant_body_bubble_wizard-contract-status-result_client">
                 산모: {contractStatus.clientName} (ID: {contractStatus.clientId})
