@@ -465,6 +465,58 @@ function pendingToChanges(pending: PendingEdits): AdminServiceRecordEditChanges 
     return changes.header || changes.sessions ? changes : undefined;
 }
 
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (isRecord(value)) {
+        return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort()
+            .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
+}
+
+/**
+ * `startDraft` RESUMES an ACTIVE draft another tab created in the meantime, so a
+ * returned draft is only this tab's batch when its content equals what was sent
+ * (nothing missing, nothing extra) and its effective session dates are the
+ * expected ones (an override, else the loaded date).
+ */
+function draftMatchesBatch(
+    draftChanges: AdminServiceRecordEditChanges,
+    sent: AdminServiceRecordEditChanges | undefined,
+    /** Dates the draft must resolve to; null while moves are still being applied. */
+    expectedDates: PlannedVector | null,
+    baseVector: PlannedVector,
+): boolean {
+    if (stableJson(draftChanges.header ?? {}) !== stableJson(sent?.header ?? {})) return false;
+    const content = (patch: AdminServiceRecordEditSessionChanges) => {
+        const rest: Record<string, unknown> = { ...patch };
+        delete rest.sessionIndex;
+        delete rest.serviceDate;
+        return stableJson(rest);
+    };
+    const draftContent = new Map<number, string>();
+    const overrides = new Map<number, string>();
+    for (const patch of draftChanges.sessions ?? []) {
+        const rest = content(patch);
+        if (rest !== "{}") draftContent.set(patch.sessionIndex, rest);
+        if (patch.serviceDate) overrides.set(patch.sessionIndex, dateOnly(patch.serviceDate));
+    }
+    const sentContent = new Map<number, string>();
+    for (const patch of sent?.sessions ?? []) {
+        const rest = content(patch);
+        if (rest !== "{}") sentContent.set(patch.sessionIndex, rest);
+    }
+    if (draftContent.size !== sentContent.size) return false;
+    for (const [index, rest] of sentContent) if (draftContent.get(index) !== rest) return false;
+    const knownIndexes = new Set(baseVector.map((entry) => entry.sessionIndex));
+    if ([...overrides.keys()].some((index) => !knownIndexes.has(index))) return false;
+    if (!expectedDates) return true;
+    return baseVector.every((entry) => {
+        const expected = expectedDates.find((item) => item.sessionIndex === entry.sessionIndex);
+        return (overrides.get(entry.sessionIndex) ?? dateOnly(entry.serviceDate)) === dateOnly(expected?.serviceDate ?? entry.serviceDate);
+    });
+}
+
 type BlockingOperationName = "contract_period" | "receipt_refresh" | "record_snapshot";
 
 /** A 409 that says an earlier edit's follow-up work is still running (not a stale record). */
@@ -784,6 +836,9 @@ export function ServiceRecordAdminWizard({
             const changes = pendingToChanges(pending);
             let state = await adminServiceRecordEditApi.startDraft(clientId, changes);
             if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
+            // Not this tab's batch (another session got there first): never preview, confirm
+            // or discard it, and never merge local edits into it.
+            if (!draftMatchesBatch(state.draft.changes, changes, baseVector, baseVector)) { showRefreshModal(); return; }
             prepared = { id: state.draft.id, version: state.draft.draftVersion };
             if (!sameSource(sourceIdentity, state) || state.sourceChanged
                 || state.draft.sourceFingerprint !== sourceIdentity?.sourceFingerprint
@@ -792,9 +847,15 @@ export function ServiceRecordAdminWizard({
                 showRefreshModal();
                 return;
             }
-            for (const move of pending.moves) {
+            for (const [index, move] of pending.moves.entries()) {
                 state = await adminServiceRecordEditApi.updateDraft(state.draft.id, state.draft.draftVersion, {}, move);
                 if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정 내용을 저장하지 못했습니다.");
+                const last = index === pending.moves.length - 1;
+                if (!draftMatchesBatch(state.draft.changes, changes, last ? vector : null, baseVector)) {
+                    prepared = null;
+                    showRefreshModal();
+                    return;
+                }
                 prepared = { id: state.draft.id, version: state.draft.draftVersion };
             }
             const result = await adminServiceRecordEditApi.previewDraft(prepared.id, prepared.version);

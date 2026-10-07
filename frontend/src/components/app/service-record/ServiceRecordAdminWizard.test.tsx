@@ -18,7 +18,7 @@ import {
     ServiceRecordAdminWizard,
     type AdminServiceRecordEditorOverview,
 } from "./ServiceRecordAdminWizard";
-import type { AdminServiceRecordEditState } from "@/features/service-records/types";
+import type { AdminServiceRecordEditChanges, AdminServiceRecordEditState } from "@/features/service-records/types";
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("@/features/service-records/case-events", () => ({
@@ -458,6 +458,20 @@ describe("per-session administrator editing", () => {
         fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "수정된 서비스" } });
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
     }
+    let sentChanges: AdminServiceRecordEditChanges = {};
+    let movedDates: Record<number, string> = {};
+    function echoedDraft(version: number, withMoves: boolean) {
+        const sessions = new Map((sentChanges.sessions ?? []).map((session) => [session.sessionIndex, { ...session }]));
+        if (withMoves) {
+            for (const [index, serviceDate] of Object.entries(movedDates)) {
+                sessions.set(Number(index), { ...sessions.get(Number(index)), sessionIndex: Number(index), serviceDate });
+            }
+        }
+        return makeDraftState({
+            ...(sentChanges.header ? { header: sentChanges.header } : {}),
+            sessions: [...sessions.values()],
+        }, version);
+    }
     function editNoteOn(container: HTMLElement, text: string) {
         fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[2]);
         fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: text } });
@@ -492,8 +506,14 @@ describe("per-session administrator editing", () => {
     beforeEach(() => {
         jest.mocked(subscribeServiceRecordCaseChanges).mockReset();
         jest.mocked(subscribeServiceRecordCaseChanges).mockImplementation(() => () => undefined);
-        jest.spyOn(adminServiceRecordEditApi, "startDraft").mockResolvedValue(makeDraftState());
-        jest.spyOn(adminServiceRecordEditApi, "updateDraft").mockResolvedValue(makeDraftState({ sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }] }, 2));
+        // The server stores what was sent; date moves add a serviceDate override per moved session.
+        sentChanges = {};
+        movedDates = {};
+        jest.spyOn(adminServiceRecordEditApi, "startDraft").mockImplementation(async (_clientId, changes) => {
+            sentChanges = changes ?? {};
+            return echoedDraft(1, false);
+        });
+        jest.spyOn(adminServiceRecordEditApi, "updateDraft").mockImplementation(async (_draftId, version) => echoedDraft(version + 1, true));
         jest.spyOn(adminServiceRecordEditApi, "discardDraft").mockResolvedValue({ ...makeDraftState(), draft: null });
         jest.spyOn(adminServiceRecordEditApi, "previewDraft").mockResolvedValue({
             ...confirmPreviewResponse,
@@ -585,7 +605,7 @@ describe("per-session administrator editing", () => {
     });
 
     it("batches two sessions, a header edit and a date move into one 수정 확정 with one confirm", async () => {
-        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({}, 2));
+        movedDates = { 3: "2026-09-10" };
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse, draftVersion: 2,
             contentChanges: { headerChanged: true, changedSessionIndexes: [1, 2, 3] },
@@ -672,7 +692,10 @@ describe("per-session administrator editing", () => {
     });
 
     it("opens the refresh modal instead of previewing when the source changed since load", async () => {
-        jest.mocked(adminServiceRecordEditApi.startDraft).mockResolvedValue({ ...makeDraftState(), sourceFingerprint: "source-2", sourceCaseVersion: 2 });
+        const echo = jest.mocked(adminServiceRecordEditApi.startDraft).getMockImplementation()!;
+        jest.mocked(adminServiceRecordEditApi.startDraft).mockImplementation(async (...args) => ({
+            ...(await echo(...args)), sourceFingerprint: "source-2", sourceCaseVersion: 2,
+        }));
         const { container } = open();
         editNote(container);
         acceptEdit();
@@ -1009,7 +1032,7 @@ describe("per-session administrator editing", () => {
 
     it("stages an approved collision shift and sends it with the explicit suffix flag on 수정 확정", async () => {
         const after = sessionOverview.scheduleProjection!.entries.map((entry, index) => ({ ...entry, serviceDate: ["2026-09-08", "2026-09-09", "2026-09-10"][index] }));
-        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({}, 2));
+        movedDates = { 1: "2026-09-08", 2: "2026-09-09", 3: "2026-09-10" };
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse, draftVersion: 2,
             before: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries },
@@ -1036,7 +1059,7 @@ describe("per-session administrator editing", () => {
         ["그대로 두기", false, ["2026-09-04", "2026-09-08", "2026-09-09"]],
     ] as const)("asks whether to move later sessions when a date moves earlier (%s)", async (label, shiftFollowing, afterDates) => {
         const after = sessionOverview.scheduleProjection!.entries.map((entry, index) => ({ ...entry, serviceDate: afterDates[index] }));
-        jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState({}, 2));
+        movedDates = Object.fromEntries(afterDates.map((date, index) => [index + 1, date]));
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse, draftVersion: 2,
             before: { startDate: dates[0], endDate: dates[2], sessions: sessionOverview.scheduleProjection!.entries },
@@ -1236,6 +1259,66 @@ describe("per-session administrator editing", () => {
             await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
             expect(screen.getByRole("alert")).toHaveTextContent(message);
             expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
+        });
+    });
+
+    describe("a draft that another session created first", () => {
+        async function stageNote() {
+            const result = open();
+            editNote(result.container);
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+            return result;
+        }
+        function expectNothingPreviewedOrDiscarded() {
+            expect(adminServiceRecordEditApi.previewDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.discardDraft).not.toHaveBeenCalled();
+        }
+
+        it.each([
+            ["different content for the same session", { sessions: [{ sessionIndex: 1, etcService: "OTHER TAB" }] }],
+            ["an extra session", { sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }, { sessionIndex: 2, notes: "OTHER TAB" }] }],
+            ["a header edit", { header: { momName: "OTHER TAB" }, sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }] }],
+            ["a date override", { sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }, { sessionIndex: 2, serviceDate: "2026-09-11" }] }],
+        ])("does not preview, confirm or discard a resumed draft with %s, and keeps the local edits", async (_label, foreign) => {
+            jest.mocked(adminServiceRecordEditApi.startDraft).mockResolvedValue(makeDraftState(foreign, 4));
+            const { container } = await stageNote();
+
+            fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+
+            await screen.findByRole("dialog", { name: refreshModalTitle });
+            expectNothingPreviewedOrDiscarded();
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        });
+
+        it("rejects a draft whose date overrides do not match the applied moves", async () => {
+            movedDates = { 3: "2026-09-10" };
+            const echo = jest.mocked(adminServiceRecordEditApi.updateDraft).getMockImplementation()!;
+            jest.mocked(adminServiceRecordEditApi.updateDraft).mockImplementation(async (...args) => {
+                const state = await echo(...args);
+                return { ...state, draft: { ...state.draft!, changes: { sessions: [{ sessionIndex: 3, serviceDate: "2026-09-11" }] } } };
+            });
+            const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+            fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+            pickDate(container, "3회차", "10일");
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+
+            fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+
+            await screen.findByRole("dialog", { name: refreshModalTitle });
+            expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
+            expectNothingPreviewedOrDiscarded();
+            expect(container.querySelectorAll('[data-slot="day"]')[2]).toHaveTextContent("2026.09.10");
+        });
+
+        it("still previews a draft that holds exactly this tab's batch", async () => {
+            await stageNote();
+            await startCommit();
+            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1);
+            expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
         });
     });
 
