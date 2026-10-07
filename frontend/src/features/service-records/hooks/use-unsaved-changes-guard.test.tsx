@@ -262,6 +262,61 @@ describe("useUnsavedChangesGuard", () => {
             window.removeEventListener("popstate", nextHandler);
         });
 
+        describe("a router that renders from its own popstate listener (window listeners run in registration order)", () => {
+            let routed: string[];
+            let router: () => void;
+            let addListener: jest.SpyInstance;
+
+            beforeEach(() => {
+                // Chromium runs a window popstate listener in registration order whatever its
+                // `capture` flag; jsdom would run a capture listener first and hide the problem.
+                // Mimic Chromium, so only a guard handler registered ahead of the router wins.
+                const original = window.addEventListener.bind(window) as (...args: unknown[]) => void;
+                addListener = jest
+                    .spyOn(window, "addEventListener")
+                    .mockImplementation(((type: string, listener: unknown, options: unknown) =>
+                        original(type, listener, type === "popstate" ? false : options)) as never);
+                routed = [];
+                // Next's app router: registered at app boot, renders the landed route inside the event.
+                router = () => { if (paths() !== EDITOR) routed.push(paths()); };
+                window.addEventListener("popstate", router);
+            });
+
+            afterEach(() => {
+                window.removeEventListener("popstate", router);
+                addListener.mockRestore();
+            });
+
+            it("keeps the editor mounted on a multi-entry Back, and 머무르기 keeps it", async () => {
+                render(<Harness active />);
+
+                await traverse(() => window.history.go(-2)); // guard -> editor -> previous
+                expect(screen.getByRole("dialog")).toBeInTheDocument();
+                expect(routed).toEqual([]);
+                expect(paths()).toBe(EDITOR);
+                expect(window.history.state).toMatchObject(NEXT_STATE);
+
+                fireEvent.click(screen.getByRole("button", { name: "머무르기" }));
+                expect(paths()).toBe(EDITOR);
+                await traverse(() => window.history.back());
+                expect(screen.getByRole("dialog")).toBeInTheDocument();
+                expect(routed).toEqual([]);
+            });
+
+            it("lets 나가기 continue to the entry the user was heading to", async () => {
+                const onLeave = jest.fn();
+                render(<Harness active onLeave={onLeave} />);
+
+                await traverse(() => window.history.go(-2));
+                expect(routed).toEqual([]);
+                await traverse(() => fireEvent.click(screen.getByRole("button", { name: "나가기" })));
+
+                expect(onLeave).toHaveBeenCalledTimes(1);
+                expect(paths()).toBe("/previous");
+                expect(routed).toEqual(["/previous"]);
+            });
+        });
+
         it("never navigates when deactivated without the Navigation API (the guard entry stays, unprompted)", async () => {
             const { rerender } = render(<Harness active />);
             const lengthWhileArmed = window.history.length;
