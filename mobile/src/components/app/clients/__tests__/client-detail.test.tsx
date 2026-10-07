@@ -752,4 +752,81 @@ describe("ClientDetailContent", () => {
     expect(screen.queryByText("취소 사유")).not.toBeInTheDocument();
     expect(screen.queryByText("이 값은 표시되면 안 됩니다.")).not.toBeInTheDocument();
   });
+  it("says only recent records are shown when the server holds older ones", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[{
+          id: 70,
+          provider: "aligo_sms",
+          templateKey: "service_record_link_sms",
+          receiver: "01012345678",
+          recipientPhone: "01012345678",
+          recipientName: "관리사",
+          clientId: client.id,
+          status: "sent",
+          messageBody: "제공기록지 작성 링크",
+          errorMessage: null,
+          createdAt: "2026-09-18T18:34:00.000Z",
+          ruleName: "제공기록지 작성 링크",
+          variables: {},
+        }]}
+        hasMoreNotificationLogs
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+  });
+
+  it("shows no truncation notice for a complete history", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
+  });
+
+  it("does not show the truncation notice over a failed history load", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[]}
+        hasMoreNotificationLogs
+        isNotificationLogsError
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("발송 내역을 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
+  });
 });

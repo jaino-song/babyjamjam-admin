@@ -1,6 +1,6 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
-import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
+import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
@@ -70,6 +70,12 @@ export interface IMessageTriggerJobRepository {
      */
     findHistoryPageByBranch(
         branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]>;
+    /** `findHistoryPageByBranch` restricted to one client (and its unowned phone matches) in the branch. */
+    findClientHistoryPageByBranch(
+        branchId: string,
+        scope: ClientHistoryScope,
         query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
     /**

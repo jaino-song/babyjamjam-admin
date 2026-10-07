@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
     removeById,
@@ -7,7 +8,7 @@ import {
     snapshotAndTransformQueries,
     type QuerySnapshot,
 } from "@/lib/query/optimistic-list-cache";
-import { messageTriggersApi } from "../api/message-triggers.api";
+import { messageTriggersApi, type ClientMessageHistoryPageTransport } from "../api/message-triggers.api";
 import { messageTriggerKeys } from "./keys";
 import type {
     MessageLogRecord,
@@ -157,6 +158,101 @@ export function useClientUpcomingMessageTriggerJobs(
                     .map((job) => [job.id, job] as const),
             ).values(),
         );
+
+    return {
+        ...query,
+        items,
+    };
+}
+
+const CLIENT_HISTORY_CONTRACT_MESSAGE = "메시지 발송 기록 서버 응답 형식이 올바르지 않습니다.";
+
+/**
+ * Validates one page of a client's history. A response missing its envelope
+ * (null data, no `items`, no `page`, a `hasMore` page without a cursor) is a
+ * broken contract, not an empty history: it must surface as an error so the
+ * panel never shows "내역 없음" for records it failed to read.
+ */
+function normalizeClientHistoryPayload(payload: unknown): ClientMessageHistoryPageTransport {
+    const candidate = payload !== null && typeof payload === "object" && "data" in payload
+        ? (payload as { data?: unknown }).data
+        : payload;
+    if (candidate === null || typeof candidate !== "object") {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
+    }
+
+    const value = candidate as { items?: unknown; page?: unknown };
+    if (!Array.isArray(value.items) || value.page === null || typeof value.page !== "object") {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
+    }
+
+    const page = value.page as { snapshotAt?: unknown; nextCursor?: unknown; hasMore?: unknown };
+    const hasNextCursor = typeof page.nextCursor === "string" && page.nextCursor.length > 0;
+    if (
+        typeof page.hasMore !== "boolean"
+        || (page.nextCursor !== null && page.nextCursor !== undefined && !hasNextCursor)
+        || (page.hasMore && !hasNextCursor)
+        || (!page.hasMore && hasNextCursor)
+    ) {
+        throw new Error(CLIENT_HISTORY_CONTRACT_MESSAGE);
+    }
+
+    return {
+        items: value.items as MessageLogRecord[],
+        page: {
+            snapshotAt: typeof page.snapshotAt === "string" ? page.snapshotAt : "",
+            nextCursor: hasNextCursor ? (page.nextCursor as string) : null,
+            hasMore: page.hasMore,
+        },
+    };
+}
+
+/**
+ * One client's message history, read from the client-scoped endpoint instead of
+ * the branch-wide `/message-logs` window (which only holds the branch's newest
+ * rows, so an older client history used to read as "no messages").
+ *
+ * `hasNextPage` is true while the server still has older records; callers must
+ * say so rather than present the loaded pages as the complete history.
+ */
+export function useClientMessageHistory(
+    clientId: number | null,
+    options: UseMessageHistoryOptions & { limit?: number } = {},
+) {
+    const limit = options.limit ?? 50;
+    const enabled = (options.enabled ?? true)
+        && Number.isSafeInteger(clientId)
+        && (clientId ?? 0) > 0;
+    const query = useInfiniteQuery<ClientMessageHistoryPageTransport, Error>({
+        queryKey: messageTriggerKeys.clientHistory(clientId ?? 0),
+        initialPageParam: null,
+        queryFn: ({ pageParam }) =>
+            messageTriggersApi
+                .listClientHistory(clientId as number, {
+                    limit,
+                    cursor: typeof pageParam === "string" ? pageParam : null,
+                })
+                .then((response) => normalizeClientHistoryPayload(response.data)),
+        getNextPageParam: (lastPage) => lastPage.page.nextCursor ?? undefined,
+        enabled,
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnWindowFocus: options.refetchOnWindowFocus ?? true,
+        refetchInterval: options.refetchInterval ?? 5_000,
+    });
+
+    const { isError, data } = query;
+    const items = useMemo(
+        () => isError
+            ? []
+            : Array.from(
+                new Map(
+                    (data?.pages.flatMap((page) => page.items) ?? [])
+                        .map((record) => [record.id, record] as const),
+                ).values(),
+            ),
+        [isError, data],
+    );
 
     return {
         ...query,

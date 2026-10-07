@@ -23,8 +23,8 @@ import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
 import {
+    useClientMessageHistory,
     useClientUpcomingMessageTriggerJobs,
-    useMessageHistory,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import type {
     ClientUpcomingMessageTriggerJob,
@@ -66,7 +66,6 @@ import {
     DetailTabs,
 } from "@/components/app/v3";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
-import { matchesMessageHistoryClient } from "@/lib/message-history/client-match";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
@@ -87,7 +86,7 @@ type ClientDetailTabKey =
     | (typeof CLIENT_DETAIL_TABS)[number]["key"]
     | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
 
-const CLIENT_MESSAGE_HISTORY_LIMIT = 500;
+const CLIENT_MESSAGE_HISTORY_PAGE_SIZE = 50;
 const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
 const CLIENT_MESSAGE_DETAIL_SLIDE_DURATION_MS = 300;
 const formatDate = (dateStr: string | null): string => {
@@ -189,6 +188,9 @@ function ClientMessageHistoryList({
     canLookupMessages,
     isError,
     isLoading,
+    isFetchingNextPage,
+    hasNextPage,
+    onLoadMore,
     clientName,
     selectedRecordId,
     onSelectRecord,
@@ -198,6 +200,11 @@ function ClientMessageHistoryList({
     canLookupMessages: boolean;
     isError: boolean;
     isLoading: boolean;
+    /** True while an older page is being read. */
+    isFetchingNextPage: boolean;
+    /** The server still holds older records than the ones loaded; the list shows only recent ones. */
+    hasNextPage: boolean;
+    onLoadMore: () => void;
     clientName: string;
     selectedRecordId: number | string | null;
     onSelectRecord: (record: MessageLogRecord) => void;
@@ -276,7 +283,7 @@ function ClientMessageHistoryList({
         );
     }
 
-    if (records.length === 0) {
+    if (records.length === 0 && !hasNextPage) {
         return (
             <DetailEmptyState
                 message="메시지 발송 내역이 없습니다"
@@ -360,6 +367,30 @@ function ClientMessageHistoryList({
                     );
                 }}
             />
+            {hasNextPage ? (
+                <div
+                    data-component={`${dataComponentPrefix}_history-list_truncated`}
+                    className="mt-3 flex w-full min-w-0 max-w-full flex-col items-center gap-2"
+                >
+                    <p
+                        data-component={`${dataComponentPrefix}_history-list_truncated_notice`}
+                        className="m-0 text-center text-[calc(11.2px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                    >
+                        최근 발송 기록만 표시하고 있어요
+                    </p>
+                    <Button
+                        data-component={`${dataComponentPrefix}_history-list_load-more`}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        disabled={isFetchingNextPage}
+                        onClick={onLoadMore}
+                    >
+                        {isFetchingNextPage ? "불러오는 중..." : "이전 발송 기록 더 불러오기"}
+                    </Button>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -821,12 +852,12 @@ function ClientDetailPanelBody({
         return detailTabState.key;
     }, [activeScheduleChange, clientId, detailTabState, hasActiveScheduleChange]);
 
-    const {
-        data: messageHistoryData = [],
-        isLoading: isMessageHistoryLoading,
-        isError: isMessageHistoryError,
-    } = useMessageHistory(CLIENT_MESSAGE_HISTORY_LIMIT, {
+    // Read this client's history by client id from the server. The branch-wide
+    // `/message-logs` window holds only the branch's newest rows, so filtering it
+    // in the browser reported "no messages" for anyone whose records had aged out.
+    const clientMessageHistoryQuery = useClientMessageHistory(client.id, {
         enabled: activeDetailTab === "messages",
+        limit: CLIENT_MESSAGE_HISTORY_PAGE_SIZE,
         refetchInterval: 30_000,
         refetchOnWindowFocus: true,
     });
@@ -916,12 +947,12 @@ function ClientDetailPanelBody({
         void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
     }, [clientContractsUpdatedAt, clientId, isClientContractsSuccess, queryClient]);
 
+    const clientMessageHistoryItems = clientMessageHistoryQuery.items;
     const clientMessageHistory = useMemo(
         () =>
-            messageHistoryData
-                .filter((record) => matchesMessageHistoryClient(record, client))
+            [...clientMessageHistoryItems]
                 .sort((left, right) => getClientMessageHistoryTime(right) - getClientMessageHistoryTime(left)),
-        [client, messageHistoryData]
+        [clientMessageHistoryItems]
     );
 
     const selectedClientMessageRecord = useMemo(
@@ -1339,8 +1370,11 @@ function ClientDetailPanelBody({
                                         <ClientMessageHistoryList
                                             records={clientMessageHistory}
                                             canLookupMessages={clientId !== null || clientPhoneKey.length > 0}
-                                            isLoading={isMessageHistoryLoading}
-                                            isError={isMessageHistoryError}
+                                            isLoading={clientMessageHistoryQuery.isLoading}
+                                            isError={clientMessageHistoryQuery.isError}
+                                            isFetchingNextPage={clientMessageHistoryQuery.isFetchingNextPage}
+                                            hasNextPage={Boolean(clientMessageHistoryQuery.hasNextPage)}
+                                            onLoadMore={() => void clientMessageHistoryQuery.fetchNextPage()}
                                             clientName={client.name}
                                             selectedRecordId={selectedMessageHistoryId}
                                             onSelectRecord={handleSelectClientMessageHistoryRecord}
