@@ -1275,6 +1275,31 @@ describe("per-session administrator editing", () => {
             expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
         });
 
+        it("keeps the modal open with a message when the refresh fails, and 확인 retries until the data catches up", async () => {
+            await openWithPending();
+            emitCaseChanged({ caseId: "case-1", caseVersion: 3 });
+            const modal = await screen.findByRole("dialog", { name: refreshModalTitle });
+
+            // A foreign commit lands between the two source reads: the bracketing check throws.
+            jest.mocked(adminServiceRecordEditApi.getDraft)
+                .mockResolvedValueOnce({ ...makeDraftState(), draft: null, sourceFingerprint: "source-2", sourceCaseVersion: 2 })
+                .mockResolvedValueOnce({ ...makeDraftState(), draft: null, sourceFingerprint: "source-3", sourceCaseVersion: 3 });
+            fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+
+            const failure = await within(screen.getByRole("dialog", { name: refreshModalTitle })).findByText("최신 기록을 불러오지 못했어요. 다시 시도해 주세요.");
+            expect(failure).toBeInTheDocument();
+            expect(screen.getByRole("dialog", { name: refreshModalTitle })).toBeInTheDocument();
+            await waitFor(() => expect(within(screen.getByRole("dialog", { name: refreshModalTitle })).getByRole("button", { name: "확인" })).toBeEnabled());
+
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockReset();
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue({ ...makeDraftState(), draft: null, sourceFingerprint: "source-3", sourceCaseVersion: 3 });
+            fireEvent.click(within(screen.getByRole("dialog", { name: refreshModalTitle })).getByRole("button", { name: "확인" }));
+
+            await waitFor(() => expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument());
+            expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
+        });
+
         it.each([
             ["an equal version", { caseId: "case-1", caseVersion: 1 }],
             ["a lower version", { caseId: "case-1", caseVersion: 0 }],

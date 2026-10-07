@@ -628,6 +628,7 @@ export function ServiceRecordAdminWizard({
     const [leaveModalOpen, setLeaveModalOpen] = useState(false);
     const [refreshModalOpen, setRefreshModalOpen] = useState(false);
     const [cleanupFailed, setCleanupFailed] = useState(false);
+    const [refreshFailed, setRefreshFailed] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(initialDraftErrorStatus ? draftErrorMessage(initialDraftErrorStatus) : null);
     const [dateError, setDateError] = useState<string | null>(null);
@@ -975,14 +976,15 @@ export function ServiceRecordAdminWizard({
         if (saving.current) return;
         saving.current = true;
         setBusy(true);
+        setRefreshFailed(false);
         try {
             await refresh();
             // Stay blocked if the data just loaded is already older than a change announced meanwhile.
             if (knownVersion.current >= foreignVersion.current) setRefreshModalOpen(false);
         } catch {
+            // The old data is still on screen: keep the modal blocking and let 확인 retry.
             setNeedsReload(true);
-            setError("최신 기록을 불러오지 못했습니다. 다시 불러와 주세요.");
-            setRefreshModalOpen(false);
+            setRefreshFailed(true);
         } finally { saving.current = false; setBusy(false); }
     };
     const leaveGuard = useUnsavedChangesGuard({
@@ -1181,6 +1183,11 @@ export function ServiceRecordAdminWizard({
                     <p className="text-sm text-v3-text-muted" data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal_content_description`}>
                         확인을 누르면 최신 기록을 불러오고, 저장하지 않은 수정사항은 사라져요.
                     </p>
+                    {refreshFailed ? (
+                        <p role="alert" className="mt-2 text-sm text-v3-burgundy" data-component={`${ADMIN_WIZARD_COMPONENT}_refresh-modal_content_error`}>
+                            최신 기록을 불러오지 못했어요. 다시 시도해 주세요.
+                        </p>
+                    ) : null}
                 </FormDialogShell>
             </Dialog>
         </>
