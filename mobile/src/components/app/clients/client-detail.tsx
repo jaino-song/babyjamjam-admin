@@ -340,8 +340,8 @@ function contractPrimaryEmployeeName(doc: EformsignDocument | null | undefined):
   ]);
 }
 
-function documentStatusLabel(status: Client["documentStatus"]): string {
-  return getClientDocumentStatusMeta(status).label;
+function documentStatusLabel(client: Pick<Client, "documentStatus" | "hasSigned">): string {
+  return getClientDocumentStatusMeta(client.documentStatus, { hasSigned: client.hasSigned }).label;
 }
 
 const DOCUMENT_STATUS_TONES = {
@@ -353,8 +353,8 @@ const DOCUMENT_STATUS_TONES = {
   neutral: "muted",
 } as const satisfies Record<StatusBadgeVariant, "green" | "primary" | "orange" | "muted" | "burgundy">;
 
-function documentStatusTone(status: Client["documentStatus"]): "green" | "primary" | "orange" | "muted" | "burgundy" {
-  return DOCUMENT_STATUS_TONES[getClientDocumentStatusMeta(status).variant];
+function documentStatusTone(client: Pick<Client, "documentStatus" | "hasSigned">): "green" | "primary" | "orange" | "muted" | "burgundy" {
+  return DOCUMENT_STATUS_TONES[getClientDocumentStatusMeta(client.documentStatus, { hasSigned: client.hasSigned }).variant];
 }
 
 export interface ClientGroup {
@@ -659,7 +659,7 @@ export function ClientDetailContent({
     setContractResendClient(null);
     onIssueContract(target, {
       paymentDate,
-      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus)
+      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus, { hasSigned: target.hasSigned })
         ? target.latestContractDocumentId
         : undefined,
     });
@@ -817,7 +817,7 @@ export function ClientDetailContent({
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
   const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
-  const docTone = documentStatusTone(client.documentStatus);
+  const docTone = documentStatusTone(client);
   const hasContractDocument = Boolean(client.eDocId);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
@@ -1325,12 +1325,12 @@ export function ClientDetailContent({
                     <span className="doc-meta-line doc-meta-id">문서 ID {client.eDocId}</span>
                   </>
                 }
-                badge={documentStatusLabel(client.documentStatus)}
+                badge={documentStatusLabel(client)}
                 tone={docTone}
               />
             </InfoCard>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
-              <InfoRow label="현재 단계" value={documentStatusLabel(client.documentStatus)} tone={docTone as never} />
+              <InfoRow label="현재 단계" value={documentStatusLabel(client)} tone={docTone as never} />
               <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
               <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}

@@ -297,6 +297,62 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText("서명 대기자").closest("div")).toHaveTextContent(pendingSigner);
   });
+  it.each([
+    ["unsigned", false, "서명 요청됨", "서명 완료"],
+    ["signed while provider review is pending", true, "서명 완료", "서명 요청됨"],
+  ])("labels the %s contract stage from hasSigned", (_state, hasSigned, shown, hidden) => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: { status_type: "070", step_type: "06", step_name: "제공기관 확인" },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(shown);
+    expect(screen.queryAllByText(hidden)).toHaveLength(0);
+  });
+  it("does not supersede a signed contract that still reports documentStatus requested", async () => {
+    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
+    jest.mocked(fetchClientServiceRecords).mockResolvedValue({
+      assignments: [{ scheduleId: 7, replaced: false }],
+    } as never);
+    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
+      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
+    } as never);
+    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
+    const onIssueContract = jest.fn();
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail"
+        client={{
+          ...client, eDocId: "old-document", latestContractDocumentId: "latest-document",
+          documentStatus: "requested", hasSigned: true,
+        }}
+        activeTab="basic"
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={onIssueContract}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByText("서비스 일정 변경"));
+    await user.click(await screen.findByText("일정 변경 적용"));
+    await user.click(await screen.findByText("수정 전송"));
+
+    expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      supersedeDocumentId: undefined,
+    }));
+  });
 
   it("keeps the completed contract badge for completed documents", () => {
     const detailClient = {
