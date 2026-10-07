@@ -635,6 +635,8 @@ export function ServiceRecordAdminWizard({
     const commitRequest = useRef<{ draftId: string; draftVersion: number; previewId: string; idempotencyKey: string } | null>(null);
     // Highest case version this tab has loaded or written itself.
     const knownVersion = useRef(initialDraftState?.sourceCaseVersion ?? 0);
+    // Highest foreign case version announced to this tab; the data is current only once it catches up.
+    const foreignVersion = useRef(0);
     const caseId = useRef<string | null>(overview.record?.id ?? null);
     const confirmInFlight = useRef(false);
     const bufferedEvents = useRef<ServiceRecordRevisionSyncEvent[]>([]);
@@ -694,7 +696,8 @@ export function ServiceRecordAdminWizard({
         knownVersion.current = Math.max(knownVersion.current, state.sourceCaseVersion);
         setPreview(null);
         setPreviewOpen(false);
-        setNeedsReload(false);
+        // A newer change may have been announced while this load was in flight.
+        setNeedsReload(state.sourceCaseVersion < foreignVersion.current);
         setPending(EMPTY_PENDING);
         commitRequest.current = null;
         resetLocal();
@@ -874,7 +877,9 @@ export function ServiceRecordAdminWizard({
     };
     /** Open the blocking refresh modal for a case event that is newer than this tab's data. */
     const applyCaseEvent = (event: ServiceRecordRevisionSyncEvent) => {
-        if (event.caseVersion > knownVersion.current) showRefreshModal();
+        if (event.caseVersion <= knownVersion.current) return;
+        foreignVersion.current = Math.max(foreignVersion.current, event.caseVersion);
+        showRefreshModal();
     };
     const handleCaseEvent = useEffectEvent((event: ServiceRecordRevisionSyncEvent) => {
         if (event.caseId !== caseId.current) return;
@@ -944,9 +949,15 @@ export function ServiceRecordAdminWizard({
         if (saving.current) return;
         saving.current = true;
         setBusy(true);
-        try { await refresh(); }
-        catch { setNeedsReload(true); setError("최신 기록을 불러오지 못했습니다. 다시 불러와 주세요."); }
-        finally { saving.current = false; setBusy(false); setRefreshModalOpen(false); }
+        try {
+            await refresh();
+            // Stay blocked if the data just loaded is already older than a change announced meanwhile.
+            if (knownVersion.current >= foreignVersion.current) setRefreshModalOpen(false);
+        } catch {
+            setNeedsReload(true);
+            setError("최신 기록을 불러오지 못했습니다. 다시 불러와 주세요.");
+            setRefreshModalOpen(false);
+        } finally { saving.current = false; setBusy(false); }
     };
     const leaveGuard = useUnsavedChangesGuard({
         active: hasPending && !refreshModalOpen,

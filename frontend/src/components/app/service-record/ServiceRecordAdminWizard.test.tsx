@@ -1152,6 +1152,37 @@ describe("per-session administrator editing", () => {
             expect(container.querySelectorAll('[data-slot="day"]')[0]).not.toHaveTextContent("초안 변경");
         });
 
+        it("stays blocked when a newer change is announced while an older refresh is loading", async () => {
+            await openWithPending();
+            emitCaseChanged({ caseId: "case-1", caseVersion: 2 });
+            const modal = await screen.findByRole("dialog", { name: refreshModalTitle });
+
+            let releaseEditor!: () => void;
+            const editorLoaded = new Promise<void>((resolve) => { releaseEditor = resolve; });
+            global.fetch = jest.fn().mockImplementation(async () => {
+                await editorLoaded;
+                return { ok: true, json: async () => sessionOverview };
+            });
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue({ ...makeDraftState(), draft: null, sourceFingerprint: "source-2", sourceCaseVersion: 2 });
+            fireEvent.click(within(modal).getByRole("button", { name: "확인" }));
+            await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+
+            emitCaseChanged({ caseId: "case-1", caseVersion: 3 });
+            await act(async () => { releaseEditor(); });
+
+            // The v2 response must not unlock editing or dismiss the notice about v3.
+            await waitFor(() => expect(within(screen.getByRole("dialog", { name: refreshModalTitle })).getByRole("button", { name: "확인" })).toBeEnabled());
+            expect(screen.getByRole("dialog", { name: refreshModalTitle })).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "최신 기록 불러오기", hidden: true })).toBeInTheDocument();
+
+            global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => sessionOverview });
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue({ ...makeDraftState(), draft: null, sourceFingerprint: "source-3", sourceCaseVersion: 3 });
+            fireEvent.click(within(screen.getByRole("dialog", { name: refreshModalTitle })).getByRole("button", { name: "확인" }));
+            await waitFor(() => expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument());
+            expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeEnabled();
+            expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+        });
+
         it.each([
             ["an equal version", { caseId: "case-1", caseVersion: 1 }],
             ["a lower version", { caseId: "case-1", caseVersion: 0 }],
