@@ -46,6 +46,20 @@ export type ReplacePendingJobsResult =
     | { kind: "link_revoked" };
 
 /**
+ * Outcome of claiming a provider-rejected job for an action-bound retry.
+ * `not_claimable` means the approved source drifted or is no longer retryable.
+ * `lock_timeout` means the rule or the source row stayed locked by another
+ * transaction for longer than the claim is willing to wait; the transaction
+ * aborted, so nothing was written and the caller may safely try again. An
+ * interactive-transaction timeout (a thrown P2028) is NOT this outcome: it
+ * does not prove nothing committed and stays an unclassified error.
+ */
+export type ClaimProviderRejectedForRetryResult =
+    | { kind: "claimed"; job: MessageTriggerJobEntity }
+    | { kind: "not_claimable" }
+    | { kind: "lock_timeout" };
+
+/**
  * Guard a job write taken under the schedule fence against a link revoke:
  * the plaintext link token the job's message carries must still be an active,
  * non-revoked token of the schedule, checked under the fence.
@@ -259,8 +273,10 @@ export interface IMessageTriggerJobRepository {
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound
-     * retry job in the same transaction. A null result means the approved
-     * source target drifted or is no longer retryable.
+     * retry job in the same transaction. `not_claimable` means the approved
+     * source target drifted or is no longer retryable. The transaction waits
+     * at most one second for any lock; past that nothing is written and
+     * `lock_timeout` is returned.
      */
     claimProviderRejectedForRetry(
         branchId: string,
@@ -269,7 +285,7 @@ export interface IMessageTriggerJobRepository {
         expectedSnapshotHash: string,
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
-    ): Promise<MessageTriggerJobEntity | null>;
+    ): Promise<ClaimProviderRejectedForRetryResult>;
 }
 
 export const MESSAGE_TRIGGER_JOB_REPOSITORY = "MESSAGE_TRIGGER_JOB_REPOSITORY";
