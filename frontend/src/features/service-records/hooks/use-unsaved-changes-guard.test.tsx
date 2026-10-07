@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { useUnsavedChangesGuard } from "./use-unsaved-changes-guard";
@@ -95,32 +96,161 @@ describe("useUnsavedChangesGuard", () => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("holds browser back with a guard entry and asks before leaving", () => {
-        const pushState = jest.spyOn(window.history, "pushState");
-        const go = jest.spyOn(window.history, "go").mockImplementation(() => undefined);
-        const onLeave = jest.fn();
-        render(<Harness active onLeave={onLeave} />);
-        expect(pushState).toHaveBeenCalledTimes(1);
+    describe("history traversal", () => {
+        const EDITOR = "/clients/42/records?tab=edit";
+        const NEXT_STATE = { __NA: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { marker: "editor-tree" } };
+        const paths = () => `${window.location.pathname}${window.location.search}`;
 
-        act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
-        expect(pushState).toHaveBeenCalledTimes(2);
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        // jsdom runs history traversal on a later task. A held traversal's popstate is
+        // swallowed by the guard (stopImmediatePropagation), so wait on time, not on the event.
+        async function traverse(move: () => void) {
+            await act(async () => {
+                move();
+                await new Promise((resolve) => setTimeout(resolve, 30));
+            });
+        }
 
-        fireEvent.click(screen.getByRole("button", { name: "나가기" }));
-        expect(onLeave).toHaveBeenCalledTimes(1);
-        expect(go).toHaveBeenCalledWith(-2);
+        async function settle() {
+            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+        }
 
-        pushState.mockRestore();
-        go.mockRestore();
-    });
+        beforeEach(() => {
+            // Entries: /earlier, /previous, EDITOR (carrying Next-style router state).
+            window.history.replaceState(null, "", "/earlier");
+            window.history.pushState(null, "", "/previous");
+            window.history.pushState(NEXT_STATE, "", EDITOR);
+        });
 
-    it("takes the guard entry back out when deactivated without leaving", () => {
-        const back = jest.spyOn(window.history, "back").mockImplementation(() => undefined);
-        const { rerender } = render(<Harness active />);
+        it("ignores hash-only traversals inside the editor document", async () => {
+            // Arm on EDITOR#b with an earlier EDITOR#a entry behind the editor entry.
+            window.history.replaceState(NEXT_STATE, "", `${EDITOR}#a`);
+            window.history.pushState(NEXT_STATE, "", `${EDITOR}#b`);
+            render(<Harness active />);
+            const lengthBefore = window.history.length;
 
-        rerender(<Harness active={false} />);
+            await traverse(() => window.history.go(-2)); // guard -> editor -> EDITOR#a
 
-        expect(back).toHaveBeenCalledTimes(1);
-        back.mockRestore();
+            expect(window.location.hash).toBe("#a");
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+            expect(window.history.length).toBe(lengthBefore);
+        });
+
+        it("does not prompt when a hash entry made after arming is traversed", async () => {
+            render(<Harness active />);
+            await act(async () => { window.location.hash = "#section"; });
+            await traverse(() => window.history.back()); // back onto the guard entry
+
+            expect(paths()).toBe(EDITOR);
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        });
+
+        it("holds a single Back, and 머무르기 keeps the editor URL and re-arms", async () => {
+            render(<Harness active />);
+
+            await traverse(() => window.history.back());
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+
+            fireEvent.click(screen.getByRole("button", { name: "머무르기" }));
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+
+            // Guard re-armed: another Back is held again instead of leaving.
+            await traverse(() => window.history.back());
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+        });
+
+        it("lets 나가기 land exactly on the previous entry after a single Back", async () => {
+            const onLeave = jest.fn();
+            render(<Harness active onLeave={onLeave} />);
+
+            await traverse(() => window.history.back());
+            await traverse(() => fireEvent.click(screen.getByRole("button", { name: "나가기" })));
+
+            expect(onLeave).toHaveBeenCalledTimes(1);
+            expect(paths()).toBe("/previous");
+        });
+
+        it("restores the editor URL after a multi-entry Back, and 머무르기 keeps it", async () => {
+            render(<Harness active />);
+
+            await traverse(() => window.history.go(-3)); // guard -> editor -> previous -> earlier
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+            // Next's router state survived on the restored entry.
+            expect(window.history.state).toMatchObject(NEXT_STATE);
+
+            fireEvent.click(screen.getByRole("button", { name: "머무르기" }));
+            expect(paths()).toBe(EDITOR);
+            expect(window.history.state).toMatchObject(NEXT_STATE);
+
+            // Still guarded: Back holds again.
+            await traverse(() => window.history.back());
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+        });
+
+        it("lets 나가기 reach the entry the user was heading to after a multi-entry Back", async () => {
+            render(<Harness active />);
+
+            await traverse(() => window.history.go(-3));
+            await traverse(() => fireEvent.click(screen.getByRole("button", { name: "나가기" })));
+
+            expect(paths()).toBe("/earlier");
+        });
+
+        it("does not let the Next router see a held multi-entry traversal", async () => {
+            const nextHandler = jest.fn();
+            window.addEventListener("popstate", nextHandler); // registered before the guard, like Next's
+            render(<Harness active />);
+
+            await traverse(() => window.history.go(-3));
+            expect(nextHandler).not.toHaveBeenCalled();
+            window.removeEventListener("popstate", nextHandler);
+        });
+
+        it("takes the guard entry back out, without navigating, when deactivated", async () => {
+            const { rerender } = render(<Harness active />);
+            const lengthWhileArmed = window.history.length;
+
+            rerender(<Harness active={false} />);
+            await settle();
+
+            expect(paths()).toBe(EDITOR);
+            expect(window.history.state).toMatchObject(NEXT_STATE);
+            // No leftover entry: one Back reaches the previous page.
+            await traverse(() => window.history.back());
+            expect(paths()).toBe("/previous");
+            expect(window.history.length).toBe(lengthWhileArmed);
+        });
+
+        it("does not queue a prompt after being deactivated", async () => {
+            const { rerender } = render(<Harness active />);
+            rerender(<Harness active={false} />);
+            await settle();
+
+            await traverse(() => window.history.back());
+            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+            expect(paths()).toBe("/previous");
+        });
+
+        it("is safe under StrictMode's double mount (exactly one guard entry)", async () => {
+            const { rerender } = render(<StrictMode><Harness active /></StrictMode>);
+            await settle();
+            expect(paths()).toBe(EDITOR);
+
+            // One Back is held by the single guard entry.
+            await traverse(() => window.history.back());
+            expect(screen.getByRole("dialog")).toBeInTheDocument();
+            expect(paths()).toBe(EDITOR);
+            fireEvent.click(screen.getByRole("button", { name: "머무르기" }));
+
+            // Deactivating leaves no extra entry behind.
+            rerender(<StrictMode><Harness active={false} /></StrictMode>);
+            await settle();
+            await traverse(() => window.history.back());
+            expect(paths()).toBe("/previous");
+        });
     });
 });
