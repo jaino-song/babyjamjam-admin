@@ -103,24 +103,25 @@ export class UpdateEformsignDocStatusUsecase {
             templateId: existing.templateId,
         });
 
-        // A step the caller did not supply is carried over from the row read above, so
-        // writing it back could revert a newer step stored between that read and this
+        // Anything this usecase does not set is carried over from the row read above, so
+        // writing it back could revert a newer value stored between that read and this
         // write. Tell the repository to leave those columns out of the UPDATE instead.
+        // The recipient, document number and expiry are never an input here, so they are
+        // always withheld; the step columns only when the caller did not supply them.
         const stepWriteOptions: EformsignDocStepWriteOptions = {
             ...(params.stepType === undefined ? { updateStepType: false } : {}),
             ...(params.stepIndex === undefined ? { updateStepIndex: false } : {}),
+            ...(params.stepName === undefined ? { updateStepName: false } : {}),
+            updateStepRecipient: false,
+            updateDocumentNumber: false,
+            updateExpiredDate: false,
         };
-        const hasStepWriteOptions = Object.keys(stepWriteOptions).length > 0;
 
         if (params.sourceUpdatedDate) {
-            return hasStepWriteOptions
-                ? this.eformsignDocRepository.updateIfSourceNewer(branchid, updated, stepWriteOptions)
-                : this.eformsignDocRepository.updateIfSourceNewer(branchid, updated);
+            return this.eformsignDocRepository.updateIfSourceNewer(branchid, updated, stepWriteOptions);
         }
         return {
-            document: hasStepWriteOptions
-                ? await this.eformsignDocRepository.update(branchid, updated, stepWriteOptions)
-                : await this.eformsignDocRepository.update(branchid, updated),
+            document: await this.eformsignDocRepository.update(branchid, updated, stepWriteOptions),
             applied: true,
         };
     }

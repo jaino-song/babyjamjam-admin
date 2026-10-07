@@ -93,7 +93,11 @@ export interface EformsignDocCompletionClaimParams {
      */
     stepType?: string;
     stepIndex?: string;
-    stepName: string;
+    /**
+     * The mirrored current step's name. The workflow's name is not a step name, so when the
+     * caller has no mirrored step name it is omitted and the stored one is left alone.
+     */
+    stepName?: string;
     expired: boolean;
     sourceUpdatedDate?: Date;
     documentName?: string;
@@ -116,6 +120,26 @@ export interface EformsignDocConditionalUpdateResult {
 export interface EformsignDocStepWriteOptions {
     updateStepType?: boolean;
     updateStepIndex?: boolean;
+    /**
+     * The step's display name. A webhook carries only the workflow's name, not the current
+     * step's, so a caller without the mirrored `current_status.step_name` sets this false
+     * rather than overwrite the stored step name with the workflow name.
+     */
+    updateStepName?: boolean;
+    /**
+     * The recipient the current step is addressed to (`stepRecipientType`/`Name`/`Sms`).
+     * No status webhook carries it; an entity rebuilt from an earlier read holds the old
+     * value, which would revert a newer one the mirror stored in between.
+     */
+    updateStepRecipient?: boolean;
+    /** Same reasoning as `updateStepRecipient`: no status webhook carries a document number. */
+    updateDocumentNumber?: boolean;
+    /**
+     * A caller working from a source without `expired_date` only has a fallback guess (a list
+     * response) or the value it read earlier (a webhook). Set false rather than overwrite a
+     * real stored expiry with it.
+     */
+    updateExpiredDate?: boolean;
 }
 
 export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWriteOptions {
@@ -133,12 +157,6 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
      * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.
      */
     updateStatusDetail?: boolean;
-    /**
-     * Same reasoning as `updateStatusDetail`: the list endpoint carries no `expired_date`,
-     * so a caller working from it only has a fallback guess. Set false there rather than
-     * overwriting a real stored expiry with it.
-     */
-    updateExpiredDate?: boolean;
     /**
      * Creation time is the list's sort key, and rows written by the create and adopt paths
      * carry the moment we wrote them rather than the moment eformsign created the
