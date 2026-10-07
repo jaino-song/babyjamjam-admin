@@ -152,8 +152,6 @@ describe("parity with the desktop client update payload", () => {
         ["reprice", { fullPrice: "1100000", grant: "900000", actualPrice: "200000" }],
         ["out-of-pocket switch", { voucherClient: false, type: "", fullPrice: "900000" }],
         ["employees", { primaryEmployeeId: null, secondaryEmployeeId: 9 }],
-        // Not here: clearing an assigned secondary employee. Mobile sends `secondaryEmployeeId: null` (as the
-        // old wizard did); the desktop helper still omits it, which is a known desktop limitation.
         ["care center and status", { careCenter: true, serviceStatus: "active" }],
         ["due date cleared", { dueDate: "" }],
     ];
@@ -170,5 +168,17 @@ describe("parity with the desktop client update payload", () => {
         expect(hasServicePeriodChange(stored, current)).toBe(
             desktop.hasServicePeriodChange(stored as never, current as never),
         );
+    });
+
+    it("builds the same body as desktop when an assigned secondary employee is cleared, and when a null is left alone", () => {
+        const withSecondary = { ...stored, secondaryEmployeeId: 4 } as ClientUpdateFormFields;
+        const cleared = { ...withSecondary, secondaryEmployeeId: null };
+        const input = { baseline: withSecondary, current: cleared };
+        expect(buildClientUpdatePayload(input)).toEqual({ secondaryEmployeeId: null });
+        expect(desktop.buildClientUpdatePayload(input as never)).toEqual({ secondaryEmployeeId: null });
+
+        const unchanged = { baseline: stored, current: { ...stored, secondaryEmployeeId: null } };
+        expect(buildClientUpdatePayload(unchanged)).toEqual({});
+        expect(desktop.buildClientUpdatePayload(unchanged as never)).toEqual({});
     });
 });

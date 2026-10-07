@@ -7,11 +7,12 @@ import { ClientFormDialog } from "../ClientFormDialog";
 
 const mockUpdateClient = jest.fn();
 
-const mockOutOfPocketPriceInfos = [
+const FULL_PRICE_TABLE = [
   { id: 1, duration: 5, fullPrice: "815000" },
   { id: 2, duration: 10, fullPrice: "1620000" },
   { id: 3, duration: 15, fullPrice: "2425000" },
 ];
+let mockOutOfPocketPriceInfos: typeof FULL_PRICE_TABLE = FULL_PRICE_TABLE;
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 jest.mock("next/navigation", () => ({
@@ -105,10 +106,56 @@ const waitForHydratedPrice = () =>
 describe("ClientFormDialog price hydration is not a user edit", () => {
   beforeEach(() => {
     HTMLElement.prototype.scrollTo = jest.fn();
+    mockOutOfPocketPriceInfos = FULL_PRICE_TABLE;
     mockApiGet.mockReset();
     mockApiGet.mockResolvedValue({ data: { exists: false } });
     mockUpdateClient.mockReset();
     mockUpdateClient.mockResolvedValue(client);
+  });
+
+  it("sends the table's prices when staff change the dates after the form already filled them in", async () => {
+    await openForm();
+    await waitForHydratedPrice();
+
+    fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2026-11-03" } });
+    await waitFor(() => expect(screen.getByLabelText("종료일")).toHaveValue("2026-11-16"));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockUpdateClient).toHaveBeenCalledWith({
+      id: client.id,
+      dto: expect.objectContaining({
+        startDate: "2026-11-03",
+        endDate: "2026-11-16",
+        expectedEndDate: "2026-11-13",
+        fullPrice: "1620000",
+        actualPrice: "1620000",
+      }),
+    });
+  });
+
+  it("does not let a price table that loads late overwrite a price staff already typed", async () => {
+    mockOutOfPocketPriceInfos = [];
+    const view = render(<ClientFormDialog open client={client} onClose={jest.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByLabelText(/이름/)).toHaveValue(client.name));
+
+    fireEvent.change(screen.getByLabelText("총 서비스 금액"), { target: { value: "1,700,000" } });
+    mockOutOfPocketPriceInfos = FULL_PRICE_TABLE;
+    view.rerender(<ClientFormDialog open client={client} onClose={jest.fn()} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByLabelText("총 서비스 금액")).toHaveValue("1,700,000");
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockUpdateClient).toHaveBeenCalledWith({
+      id: client.id,
+      dto: { fullPrice: "1700000", actualPrice: "1700000" },
+    });
   });
 
   it("sends an empty update on a no-op save even though the price table filled the prices", async () => {
