@@ -53,7 +53,7 @@ export function getServiceRecordHeaderFieldError(
             ? null : "0보다 큰 숫자로 (예: 3.2)";
     }
     if (rawValue.length !== 10 || !BIRTH_PATTERN.test(rawValue)) {
-        return "YYYY-MM-DD로 입력해 주세요";
+        return "8자리로 입력해 주세요 (예: 19940315)";
     }
     if (isValidBirthdayIsoDate(rawValue, now)) return null;
     // isRealIsoDate already rejects years before the 1900 floor (-> "not a real date"),

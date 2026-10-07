@@ -585,7 +585,7 @@ describe("per-session administrator editing", () => {
         const birth = screen.getByLabelText(/^산모 생년월일/);
         fireEvent.focus(birth);
         fireEvent.change(birth, { target: { value: "1999" } });
-        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("예: 19940315");
         expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveClass("hint");
     });
 
