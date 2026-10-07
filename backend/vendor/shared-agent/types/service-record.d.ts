@@ -364,8 +364,8 @@ export interface ServiceRecordOverview {
 export interface SendServiceRecordLinkResponse {
     ok: boolean;
     jobId: string;
-    /** `dispatching` is set by the backend while a claimed job is delivering; the shared job-status union predates it. */
-    status: MessageTriggerJobStatus | "dispatching";
+    /** Includes `dispatching`, which the backend sets while a claimed job is delivering. */
+    status: MessageTriggerJobStatus;
     scheduledFor: string;
 }
 export interface PrepareServiceRecordLinkResponse {
