@@ -5,11 +5,13 @@ import {
     createProblemDetails,
     normalizeApiError,
     parseProblemDetails,
+    PROBLEM_CATALOG,
     type ProblemDetails,
     type ProblemError,
     type ProblemErrorCode,
 } from "../errors/problem-details";
 
+import { KOREAN_ERROR_MESSAGES } from "../errors/korean-error-messages";
 import { sanitizeApiDisplayMessage } from "../errors/safe-api-error-message";
 import { getUserErrorMessage } from "../errors/user-error-message";
 import { systemTemplateKeySchema } from "../types/system-template";
@@ -421,6 +423,67 @@ function getMessageTriggerParentConflictCode(error: unknown): string | undefined
     return nestedCode === MESSAGE_AUTOMATION_PARENT_DISABLED_CODE ? nestedCode : undefined;
 }
 
+/**
+ * Korean copy this codebase itself authored: every catalog detail/title plus the
+ * registered legacy-message table. An upstream legacy body may repeat one of
+ * these verbatim; any other Hangul is the backend's own wording.
+ */
+const REGISTERED_KOREAN_COPY: ReadonlySet<string> = new Set([
+    ...Object.values(PROBLEM_CATALOG).flatMap((entry) => [entry.detail["ko-KR"], entry.title["ko-KR"]]),
+    ...Object.values(KOREAN_ERROR_MESSAGES),
+]);
+
+const HANGUL_PATTERN = /[가-힣]/;
+
+function isUnregisteredKoreanText(value: unknown): boolean {
+    return typeof value === "string"
+        && HANGUL_PATTERN.test(value)
+        && !REGISTERED_KOREAN_COPY.has(value.trim());
+}
+
+function withoutUnregisteredKorean(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.filter((entry) => !isUnregisteredKoreanText(entry));
+    }
+    return isUnregisteredKoreanText(value) ? undefined : value;
+}
+
+/**
+ * Raw (non-problem) upstream bodies are not an application contract. The
+ * user-facing text for them comes only from registered sources (the status
+ * table, the code table, the ValidationPipe rule translations, the registered
+ * Korean copy). Hangul the backend wrote itself is diagnostic text and is
+ * dropped before the message resolver sees the body.
+ */
+function legacyBodyForMessageResolution(upstreamData: unknown): unknown {
+    if (!upstreamData || typeof upstreamData !== "object" || Array.isArray(upstreamData)) {
+        return undefined;
+    }
+
+    const data = upstreamData as Record<string, unknown>;
+    return {
+        code: data.code,
+        field: data.field,
+        statusCode: data.statusCode,
+        message: withoutUnregisteredKorean(data.message),
+        error: withoutUnregisteredKorean(data.error),
+        issues: withoutUnregisteredKorean(data.issues),
+    };
+}
+
+/**
+ * Only an identifier-shaped code may reach the browser: capital letters, digits
+ * and underscores (no separators, paths, spaces or prose), or a Prisma code
+ * whose consumers key on it (the register duplicate-phone flow).
+ */
+function forwardableErrorCode(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    return /^(?:[A-Z][A-Z0-9_]{1,63}|P\d{4})$/.test(value) ? value : undefined;
+}
+
 export function sanitizeUpstreamClientError(
     upstreamData: unknown,
     fallbackMessage: string,
@@ -433,12 +496,15 @@ export function sanitizeUpstreamClientError(
         return { error: normalizeApiError({ response: { status, data: upstreamData } }, { operation }).message };
     }
     const payload: { error: string; code?: string; field?: string; hasKakaoAccount?: boolean } = {
-        error: getUserErrorMessage({ response: { status, data: upstreamData } }, fallbackMessage),
+        error: getUserErrorMessage(
+            { response: { status, data: legacyBodyForMessageResolution(upstreamData) } },
+            fallbackMessage,
+        ),
     };
 
     if (upstreamData && typeof upstreamData === "object") {
         const data = upstreamData as { code?: unknown; field?: unknown; hasKakaoAccount?: unknown };
-        const code = safeErrorCode(data.code);
+        const code = forwardableErrorCode(data.code);
         if (code) {
             payload.code = code;
             if (/^P\d{4}$/.test(code) && typeof data.field === "string" && /^[A-Za-z][\w.-]{0,63}$/.test(data.field)) {

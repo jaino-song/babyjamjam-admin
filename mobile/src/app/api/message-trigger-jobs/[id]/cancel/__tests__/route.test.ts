@@ -83,7 +83,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
     );
   });
 
-  it("forwards a safe backend conflict message while omitting diagnostics", async () => {
+  it("answers an unregistered backend conflict message with the 409 status copy while omitting diagnostics", async () => {
     mockPost.mockRejectedValue({
       response: {
         status: 409,
@@ -100,7 +100,7 @@ describe("POST /api/message-trigger-jobs/[id]/cancel", () => {
 
     expect(response.status).toBe(409);
     const body = await response.json();
-    expect(body).toEqual({ error: "이미 발송되었거나 취소할 수 없는 상태예요." });
+    expect(body).toEqual({ error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요." });
     expect(JSON.stringify(body)).not.toContain("upstream-secret");
     expect(JSON.stringify(body)).not.toContain("SELECT * FROM MessageJob");
   });

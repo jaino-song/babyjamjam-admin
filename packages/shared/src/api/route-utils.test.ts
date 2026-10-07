@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { normalizeApiError } from "../errors/problem-details";
+import { createProblemDetails, normalizeApiError, PROBLEM_CATALOG } from "../errors/problem-details";
 import {
     buildSystemTemplatePath,
     createRouteUtils,
@@ -9,6 +9,7 @@ import {
     logUpstreamError,
     messageTriggerUpstreamErrorResponse,
     parseBody,
+    sanitizeUpstreamClientError,
     systemTemplateBackendJsonResponse,
     systemTemplateUpstreamErrorResponse,
 } from "./route-utils";
@@ -226,14 +227,25 @@ describe("createRouteUtils legacy-message errorResponse", () => {
         });
     });
 
-    it("falls back to the upstream error field when no message is present", async () => {
+    it("does not reflect the backend's own Korean wording from the upstream error field", async () => {
         const response = errorResponse(
             upstreamError(409, { error: "자동 고객 등록이 꺼져 있습니다." }),
             "create client",
         );
 
         await expect(response.json()).resolves.toEqual({
-            error: "자동 고객 등록이 꺼져 있어요.",
+            error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요.",
+        });
+    });
+
+    it("falls back to the upstream error field when it is a registered message", async () => {
+        const response = errorResponse(
+            upstreamError(404, { error: "Client not found" }),
+            "create client",
+        );
+
+        await expect(response.json()).resolves.toEqual({
+            error: "해당 고객을 찾을 수 없어요.",
         });
     });
 
@@ -436,5 +448,89 @@ describe("system-template route policy", () => {
         const response = invalidSystemTemplateKeyResponse();
         expect(response.status).toBe(400);
         await expect(response.json()).resolves.toEqual({ error: "Invalid system template key" });
+    });
+});
+
+describe("sanitizeUpstreamClientError never forwards backend diagnostic text", () => {
+    const INTERNAL_KOREAN_DETAIL = "고객 9137의 계약 상태 전이(draft->sent) 보정 3단계에서 eformsign_doc 행 잠금 실패";
+
+    it("replaces a registered problem's detail with the catalog message, whatever the upstream detail says", () => {
+        const problem = createProblemDetails({ code: "CLIENT_PHONE_ALREADY_REGISTERED", requestId: "req-1", outcome: "NOT_APPLIED" });
+        const payload = sanitizeUpstreamClientError({ ...problem, detail: INTERNAL_KOREAN_DETAIL, title: INTERNAL_KOREAN_DETAIL }, "fallback", 409);
+
+        expect(payload.code).toBe("CLIENT_PHONE_ALREADY_REGISTERED");
+        expect(payload.detail).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"]);
+        expect(payload.error).toBe(PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"]);
+        expect(JSON.stringify(payload)).not.toContain("9137");
+        expect(JSON.stringify(payload)).not.toContain("eformsign_doc");
+    });
+
+    it("keeps the catalog detail of every registered code verbatim (no code is allowed to keep upstream text)", () => {
+        for (const [code, entry] of Object.entries(PROBLEM_CATALOG)) {
+            const problem = createProblemDetails({ code: code as keyof typeof PROBLEM_CATALOG, requestId: "req-all", status: entry.status });
+            const payload = sanitizeUpstreamClientError({ ...problem, detail: INTERNAL_KOREAN_DETAIL }, "fallback", entry.status);
+            expect(payload.error).toBe(entry.detail["ko-KR"]);
+            expect(payload.code).toBe(code);
+        }
+    });
+
+    it("strips Korean free text from a raw legacy body and answers with the status message", () => {
+        const payload = sanitizeUpstreamClientError(
+            { message: INTERNAL_KOREAN_DETAIL, error: "Bad Request", statusCode: 400 },
+            "Failed to send contract",
+            400,
+        );
+
+        expect(payload).toEqual({ error: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요." });
+    });
+
+    it("strips Korean free text in the error field and in message arrays", () => {
+        expect(sanitizeUpstreamClientError({ error: INTERNAL_KOREAN_DETAIL }, "Failed to x", 409))
+            .toEqual({ error: "현재 데이터 상태와 요청이 충돌해 처리할 수 없어요." });
+        expect(sanitizeUpstreamClientError({ message: [INTERNAL_KOREAN_DETAIL, "name must be a string"] }, "Failed to x", 400))
+            .toEqual({ error: "이름 항목은 문자로 입력해 주세요." });
+    });
+
+    it("still translates registered validation text (ValidationPipe rules and registered Korean copy)", () => {
+        expect(sanitizeUpstreamClientError(
+            { message: ["phone must be a valid Korean phone number"], error: "Bad Request" },
+            "Failed to x",
+            400,
+        )).toEqual({ error: "연락처 항목에 올바른 국내 전화번호를 입력해 주세요." });
+        expect(sanitizeUpstreamClientError({ message: "Client not found" }, "Failed to x", 404))
+            .toEqual({ error: "해당 고객을 찾을 수 없어요." });
+        const registeredKorean = PROBLEM_CATALOG.CLIENT_PHONE_ALREADY_REGISTERED.detail["ko-KR"];
+        expect(sanitizeUpstreamClientError({ message: registeredKorean }, "Failed to x", 409))
+            .toEqual({ error: registeredKorean });
+    });
+
+    it("turns a raw string body and a non-JSON body into the generic status message", () => {
+        expect(sanitizeUpstreamClientError(`<html>${INTERNAL_KOREAN_DETAIL} at /app/dist/main.js:1</html>`, "Failed to x", 400))
+            .toEqual({ error: "입력 정보가 요청 조건에 맞지 않아요. 입력 내용을 확인해 주세요." });
+        expect(sanitizeUpstreamClientError(INTERNAL_KOREAN_DETAIL, "Failed to x", 404))
+            .toEqual({ error: "요청한 정보를 찾을 수 없어요." });
+        expect(sanitizeUpstreamClientError(undefined, "Failed to x", 502))
+            .toEqual({ error: "연결된 서버에서 정상적인 응답을 받지 못했어요." });
+    });
+
+    it("never reflects a 5xx body, a stack trace, SQL, or a Prisma message", () => {
+        const body = {
+            statusCode: 500,
+            message: `${INTERNAL_KOREAN_DETAIL}\n    at Object.<anonymous> (/app/dist/x.js:1:1) PrismaClientKnownRequestError SELECT * FROM "Client"`,
+            stack: "Error: boom\n    at /app/dist/x.js",
+            error: INTERNAL_KOREAN_DETAIL,
+        };
+        const payload = sanitizeUpstreamClientError(body, "Failed to x", 500);
+
+        expect(payload).toEqual({ error: "서버 내부 오류로 요청을 처리하지 못했어요." });
+        expect(JSON.stringify(payload)).not.toMatch(/9137|Prisma|SELECT|\/app\/|boom/);
+    });
+
+    it("forwards only identifier-shaped codes: no separators, paths or free text", () => {
+        expect(sanitizeUpstreamClientError({ code: "EMAIL_EXISTS", message: INTERNAL_KOREAN_DETAIL }, "Failed to x", 409))
+            .toEqual({ error: "이미 등록된 이메일이에요.", code: "EMAIL_EXISTS" });
+        expect(sanitizeUpstreamClientError({ code: "CLIENT:9137:LOCK_FAILED" }, "Failed to x", 409).code).toBeUndefined();
+        expect(sanitizeUpstreamClientError({ code: "고객 9137 잠금 실패" }, "Failed to x", 409).code).toBeUndefined();
+        expect(sanitizeUpstreamClientError({ code: "/app/dist/main.js" }, "Failed to x", 409).code).toBeUndefined();
     });
 });
