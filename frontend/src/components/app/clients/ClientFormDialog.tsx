@@ -29,7 +29,7 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientFormData } from "@/features/clients/types";
-import { buildClientUpdatePayload } from "./client-update-payload";
+import { buildClientUpdatePayload, hasServicePeriodChange } from "./client-update-payload";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -1353,7 +1353,13 @@ function ClientFormContent({
             const businessDays = normalizedStartDate && normalizedEndDate
                 ? fresh.calendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
                 : null;
-            const hasDurationMismatch = businessDays !== null
+            // An edit that leaves the service period alone sends no period field, so a period whose
+            // length differs from its business days (a delayed client) needs no confirmation to save,
+            // say, an address.
+            const writesServicePeriod = !(isEditMode && client)
+                || hasServicePeriodChange(formDataBaselineRef.current, formData);
+            const hasDurationMismatch = writesServicePeriod
+                && businessDays !== null
                 && Number.isSafeInteger(formData.duration)
                 && (formData.duration ?? 0) > 0
                 && formData.duration !== businessDays;
