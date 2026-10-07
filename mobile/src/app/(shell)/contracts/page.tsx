@@ -55,6 +55,7 @@ import {
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
   isReceiptSendableOnCalendar,
+  isRevokeRequestedEformsignStatus,
   mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -185,7 +186,10 @@ const ContractPdfViewer = dynamic(
   }
 );
 
-type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "expired" | "unknown";
+// "revoke-requested" is eformsign 040 (cancellation asked, not done). It is display-only: the
+// server still files it under the "기간 만료" filter, so FILTER_BY_CATEGORY maps it there and the
+// pill counts keep matching the server's expired filter.
+type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
 type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
@@ -296,6 +300,7 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   // own would add a filter pill for work that cannot be done on mobile.
   unassigned: "signed",
   completed: "completed",
+  revoke_requested: "revoke-requested",
   expired: "expired",
   unknown: "unknown",
 };
@@ -321,6 +326,9 @@ function categorize(doc: EformsignDocument, calendar: KrBusinessDayCalendar): Co
   if (isContractDocDisplayStatus(doc.display_status)) {
     return CATEGORY_BY_DISPLAY_STATUS[doc.display_status] ?? "unknown";
   }
+  // 040 is in the server's "expired" bucket but is not expired — payloads without display_status
+  // must not show it as 기간 만료.
+  if (isRevokeRequestedEformsignStatus(doc.current_status?.status_type)) return "revoke-requested";
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewStep(doc)) return "drafting";
@@ -348,6 +356,8 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
   signed: "서명 완료",
   "in-progress": "검토 필요",
   completed: "계약 완료",
+  // Filed under the server's expired filter, so the pill counts match it.
+  "revoke-requested": "기간 만료",
   expired: "기간 만료",
   unknown: "알 수 없음",
 };
@@ -357,6 +367,7 @@ function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDay
   if (isContractDocDisplayStatus(signal.display_status)) {
     return CATEGORY_BY_DISPLAY_STATUS[signal.display_status] ?? "unknown";
   }
+  if (isRevokeRequestedEformsignStatus(signal.status_type)) return "revoke-requested";
   const cat = getStatusCategory(signal.status_type ?? undefined);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
@@ -406,6 +417,13 @@ function categoryTones(category: ContractCategory): {
         badgeTone: "green",
         badgeMini: "green",
         infoTone: "green",
+      };
+    case "revoke-requested":
+      return {
+        badge: "철회 요청됨",
+        badgeTone: "orange",
+        badgeMini: "orange",
+        infoTone: "orange",
       };
     case "expired":
       return {
@@ -607,6 +625,7 @@ function canReRequestDocument(doc: EformsignDocument): boolean {
 function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar): string {
   const category = categorize(doc, calendar);
   if (category === "completed") return "6/6 - 계약서 완료";
+  if (category === "revoke-requested") return "철회 요청됨";
   if (category === "expired") return "기간 만료";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
@@ -1193,6 +1212,17 @@ function contractStageItems(
         time: updatedAt,
       },
     );
+    return items;
+  }
+
+  if (category === "revoke-requested") {
+    // Cancellation was asked for, not done — it may still be refused or completed.
+    items.push({
+      icon: AlertTriangle,
+      iconVariant: "warning",
+      text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
+      time: updatedAt,
+    });
     return items;
   }
 

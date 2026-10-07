@@ -3,7 +3,13 @@ import vm from "node:vm";
 import ts from "typescript";
 
 import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
-import { getStatusCategory, isContractReviewWindowOpen, isProviderReviewWorkflowStep, normalizeStatusCode } from "@/lib/eformsign/status-codes";
+import {
+  getStatusCategory,
+  isContractReviewWindowOpen,
+  isProviderReviewWorkflowStep,
+  isRevokeRequestedEformsignStatus,
+  normalizeStatusCode,
+} from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { isContractDocDisplayStatus } from "@babyjamjam/shared/constants/eformsign-doc-status";
 
@@ -33,7 +39,7 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";
 interface StageItem {
   text: string;
 }
@@ -46,6 +52,7 @@ const helpers = vm.runInNewContext(
     getStatusCategory,
     isContractReviewWindowOpen,
     isProviderReviewWorkflowStep,
+    isRevokeRequestedEformsignStatus,
     normalizeStatusCode,
     isContractDocDisplayStatus,
     KR_BUILTIN_CALENDAR,
@@ -193,6 +200,31 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     expect(category).toBe("completed");
     expect(progress).toBe("6/6 - 계약서 완료");
     expect(stages).toContain(SIGNED_STAGE);
+  });
+
+  it.each([
+    ["with display_status revoke_requested", "revoke_requested"],
+    ["without display_status (legacy payload)", undefined],
+  ])("shows 040 (cancellation requested) as its own category, never expired or signed — %s", (_label, displayStatus) => {
+    const doc = makeDoc({ statusType: "040", stepType: "06", stepName: "제공기관 검토", displayStatus });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("revoke-requested");
+    expect(progress).toBe("철회 요청됨");
+    expect(stages).toContain("철회가 요청됐어요 — 아직 철회가 완료되지 않았어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+  });
+
+  it("leaves 042 / 080 as expired and keeps 040 files under the 기간 만료 filter pill", () => {
+    for (const statusType of ["042", "080"]) {
+      const { category, progress } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "expired" }));
+      expect(category).toBe("expired");
+      expect(progress).toBe("기간 만료");
+    }
+    // FILTER_BY_CATEGORY / categoryTones live beside the helpers in page.tsx; pin them in source.
+    expect(/"revoke-requested": "기간 만료"/.test(source)).toBe(true);
+    expect(/case "revoke-requested":\s*return \{\s*badge: "철회 요청됨",\s*badgeTone: "orange"/.test(source)).toBe(true);
   });
 
   it("no longer scans histories for signature keywords", () => {

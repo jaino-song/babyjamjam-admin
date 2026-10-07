@@ -355,7 +355,7 @@
       "name": "contracts.recent",
       "domain": "contracts",
       "renderer": "activity",
-      "description": "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
+      "description": "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/revoke_requested/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
       "version": "1.0.0",
       "risk": "read",
       "requiredRoles": [
@@ -367,7 +367,7 @@
       "flagKey": "agent.capability.contracts.recent",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "19d7c38c30b3e16177bdcad96a57dbd273507c0ecfb269ff5ee5a8ce6e691913"
+      "sourceDigest": "bc460fdca6edacfd31b5e4e3ab9d9938b9d40efbe3bb9a65c5e7674006383b15"
     },
     {
       "name": "contracts.status",
@@ -385,7 +385,7 @@
       "flagKey": "agent.capability.contracts.status",
       "sideEffect": false,
       "sourceFile": "application/usecases/eformsign-doc/eformsign-agent-capabilities.provider.ts",
-      "sourceDigest": "19d7c38c30b3e16177bdcad96a57dbd273507c0ecfb269ff5ee5a8ce6e691913"
+      "sourceDigest": "bc460fdca6edacfd31b5e4e3ab9d9938b9d40efbe3bb9a65c5e7674006383b15"
     },
     {
       "name": "dashboard.summary",

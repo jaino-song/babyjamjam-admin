@@ -185,6 +185,42 @@ describe("Release A domain read capabilities", () => {
         expect(findRecentContracts.execute).toHaveBeenCalledWith("branch-a", 10);
     });
 
+    it("reports eformsign 040 as revoke_requested (not expired) in contracts.status and contracts.recent, and accepts it as a filter", async () => {
+        const base = {
+            documentName: "계약서", createdDate: new Date("2026-08-01T00:00:00Z"), statusDetail: "철회 요청", stepType: "05", stepIndex: "1", stepName: "이용자",
+            stepRecipientType: "05", stepRecipientName: "이용자", stepRecipientSms: "010-0000-0000", expiredDate: new Date("2026-12-01T00:00:00Z"), expired: false, clientId: 10,
+        };
+        const find = {
+            execute: jest.fn().mockResolvedValue([
+                EformsignDocEntity.create({ ...base, documentId: "doc-040", statusType: "040" }),
+                EformsignDocEntity.create({ ...base, documentId: "doc-042", statusType: "042" }),
+                EformsignDocEntity.create({ ...base, documentId: "doc-080", statusType: "080" }),
+            ]),
+        };
+        const rows = ["040", "042", "080"].map((statusType) => ({
+            documentId: `doc-${statusType}`, documentName: "계약서", clientId: 10, clientName: "산모",
+            statusType, statusDetail: "x", stepType: "05", stepName: "이용자",
+            updatedDate: new Date("2026-09-20T00:00:00.000Z"), expired: false,
+        }));
+        const findRecentContracts = { execute: jest.fn().mockResolvedValue(rows) };
+        const provider = new EformsignAgentCapabilitiesProvider(find as never, createHolidayCalendarStub(), findRecentContracts as never);
+        const capabilities = provider.getCapabilities();
+
+        const status = await capabilities.find(({ meta }) => meta.name === "contracts.status")!.execute(context, { clientId: 10 }) as { documents: Array<{ documentId: string; status: string }> };
+        expect(status.documents.map((doc) => `${doc.documentId}:${doc.status}`)).toEqual([
+            "doc-040:revoke_requested", "doc-042:expired", "doc-080:expired",
+        ]);
+
+        const recent = capabilities.find(({ meta }) => meta.name === "contracts.recent")!;
+        const all = await recent.execute(context, {}) as { documents: Array<{ documentId: string; status: string }> };
+        expect(all.documents.map((doc) => `${doc.documentId}:${doc.status}`)).toEqual([
+            "doc-040:revoke_requested", "doc-042:expired", "doc-080:expired",
+        ]);
+        const filtered = await recent.execute(context, { status: "revoke_requested" }) as { documents: Array<{ documentId: string }> };
+        expect(filtered.documents.map((doc) => doc.documentId)).toEqual(["doc-040"]);
+        expect(recent.meta.description).toContain("revoke_requested");
+    });
+
     it("resolves contract display statuses on the principal's branch calendar, fetched once per call", async () => {
         // End date Fri 2026-08-07, today Wed 2026-08-05 (KST): a branch holiday on 8/6 opens
         // the review window a day early, so the same row reads 검토 필요 instead of 서명 완료.

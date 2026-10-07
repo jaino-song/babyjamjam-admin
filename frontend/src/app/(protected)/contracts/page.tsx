@@ -1783,6 +1783,15 @@ export function ContractDetail({
       text: "계약서가 완료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
+  } else if (statusLabel === "철회 요청됨") {
+    // 040 shares the "expired" category (tabs/filters) but is not over: the cancellation was
+    // requested, and may still be refused or completed.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "warning",
+      text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
   } else if (category === "expired") {
     activityItems.push({
       icon: AlertTriangle,
