@@ -51,6 +51,14 @@ export const RECEIPT_LINK_SKIP_MESSAGES: Record<ReceiptLinkSkipReason, string> =
     upload_failed: "영수증 이미지 저장에 실패했습니다",
 };
 
+/** An approved staged link that can no longer be delivered: expired, revoked, or no longer the client's current contract. */
+export function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
+    return new SmsTriggerDeliverySkipError(
+        "receipt_link_unusable",
+        "승인된 영수증 링크가 만료되었거나 취소되어 재시도하지 않았습니다",
+    );
+}
+
 export class ReceiptLinkSkipError extends SmsTriggerDeliverySkipError {
     constructor(readonly skipReason: ReceiptLinkSkipReason) {
         super(skipReason, RECEIPT_LINK_SKIP_MESSAGES[skipReason]);
@@ -206,7 +214,20 @@ export class ReceiptLinkIssueService {
      * locally stored file still matches the mirror's live detail version.
      */
     async assertDocumentSyncReady(
-        target: string | { branchId: string; clientId: number; eformsignDocId?: number },
+        target:
+            | string
+            | {
+                  branchId: string;
+                  clientId: number;
+                  eformsignDocId?: number;
+                  /**
+                   * AUTO delivery only (no pinned `eformsignDocId`): the document (eformsign_doc.id)
+                   * the already-approved artifact was rendered from. It must still be the client's
+                   * current contract — a fact verified about the current contract must never
+                   * authorize an artifact of an older one. Ignored for a pinned document.
+                   */
+                  expectedEformsignDocId?: number;
+              },
     ): Promise<void> {
         try {
             let documentId: string | null = typeof target === "string" ? target : null;
@@ -217,6 +238,14 @@ export class ReceiptLinkIssueService {
                         ? await this.findExplicitContractDocument(target.branchId, target.eformsignDocId, client.id)
                         : await this.findContractDocument(client)
                     : null;
+                if (
+                    doc
+                    && target.eformsignDocId === undefined
+                    && target.expectedEformsignDocId !== undefined
+                    && doc.id !== target.expectedEformsignDocId
+                ) {
+                    throw receiptLinkUnusableError();
+                }
                 documentId = doc?.documentId ?? null;
             }
             if (!documentId) throw new ReceiptLinkSkipError("no_contract_document");
@@ -225,7 +254,9 @@ export class ReceiptLinkIssueService {
             if (!file) throw new ReceiptLinkSkipError("pdf_unavailable");
             await this.assertContractSigned(documentId);
         } catch (error) {
-            if (error instanceof ReceiptLinkSkipError) throw error;
+            // SmsTriggerDeliverySkipError covers ReceiptLinkSkipError and the staged-link
+            // refusal (receipt_link_unusable); both are definite answers, not an unreadable PDF.
+            if (error instanceof SmsTriggerDeliverySkipError) throw error;
             throw new ReceiptLinkSkipError("pdf_unavailable");
         }
     }
