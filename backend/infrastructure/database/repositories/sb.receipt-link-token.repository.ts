@@ -3,6 +3,8 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
+import { selectCurrentContractDocument } from "application/utils/current-contract-document";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
     CreateReceiptLinkTokenData,
     RefreshReceiptClientFields,
@@ -80,6 +82,8 @@ function validPromotionInput(input: PromoteReceiptLinkRevisionArtifactInput): bo
         && typeof input.templateVersion === "string" && input.templateVersion.trim().length > 0
         && typeof input.mirrorGeneration === "string" && input.mirrorGeneration.trim().length > 0
         && Number.isSafeInteger(input.eformsignDocId) && input.eformsignDocId > 0
+        && Array.isArray(input.serviceRecordTemplateIds)
+        && input.serviceRecordTemplateIds.every((id) => typeof id === "string")
         && Array.isArray(input.tokenIds)
         && input.tokenIds.length > 0
         && input.tokenIds.every((tokenId) => validUuid(tokenId))
@@ -469,8 +473,11 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             `);
             // Keep the common owner lock order: client -> case -> revision ->
             // document state -> contract document -> receipt tokens.
-            const clients = await tx.$queryRaw<Array<{ eDocId: string | null }>>(Prisma.sql`
-                SELECT e_doc_id AS "eDocId"
+            // The client row is locked for ownership only. `client.eDocId` is deliberately not
+            // compared with the target: it can lag behind a re-issued contract, and the
+            // currency check below uses the shared "current contract" rule instead.
+            const clients = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+                SELECT id
                 FROM client
                 WHERE id = ${input.clientId}
                   AND branch_id = ${input.branchId}::uuid
@@ -478,9 +485,6 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             `);
             const client = clients[0];
             if (!client) return { disposition: "not_found", tokenIds: [], stateVersion: null };
-            if (client.eDocId !== input.targetDocumentId) {
-                return { disposition: "stale", tokenIds: [], stateVersion: null };
-            }
 
             const cases = await tx.$queryRaw<Array<{ currentRevisionId: string | null }>>(Prisma.sql`
                 SELECT current_revision_id AS "currentRevisionId"
@@ -564,6 +568,44 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             `);
             const targetDocument = targetDocuments[0];
             if (!targetDocument || targetDocument.documentId !== input.targetDocumentId) {
+                return { disposition: "stale", tokenIds: [], stateVersion: state.version };
+            }
+
+            // Fail closed unless the target document is STILL the client's current contract
+            // (the rule the client summary and the automatic receipt path use), instead of
+            // comparing it with the `client.eDocId` pointer, which can lag a re-issued contract.
+            // This runs in the same transaction, after the target document row is locked, so a
+            // concurrent writer to that document cannot slip in between check and write.
+            // Candidates are ranked by the database (createdDate desc, id desc) exactly as
+            // `findContractCandidatesByClientId` does and are never re-sorted in JS. The frozen
+            // tokens keep the document they are attached to (the stable link); only the source of
+            // the refreshed image is checked.
+            const candidates = await tx.$queryRaw<Array<{
+                id: number;
+                documentId: string;
+                documentKind: string | null;
+                serviceRecordCaseId: string | null;
+                templateId: string | null;
+            }>>(Prisma.sql`
+                SELECT
+                    id,
+                    document_id AS "documentId",
+                    document_kind AS "documentKind",
+                    service_record_case_id AS "serviceRecordCaseId",
+                    template_id AS "templateId"
+                FROM eformsign_doc
+                WHERE client_id = ${input.clientId}
+                  AND service_record_case_id IS NULL
+                  AND (document_kind = ${EFORMSIGN_DOCUMENT_KIND.CONTRACT} OR document_kind IS NULL)
+                ORDER BY created_date DESC, id DESC
+            `);
+            const current = selectCurrentContractDocument(
+                candidates,
+                new Set(input.serviceRecordTemplateIds),
+            );
+            if (!current
+                || current.id !== targetDocument.id
+                || current.documentId !== input.targetDocumentId) {
                 return { disposition: "stale", tokenIds: [], stateVersion: state.version };
             }
 

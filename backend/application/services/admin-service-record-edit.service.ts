@@ -1,10 +1,12 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import {
     validateServiceRecordAnswers,
     validateServiceRecordEditText,
@@ -493,6 +495,9 @@ export class AdminServiceRecordEditService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly repository: IServiceRecordEditRepository,
         private readonly holidayCalendar: HolidayCalendarService,
+        // Optional so positional construction in specs keeps working; without it the template
+        // ids fall back to process.env exactly like `configuredServiceRecordTemplateIds()`.
+        @Optional() private readonly configService?: ConfigService,
     ) {}
 
     async startDraft(
@@ -692,6 +697,7 @@ export class AdminServiceRecordEditService {
                 idempotencyKey: dto.idempotencyKey,
                 requestFingerprint,
                 actorUserId,
+                serviceRecordTemplateIds: [...configuredServiceRecordTemplateIds(this.configService)],
                 prepare: ({ draft, source, revisionFactsSource }) => this.buildConfirmPlan({
                     draft,
                     source,
@@ -985,6 +991,30 @@ export class AdminServiceRecordEditService {
                 targetPeriod,
             })
             : { facts: null, receiptInput: null, missingFacts: [] };
+        // The receipt refresh reads its facts from the receipt document (the tokens' own document,
+        // verified as the client's current contract), which can differ from the
+        // `client.eDocId`-pinned contract document above while that pointer lags a re-issued
+        // contract. Contract-revision planning keeps using `document` untouched: it WRITES to
+        // eformsign, so its target is deliberately not retargeted here. When the receipt document
+        // is the same document (the common case) the single capture above already answers both.
+        const receiptDocument = revisionFactsSource?.receiptDocument;
+        const receiptFactsResult: ServiceRecordRevisionFactsResult = periodChanged
+            && revisionFactsSource
+            && receiptDocument !== undefined
+            && receiptDocument !== revisionFactsSource.document
+            ? captureServiceRecordRevisionFacts({
+                document: receiptDocument,
+                receiptTokens: revisionFactsSource.receiptTokens,
+                targetPeriod: {
+                    ...targetPeriod,
+                    fields: buildServiceRecordRevisionTargetFieldMap(
+                        receiptDocument,
+                        provisional.after.startDate,
+                        provisional.after.endDate,
+                    ).fields ?? {},
+                },
+            })
+            : factsResult;
         const builtContractSnapshot = factsResult.facts
             ? buildServiceRecordContractRevisionSnapshot(factsResult.facts)
             : { snapshot: null, reason: null };
@@ -1050,7 +1080,7 @@ export class AdminServiceRecordEditService {
         // unverified receipt scope remains unknown when the period changes.
         const receiptRequiresSync = periodChanged
             && (!receiptScopeKnown || receiptTokenIds.length > 0);
-        const receiptInput = factsResult.receiptInput;
+        const receiptInput = receiptFactsResult.receiptInput;
         const receiptOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = receiptRequiresSync
             ? receiptInput ? "pending" : "manual_review"
             : "not_required";
