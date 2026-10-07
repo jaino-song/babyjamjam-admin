@@ -119,7 +119,15 @@ export class UpdateEformsignDocStatusUsecase {
             ...(params.stepType === undefined ? { updateStepType: false } : {}),
             ...(params.stepIndex === undefined ? { updateStepIndex: false } : {}),
             ...(params.stepName === undefined ? { updateStepName: false } : {}),
-            ...(params.actionOnly ? { updateStatusDetail: false, updateExpired: false } : {}),
+            // The terminal fence above ran against `existing`, which another webhook may have
+            // moved to a terminal status since; pin the UPDATE to the status that was read.
+            ...(params.actionOnly
+                ? {
+                    updateStatusDetail: false,
+                    updateExpired: false,
+                    expectedStatusType: existing.statusType,
+                }
+                : {}),
             updateStepRecipient: false,
             updateDocumentNumber: false,
             updateExpiredDate: false,

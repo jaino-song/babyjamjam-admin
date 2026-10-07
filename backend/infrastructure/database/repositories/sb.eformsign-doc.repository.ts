@@ -1074,6 +1074,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             permanentPurgeRequestedAt: null,
             statusType: { notIn: DELETED_EFORMSIGN_STATUS_TYPES },
             ...(onlyIfSourceNewer ? { updatedDate: { lt: doc.updatedDate } } : {}),
+            ...(options?.expectedStatusType === undefined
+                ? {}
+                : { AND: [{ statusType: options.expectedStatusType }] }),
         };
         let result: Prisma.BatchPayload;
 
@@ -1094,7 +1097,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         }
 
         if (result.count === 0) {
-            if (onlyIfSourceNewer) {
+            if (onlyIfSourceNewer || options?.expectedStatusType !== undefined) {
                 const current = await this.findFirstDomain({ id: doc.id, branchId: branchid });
                 if (current) {
                     return { document: current, applied: false };

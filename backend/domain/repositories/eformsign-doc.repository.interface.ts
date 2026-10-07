@@ -142,6 +142,14 @@ export interface EformsignDocStepWriteOptions {
     updateExpiredDate?: boolean;
     updateExpired?: boolean;
     /**
+     * Compare-and-set on the status the caller read: the UPDATE matches only while the row
+     * still holds this `statusType`. A caller whose terminal fence ran against an earlier
+     * read (an action event, which writes the mirror's code but not its detail or expiry)
+     * would otherwise land on a row another writer has since moved to a terminal status.
+     * When it no longer matches nothing is written and the result is `applied: false`.
+     */
+    expectedStatusType?: string;
+    /**
      * The list endpoint carries no status detail, so a caller working from it only has a
      * value derived from the step name. Set false there: a new row still needs something,
      * but overwriting a stored detail — "만료", "거부" — with the derived one loses it.

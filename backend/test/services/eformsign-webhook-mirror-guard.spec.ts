@@ -394,6 +394,61 @@ describe.each(BOTH_PATHS)(
     },
 );
 
+describe("a branch-owned action is compare-and-set on the status it read", () => {
+    const action = () =>
+        documentPayload("doc_request_participant", { action: "doc_open_participant" });
+
+    it("does not write the mirror's 060 over a 080 another webhook stored after the read", async () => {
+        // Read as 060; before the UPDATE another webhook stores 080/만료/expired=true at T-60s.
+        // The timestamp predicate alone lets the action (and its mirror at T) through.
+        const { state, prisma } = createTable(
+            freshRow(BRANCH, { updatedDate: new Date(T - 3_600_000) }),
+            (row) => ({
+                ...row,
+                statusType: "080",
+                statusDetail: "만료",
+                expired: true,
+                updatedDate: new Date(T - 60_000),
+            }),
+        );
+        const { service } = createService(prisma);
+
+        await service.processWebhook(action(), mirror("060"));
+
+        expect(state.row.statusType).toBe("080");
+        expect(state.row.statusDetail).toBe("만료");
+        expect(state.row.expired).toBe(true);
+        expect(state.row.updatedDate).toEqual(new Date(T - 60_000));
+    });
+
+    it("CONTROL: with the status unchanged since the read the action still lands", async () => {
+        const { state, prisma } = createTable(
+            freshRow(BRANCH, { updatedDate: new Date(T - 3_600_000) }),
+            (row) => ({ ...row, stepName: "someone else touched a column", updatedDate: new Date(T - 60_000) }),
+        );
+        const { service } = createService(prisma);
+
+        await service.processWebhook(action(), mirror("060"));
+
+        expect(state.row.statusType).toBe("060");
+        expect(state.row.updatedDate).toEqual(new Date(T));
+        expect(state.updateData).toHaveLength(1);
+    });
+
+    it("CONTROL: a status webhook (not an action) is not pinned to the read status", async () => {
+        const { state, prisma } = createTable(
+            freshRow(BRANCH, { updatedDate: new Date(T - 3_600_000) }),
+            (row) => ({ ...row, statusType: "070", updatedDate: new Date(T - 60_000) }),
+        );
+        const { service } = createService(prisma);
+
+        await service.processWebhook(documentPayload("doc_request_participant"), mirror("060"));
+
+        expect(state.row.statusType).toBe("060");
+        expect(state.row.updatedDate).toEqual(new Date(T));
+    });
+});
+
 describe("a 062 acceptance is never written back as 060", () => {
     it.each(BOTH_PATHS)(
         "%s: doc_accept_participant at the mirror's timestamp leaves a mirrored 062",
