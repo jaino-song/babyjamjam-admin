@@ -10,9 +10,12 @@ describe("legacyClientBadges contract status", () => {
         const badges = legacyClientBadges({ serviceStatus: "active", documentStatus: "revoke_requested" });
 
         expect(badges.some((badge) => badge.key === "contract_required")).toBe(false);
-        expect(badges[0]).toMatchObject({ key: "service_status", label: "철회 요청됨", tone: "warning" });
-        // The regular service-status badge is still present behind it.
-        expect(badges.filter((badge) => badge.key === "service_status")).toHaveLength(2);
+        // Its own key, first, warning tone; the real service-status badge stays, once.
+        expect(badges.map((badge) => [badge.key, badge.label, badge.tone])).toEqual([
+            ["contract_status", "철회 요청됨", "warning"],
+            ["service_status", "진행중", "primary"],
+        ]);
+        expect(new Set(badges.map((badge) => badge.key)).size).toBe(badges.length);
     });
 
     it("does not add the warning badge for a completed contract or a non-active service", () => {

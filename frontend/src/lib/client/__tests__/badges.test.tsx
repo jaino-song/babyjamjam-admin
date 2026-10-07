@@ -113,7 +113,18 @@ describe("getClientBadges legacy fallback for a revoke-requested contract (040/0
     const badges = getClientBadges(legacyClient("revoke_requested") as never);
 
     expect(badges.some((badge) => badge.key === "contract_required")).toBe(false);
-    expect(badges[0]).toEqual(expect.objectContaining({ label: "철회 요청됨", tone: "warning" }));
+    expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_status", label: "철회 요청됨", tone: "warning" }));
+  });
+
+  it("keeps the real service-status badge behind it with unique React keys, so the hidden count is unchanged", () => {
+    const client = { ...legacyClient("revoke_requested"), breastPump: true };
+    const badges = getClientBadges(client as never);
+    const plain = getClientBadges({ ...client, documentStatus: "completed" } as never);
+
+    expect(badges.map((badge) => badge.label)).toEqual(["철회 요청됨", "진행중", "유축기 대여"]);
+    expect(new Set(badges.map((badge) => badge.key)).size).toBe(badges.length);
+    // The list shows the first badge and "+N" for the rest.
+    expect(badges.length - 1).toBe(plain.length);
   });
 
   it("keeps 계약서 필요 for a revoked contract", () => {

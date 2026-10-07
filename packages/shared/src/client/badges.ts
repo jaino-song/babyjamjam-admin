@@ -32,6 +32,7 @@ export interface LegacyClientBadge {
 
 const LEGACY_CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
     contract_required: 10,
+    contract_status: 15,
     service_status: 20,
     breast_pump: 30,
     care_center: 40,
@@ -75,7 +76,8 @@ export function legacyClientBadges(client: LegacyClientBadgeInput): LegacyClient
 
     // 철회 요청됨 (040/045): the contract is still ACTIVE — cancellation is only requested and
     // may be refused — so it never reads "계약서 필요" (no 발송 필요), and it must not be counted
-    // by the contract_required filters. It surfaces as the warning-toned status instead.
+    // by the contract_required filters. It surfaces as its own warning-toned contract_status badge
+    // beside (not instead of) the real service-status badge.
     const revokeRequested = client.documentStatus === "revoke_requested";
 
     if (client.serviceStatus === "active" && client.documentStatus !== "completed" && !revokeRequested) {
@@ -83,7 +85,7 @@ export function legacyClientBadges(client: LegacyClientBadgeInput): LegacyClient
     }
 
     if (client.serviceStatus === "active" && revokeRequested) {
-        badges.push(legacyBadge("service_status", "review", "철회 요청됨"));
+        badges.push(legacyBadge("contract_status", "review"));
     }
 
     badges.push(legacyBadge(

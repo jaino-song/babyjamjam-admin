@@ -72,6 +72,8 @@ const AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES = new Set([
     "022",
     "030",
     "032",
+    // 041 (doc_refuse_revoke): the revoke was refused, the document continues like 060.
+    "041",
     "043",
     "050",
     "060",
