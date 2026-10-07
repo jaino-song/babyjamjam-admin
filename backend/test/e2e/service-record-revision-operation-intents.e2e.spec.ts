@@ -142,34 +142,70 @@ describeE2E("revision operation intent readiness (disposable PostgreSQL)", () =>
             .toBe(second.revisionId);
     });
 
-    const refusingStates: Array<{ name: string; data: Record<string, unknown>; expected: Record<string, unknown> }> = [
-        { name: "an in-flight operation", data: { status: "processing", step: "processing", lastErrorCode: null },
-            expected: { status: "processing", lastErrorCode: null } },
-        { name: "a manual_review operation with a provider-state reason",
-            data: { status: "manual_review", step: "manual_review", lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED" },
+    /**
+     * Real-PostgreSQL proof of the confirm guard selector.  The born-stuck
+     * contract state is forced into each shape on the CURRENT revision, then
+     * the actual confirm path decides.  An inverted or NULL-unsafe predicate
+     * flips at least one allowed and one refused case.
+     */
+    const guardCases: Array<{
+        name: string;
+        operation: "contract_period" | "receipt_refresh";
+        data: Record<string, unknown>;
+        outcome: "allowed" | "refused";
+        expected?: Record<string, unknown>;
+    }> = [
+        { name: "contract born-stuck code without a target document", operation: "contract_period", outcome: "allowed",
+            data: { status: "manual_review", step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE", targetDocumentId: null } },
+        { name: "receipt born-stuck code without a target document", operation: "receipt_refresh", outcome: "allowed",
+            data: { status: "manual_review", step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE", targetDocumentId: null } },
+        { name: "manual_review with a NULL error code", operation: "contract_period", outcome: "refused",
+            data: { status: "manual_review", step: "manual_review", lastErrorCode: null, targetDocumentId: null },
+            expected: { status: "manual_review", lastErrorCode: null } },
+        { name: "manual_review with a provider-state reason", operation: "contract_period", outcome: "refused",
+            data: { status: "manual_review", step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED", targetDocumentId: null },
             expected: { status: "manual_review", lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED" } },
-        { name: "a facts-unavailable operation that already has a target document",
-            data: { targetDocumentId: `synthetic-target:${randomUUID()}` },
+        { name: "a processing operation", operation: "contract_period", outcome: "refused",
+            data: { status: "processing", step: "processing", lastErrorCode: null, targetDocumentId: null },
+            expected: { status: "processing", lastErrorCode: null } },
+        { name: "a contract born-stuck code WITH a target document", operation: "contract_period", outcome: "refused",
+            data: { status: "manual_review", step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE", targetDocumentId: "synthetic-target-document" },
             expected: { status: "manual_review", lastErrorCode: "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE" } },
+        { name: "a receipt born-stuck code WITH a target document", operation: "receipt_refresh", outcome: "refused",
+            data: { status: "manual_review", step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE", targetDocumentId: "synthetic-target-document" },
+            expected: { status: "manual_review", lastErrorCode: "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE" } },
     ];
 
-    it.each(refusingStates)("allows saved drafts but refuses the next confirmation while $name blocks", async ({ data, expected }) => {
+    it.each(guardCases)("guard selector (real PostgreSQL): $outcome for $name", async ({ operation, data, outcome, expected }) => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         await linkIncompleteContract(fixture);
         const first = await confirm(fixture, true);
-        const operation = (await states(first.revisionId)).find((row) => row.operation === "contract_period");
-        if (!operation) throw new Error("Missing contract operation");
-        await prisma.service_record_revision_document_state.update({ where: { id: operation.id }, data });
+        const target = (await states(first.revisionId)).find((row) => row.operation === operation);
+        if (!target) throw new Error(`Missing ${operation} state`);
+        await prisma.service_record_revision_document_state.update({ where: { id: target.id }, data });
         const next = await prepare(fixture, false);
         expect(next.draft.draftVersion).toBeGreaterThan(1);
-        await expect(editor.confirmDraft(fixture.branch.id, next.draft.id, fixture.actorUserId, {
+        const attempt = editor.confirmDraft(fixture.branch.id, next.draft.id, fixture.actorUserId, {
             expectedDraftVersion: next.draft.draftVersion, previewId: next.preview.previewId, idempotencyKey: randomUUID(),
-        })).rejects.toMatchObject({ response: {
+        });
+        const currentRevisionId = async () =>
+            (await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } })).currentRevisionId;
+        if (outcome === "allowed") {
+            const second = await attempt;
+            expect(second.revisionId).not.toBe(first.revisionId);
+            expect(await currentRevisionId()).toBe(second.revisionId);
+            return;
+        }
+        await expect(attempt).rejects.toMatchObject({ response: {
             code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
-            blockingOperation: { operation: "contract_period", ...expected },
+            blockingOperation: { operation, ...expected },
         } });
-        expect((await prisma.service_record_case.findUniqueOrThrow({ where: { id: fixture.record.id } })).currentRevisionId)
-            .toBe(first.revisionId);
+        expect(await currentRevisionId()).toBe(first.revisionId);
         expect(await prisma.service_record_edit_draft.findUnique({ where: { id: next.draft.id } })).not.toBeNull();
     });
 });

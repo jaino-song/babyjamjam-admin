@@ -1124,7 +1124,7 @@ describe("assertNoBlockingRevisionDocumentStates", () => {
         expect(normalized).toContain("state.status IN ('not_required', 'completed')");
         expect(normalized).toContain("state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion'");
         expect(normalized).toMatch(
-            /state\.status = 'manual_review' AND state\.last_error_code IN \(.*SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE.*SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE.*\) AND state\.target_document_id IS NULL/,
+            /state\.status = 'manual_review' AND COALESCE\(state\.last_error_code IN \(.*SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE.*SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE.*\), FALSE\) AND state\.target_document_id IS NULL/,
         );
         // No other status or error code is waved through.
         expect(normalized).not.toContain("'processing'");

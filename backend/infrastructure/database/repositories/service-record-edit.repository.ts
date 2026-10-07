@@ -1556,7 +1556,7 @@ export async function assertNoBlockingRevisionDocumentStates(
                 OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
                 OR (
                     state.status = 'manual_review'
-                    AND state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])})
+                    AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
                     AND state.target_document_id IS NULL
                 )
           )
