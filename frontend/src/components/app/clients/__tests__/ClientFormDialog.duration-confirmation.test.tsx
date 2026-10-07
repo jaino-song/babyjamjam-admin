@@ -151,9 +151,8 @@ describe("client duration confirmation", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
-    expect(mockUpdateClient).toHaveBeenCalledWith({ id: 2, dto: expect.objectContaining({
-      duration: 15, startDate: "2026-08-26", endDate: "2026-09-14", allowBusinessDayMismatch: true,
-    }) });
+    // The period was not edited, so the confirmed save sends no period fields (and no end-date guard).
+    expect(mockUpdateClient).toHaveBeenCalledWith({ id: 2, dto: {} });
     await act(async () => { finish({ id: 2 }); });
   });
 });
