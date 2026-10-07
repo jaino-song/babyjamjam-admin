@@ -628,6 +628,121 @@ describe("AdminServiceRecordService", () => {
         });
     });
 
+    describe("link status follows the newest attempt", () => {
+        const at = (iso: string) => new Date(`2026-07-0${iso}:00.000Z`);
+        const job = (id: string, status: string, updatedAt: Date, extra: Record<string, unknown> = {}) => ({
+            id,
+            branchId: "branch-1",
+            employeeScheduleId: 1,
+            ruleId: SERVICE_RECORD_LINK_RULE_ID,
+            status,
+            scheduledFor: updatedAt,
+            createdAt: updatedAt,
+            updatedAt,
+            ...extra,
+        });
+        const log = (id: number, triggerJobId: string, status: string, when: Date) => ({
+            id,
+            branchId: "branch-1",
+            templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            triggerJobId,
+            clientId: 100,
+            status,
+            lastAttemptAt: when,
+            createdAt: when,
+        });
+        const linkFor = async (jobs: unknown[], logs: unknown[]) => {
+            const prisma = createPrisma();
+            const service = new AdminServiceRecordService(
+                prisma as unknown as PrismaService,
+                createLinkService() as unknown as ServiceRecordLinkService,
+                createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
+            );
+            prisma.employee_schedule.findMany.mockResolvedValue([createSchedule(1, "2026-07-04T00:00:00.000Z")]);
+            // Deliberately not sorted newest-first: derivation must not depend on query order.
+            prisma.message_trigger_job.findMany.mockResolvedValue(jobs);
+            prisma.message_log.findMany.mockResolvedValue(logs);
+            const overview = await service.getClientOverview("branch-1", 100);
+            return overview.assignments[0]!.link;
+        };
+
+        it("shows failed when a newer resend failed after an older success", async () => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", "failed", at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00")), log(2, "job-new", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("failed");
+            expect(link.sentCount).toBe(1);
+            expect(link.lastSentAt).toEqual(at("1T06:00"));
+        });
+
+        it("shows failed for a job that failed during preparation and wrote no log", async () => {
+            const link = await linkFor([job("job-1", "failed", at("3T06:00"))], []);
+            expect(link.status).toBe("failed");
+        });
+
+        it("shows failed for a preparation failure that is newer than an old success", async () => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", "failed", at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(link.status).toBe("failed");
+            expect(link.sentCount).toBe(1);
+        });
+
+        it.each(["processing", "dispatching"])("shows sending while the newest job is %s", async (status) => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", status, at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(link.status).toBe("sending");
+            expect(link.scheduledFor).toBeNull();
+            expect(link.sentCount).toBe(1);
+        });
+
+        it("keeps a retried job scheduled even though its earlier attempt logged a failure", async () => {
+            const link = await linkFor(
+                [
+                    job("job-old", "sent", at("1T06:00")),
+                    job("job-retry", "pending", at("3T07:00"), { scheduledFor: at("9T06:00"), createdAt: at("2T06:00") }),
+                ],
+                [log(1, "job-old", "sent", at("1T06:00")), log(2, "job-retry", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("scheduled");
+            expect(link.scheduledFor).toEqual(at("9T06:00"));
+        });
+
+        it("keeps a retried job sending even though its earlier attempt logged a failure", async () => {
+            const link = await linkFor(
+                [job("job-retry", "dispatching", at("3T07:00"))],
+                [log(2, "job-retry", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sending");
+        });
+
+        it("shows sent when the newest attempt succeeded after an older failure", async () => {
+            const link = await linkFor(
+                [job("job-old", "failed", at("1T06:00")), job("job-new", "sent", at("3T06:00"))],
+                [log(1, "job-old", "failed", at("1T06:00")), log(2, "job-new", "sent", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sent");
+            expect(link.lastSentAt).toEqual(at("3T06:00"));
+        });
+
+        it("shows canceled only when nothing was ever sent", async () => {
+            expect((await linkFor([job("job-1", "canceled", at("3T06:00"))], [])).status).toBe("canceled");
+            const withHistory = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", "canceled", at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(withHistory.status).toBe("sent");
+        });
+
+        it("shows none when there is no job and no log", async () => {
+            expect((await linkFor([], [])).status).toBe("none");
+        });
+    });
+
     it("attributes phone-missing failure logs only to their own assignment", async () => {
         const prisma = createPrisma();
         const service = new AdminServiceRecordService(

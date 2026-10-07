@@ -64,6 +64,13 @@ type CaseForOverview = Prisma.service_record_caseGetPayload<{
 
 type ServiceRecordLinkJob = message_trigger_job;
 type ServiceRecordLinkLog = message_log;
+type LinkAttempt =
+    | { kind: "job"; time: number; job: ServiceRecordLinkJob }
+    | { kind: "log"; time: number; log: ServiceRecordLinkLog };
+
+function isInFlightLinkJob(job: ServiceRecordLinkJob): boolean {
+    return job.status === "pending" || job.status === "processing" || job.status === "dispatching";
+}
 type SignatureDocRow = Prisma.eformsign_docGetPayload<{
     select: {
         employeeScheduleId: true;
@@ -484,6 +491,16 @@ export class AdminServiceRecordService {
         };
     }
 
+    /**
+     * The status follows the NEWEST attempt, not the whole history: a failed
+     * resend after an old success is a failure, a job that failed while being
+     * prepared (no log row) is a failure, and a job the scheduler is currently
+     * delivering is "sending". `sentCount`/`lastSentAt` stay all-time history.
+     *
+     * Attempt time is `updatedAt` for a job (it moves on every claim, retry
+     * and terminal transition) and `lastAttemptAt ?? createdAt` for a log.
+     * Rows are compared by that time, never by query order.
+     */
     private deriveLink(
         jobs: ServiceRecordLinkJob[],
         logs: ServiceRecordLinkLog[],
@@ -492,22 +509,59 @@ export class AdminServiceRecordService {
         const sentLogs = logs
             .filter((log) => log.status === "sent")
             .sort((left, right) => this.logActivityTime(right) - this.logActivityTime(left));
-        const pendingJob = jobs.find((job) => job.status === "pending") ?? null;
-        const newestLog = logs[0] ?? null;
-        const newestJob = jobs[0] ?? null;
         const sentCount = sentLogs.length;
+
+        // A log never outranks its own job while that job is still in flight:
+        // a retried job is pending/processing/dispatching even though its
+        // earlier attempt logged a failure.
+        const inFlightJobIds = new Set(
+            jobs.filter((job) => isInFlightLinkJob(job)).map((job) => job.id),
+        );
+        const attempts: LinkAttempt[] = [
+            ...jobs
+                // An unsent job that was canceled is not a delivery attempt;
+                // it only matters when nothing was ever sent.
+                .filter((job) => job.status !== "canceled" || sentCount === 0)
+                .map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...logs
+                .filter((log) => (
+                    (log.status === "sent" || log.status === "failed")
+                    && !(log.triggerJobId !== null && inFlightJobIds.has(log.triggerJobId))
+                ))
+                .map((log): LinkAttempt => ({ kind: "log", time: this.logActivityTime(log), log })),
+        ];
+        // Equal timestamps: prefer the job (it carries the in-flight state).
+        attempts.sort((left, right) => (
+            right.time - left.time || Number(right.kind === "job") - Number(left.kind === "job")
+        ));
+        const newest = attempts[0] ?? null;
+
         let status: AdminServiceRecordLinkStatus = "none";
         let scheduledFor: Date | null = null;
-
-        if (sentCount > 0) {
-            status = "sent";
-        } else if (pendingJob) {
-            status = "scheduled";
-            scheduledFor = pendingJob.scheduledFor;
-        } else if (newestLog?.status === "failed") {
-            status = "failed";
-        } else if (newestJob?.status === "canceled") {
-            status = "canceled";
+        if (newest?.kind === "log") {
+            status = newest.log.status === "sent" ? "sent" : "failed";
+        } else if (newest?.kind === "job") {
+            switch (newest.job.status) {
+                case "pending":
+                    status = "scheduled";
+                    scheduledFor = newest.job.scheduledFor;
+                    break;
+                case "processing":
+                case "dispatching":
+                    status = "sending";
+                    break;
+                case "sent":
+                    status = "sent";
+                    break;
+                case "failed":
+                    status = "failed";
+                    break;
+                case "canceled":
+                    status = "canceled";
+                    break;
+                default:
+                    break;
+            }
         }
 
         return {
@@ -588,6 +642,10 @@ export class AdminServiceRecordService {
 
     private logActivityTime(log: ServiceRecordLinkLog): number {
         return (log.lastAttemptAt ?? log.createdAt).getTime();
+    }
+
+    private jobActivityTime(job: ServiceRecordLinkJob): number {
+        return (job.updatedAt ?? job.createdAt).getTime();
     }
 
     private async findServiceRecordSignatureDocs(

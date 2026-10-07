@@ -495,35 +495,89 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
-    it("shows a failure toast when manual sending resolves without a sent job", async () => {
-        mutateAsync.mockResolvedValue({
-            ok: false,
-            jobId: "job-manual",
-            status: "pending",
-            scheduledFor: "2026-07-01T15:00:00+09:00",
+    describe("manual send result", () => {
+        const renderAndSend = async (result: { ok: boolean; status: string }) => {
+            mutateAsync.mockResolvedValue({
+                jobId: "job-manual",
+                scheduledFor: "2026-07-01T15:00:00+09:00",
+                ...result,
+            });
+
+            render(
+                <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            fireEvent.click(screen.getByRole("button", { name: "링크 수동 전송" }));
+            await waitFor(() => expect(toast).toHaveBeenCalled());
+        };
+
+        it.each(["failed", "canceled"])("shows the failure toast when the job ended %s", async (status) => {
+            await renderAndSend({ ok: false, status });
+
+            expect(toast).toHaveBeenCalledWith({
+                variant: "destructive",
+                description: "제공기록지 링크 발송에 실패했어요",
+            });
+            expect(toast).not.toHaveBeenCalledWith({
+                variant: "success",
+                description: "제공기록지 링크를 보냈어요",
+            });
         });
 
+        it.each(["processing", "dispatching"])(
+            "shows a neutral in-progress toast when the scheduler already claimed the job (%s)",
+            async (status) => {
+                await renderAndSend({ ok: false, status });
+
+                expect(toast).toHaveBeenCalledTimes(1);
+                expect(toast).toHaveBeenCalledWith({ description: "발송 처리 중이에요" });
+            },
+        );
+
+        it("shows a neutral deferred toast when the job went back to pending", async () => {
+            await renderAndSend({ ok: false, status: "pending" });
+
+            expect(toast).toHaveBeenCalledTimes(1);
+            expect(toast).toHaveBeenCalledWith({ description: "잠시 후 다시 발송돼요" });
+        });
+
+        it("shows the success toast when the job was sent", async () => {
+            await renderAndSend({ ok: true, status: "sent" });
+
+            expect(toast).toHaveBeenCalledWith({
+                variant: "success",
+                description: "제공기록지 링크를 보냈어요",
+            });
+        });
+
+        it("decides by status, not by the ok flag", async () => {
+            await renderAndSend({ ok: false, status: "sent" });
+
+            expect(toast).toHaveBeenCalledWith({
+                variant: "success",
+                description: "제공기록지 링크를 보냈어요",
+            });
+        });
+    });
+
+    it("labels an in-flight link as sending and keeps it on the first-send layout", () => {
         render(
             <ClientServiceRecordsTab data-component={TEST_COMPONENT}
-                overview={{ assignments: [createAssignment(1, "none")] }}
+                overview={{ assignments: [createAssignment(1, "sending")] }}
                 clientId={100}
                 isLoading={false}
                 isError={false}
             />,
         );
 
-        fireEvent.click(screen.getByRole("button", { name: "링크 수동 전송" }));
-
-        await waitFor(() => {
-            expect(toast).toHaveBeenCalledWith({
-                variant: "destructive",
-                description: "제공기록지 링크 발송에 실패했어요",
-            });
-        });
-        expect(toast).not.toHaveBeenCalledWith({
-            variant: "success",
-            description: "제공기록지 링크를 보냈어요",
-        });
+        expect(screen.getByText("발송 중")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "메시지 재전송" })).not.toBeInTheDocument();
     });
 
     it("presends the manual-send layout while sending, then switches to resend after refresh", async () => {

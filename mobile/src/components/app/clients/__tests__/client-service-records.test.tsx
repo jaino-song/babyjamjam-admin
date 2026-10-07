@@ -5,6 +5,7 @@ import { buildCalendarFromHolidayYears } from "@babyjamjam/shared/utils/holiday-
 
 import { ClientServiceRecords } from "../client-service-records";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
+import { toast } from "@/hooks/use-toast";
 import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import type { Client } from "@/lib/client/types";
 import type {
@@ -330,6 +331,67 @@ describe("ClientServiceRecords", () => {
                 clientId: 100,
             });
         });
+    });
+
+    describe("send-now result", () => {
+        const sendFirstLink = async (result: { ok: boolean; status: string }) => {
+            const user = userEvent.setup();
+            mockMutateAsync.mockResolvedValue({
+                jobId: "job-manual",
+                scheduledFor: TEST_SCHEDULED_FOR,
+                ...result,
+            });
+            renderComponent({ assignments: [createAssignment(1, "none")] });
+
+            await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+            await waitFor(() => expect(toast).toHaveBeenCalled());
+        };
+
+        it.each(["failed", "canceled"])("shows the failure toast, not the success one, when the job ended %s", async (status) => {
+            await sendFirstLink({ ok: false, status });
+
+            expect(toast).toHaveBeenCalledTimes(1);
+            expect(toast).toHaveBeenCalledWith({
+                variant: "destructive",
+                description: "제공기록지 링크 발송에 실패했어요",
+            });
+            expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ description: "제공기록지 링크를 보냈어요" }));
+        });
+
+        it.each(["processing", "dispatching"])("shows a neutral in-progress toast while the job is %s", async (status) => {
+            await sendFirstLink({ ok: false, status });
+
+            expect(toast).toHaveBeenCalledTimes(1);
+            expect(toast).toHaveBeenCalledWith({ description: "발송 처리 중이에요" });
+        });
+
+        it("shows a neutral deferred toast when the job went back to pending", async () => {
+            await sendFirstLink({ ok: false, status: "pending" });
+
+            expect(toast).toHaveBeenCalledTimes(1);
+            expect(toast).toHaveBeenCalledWith({ description: "잠시 후 다시 발송돼요" });
+        });
+
+        it("shows the success toast only when the job was sent", async () => {
+            await sendFirstLink({ ok: true, status: "sent" });
+
+            expect(toast).toHaveBeenCalledTimes(1);
+            expect(toast).toHaveBeenCalledWith({
+                variant: "success",
+                description: "제공기록지 링크를 보냈어요",
+            });
+        });
+    });
+
+    it("labels an in-flight link as sending without switching to the resend flow", async () => {
+        const user = userEvent.setup();
+        renderComponent({ assignments: [createAssignment(1, "sending")] });
+
+        expect(screen.getByText("발송 중")).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+
+        expect(screen.queryByRole("dialog", { name: "제공기록지 메시지를 재전송하시겠습니까?" })).not.toBeInTheDocument();
     });
 
     it("opens a submitted session detail from the session list", async () => {

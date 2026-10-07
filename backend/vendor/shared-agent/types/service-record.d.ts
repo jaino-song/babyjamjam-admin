@@ -1,5 +1,5 @@
 import type { MessageTriggerJobStatus } from "./message";
-export type ServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
+export type ServiceRecordLinkStatus = "none" | "scheduled" | "sending" | "sent" | "failed" | "canceled";
 export type ServiceRecordTokenState = "active" | "expired" | "revoked" | null;
 export interface ServiceRecordToken {
     issuedAt: string;
@@ -358,7 +358,8 @@ export interface ServiceRecordOverview {
 export interface SendServiceRecordLinkResponse {
     ok: boolean;
     jobId: string;
-    status: MessageTriggerJobStatus;
+    /** `dispatching` is set by the backend while a claimed job is delivering; the shared job-status union predates it. */
+    status: MessageTriggerJobStatus | "dispatching";
     scheduledFor: string;
 }
 export interface PrepareServiceRecordLinkResponse {
