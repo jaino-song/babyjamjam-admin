@@ -1089,6 +1089,11 @@ export default function ClientsPage() {
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"
                             onScheduleChangeDecided={clearSelectedClientScheduleChange}
+                            onCreateContract={
+                                canCreateNewContractDocument(activeSelectedClient)
+                                    ? () => setMaternityContractClient(activeSelectedClient)
+                                    : undefined
+                            }
                             trailing={
                                 // Avoid overlapping Radix modal layers when an action opens a dialog.
                                 <DropdownMenu modal={false}>

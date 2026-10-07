@@ -268,7 +268,13 @@ function ClientServiceRecordsTabContent({
                             data-component={`${dataComponent}_overview-grid`}
                             className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
                         >
-                            <RecordStatusCard record={record} isRefreshing={isTextRefreshing} />
+                            <RecordStatusCard
+                                record={record}
+                                isRefreshing={isTextRefreshing}
+                                viewHref={layout === "desktop" && clientId != null
+                                    ? `/service-record-admin/${encodeURIComponent(String(clientId))}`
+                                    : null}
+                            />
                             {layout === "desktop" && (<ServiceRecordHeaderCard
                                 data-component={`${dataComponent}_overview-grid_header-card`}
                                 header={record.header}
@@ -573,8 +579,19 @@ function ServiceRecordValueSkeleton() {
     );
 }
 
-function RecordStatusCard({ record, isRefreshing }: { record: ServiceRecordCase; isRefreshing: boolean }) {
+function RecordStatusCard({
+    record,
+    isRefreshing,
+    viewHref,
+}: {
+    record: ServiceRecordCase;
+    isRefreshing: boolean;
+    /** Same destination as the client menu's 제공기록지 보기 item. */
+    viewHref: string | null;
+}) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "status-card");
+    const authUserQuery = useGetAuthUser();
+    const canViewServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const status = getRecordStatusMeta(record.status);
     const { activeSessions } = partitionSessionsByPeriod(
         record.startDate,
@@ -610,6 +627,22 @@ function RecordStatusCard({ record, isRefreshing }: { record: ServiceRecordCase;
                 value={formatDateTimeKo(record.finalizedAt)}
                 isRefreshing={isRefreshing}
             />
+            {viewHref && canViewServiceRecord && (
+                <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-col items-end">
+                    <Button
+                        asChild
+                        variant="positive"
+                        size="sm"
+                        width="lg"
+                        className="shrink-0"
+                        data-component={`${dataComponent}_actions_view`}
+                    >
+                        <a href={viewHref} target="_blank" rel="noopener noreferrer">
+                            제공기록지 보기
+                        </a>
+                    </Button>
+                </div>
+            )}
         </InfoCard>
     );
 }
