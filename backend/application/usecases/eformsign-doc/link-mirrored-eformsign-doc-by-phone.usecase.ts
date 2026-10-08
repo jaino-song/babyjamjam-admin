@@ -650,6 +650,16 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         if (matches.length === 1) {
                             if (completeLockSurface) {
                                 const matched = matches[0]!;
+                                // `client.e_doc_id` is unique, so a different client that still points
+                                // at this unassigned document would make the pointer write fail with
+                                // P2002. Lock those clients together with the matched one, in id
+                                // order, before any other lock (project-wide order: client rows
+                                // first); they are re-validated once the document is locked.
+                                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                                    branchId: existingClientBranchId,
+                                    documentId: document.documentId,
+                                    clientId: matched.id,
+                                });
                                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                                     branchId: existingClientBranchId,
                                     clientId: matched.id,
@@ -686,7 +696,23 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 ) {
                                     throw new MirrorGenerationConflict();
                                 }
-                                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                                const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
+                                    branchId: locked.branchId,
+                                    documentId: document.documentId,
+                                    clientId: matched.id,
+                                });
+                                if (currentPointerClientIds.some((id) => !lockedPointerClientIds.has(id))) {
+                                    // A pointer client appeared after the unlocked read; locking it
+                                    // now would invert the lock order and writing it unlocked is not
+                                    // allowed. Start over from the reconciler.
+                                    throw new MirrorGenerationConflict();
+                                }
+                                const linked = await this.linkExistingClient(
+                                    transaction,
+                                    current,
+                                    locked.client,
+                                    [...lockedPointerClientIds],
+                                );
                                 if (
                                     params.initializeLifecycle
                                     && (linked === "linked" || linked === "already_linked")
@@ -1323,6 +1349,49 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         });
     }
 
+    /**
+     * Other clients (same branch) whose `eDocId` points at the document. Read without a lock; it
+     * only chooses which client rows to lock and is re-read once the locks are held.
+     */
+    private async findOtherPointerClientIds(
+        transaction: Prisma.TransactionClient,
+        params: { branchId: string | null; documentId: string; clientId: number },
+    ): Promise<number[]> {
+        if (!params.branchId) return [];
+        const rows = await transaction.$queryRaw<Array<{ id: number }> | undefined>(Prisma.sql`
+            SELECT pointer_client.id
+            FROM client AS pointer_client
+            WHERE pointer_client.e_doc_id = ${params.documentId}
+              AND pointer_client.branch_id = ${params.branchId}::uuid
+              AND pointer_client.id <> ${params.clientId}
+        `);
+        return (rows ?? []).map((row) => row.id);
+    }
+
+    /**
+     * Locks the other clients pointing at the document. The matched client's own row is taken by
+     * the service-record write set that follows, so it is locked here too only to keep every
+     * client row of the link in one ascending-id acquisition.
+     */
+    private async lockPointerClients(
+        transaction: Prisma.TransactionClient,
+        params: { branchId: string | null; documentId: string; clientId: number },
+    ): Promise<Set<number>> {
+        const pointerClientIds = await this.findOtherPointerClientIds(transaction, params);
+        if (pointerClientIds.length > 0) {
+            const clientIdsToLock = Array.from(new Set([params.clientId, ...pointerClientIds]))
+                .sort((left, right) => left - right);
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM client
+                WHERE id IN (${Prisma.join(clientIdsToLock)})
+                ORDER BY id
+                FOR UPDATE
+            `);
+        }
+        return new Set(pointerClientIds);
+    }
+
     private async lockExpectedMirrorGeneration(
         transaction: Prisma.TransactionClient,
         documentId: string,
@@ -1388,6 +1457,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             branchId: string | null;
             eDocId: string | null;
         },
+        lockedOtherPointerClientIds: readonly number[] = [],
     ): Promise<"linked" | "already_linked" | "ambiguous"> {
         const clientBranchId = client.branchId;
         if (!clientBranchId) {
@@ -1461,6 +1531,18 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 || document.createdDate >= currentDocument.createdDate;
         }
         if (shouldPointToMirroredDocument) {
+            if (lockedOtherPointerClientIds.length > 0) {
+                // Unique `eDocId`: release the document from the other (locked) clients that
+                // still point at it before this client takes it.
+                await transaction.client.updateMany({
+                    where: {
+                        id: { in: [...lockedOtherPointerClientIds] },
+                        branchId: clientBranchId,
+                        eDocId: document.documentId,
+                    },
+                    data: { eDocId: null },
+                });
+            }
             await transaction.client.updateMany({
                 where: {
                     id: client.id,

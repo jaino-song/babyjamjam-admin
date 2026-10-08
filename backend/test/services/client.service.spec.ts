@@ -899,7 +899,22 @@ describe("ClientService", () => {
                 expect(documentLock.values).toEqual([10, 11, branchId]);
                 // Nothing is written before both lock groups are held.
                 expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(1);
+                // The other locked clients (owner 99, pointer 55) are released from the documents
+                // that move to the target first; only then does the target take the pointer.
+                expect(prismaService.client.updateMany.mock.calls).toEqual([
+                    [{
+                        where: {
+                            id: { in: [55, 99] },
+                            branchId,
+                            eDocId: { in: ["DOC-LATEST", "DOC-OLDER"] },
+                        },
+                        data: { eDocId: null },
+                    }],
+                    [{
+                        where: { id: mockClient.id, branchId },
+                        data: { eDocId: "DOC-LATEST" },
+                    }],
+                ]);
                 expect(mockClient.eDocId).toBe("DOC-LATEST");
             });
 
@@ -923,9 +938,57 @@ describe("ClientService", () => {
                 ]);
                 // The aborted attempt wrote nothing; the retry wrote once.
                 expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(1);
+                // the release of the locked clients (77, 99) + the target's pointer write, once each.
+                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(2);
+                expect(prismaService.client.updateMany.mock.calls[0]![0]).toMatchObject({
+                    where: { id: { in: [77, 99] } },
+                    data: { eDocId: null },
+                });
                 expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
                 expect(mockClient.eDocId).toBe("DOC-LATEST");
+            });
+
+            it("releases another client's pointer even when the latest document already belongs to the target", async () => {
+                const mockClient = arrangeCandidates();
+                // DOC-LATEST is already the target's document, yet client 55 still points at it:
+                // setting the target's pointer would raise P2002 on the unique e_doc_id.
+                prismaService.eformsign_doc.findMany.mockResolvedValue([{
+                    id: 11,
+                    documentId: "DOC-LATEST",
+                    clientId: mockClient.id,
+                    branchId,
+                    stepRecipientSms: "고객 010-1234-5678",
+                }]);
+                arrangeQueries([[55]]);
+
+                await service.create(branchId, CREATE_DTO);
+
+                expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.client.updateMany.mock.calls).toEqual([
+                    [{
+                        where: { id: { in: [55] }, branchId, eDocId: { in: ["DOC-LATEST"] } },
+                        data: { eDocId: null },
+                    }],
+                    [{
+                        where: { id: mockClient.id, branchId },
+                        data: { eDocId: "DOC-LATEST" },
+                    }],
+                ]);
+                expect(mockClient.eDocId).toBe("DOC-LATEST");
+            });
+
+            it("writes no client other than the target when no other client is in the locked set", async () => {
+                const mockClient = arrangeCandidates();
+                arrangeQueries([[]]);
+
+                await service.create(branchId, CREATE_DTO);
+
+                expect(prismaService.client.updateMany.mock.calls).toEqual([
+                    [{
+                        where: { id: mockClient.id, branchId },
+                        data: { eDocId: "DOC-LATEST" },
+                    }],
+                ]);
             });
 
             it("gives up after three stale attempts, writes nothing and logs the phone-link failure", async () => {
@@ -2654,7 +2717,17 @@ describe("ClientService", () => {
                     },
                     data: { eDocId: "DOC-AFTER-UPDATE" },
                 });
-                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(1);
+                // The default raw-query double reports clients 9-12 as owners/pointers: they are
+                // released from the moving document before the target takes the pointer.
+                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(2);
+                expect(prismaService.client.updateMany).toHaveBeenNthCalledWith(1, {
+                    where: {
+                        id: { in: expect.arrayContaining([9, 10, 11, 12]) },
+                        branchId,
+                        eDocId: { in: ["DOC-AFTER-UPDATE"] },
+                    },
+                    data: { eDocId: null },
+                });
                 expect(result.eDocId).toBe("DOC-AFTER-UPDATE");
                 expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
                 expect(documentSnapshotService.bumpCompanyEpoch).toHaveBeenCalledTimes(1);

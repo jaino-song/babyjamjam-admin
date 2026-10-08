@@ -582,6 +582,82 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
     });
 
+    describe("another client still points at the unassigned document", () => {
+        const arrange = (pointerReads: number[][]) => {
+            const document = mirroredDocument({ branchId: "branch-1", clientId: null });
+            const { transaction, usecase } = setup(document);
+            const tx = transaction as typeof transaction & {
+                employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+                service_record_case: { findUnique: jest.Mock };
+            };
+            tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            let reads = 0;
+            transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ").toLowerCase() ?? "";
+                if (sql.includes("pointer_client")) {
+                    const answer = pointerReads[Math.min(reads, pointerReads.length - 1)]!;
+                    reads += 1;
+                    return Promise.resolve(answer.map((id) => ({ id })));
+                }
+                return Promise.resolve([{ id: 11 }]);
+            });
+            return { transaction, usecase };
+        };
+
+        it("locks the pointer client with the matched one, then releases it before taking the pointer", async () => {
+            const { transaction, usecase } = arrange([[55]]);
+
+            await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("linked");
+
+            const clientLocks = transaction.$queryRaw.mock.calls
+                .map(([query]) => query as { strings: string[]; values: unknown[] })
+                .filter((query) => {
+                    const sql = query.strings.join(" ").toLowerCase();
+                    return sql.includes("for update") && /from\s+client\b/.test(sql);
+                });
+            // The first client lock is the ascending-id pair, ahead of the service-record write set.
+            expect(clientLocks[0]!.values).toEqual([21, 55]);
+            expect(clientLocks[0]!.strings.join(" ")).toContain("ORDER BY id");
+            expect(transaction.client.updateMany.mock.calls).toEqual([
+                [{
+                    where: { id: { in: [55] }, branchId: "branch-1", eDocId: "doc-1" },
+                    data: { eDocId: null },
+                }],
+                [{
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                }],
+            ]);
+        });
+
+        it("never writes a pointer client that was not locked: starts over via the reconciler", async () => {
+            // 55 was locked; 77 starts pointing at the document once it is locked.
+            const { transaction, usecase } = arrange([[55], [55, 77]]);
+
+            await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("mirror_not_ready");
+
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("does not release anything when no other client points at it", async () => {
+            const { transaction, usecase } = arrange([[]]);
+
+            await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("linked");
+
+            expect(transaction.client.updateMany.mock.calls).toEqual([
+                [{
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                }],
+            ]);
+        });
+    });
+
     it("keeps the client pointer on a newer contract", async () => {
         const { document, transaction, usecase } = setup(mirroredDocument({ branchId: "branch-1" }));
         transaction.client.findMany.mockResolvedValue([{
