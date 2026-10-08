@@ -200,6 +200,9 @@ async function openFirstDay(user: User) {
     await screen.findByText(ITEM.perineum);
 }
 
+/** The 결제 확인 row of a day answered with the payment confirmed (the row reads "✓ 확인 완료"). */
+const PAYMENT_REVIEW_VALUE = "확인 완료";
+
 /** What the review shows after the walk-through test's answers, row by row. */
 function expectWalkthroughReview() {
     expectReviewRow("산모", ITEM.perineum, "이상없음, 열상");
@@ -215,6 +218,7 @@ function expectWalkthroughReview() {
     expectReviewRow("신생아", ITEM.bath, "실시");
     expectReviewRow("서비스 기록", ITEM.etcService, "신생아 옷 정리");
     expectReviewRow("서비스 기록", ITEM.notes, "간식 시간 변경");
+    expectReviewRow("서비스 기록", ITEM.paymentConfirmed, PAYMENT_REVIEW_VALUE);
 }
 
 /** What the review shows for the answers the server holds (SUBMITTED_ANSWERS), row by row. */
@@ -232,6 +236,20 @@ function expectSubmittedReview() {
     expectReviewRow("신생아", ITEM.bath, "실시");
     expectReviewRow("서비스 기록", ITEM.etcService, "옷 정리");
     expectReviewRow("서비스 기록", ITEM.notes, "산모 요청으로 간식 시간 변경");
+    expectReviewRow("서비스 기록", ITEM.paymentConfirmed, PAYMENT_REVIEW_VALUE);
+}
+
+interface FeedingCounts { breast: string; formula: string; formulaMl: string }
+
+/** The rows of a day filled by `fillDayUpToReview` that no test chooses differently: still shown in their own rows. */
+function expectFilledDayCommonRows() {
+    expectReviewRow("산모", ITEM.sitzBath, "실시");
+    expectReviewRow("산모", ITEM.meals, /식사\s*2/, /간식\s*1/);
+    expectReviewRow("신생아", ITEM.temperature, "36.5");
+    expectReviewRow("신생아", ITEM.sleep, "잘 잠");
+    expectReviewRow("신생아", ITEM.stool, "정상변");
+    expectReviewRow("신생아", ITEM.bath, "실시");
+    expectReviewRow("서비스 기록", ITEM.paymentConfirmed, PAYMENT_REVIEW_VALUE);
 }
 
 /** Signs, presses the submit button, approves the dialog and returns the body that reached the server. */
@@ -239,12 +257,13 @@ async function signAndSubmit(api: ReturnType<typeof installApi>, user: User, { s
     if (sign) await user.click(screen.getByRole("button", { name: "서명 입력" }));
     await user.click(screen.getByRole("button", { name: PINNED_COPY.reviewSubmit }));
     const dialog = await screen.findByRole("dialog");
+    // The dialog is only a question: nothing has reached the server before it is approved.
+    expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: PINNED_COPY.submitApprove }));
     await waitFor(() => expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(1));
     return api.callsTo("POST", "/sessions/1/submit")[0].body as Record<string, unknown>;
 }
 
-interface FeedingCounts { breast: string; formula: string; formulaMl: string }
 
 /**
  * From the first input page of an opened day (① ② ③ already chosen by the
@@ -534,6 +553,7 @@ describe("service-record page contract", () => {
             expectNotInReviewRow("산모", ITEM.breast, "이상없음");
             expectReviewRow("산모", ITEM.excretion, "이상없음");
             expectNotInReviewRow("산모", ITEM.excretion, "불편감");
+            expectFilledDayCommonRows();
 
             const body = await signAndSubmit(api, user);
             expect(body.answers).toMatchObject({
@@ -553,6 +573,7 @@ describe("service-record page contract", () => {
             expectNotInReviewRow("신생아", ITEM.breastFeeding, "2회");
             expectReviewRow("신생아", ITEM.formulaFeeding, "2회", "회당 60ml");
             expectNotInReviewRow("신생아", ITEM.formulaFeeding, "7회");
+            expectFilledDayCommonRows();
 
             const body = await signAndSubmit(api, user);
             expect(body.answers).toMatchObject({
@@ -582,6 +603,7 @@ describe("service-record page contract", () => {
 
             await user.click(screen.getByRole("button", { name: PINNED_COPY.reviewSubmit }));
             const dialog = await screen.findByRole("dialog");
+            expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(0);
             await user.click(within(dialog).getByRole("button", { name: PINNED_COPY.submitApprove }));
 
             await waitFor(() => expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(1));
@@ -633,6 +655,7 @@ describe("service-record page contract", () => {
             expectReviewRow("신생아", ITEM.sleep, "잘 잠");
             expectNotInReviewRow("신생아", ITEM.sleep, "잘 못 잠");
             expectReviewRow("신생아", ITEM.stool, "이상변", "연두색");
+            expectReviewRow("서비스 기록", ITEM.paymentConfirmed, PAYMENT_REVIEW_VALUE);
 
             const body = await signAndSubmit(api, user, { sign: false });
             expect(body.answers).toMatchObject({ ...SUBMITTED_ANSWERS, sleep: "잘 잠" });
