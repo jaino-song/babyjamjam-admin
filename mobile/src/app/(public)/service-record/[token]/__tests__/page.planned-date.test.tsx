@@ -21,10 +21,6 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         </div>
     ),
 }));
-jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
-    MobileTwoButtonModal: ({ open, description }: { open: boolean; description: string }) =>
-        open ? <div role="dialog">{description}</div> : null,
-}));
 
 describe("token planned-date drafts", () => {
     beforeEach(() => {
