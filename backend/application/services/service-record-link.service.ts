@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -288,22 +289,35 @@ export class ServiceRecordLinkService {
         }
     }
 
-    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<void> {
-        const jobs = await this.jobRepository.findPendingByRuleIdsAndEmployeeScheduleId(
-            [SERVICE_RECORD_LINK_RULE_ID],
+    /**
+     * Cancel the schedule's pending/processing link jobs in one atomic
+     * repository statement. Returns the ids of jobs the dispatcher already
+     * moved to `dispatching`: those are left untouched (the SMS may be on its
+     * way) and each caller decides what that means. Never throws on them.
+     */
+    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<string[]> {
+        const { inFlightJobIds } = await this.jobRepository.cancelPendingByRuleAndEmployeeSchedule(
+            SERVICE_RECORD_LINK_RULE_ID,
             scheduleId,
+            reason,
         );
-        for (const job of jobs) {
-            job.cancel(reason);
-            await this.jobRepository.update(job);
+        if (inFlightJobIds.length > 0) {
+            this.logger.warn(
+                `Schedule ${scheduleId}: ${inFlightJobIds.length} service-record link job(s) already dispatching were left untouched (${reason}): ${inFlightJobIds.join(", ")}`,
+            );
         }
+        return inFlightJobIds;
     }
 
-    private async supersedeRetryableServiceRecordSmsLogs(scheduleId: number, reason: string): Promise<void> {
-        const logs = await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId);
+    private async supersedeRetryableServiceRecordSmsLogs(
+        scheduleId: number,
+        reason: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const logs = await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId, transaction);
         for (const log of logs) {
             log.markRetrySuperseded(reason);
-            await this.logRepository.update(log);
+            await this.logRepository.update(log, transaction);
         }
     }
 
@@ -399,15 +413,15 @@ export class ServiceRecordLinkService {
                 }
             }
 
-            await this.cancelPendingServiceRecordJobs(
-                scheduleId,
-                SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-            );
-            await this.supersedeRetryableServiceRecordSmsLogs(
-                scheduleId,
-                SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-            );
-
+            // Neither path cancels anything up front. A manual send cancels the
+            // old pending job and enqueues its replacement (and supersedes the
+            // retryable logs) in ONE repository transaction below, so it can
+            // refuse when the dispatcher already claimed a job. The automatic
+            // path's claim only starts when the schedule has no pending,
+            // processing, dispatching or sent job (nor a failed delivery), so
+            // any such row seen afterwards is a newer send, most likely a
+            // manual one, which the fenced promotion refuses to join.
+            // Cancelling it here would silently lose that accepted send.
             if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                 if (!options.recordMissingPhoneFailure) {
                     throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
@@ -513,9 +527,37 @@ export class ServiceRecordLinkService {
                     automaticSchedulingClaim!.claimVersion,
                     pendingJob,
                 );
-            const persistedJob = automaticSchedulingClaim
-                ? await this.branchLock!.runExclusive(schedule.branchId, (transaction) => promote(transaction))
-                : await this.jobRepository.upsertPending(pendingJob);
+            let persistedJob: MessageTriggerJobEntity | null;
+            if (automaticSchedulingClaim) {
+                persistedJob = await this.branchLock!.runExclusive(
+                    schedule.branchId,
+                    (transaction) => promote(transaction),
+                );
+            } else if (options.isManualSend) {
+                // The retry-log supersession runs inside the replacement's
+                // transaction: if it fails, the replacement rolls back with it
+                // instead of throwing after a committed (and still dispatchable)
+                // send, which an operator retry would then duplicate.
+                const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
+                    pendingJob,
+                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                    (transaction) => this.supersedeRetryableServiceRecordSmsLogs(
+                        scheduleId,
+                        SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                        transaction,
+                    ),
+                );
+                if (replaced.kind === "in_flight" || replaced.kind === "lock_timeout") {
+                    // Never queue a second send behind one the dispatcher
+                    // already claimed; the caller re-reads the (sending) status.
+                    // A lock held past the fence's lock_timeout is the same
+                    // answer: nothing was written, try again.
+                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                }
+                persistedJob = replaced.job;
+            } else {
+                persistedJob = await this.jobRepository.upsertPending(pendingJob);
+            }
 
             if (!persistedJob) {
                 return {
@@ -630,25 +672,11 @@ export class ServiceRecordLinkService {
                 FROM "message_trigger_job" AS blocker
                 WHERE blocker."employee_schedule_id" = ${params.scheduleId}
                   AND blocker."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
-                  AND (
-                      blocker."status" IN ('pending', 'processing', 'dispatching', 'sent')
-                      OR (
-                          blocker."status" = 'failed'
-                          AND blocker."cancel_reason" IS DISTINCT FROM ${SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON}
-                      )
-                      OR (
-                          blocker."status" = 'canceled'
-                          AND (
-                              blocker."canceled_by_user" = true
-                              OR blocker."cancel_reason" IS NULL
-                              OR blocker."cancel_reason" NOT IN (
-                                  ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
-                                  ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                                  ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
-                              )
-                          )
-                      )
-                  )
+                  AND ${serviceRecordScheduleBlockerSql({
+                      status: Prisma.sql`blocker."status"`,
+                      cancelReason: Prisma.sql`blocker."cancel_reason"`,
+                      canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                  })}
             )
             ON CONFLICT ("dedupe_key") DO UPDATE SET
                 status = 'failed',

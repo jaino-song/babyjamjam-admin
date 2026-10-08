@@ -1,9 +1,16 @@
-import { ServiceRecordEditNotFoundError } from "domain/errors/service-record-edit.error";
+import {
+    ServiceRecordEditConflictError,
+    ServiceRecordEditNotFoundError,
+    ServiceRecordRevisionOperationUnresolvedError,
+} from "domain/errors/service-record-edit.error";
 import type {
     ServiceRecordEditConfirmPlan,
     ServiceRecordEditSource,
 } from "domain/repositories/service-record-edit.repository.interface";
-import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import {
+    assertNoBlockingRevisionDocumentStates,
+    ServiceRecordEditRepository,
+} from "infrastructure/database/repositories/service-record-edit.repository";
 
 const branchId = "11111111-1111-4111-8111-111111111111";
 const caseId = "22222222-2222-4222-8222-222222222222";
@@ -352,7 +359,7 @@ describe("ServiceRecordEditRepository", () => {
         expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it("loads the draft and branch-owned source from one repeatable-read snapshot", async () => {
+    function buildDraftSourceFixture(contractStatus = "060") {
         const currentRevisionId = "66666666-6666-4666-8666-666666666666";
         const service_record_edit_draft = {
             findFirst: jest.fn().mockResolvedValue(draftRow()),
@@ -424,7 +431,7 @@ describe("ServiceRecordEditRepository", () => {
                 {
                     documentId: "contract-1",
                     documentKind: "contract",
-                    statusType: "060",
+                    statusType: contractStatus,
                     clientId: 101,
                     serviceRecordCaseId: null,
                     employeeScheduleId: null,
@@ -453,6 +460,25 @@ describe("ServiceRecordEditRepository", () => {
         };
         const prisma = transactionalPrisma(tx);
         const repository = new ServiceRecordEditRepository(prisma as never);
+        return {
+            prisma,
+            repository,
+            currentRevisionId,
+            service_record_edit_draft,
+            service_record_case,
+            eformsign_doc,
+        };
+    }
+
+    it("loads the draft and branch-owned source from one repeatable-read snapshot", async () => {
+        const {
+            prisma,
+            repository,
+            currentRevisionId,
+            service_record_edit_draft,
+            service_record_case,
+            eformsign_doc,
+        } = buildDraftSourceFixture();
 
         await expect(repository.loadDraftWithSource(branchId, draftId)).resolves.toMatchObject({
             draft: { id: draftId, draftVersion: 1 },
@@ -489,6 +515,21 @@ describe("ServiceRecordEditRepository", () => {
         expect(eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ branchId }),
         }));
+    });
+
+    it.each([
+        ["060", "in_progress"],
+        ["040", "in_progress"],
+        ["042", "rejected"],
+        ["050", "completed"],
+    ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
+        const { repository } = buildDraftSourceFixture(contractStatus);
+
+        await expect(repository.loadDraftWithSource(branchId, draftId)).resolves.toMatchObject({
+            source: {
+                documentScope: { contract: { currentDocumentId: "contract-1", stage } },
+            },
+        });
     });
 
     it("does not probe or create a draft when the case is foreign to the requested branch", async () => {
@@ -1101,5 +1142,69 @@ describe("ServiceRecordEditRepository", () => {
             expect(statement).toContain('owner_client.e_doc_id');
             expect(statement).toContain('owner_client.branch_id');
         }
+    });
+});
+
+describe("assertNoBlockingRevisionDocumentStates", () => {
+    const input = { branchId, clientId: 126, serviceRecordCaseId: caseId };
+
+    it("excludes only born-stuck manual_review states that never created a provider document", async () => {
+        const tx = { $queryRaw: jest.fn().mockResolvedValue([]) };
+
+        await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).resolves.toBeUndefined();
+
+        const statement = sqlTextWithValues(tx.$queryRaw.mock.calls[0]?.[0]);
+        const normalized = statement.replace(/\s+/g, " ");
+        expect(normalized).toContain("state.status IN ('not_required', 'completed')");
+        expect(normalized).toContain("state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion'");
+        expect(normalized).toMatch(
+            /state\.status = 'manual_review' AND COALESCE\(state\.last_error_code IN \(.*SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE.*SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE.*\), FALSE\) AND state\.target_document_id IS NULL/,
+        );
+        // No other status or error code is waved through.
+        expect(normalized).not.toContain("'processing'");
+        expect(normalized).not.toContain("'failed'");
+        expect(normalized).not.toContain("PROVIDER_STATE_CHANGED");
+    });
+
+    it("still refuses a selected in-flight operation and reports it on the error", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{
+                id: "state-1",
+                operation: "contract_period",
+                status: "processing",
+                step: "processing",
+                lastErrorCode: null,
+            }]),
+        };
+
+        const error = await assertNoBlockingRevisionDocumentStates(tx as never, input)
+            .catch((caught: unknown) => caught);
+
+        expect(error).toBeInstanceOf(ServiceRecordRevisionOperationUnresolvedError);
+        expect(error).toBeInstanceOf(ServiceRecordEditConflictError);
+        expect(error).toMatchObject({
+            code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED",
+            operation: "contract_period",
+            status: "processing",
+            lastErrorCode: null,
+        });
+    });
+
+    it("carries the provider-state reason of a blocking manual_review operation", async () => {
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{
+                id: "state-2",
+                operation: "receipt_refresh",
+                status: "manual_review",
+                step: "manual_review",
+                lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED",
+            }]),
+        };
+
+        await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).rejects.toMatchObject({
+            operation: "receipt_refresh",
+            status: "manual_review",
+            lastErrorCode: "SERVICE_RECORD_PROVIDER_STATE_CHANGED",
+        });
     });
 });

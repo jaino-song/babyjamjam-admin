@@ -5,38 +5,33 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { ClientNotificationLogRecord } from "@/components/app/clients/client-detail";
 import type { Client } from "@/lib/client/types";
-import { fetchAllMessageLogs } from "@/lib/messages/logs";
-import { normalizeKoreanPhoneDigits } from "@/lib/phone";
+import { fetchClientMessageLogs, type ClientMessageLogs } from "@/lib/messages/logs";
 
 export function useClientMessageHistory(client: Client | null) {
-  const query = useQuery<ClientNotificationLogRecord[]>({
-    queryKey: ["messages", "logs", "all"],
-    queryFn: () => fetchAllMessageLogs<ClientNotificationLogRecord>(),
-    enabled: Boolean(client),
+  const clientId = client?.id ?? null;
+  const query = useQuery<ClientMessageLogs<ClientNotificationLogRecord>>({
+    queryKey: ["messages", "logs", "client", clientId],
+    // The server returns this client's own records (plus unowned records sent to
+    // the client's current phone) newest first, so no client-side matching of a
+    // branch-wide window is needed — or safe, since that window drops old history.
+    queryFn: () => fetchClientMessageLogs<ClientNotificationLogRecord>(clientId as number),
+    enabled: clientId !== null,
     staleTime: 0,
     retry: false,
   });
 
   const notificationLogs = useMemo(() => {
-    if (!client || !Array.isArray(query.data)) return [];
+    if (!Array.isArray(query.data?.logs)) return [];
 
-    const clientPhone = normalizeKoreanPhoneDigits(client.phone);
-    return query.data
-      .filter((log) => {
-        if (log.clientId === client.id) return true;
-        if (!clientPhone) return false;
-
-        const logPhones = [
-          log.recipientPhone,
-          ...(log.receiver ?? "").split(/[,\n;]/),
-        ];
-        return logPhones.some((phone) => normalizeKoreanPhoneDigits(phone) === clientPhone);
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [client, query.data]);
+    return [...query.data.logs].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [query.data]);
 
   return {
     notificationLogs,
+    /** The server holds older records than the ones in `notificationLogs`. */
+    hasMore: query.data?.hasMore === true,
     isLoading: query.isLoading,
     isError: query.isError,
     refetch: query.refetch,

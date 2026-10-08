@@ -99,9 +99,8 @@ describe("ClientFormDialog - editing a client stored with a landline", () => {
 
         save();
         await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
-        expect(updateMutateAsync.mock.calls[0]?.[0]).toEqual(
-            expect.objectContaining({ id: 5, dto: expect.objectContaining({ phone: LANDLINE }) }),
-        );
+        // The stored landline is left as it is: nothing was edited, so no field is sent.
+        expect(updateMutateAsync.mock.calls[0]?.[0]).toEqual({ id: 5, dto: {} });
     });
 
     it("applies the mobile-only rule once the phone is edited, and blocks saving", async () => {

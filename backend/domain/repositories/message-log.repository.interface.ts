@@ -21,6 +21,17 @@ export interface MessageHistoryPageQuery {
     limit: number;
 }
 
+/**
+ * Identity of the client whose history is being read. `phoneKey` is the
+ * client's current `normalizeKoreanPhoneLookupKey`; it only ever pulls in rows
+ * that carry no client id at all (a row owned by another client never matches
+ * by phone).
+ */
+export interface ClientHistoryScope {
+    clientId: number;
+    phoneKey: string | null;
+}
+
 export type MessageRetryStartResult =
     | { kind: "started"; log: MessageLogEntity }
     | { kind: "suppressed"; log: MessageLogEntity }
@@ -54,7 +65,10 @@ export interface IMessageLogRepository {
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findPendingRetriesSystemScope(): Promise<MessageLogEntity[]>;
-    findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
+    findRetryableServiceRecordSmsByScheduleId(
+        scheduleId: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity[]>;
     findRecentByBranch(
         branchId: string,
         limit?: number,
@@ -67,6 +81,16 @@ export interface IMessageLogRepository {
      */
     findHistoryPageByBranch(
         branchId: string,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageLogEntity[]>;
+    /**
+     * Same cursor/ordering contract as `findHistoryPageByBranch`, restricted to
+     * one client inside the branch: rows owned by the client plus unowned rows
+     * whose stored phone normalises to the client's phone key.
+     */
+    findClientHistoryPageByBranch(
+        branchId: string,
+        scope: ClientHistoryScope,
         query: MessageHistoryPageQuery,
     ): Promise<MessageLogEntity[]>;
 }

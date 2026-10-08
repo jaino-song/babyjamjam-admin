@@ -6,7 +6,7 @@ export interface EmployeeSummary {
 }
 
 // Document status type for eformsign documents
-export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatus = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
 
 export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
@@ -138,6 +138,12 @@ export interface UpdateClientDto {
     voucherClient?: boolean;
     breastPump?: boolean;
     serviceStatus?: ServiceStatus | null;
+    /**
+     * The end date (YYYY-MM-DD, or null for none) the edit form was opened with. Sent with any
+     * service-period change so the backend answers 409 instead of overwriting an end date that
+     * moved meanwhile. Not a field to update.
+     */
+    expectedEndDate?: string | null;
 }
 
 // DTO for terminating service

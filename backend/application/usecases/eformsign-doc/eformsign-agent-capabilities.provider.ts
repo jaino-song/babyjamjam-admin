@@ -8,9 +8,11 @@ import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from
 import { FindEformsignDocsByClientIdUsecase } from "./find-eformsign-docs-by-client-id.usecase";
 import { FindRecentContractsUsecase, type RecentContractRow } from "./find-recent-contracts.usecase";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.service";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
-const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
+const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "revoke_requested", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
 const InputSchema = z.object({
     clientId: z.number().int().positive().describe(
@@ -81,7 +83,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                     const docs = await this.findDocs.execute(context.principal.branchId, InputSchema.parse(rawInput).clientId);
                     // Display only, for the principal's own branch; fetched once for all rows.
                     const calendar = await this.holidayCalendar.forBranch(context.principal.branchId);
-                    return { documents: docs.filter((doc) => doc.statusType !== "deleted").map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }, new Date(), calendar), statusDetail: doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
+                    return { documents: docs.filter((doc) => !DELETED_DOCUMENT_STATUS_TYPES.has(normalizeEformsignStatusCode(doc.statusType))).map((doc) => ({ documentId: doc.documentId, documentName: doc.documentName, status: resolveEformsignDocDisplayStatus({ id: doc.documentId, current_status: { status_type: doc.statusType, step_type: doc.stepType, step_name: doc.stepName } }, new Date(), calendar), statusDetail: doc.statusDetail, updatedDate: doc.updatedDate.toISOString(), expired: doc.expired })) };
                 },
             },
             {
@@ -89,7 +91,7 @@ export class EformsignAgentCapabilitiesProvider implements AgentCapabilityProvid
                     name: "contracts.recent",
                     domain: "contracts",
                     version: "1.0.0",
-                    description: "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
+                    description: "List the most recently updated contracts for the current branch, across all clients. Use for: 최근 계약서, 계약서 현황, 서명 안 된 계약서. Input: optional limit (1-20, default 10), optional status (display status: pending/signed/review/unassigned/completed/revoke_requested/expired/unknown) — when given, applied over a bounded window before the limit. Returns, newest updated first: documentId, documentName, clientId, clientName, status, statusDetail, updatedDate, expired. There is no rest-day or leave calendar here — this only covers contract documents, never service-record submissions.",
                     risk: "read", requiredRoles: ["owner", "admin", "manager", "user"], renderer: "activity", flagKey: "agent.capability.contracts.recent", sideEffect: false,
                 },
                 inputSchema: RecentInputSchema, outputSchema: RecentOutputSchema,

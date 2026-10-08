@@ -205,7 +205,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             artifact: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
         };
         prisma.__tx.$queryRaw
-            .mockResolvedValueOnce([{ eDocId: "target-document" }])
+            .mockResolvedValueOnce([{ id: 7 }])
             .mockResolvedValueOnce([{ currentRevisionId: revisionId }])
             .mockResolvedValueOnce([{ id: revisionId }])
             .mockResolvedValueOnce([{
@@ -221,7 +221,15 @@ describe("SbReceiptLinkTokenRepository", () => {
                 outputProof: proof,
                 status: "processing",
             }])
+            .mockResolvedValueOnce([]) // every document row of the client, locked in id order
             .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
+            .mockResolvedValueOnce([{
+                id: 99,
+                documentId: "target-document",
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: "contract-template",
+            }])
             .mockResolvedValueOnce(tokenIds.map((id) => ({
                 id,
                 eformsignDocId: 42,
@@ -246,6 +254,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             templateId: "template-1",
             templateVersion: "v3",
             mirrorGeneration: "mirror-1",
+            serviceRecordTemplateIds: [],
             eformsignDocId: 42,
             tokenIds,
             storagePath: "receipts/new.png",
@@ -290,7 +299,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             artifact: { storagePath: "receipts/new.png", contentSha256: "b".repeat(64), byteSize: 9 },
         };
         prisma.__tx.$queryRaw
-            .mockResolvedValueOnce([{ eDocId: "target-document" }])
+            .mockResolvedValueOnce([{ id: 7 }])
             .mockResolvedValueOnce([{ currentRevisionId: revisionId }])
             .mockResolvedValueOnce([{ id: revisionId }])
             .mockResolvedValueOnce([{
@@ -298,7 +307,15 @@ describe("SbReceiptLinkTokenRepository", () => {
                 targetDocumentId: "target-document", documentVersion: 3, templateId: "template-1", templateVersion: "v3",
                 mirrorGeneration: "mirror-1", outputProof: proof, status: "processing",
             }])
+            .mockResolvedValueOnce([]) // every document row of the client, locked in id order
             .mockResolvedValueOnce([{ id: 99, documentId: "target-document" }])
+            .mockResolvedValueOnce([{
+                id: 99,
+                documentId: "target-document",
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: "contract-template",
+            }])
             .mockResolvedValueOnce([{
                 id: tokenId, eformsignDocId: 42, branchId, clientId: 7, active: false,
                 expiresAt: new Date("2026-09-30T00:00:00.000Z"),
@@ -308,6 +325,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             branchId, clientId: 7, serviceRecordCaseId: caseId, revisionId, documentStateId: stateId,
             expectedGeneration: "generation-1", expectedStateVersion: 1, targetDocumentId: "target-document",
             documentVersion: 3, templateId: "template-1", templateVersion: "v3", mirrorGeneration: "mirror-1",
+            serviceRecordTemplateIds: [],
             eformsignDocId: 42, tokenIds: [tokenId], storagePath: "receipts/new.png", contentSha256: "b".repeat(64),
             byteSize: 9, proof, now,
         });
@@ -363,6 +381,7 @@ describe("SbReceiptLinkTokenRepository", () => {
             templateId: "template-1",
             templateVersion: "v3",
             mirrorGeneration: "mirror-1",
+            serviceRecordTemplateIds: [],
             eformsignDocId: 42,
             tokenIds: ["55555555-5555-4555-8555-555555555555"],
             storagePath: "receipts/new.png",

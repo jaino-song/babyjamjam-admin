@@ -322,9 +322,10 @@ describe("mobile client wizard field messages", () => {
       expect(useClientWizardStore.getState().currentStep).toBe(2);
     };
 
-    it("asks for the business-day confirmation before saving a stored period missing from the price list", async () => {
-      // 2026-12-01 .. 2026-12-19 is 14 business days, not the stored 99.
+    it("asks for the business-day confirmation before saving an edited period whose stored duration is missing from the price list", async () => {
+      // 2026-12-01 .. 2026-12-18 is 13 business days, not the stored 99.
       await openStoredPeriodEdit(editingVoucherClient(99, "2026-12-19"));
+      fireEvent.change(field("endDate"), { target: { value: "2026-12-18" } });
 
       fireEvent.click(screen.getByRole("button", { name: "저장" }));
       await act(async () => {});
@@ -339,14 +340,33 @@ describe("mobile client wizard field messages", () => {
       expect(mockUpdateClient).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 7,
-          dto: expect.objectContaining({ duration: 99, allowBusinessDayMismatch: true }),
+          dto: expect.objectContaining({
+            duration: 99,
+            endDate: "2026-12-18",
+            expectedEndDate: "2026-12-19",
+            allowBusinessDayMismatch: true,
+          }),
         }),
       );
     });
 
-    it("saves a stored period missing from the price list without confirmation when the dates match it", async () => {
-      // 2026-12-01 .. 2026-12-19 is exactly the stored 14 business days.
+    it("saves an unedited stored period missing from the price list without confirming or sending it", async () => {
+      // 2026-12-01 .. 2026-12-19 is 14 business days, not the stored 99, but nothing is written.
+      await openStoredPeriodEdit(editingVoucherClient(99, "2026-12-19"));
+
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      await act(async () => {});
+
+      expect(screen.queryByText("서비스 기간 확인")).not.toBeInTheDocument();
+      expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+      expect(mockUpdateClient).toHaveBeenCalledWith({ id: 7, dto: {} });
+    });
+
+    it("saves an edited stored period missing from the price list without confirmation when the dates match it", async () => {
+      // 2026-12-02 .. 2026-12-21 is exactly the stored 14 business days.
       await openStoredPeriodEdit(editingVoucherClient(14, "2026-12-19"));
+      fireEvent.change(field("startDate"), { target: { value: "2026-12-02" } });
+      fireEvent.change(field("endDate"), { target: { value: "2026-12-21" } });
 
       fireEvent.click(screen.getByRole("button", { name: "저장" }));
       await act(async () => {});
@@ -354,8 +374,12 @@ describe("mobile client wizard field messages", () => {
       expect(screen.queryByText("서비스 기간 확인")).not.toBeInTheDocument();
       expect(mockUpdateClient).toHaveBeenCalledTimes(1);
       const { dto } = mockUpdateClient.mock.calls[0][0];
-      expect(dto).toEqual(expect.objectContaining({ duration: 14 }));
-      expect(dto).not.toHaveProperty("allowBusinessDayMismatch");
+      expect(dto).toEqual({
+        startDate: "2026-12-02",
+        endDate: "2026-12-21",
+        duration: 14,
+        expectedEndDate: "2026-12-19",
+      });
     });
 
     it("shows a failed voucher price lookup in the period slot", async () => {

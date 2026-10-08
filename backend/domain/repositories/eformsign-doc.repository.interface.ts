@@ -36,6 +36,23 @@ export interface RecentEformsignDocRow {
     expired: boolean;
 }
 
+/**
+ * The plain row set the "current contract" rule judges (see
+ * `selectCurrentContractDocument`): exactly the fields it reads, no entity mapping.
+ */
+export interface EformsignContractCandidateRow {
+    id: number;
+    documentId: string;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    templateId: string | null;
+    createdDate: Date;
+    statusType: string;
+    stepType: string;
+    stepName: string;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 export class EformsignDocMappingError extends Error {
     readonly originalError: unknown;
 
@@ -69,8 +86,13 @@ export interface EformsignDocCompletionClaimParams {
     documentId: string;
     statusType: string;
     statusDetail: string;
-    stepType: string;
-    stepIndex: string;
+    /**
+     * Step kind/index from the mirrored document. When absent the atomic completion update
+     * leaves the stored columns untouched -- re-sending a value read earlier would race a
+     * newer step write and overwrite it.
+     */
+    stepType?: string;
+    stepIndex?: string;
     stepName: string;
     expired: boolean;
     sourceUpdatedDate?: Date;
@@ -85,7 +107,18 @@ export interface EformsignDocConditionalUpdateResult {
     applied: boolean;
 }
 
-export interface UpsertUnassignedEformsignDocOptions {
+/**
+ * The caller built its entity from a row it read earlier, so a step column the source did
+ * not actually supply holds that earlier value. Writing it back would overwrite a newer
+ * step the mirror/backfill stored in between and still pass the timestamp guard. Set a flag
+ * false to leave that column out of the UPDATE; the default (true) writes the entity's value.
+ */
+export interface EformsignDocStepWriteOptions {
+    updateStepType?: boolean;
+    updateStepIndex?: boolean;
+}
+
+export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWriteOptions {
     allowAssignedUpdate?: boolean;
     updateListDisplayFields?: boolean;
     /**
@@ -158,6 +191,15 @@ export interface IEformsignDocRepository {
     ): Promise<EformsignDocCompletionClaimResult>;
     findByClientId(branchid: string, clientId: number): Promise<EformsignDocEntity[]>;
     /**
+     * Every contract-or-unclassified, non-service-record row linked to the client, INCLUDING
+     * purge-requested ones and regardless of artifact sync state — the same row set the client
+     * summary judges. Ordered `createdDate desc, id desc` by the database (full microsecond
+     * precision): pass it straight to `selectCurrentContractDocument`, which keeps that order. Unlike
+     * `findByClientId` it must not drop purge-requested rows, or a purge-requested newest
+     * contract would silently fall back to an older one.
+     */
+    findContractCandidatesByClientId(clientId: number): Promise<EformsignContractCandidateRow[]>;
+    /**
      * The `take` most recently updated contract-or-unclassified documents for the
      * branch (never a service-record snapshot, never a permanently-purged or
      * locally-deleted row), with the client name joined in. Ordering, kind, and
@@ -204,11 +246,13 @@ export interface IEformsignDocRepository {
     update(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity>;
     /** Atomically applies a vendor projection only when its generation is strictly newer. */
     updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocConditionalUpdateResult>;
     /**
      * Atomically assigns the live document to the client and updates the client's

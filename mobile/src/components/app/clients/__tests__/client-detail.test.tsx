@@ -297,6 +297,62 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText("서명 대기자").closest("div")).toHaveTextContent(pendingSigner);
   });
+  it.each([
+    ["unsigned", false, "서명 요청됨", "서명 완료"],
+    ["signed while provider review is pending", true, "서명 완료", "서명 요청됨"],
+  ])("labels the %s contract stage from hasSigned", (_state, hasSigned, shown, hidden) => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: { status_type: "070", step_type: "06", step_name: "제공기관 확인" },
+    } as EformsignDocument;
+
+    renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(shown);
+    expect(screen.queryAllByText(hidden)).toHaveLength(0);
+  });
+  it("does not supersede a signed contract that still reports documentStatus requested", async () => {
+    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
+    jest.mocked(fetchClientServiceRecords).mockResolvedValue({
+      assignments: [{ scheduleId: 7, replaced: false }],
+    } as never);
+    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
+      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
+    } as never);
+    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
+    const onIssueContract = jest.fn();
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail"
+        client={{
+          ...client, eDocId: "old-document", latestContractDocumentId: "latest-document",
+          documentStatus: "requested", hasSigned: true,
+        }}
+        activeTab="basic"
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={onIssueContract}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByText("서비스 일정 변경"));
+    await user.click(await screen.findByText("일정 변경 적용"));
+    await user.click(await screen.findByText("수정 전송"));
+
+    expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      supersedeDocumentId: undefined,
+    }));
+  });
 
   it("keeps the completed contract badge for completed documents", () => {
     const detailClient = {
@@ -695,5 +751,82 @@ describe("ClientDetailContent", () => {
     expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
     expect(screen.queryByText("취소 사유")).not.toBeInTheDocument();
     expect(screen.queryByText("이 값은 표시되면 안 됩니다.")).not.toBeInTheDocument();
+  });
+  it("says only recent records are shown when the server holds older ones", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[{
+          id: 70,
+          provider: "aligo_sms",
+          templateKey: "service_record_link_sms",
+          receiver: "01012345678",
+          recipientPhone: "01012345678",
+          recipientName: "관리사",
+          clientId: client.id,
+          status: "sent",
+          messageBody: "제공기록지 작성 링크",
+          errorMessage: null,
+          createdAt: "2026-09-18T18:34:00.000Z",
+          ruleName: "제공기록지 작성 링크",
+          variables: {},
+        }]}
+        hasMoreNotificationLogs
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+  });
+
+  it("shows no truncation notice for a complete history", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[]}
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
+  });
+
+  it("does not show the truncation notice over a failed history load", () => {
+    render(
+      <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={client}
+        contractDocument={null}
+        activeTab="message"
+        notificationLogs={[]}
+        hasMoreNotificationLogs
+        isNotificationLogsError
+        onTabChange={jest.fn()}
+        onMessage={jest.fn()}
+        onIssueContract={jest.fn()}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onClientUpdated={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText("발송 내역을 불러오지 못했습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
   });
 });

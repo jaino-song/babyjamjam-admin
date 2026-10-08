@@ -1,7 +1,7 @@
 import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { buildClientTemplateVariables } from "../../application/services/message-trigger-recipes";
-import { ConflictException, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import {
@@ -199,6 +199,7 @@ describe("MessageTriggerService", () => {
         ),
         findRecentByBranch: jest.fn().mockResolvedValue([]),
         findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
+        findClientHistoryPageByBranch: jest.fn().mockResolvedValue([]),
     });
 
     /** Default: no branch override present, matching pre-feature behaviour (global rule always governs). */
@@ -315,6 +316,7 @@ describe("MessageTriggerService", () => {
             findUpcomingPendingByBranch: jest.fn().mockResolvedValue([]),
             findTerminalByBranch: jest.fn().mockResolvedValue([]),
             findHistoryPageByBranch: jest.fn().mockResolvedValue([]),
+            findClientHistoryPageByBranch: jest.fn().mockResolvedValue([]),
             hasActiveJobsBefore: jest.fn().mockResolvedValue(false),
             upsertPending: jest.fn().mockResolvedValue(undefined),
             cancelPendingByUser: jest.fn().mockResolvedValue(true),
@@ -327,6 +329,7 @@ describe("MessageTriggerService", () => {
         const prisma = {
             client: {
                 findMany: jest.fn().mockResolvedValue([]),
+                findFirst: jest.fn().mockResolvedValue(null),
             },
             message_log: {
                 findMany: jest.fn().mockResolvedValue([]),
@@ -5313,6 +5316,164 @@ describe("MessageTriggerService", () => {
             );
             expect(messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
             expect(jobRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("listClientHistoryPage", () => {
+        const clientId = 42;
+        const withClient = (
+            ctx: ReturnType<typeof createService>,
+            phone: string | null = "010-1234-5678",
+        ) => {
+            ctx.prisma.client.findFirst.mockResolvedValue({ id: clientId, phone });
+            ctx.ruleRepository.findAll.mockResolvedValue([]);
+            return ctx;
+        };
+
+        it("reads the client's own history in SQL instead of slicing the branch-wide window", async () => {
+            const ctx = withClient(createService());
+            ctx.messageLogRepository.findClientHistoryPageByBranch.mockResolvedValue([
+                createLog({ id: 9, createdAt: new Date("2025-01-01T00:00:00.000Z") }),
+            ]);
+
+            const result = await ctx.service.listClientHistoryPage(branchId, clientId, 50);
+
+            expect(result.items.map((item) => item.id)).toEqual([9]);
+            expect(result.page.hasMore).toBe(false);
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                { clientId, phoneKey: "01012345678" },
+                expect.objectContaining({ after: null, limit: 51 }),
+            );
+            // The branch-wide window the old UI sliced is never touched.
+            expect(ctx.messageLogRepository.findRecentByBranch).not.toHaveBeenCalled();
+            expect(ctx.messageLogRepository.findHistoryPageByBranch).not.toHaveBeenCalled();
+        });
+
+        it("resolves a client of another branch to 404 before reading any history", async () => {
+            const ctx = createService();
+            ctx.prisma.client.findFirst.mockResolvedValue(null);
+
+            await expect(ctx.service.listClientHistoryPage(branchId, clientId)).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(ctx.prisma.client.findFirst).toHaveBeenCalledWith({
+                where: { id: clientId, branchId },
+                select: { id: true, phone: true },
+            });
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).not.toHaveBeenCalled();
+            expect(ctx.jobRepository.findClientHistoryPageByBranch).not.toHaveBeenCalled();
+        });
+
+        it("uses the branch-fenced client repository when it is wired", async () => {
+            const ctx = withClient(createService());
+            const findById = jest.fn().mockResolvedValue({ id: clientId, phone: "+82 10-1234-5678" });
+            (ctx.service as unknown as { clientRepository: unknown }).clientRepository = { findById };
+
+            await ctx.service.listClientHistoryPage(branchId, clientId);
+
+            expect(findById).toHaveBeenCalledWith(branchId, clientId);
+            expect(ctx.prisma.client.findFirst).not.toHaveBeenCalled();
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                { clientId, phoneKey: "01012345678" },
+                expect.anything(),
+            );
+        });
+
+        it("passes no phone key for a client without a usable phone", async () => {
+            const ctx = withClient(createService(), null);
+
+            await ctx.service.listClientHistoryPage(branchId, clientId);
+
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                { clientId, phoneKey: null },
+                expect.anything(),
+            );
+        });
+
+        it("paginates: a full page yields a client-pinned cursor and the continuation resumes after it", async () => {
+            const ctx = withClient(createService());
+            ctx.messageLogRepository.findClientHistoryPageByBranch.mockResolvedValue([
+                createLog({ id: 30 }),
+                createLog({ id: 20 }),
+                createLog({ id: 10 }),
+            ]);
+
+            const first = await ctx.service.listClientHistoryPage(branchId, clientId, 2);
+
+            expect(first.items.map((item) => item.id)).toEqual([30, 20]);
+            expect(first.page.hasMore).toBe(true);
+            const decoded = JSON.parse(Buffer.from(first.page.nextCursor!, "base64url").toString("utf8"));
+            expect(decoded).toMatchObject({ branchId, clientId, source: "log", nativeId: "20" });
+
+            ctx.messageLogRepository.findClientHistoryPageByBranch.mockResolvedValue([createLog({ id: 10 })]);
+            const second = await ctx.service.listClientHistoryPage(branchId, clientId, 2, first.page.nextCursor!);
+
+            expect(second.items.map((item) => item.id)).toEqual([10]);
+            expect(second.page.hasMore).toBe(false);
+            expect(second.page.nextCursor).toBeNull();
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).toHaveBeenLastCalledWith(
+                branchId,
+                { clientId, phoneKey: "01012345678" },
+                expect.objectContaining({
+                    after: { source: "log", nativeId: "20" },
+                    snapshotAt: new Date(first.page.snapshotAt),
+                    limit: 3,
+                }),
+            );
+        });
+
+        it("fills the rest of a page with the client's terminal jobs that never produced a log", async () => {
+            const ctx = withClient(createService());
+            ctx.messageLogRepository.findClientHistoryPageByBranch.mockResolvedValue([createLog({ id: 40 })]);
+            ctx.jobRepository.findClientHistoryPageByBranch.mockResolvedValue([
+                createJob({ id: "00000000-0000-4000-8000-0000000000f0", status: "failed", clientId }),
+            ]);
+
+            const result = await ctx.service.listClientHistoryPage(branchId, clientId, 5);
+
+            expect(result.items.map((item) => item.id)).toEqual([40, "job:00000000-0000-4000-8000-0000000000f0"]);
+            expect(ctx.jobRepository.findClientHistoryPageByBranch).toHaveBeenCalledWith(
+                branchId,
+                { clientId, phoneKey: "01012345678" },
+                expect.objectContaining({ limit: 5 }),
+            );
+        });
+
+        it("refuses a cursor minted for another client, another branch, or the branch-wide endpoint's shape", async () => {
+            const ctx = withClient(createService());
+            const mint = (overrides: Record<string, unknown>) => Buffer.from(JSON.stringify({
+                v: 1,
+                branchId,
+                clientId,
+                snapshotAt: new Date(Date.now() - 60_000).toISOString(),
+                source: "log",
+                nativeId: "20",
+                ...overrides,
+            })).toString("base64url");
+
+            for (const cursor of [
+                mint({ clientId: clientId + 1 }),
+                mint({ branchId: "other-branch" }),
+                mint({ clientId: undefined }),
+                "not-a-cursor",
+            ]) {
+                await expect(ctx.service.listClientHistoryPage(branchId, clientId, 2, cursor)).rejects.toThrow(
+                    "메시지 발송 기록 페이지 커서가 올바르지 않습니다.",
+                );
+            }
+            expect(ctx.messageLogRepository.findClientHistoryPageByBranch).not.toHaveBeenCalled();
+        });
+
+        it("rejects invalid client ids and page sizes before any lookup", async () => {
+            const ctx = withClient(createService());
+
+            await expect(ctx.service.listClientHistoryPage(branchId, 0)).rejects.toBeInstanceOf(BadRequestException);
+            await expect(ctx.service.listClientHistoryPage(branchId, 1.5)).rejects.toBeInstanceOf(BadRequestException);
+            await expect(ctx.service.listClientHistoryPage(branchId, clientId, 0)).rejects.toBeInstanceOf(BadRequestException);
+            await expect(ctx.service.listClientHistoryPage(branchId, clientId, 101)).rejects.toBeInstanceOf(BadRequestException);
+            expect(ctx.prisma.client.findFirst).not.toHaveBeenCalled();
         });
     });
 });

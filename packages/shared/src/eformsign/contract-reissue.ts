@@ -12,7 +12,16 @@ const PAYMENT_DATE_FIELD_IDS = {
 /** Unsigned statuses: eformsign can still cancel these, which expires the signing link. */
 const CANCELLABLE_CONTRACT_STATUSES: ReadonlySet<string> = new Set(["created", "requested", "opened"]);
 
-export function isCancellableContractStatus(status: string | null | undefined): boolean {
+/**
+ * `hasSigned` is required: a signed-but-not-finalized contract (provider review, status 070) still
+ * reports documentStatus "requested", yet its signing link is already consumed and must not be
+ * treated as an unsigned cancellable one.
+ */
+export function isCancellableContractStatus(
+    status: string | null | undefined,
+    { hasSigned }: { hasSigned: boolean | null | undefined },
+): boolean {
+    if (hasSigned === true) return false;
     return status != null && CANCELLABLE_CONTRACT_STATUSES.has(status);
 }
 

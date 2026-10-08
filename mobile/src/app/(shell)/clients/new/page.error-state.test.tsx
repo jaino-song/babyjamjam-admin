@@ -333,21 +333,26 @@ describe("mobile client wizard mutation error presentation", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("keeps the successful edit request shape unchanged", async () => {
+  it("sends only the edited field on a successful edit", async () => {
+    renderEdit();
+    await waitFor(() => expect(useClientWizardStore.getState().name).toBe(initialForm.name));
+    act(() => useClientWizardStore.getState().setField("name", "고친 이름"));
+    act(() => useClientWizardStore.getState().setCurrentStep(2));
+
+    clickSubmit();
+    await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
+    expect(mockUpdateClient).toHaveBeenCalledWith({ id: 7, dto: { name: "고친 이름" } });
+    expect(mockPush).toHaveBeenCalledWith("/clients?id=7");
+  });
+
+  it("sends an empty update when nothing was edited", async () => {
     renderEdit();
     await waitFor(() => expect(useClientWizardStore.getState().name).toBe(initialForm.name));
     act(() => useClientWizardStore.getState().setCurrentStep(2));
 
     clickSubmit();
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
-    expect(mockUpdateClient).toHaveBeenCalledWith({
-      id: 7,
-      dto: expect.objectContaining({
-        name: initialForm.name,
-        phone: initialForm.phone,
-        duration: initialForm.duration,
-      }),
-    });
+    expect(mockUpdateClient).toHaveBeenCalledWith({ id: 7, dto: {} });
     expect(mockPush).toHaveBeenCalledWith("/clients?id=7");
   });
 });
