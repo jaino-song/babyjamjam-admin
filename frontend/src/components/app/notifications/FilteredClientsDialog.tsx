@@ -58,8 +58,8 @@ const DOCUMENT_STATUS_BADGE_VARIANTS = {
     neutral: "outline",
 } as const satisfies Record<StatusBadgeVariant, string>;
 
-const getDocumentStatusBadge = (status: DocumentStatus) => {
-    const meta = getClientDocumentStatusMeta(status);
+const getDocumentStatusBadge = (status: DocumentStatus, hasSigned: boolean) => {
+    const meta = getClientDocumentStatusMeta(status, { hasSigned });
     return <Badge variant={DOCUMENT_STATUS_BADGE_VARIANTS[meta.variant]}>{meta.label}</Badge>;
 };
 
@@ -199,7 +199,7 @@ export function FilteredClientsDialog({
                                                 {formatDate(client.startDate)}
                                             </TableCell>
                                             <TableCell>
-                                                {getDocumentStatusBadge(client.documentStatus)}
+                                                {getDocumentStatusBadge(client.documentStatus, client.hasSigned)}
                                             </TableCell>
                                         </TableRow>
                                     ))}

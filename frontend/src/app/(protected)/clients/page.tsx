@@ -692,7 +692,7 @@ export default function ClientsPage() {
         }
         setContractReissue({
             paymentDate,
-            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus)
+            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus, { hasSigned: client.hasSigned })
                 ? client.latestContractDocumentId
                 : undefined,
         });
@@ -1089,6 +1089,11 @@ export default function ClientsPage() {
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"
                             onScheduleChangeDecided={clearSelectedClientScheduleChange}
+                            onCreateContract={
+                                canCreateNewContractDocument(activeSelectedClient)
+                                    ? () => setMaternityContractClient(activeSelectedClient)
+                                    : undefined
+                            }
                             trailing={
                                 // Avoid overlapping Radix modal layers when an action opens a dialog.
                                 <DropdownMenu modal={false}>
@@ -1115,9 +1120,27 @@ export default function ClientsPage() {
                                                 className="gap-2"
                                             >
                                                 <FileSignature className="w-4 h-4" />
-                                                산모 계약서 생성
+                                                서비스 계약서 생성
                                             </DropdownMenuItem>
                                         )}
+                                        <DropdownMenuItem
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
+                                            disabled={isPreparingScheduleChange}
+                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
+                                            className="gap-2"
+                                        >
+                                            <CalendarDays className="w-4 h-4" />
+                                            서비스 일정 변경
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
+                                            disabled={isSendingReceipt}
+                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
+                                            className="gap-2"
+                                        >
+                                            <Send className="w-4 h-4" />
+                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+                                        </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
                                                 asChild
@@ -1134,24 +1157,6 @@ export default function ClientsPage() {
                                                 </a>
                                             </DropdownMenuItem>
                                         )}
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
-                                            disabled={isSendingReceipt}
-                                            onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className="gap-2"
-                                        >
-                                            <Send className="w-4 h-4" />
-                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
-                                            disabled={isPreparingScheduleChange}
-                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
-                                            className="gap-2"
-                                        >
-                                            <CalendarDays className="w-4 h-4" />
-                                            서비스 일정 변경
-                                        </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
                                                 data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_reset-service-record-link"

@@ -27,6 +27,18 @@ describe("message history client matching", () => {
     ).toBe(true);
   });
 
+  it("never matches a record owned by another client, even when the phone number is the same", () => {
+    expect(
+      matchesMessageHistoryClient(
+        { clientId: 1, receiver: "010-9641-1878", recipientPhone: "010-9641-1878" },
+        clients[1],
+      ),
+    ).toBe(false);
+    expect(
+      findMessageHistoryClient({ clientId: 99, receiver: "010-6621-1878" }, clients),
+    ).toBeNull();
+  });
+
   it("uses the recipient phone snapshot before the provider receiver value", () => {
     expect(
       matchesMessageHistoryClient(

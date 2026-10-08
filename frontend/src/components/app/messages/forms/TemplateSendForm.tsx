@@ -995,7 +995,7 @@ export function TemplateSendForm({
         toast({ variant: "success", description: "제공기록지 링크를 바로 보냈어요" });
         resetEmployeeFields();
         resetClientFields();
-      } else if (status === "processing") {
+      } else if (status === "processing" || status === "dispatching") {
         setFeedback({ tone: "success", message: "제공기록지 링크를 보내고 있어요" });
         toast({ description: "제공기록지 링크를 보내고 있어요" });
       } else {

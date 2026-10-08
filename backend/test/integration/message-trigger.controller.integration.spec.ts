@@ -49,6 +49,7 @@ describe("MessageTriggerController (Integration)", () => {
         listClientUpcomingJobs: jest.Mock;
         listHistory: jest.Mock;
         listHistoryPage: jest.Mock;
+        listClientHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
         createRule: jest.Mock;
         getRule: jest.Mock;
@@ -166,6 +167,7 @@ describe("MessageTriggerController (Integration)", () => {
             listClientUpcomingJobs: jest.fn(),
             listHistory: jest.fn(),
             listHistoryPage: jest.fn(),
+            listClientHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
             createRule: jest.fn(),
             getRule: jest.fn(),
@@ -412,6 +414,69 @@ describe("MessageTriggerController (Integration)", () => {
 
             expect(response.status).toBe(400);
             expect(triggerService.listHistoryPage).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("GET /message-logs/client/:clientId", () => {
+        it("passes the caller's branch, the client, the default page size and the cursor to the read service", async () => {
+            triggerService.listClientHistoryPage.mockResolvedValue({
+                items: [createMockHistoryRecord()],
+                page: { snapshotAt: "2026-09-17T00:00:00.000Z", nextCursor: null, hasMore: false },
+            });
+
+            const response = await request(app.getHttpServer())
+                .get("/message-logs/client/42")
+                .query({ cursor: "opaque-cursor" });
+
+            expect(response.status).toBe(200);
+            expect(response.body.items).toHaveLength(1);
+            expect(triggerService.listClientHistoryPage).toHaveBeenCalledWith(branchId, 42, 50, "opaque-cursor");
+        });
+
+        it("is open to branch staff, like the client upcoming read", async () => {
+            authRole = "staff";
+            triggerService.listClientHistoryPage.mockResolvedValue({
+                items: [],
+                page: { snapshotAt: "2026-09-17T00:00:00.000Z", nextCursor: null, hasMore: false },
+            });
+
+            const response = await request(app.getHttpServer()).get("/message-logs/client/42");
+
+            expect(response.status).toBe(200);
+        });
+
+        it("does not shadow the branch-wide page and list endpoints", async () => {
+            triggerService.listHistoryPage.mockResolvedValue({
+                items: [],
+                page: { snapshotAt: "2026-09-17T00:00:00.000Z", nextCursor: null, hasMore: false },
+            });
+            triggerService.listHistory.mockResolvedValue([]);
+
+            await request(app.getHttpServer()).get("/message-logs/page").expect(200);
+            await request(app.getHttpServer()).get("/message-logs").expect(200);
+
+            expect(triggerService.listHistoryPage).toHaveBeenCalledTimes(1);
+            expect(triggerService.listHistory).toHaveBeenCalledTimes(1);
+            expect(triggerService.listClientHistoryPage).not.toHaveBeenCalled();
+        });
+
+        it("rejects malformed client ids and page sizes before calling the service", async () => {
+            const invalidClient = await request(app.getHttpServer()).get("/message-logs/client/not-an-integer");
+            const invalidLimit = await request(app.getHttpServer())
+                .get("/message-logs/client/42")
+                .query({ limit: 101 });
+
+            expect(invalidClient.status).toBe(400);
+            expect(invalidLimit.status).toBe(400);
+            expect(triggerService.listClientHistoryPage).not.toHaveBeenCalled();
+        });
+
+        it("surfaces the service's 404 for another branch's client", async () => {
+            triggerService.listClientHistoryPage.mockRejectedValue(new NotFoundException());
+
+            const response = await request(app.getHttpServer()).get("/message-logs/client/42");
+
+            expect(response.status).toBe(404);
         });
     });
 

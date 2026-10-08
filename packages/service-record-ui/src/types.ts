@@ -87,6 +87,8 @@ export interface ServiceRecordWizardSlots {
     adminToolbar?: ReactNode;
     /** Administrator confirm action rendered at the same overview action position as the public schedule button. */
     adminConfirmAction?: ReactNode;
+    /** Administrator commit/cancel controls rendered directly above the overview actions. */
+    adminCommitActions?: ReactNode;
     /** Per-session administrator save/return action. */
     adminSessionAction?: ReactNode | ((props: ServiceRecordAdminSessionActionProps) => ReactNode);
     /** Administrator-only basic-information confirmation. */

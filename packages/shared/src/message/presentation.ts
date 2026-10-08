@@ -64,6 +64,7 @@ export const MESSAGE_HISTORY_STATUS_LABELS: Readonly<Record<MessageLogStatus, st
 export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus, string>> = {
   pending: "발송 대기",
   processing: "발송 중",
+  dispatching: "발송 중",
   sent: "발송 완료",
   failed: "발송 실패",
   canceled: "발송 취소",
@@ -85,6 +86,7 @@ export const MESSAGE_LOG_STATUS_BADGE_VARIANT: Readonly<Record<MessageLogStatus,
 export const MESSAGE_JOB_STATUS_BADGE_VARIANT: Readonly<Record<MessageTriggerJobStatus, MessageStatusBadgeVariant>> = {
   pending: "warning",
   processing: "info",
+  dispatching: "info",
   sent: "success",
   failed: "danger",
   canceled: "neutral",

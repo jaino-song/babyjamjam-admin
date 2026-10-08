@@ -334,4 +334,81 @@ describe("service-record draft proxy routes", () => {
             consoleErrorSpy.mockRestore();
         }
     });
+
+    describe("blockingOperation on a confirm conflict", () => {
+        const confirmWithUpstream409 = async (data: unknown) => {
+            mockPost.mockRejectedValue({ response: { status: 409, data } });
+            const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+            try {
+                return await confirmDraft(
+                    createRequest("/api/admin/service-records/drafts/draft-1/confirm", "POST", {
+                        expectedDraftVersion: 1,
+                        previewId: "preview-1",
+                        idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                    }),
+                    { params: Promise.resolve({ draftId: "draft-1" }) },
+                );
+            } finally {
+                consoleErrorSpy.mockRestore();
+            }
+        };
+
+        it("re-attaches a validated blockingOperation to the sanitized 409", async () => {
+            const response = await confirmWithUpstream409({
+                code: "DRAFT_VERSION_CONFLICT",
+                message: "cas private internals",
+                blockingOperation: { operation: "contract_period", status: "RUNNING", lastErrorCode: "ERR_1" },
+            });
+
+            expect(response.status).toBe(409);
+            const body = await response.json();
+            expect(body).toMatchObject({
+                code: "DRAFT_VERSION_CONFLICT",
+                blockingOperation: { operation: "contract_period", status: "RUNNING", lastErrorCode: "ERR_1" },
+            });
+            expect(JSON.stringify(body)).not.toContain("cas private internals");
+        });
+
+        it("nulls unsafe status and lastErrorCode strings", async () => {
+            const response = await confirmWithUpstream409({
+                code: "DRAFT_VERSION_CONFLICT",
+                blockingOperation: {
+                    operation: "receipt_refresh",
+                    status: "has spaces and <script>",
+                    lastErrorCode: "x".repeat(81),
+                },
+            });
+
+            await expect(response.json()).resolves.toMatchObject({
+                blockingOperation: { operation: "receipt_refresh", status: null, lastErrorCode: null },
+            });
+        });
+
+        it("omits the field for an unknown operation or a non-409 status", async () => {
+            const unknownOperation = await confirmWithUpstream409({
+                code: "DRAFT_VERSION_CONFLICT",
+                blockingOperation: { operation: "drop_tables", status: "RUNNING" },
+            });
+            expect(unknownOperation.status).toBe(409);
+            expect(await unknownOperation.json()).not.toHaveProperty("blockingOperation");
+
+            mockPost.mockRejectedValue({
+                response: { status: 500, data: { blockingOperation: { operation: "contract_period" } } },
+            });
+            const consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+            try {
+                const serverError = await confirmDraft(
+                    createRequest("/api/admin/service-records/drafts/draft-1/confirm", "POST", {
+                        expectedDraftVersion: 1,
+                        previewId: "preview-1",
+                        idempotencyKey: "11111111-1111-4111-8111-111111111111",
+                    }),
+                    { params: Promise.resolve({ draftId: "draft-1" }) },
+                );
+                expect(await serverError.json()).not.toHaveProperty("blockingOperation");
+            } finally {
+                consoleErrorSpy.mockRestore();
+            }
+        });
+    });
 });

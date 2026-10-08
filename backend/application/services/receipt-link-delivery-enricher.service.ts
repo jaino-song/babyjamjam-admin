@@ -6,10 +6,13 @@ import {
     FileStorageObjectNotFoundError,
     FileStoragePort,
 } from "domain/ports/file-storage.port";
-import { ReceiptLinkIssueService, ReceiptLinkSkipError } from "./receipt-link-issue.service";
+import {
+    ReceiptLinkIssueService,
+    ReceiptLinkSkipError,
+    receiptLinkUnusableError,
+} from "./receipt-link-issue.service";
 import { ReceiptLinkTokenService } from "./receipt-link-token.service";
 import {
-    SmsTriggerDeliverySkipError,
     SmsTriggerPayloadEnricher,
     SmsTriggerPayloadEnricherRegistry,
 } from "./sms-trigger-payload-enricher.registry";
@@ -20,13 +23,6 @@ import {
     SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE,
 } from "domain/constants/service-end-notice-message";
 export { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
-
-function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
-    return new SmsTriggerDeliverySkipError(
-        "receipt_link_unusable",
-        "승인된 영수증 링크가 만료되었거나 취소되어 재시도하지 않았습니다",
-    );
-}
 
 /** Refreshes the contract receipt link at delivery time to a new 30-day expiry counted from this send. */
 @Injectable()
@@ -83,20 +79,26 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         if (!branchId || clientId === null) {
             throw receiptLinkUnusableError();
         }
+        const status = await this.tokenService.getStatus(linkToken, new Date());
         const assertDocumentSyncReady = this.issueService.assertDocumentSyncReady;
         if (typeof assertDocumentSyncReady === "function") {
             const explicitDocId = job.payload.receiptEformsignDocId;
             // The issue service resolves the client's authoritative contract
             // when no explicit manual-send document was pinned. This check is
             // deliberately before signing the object URL or handing control
-            // back to the SMS provider.
+            // back to the SMS provider. For an automatic job the approved link
+            // was rendered from one specific contract; it is only deliverable
+            // while that contract is still the current one (the readiness
+            // result describes the current contract, never the link's own).
             await assertDocumentSyncReady.call(this.issueService, {
                 branchId,
                 clientId,
                 ...(typeof explicitDocId === "number" ? { eformsignDocId: explicitDocId } : {}),
+                ...(typeof explicitDocId !== "number" && status.ok
+                    ? { expectedEformsignDocId: status.eformsignDocId }
+                    : {}),
             });
         }
-        const status = await this.tokenService.getStatus(linkToken, new Date());
         if (!status.ok) {
             throw receiptLinkUnusableError();
         }

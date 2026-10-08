@@ -167,9 +167,18 @@ export interface ServiceRecordEditRevisionFactsReceiptToken {
 }
 
 export interface ServiceRecordEditRevisionFactsSource {
+    /** The contract document the contract-revision planning reads (the `client.eDocId` pointer). */
     document: ServiceRecordEditRevisionFactsDocument | null;
-    /** Undefined means the token observation failed; [] is an observed empty set. */
+    /** Receipt tokens observed on the contract documents named by the scope (the stable links). Undefined means the token observation failed; [] is an observed empty set. */
     receiptTokens?: readonly ServiceRecordEditRevisionFactsReceiptToken[];
+    /**
+     * The document the receipt refresh reads its facts from: the client's CURRENT contract
+     * (the same rule as the client summary and the automatic receipt path), not the possibly
+     * lagging `client.eDocId` pointer. `null` means the current contract could not be resolved,
+     * so receipt facts are unavailable and the operation fails closed. Omitted means "same as
+     * `document`".
+     */
+    receiptDocument?: ServiceRecordEditRevisionFactsDocument | null;
 }
 
 export type ServiceRecordEditDraftStatus = "ACTIVE" | "DISCARDED" | "CONFIRMED";
@@ -466,6 +475,11 @@ export interface ServiceRecordEditConfirmInput {
     idempotencyKey: string;
     requestFingerprint: string;
     actorUserId: string;
+    /**
+     * Configured service-record template ids, needed to apply the shared "current contract" rule
+     * when capturing receipt facts. Omitted means none are configured.
+     */
+    serviceRecordTemplateIds?: readonly string[];
     prepare: (snapshot: ServiceRecordEditConfirmSnapshot) =>
         | ServiceRecordEditConfirmPlan
         | Promise<ServiceRecordEditConfirmPlan>;

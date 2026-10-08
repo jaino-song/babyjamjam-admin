@@ -486,7 +486,8 @@ describeE2E("service-record finalization eligibility and frozen input (real disp
         const requestKey = `service-record-initial-finalization:${first.revisionId}`;
         const frozen = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
         await expect(confirmAdminDateMove(prisma, fixture, "next confirmed revision"))
-            .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED" } });
+            .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED",
+                blockingOperation: expect.objectContaining({ status: expect.any(String) }) } });
         const retained = await prisma.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
         expect(retained.payload).toEqual(frozen.payload);
         expect(retained.payloadFingerprint).toBe(frozen.payloadFingerprint);

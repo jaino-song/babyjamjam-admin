@@ -418,12 +418,19 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             service_record_case: {
                 deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
-            $queryRaw: jest.fn().mockResolvedValue([{
-                id: 11,
-                documentId: "doc-1",
-                clientId: 31,
-                autoRegisteredClient: true,
-            }]),
+            // Lock order is client row(s) -> document rows: an unlocked owner read, the client
+            // lock, the document lock, the owner re-read, then the auto-registration client lock.
+            $queryRaw: jest.fn(async (query: { strings: readonly string[] }) => {
+                const text = query.strings.join("?");
+                if (text.includes("UNION")) return [{ id: 31 }];
+                if (text.includes("FROM client")) return [{ id: 31 }];
+                return [{
+                    id: 11,
+                    documentId: "doc-1",
+                    clientId: 31,
+                    autoRegisteredClient: true,
+                }];
+            }),
         };
         (prisma as { $transaction?: jest.Mock }).$transaction = transactionMock(prisma);
         const repository = new SbEformsignDocumentMirrorRepository(
@@ -432,6 +439,13 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         const deletedAt = new Date("2026-07-30T00:00:00.000Z");
 
         await repository.purgeContent(["doc-1"], deletedAt);
+
+        const sqlOf = (index: number) =>
+            (prisma.$queryRaw.mock.calls[index]![0] as { strings: readonly string[] }).strings.join("?");
+        expect(sqlOf(0)).toContain("UNION");
+        expect(sqlOf(0)).not.toContain("FOR UPDATE");
+        expect(sqlOf(1)).toMatch(/FROM client[\s\S]*ORDER BY id[\s\S]*FOR UPDATE/);
+        expect(sqlOf(2)).toMatch(/FROM eformsign_doc[\s\S]*FOR UPDATE/);
 
         expect(prisma.client.updateMany).toHaveBeenCalledWith({
             where: { eDocId: { in: ["doc-1"] } },
@@ -522,7 +536,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             }),
         });
         expect((prisma as { $transaction?: jest.Mock }).$transaction).toHaveBeenCalledTimes(1);
-        expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(5);
     });
 
     it("keeps automatic-registration artifacts when the client has real business data", async () => {
@@ -563,6 +577,68 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         expect(prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
         expect(prisma.service_record_case.deleteMany).not.toHaveBeenCalled();
         expect(prisma.client.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it("restarts the purge when the owner changed between the unlocked read and the document lock", async () => {
+        const sql = (query: { strings: readonly string[] }) => query.strings.join("?");
+        const lockedClients: number[][] = [];
+        let documentLocks = 0;
+        const prisma = {
+            eformsign_doc: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            eformsign_doc_file: { deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            client: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            $queryRaw: jest.fn(async (query: { strings: readonly string[]; values: unknown[] }) => {
+                const text = sql(query);
+                if (text.includes("UNION")) {
+                    // 1st attempt: the document looks unowned at first, then turns out owned by 31
+                    // once its row is locked. 2nd attempt: owner 31 is known up front.
+                    return documentLocks === 0 ? [] : [{ id: 31 }];
+                }
+                if (text.includes("FROM client")) {
+                    lockedClients.push(query.values as number[]);
+                    return [{ id: 31 }];
+                }
+                documentLocks += 1;
+                return [{ id: 11, documentId: "doc-1", clientId: 31, autoRegisteredClient: false }];
+            }),
+        };
+        (prisma as { $transaction?: jest.Mock }).$transaction = transactionMock(prisma);
+        const repository = new SbEformsignDocumentMirrorRepository(prisma as never);
+
+        await repository.purgeContent(["doc-1"], new Date("2026-07-30T00:00:00.000Z"));
+
+        // First attempt: no client was locked and nothing was written (rolled back by returning);
+        // second attempt locks client 31 BEFORE the document and then purges.
+        expect((prisma as unknown as { $transaction: jest.Mock }).$transaction).toHaveBeenCalledTimes(2);
+        expect(documentLocks).toBe(2);
+        expect(lockedClients).toEqual([[31]]);
+        expect(prisma.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives up (instead of purging with the wrong locks) when the owner keeps changing", async () => {
+        const prisma = {
+            eformsign_doc: { updateMany: jest.fn() },
+            eformsign_doc_file: { deleteMany: jest.fn() },
+            client: { updateMany: jest.fn() },
+            // the unlocked read never sees an owner, but the re-read under the document lock always
+            // reveals one that was not locked
+            $queryRaw: jest.fn(),
+        };
+        let unionCalls = 0;
+        prisma.$queryRaw.mockImplementation(async (query: { strings: readonly string[] }) => {
+            const text = query.strings.join("?");
+            if (text.includes("UNION")) {
+                unionCalls += 1;
+                return unionCalls % 2 === 0 ? [{ id: 31 }] : [];
+            }
+            return [{ id: 11, documentId: "doc-1", clientId: 31, autoRegisteredClient: false }];
+        });
+        (prisma as { $transaction?: jest.Mock }).$transaction = transactionMock(prisma);
+        const repository = new SbEformsignDocumentMirrorRepository(prisma as never);
+
+        await expect(repository.purgeContent(["doc-1"], new Date("2026-07-30T00:00:00.000Z")))
+            .rejects.toThrow("owner kept changing");
+        expect(prisma.eformsign_doc.updateMany).not.toHaveBeenCalled();
     });
 
     it("keeps an existing client that was only linked to the purged document", async () => {
@@ -706,6 +782,8 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                     $queryRaw: async (query: unknown) => {
                         const text = (query as { strings?: readonly string[] })
                             .strings?.join("?") ?? "";
+                        // The purge's unlocked owner read (no lock, no owning client here).
+                        if (text.includes("UNION")) return [];
                         lockQueries.push(text);
                         if (text.includes('detail_payload AS "detailPayload"')) {
                             markStarted.resolve();

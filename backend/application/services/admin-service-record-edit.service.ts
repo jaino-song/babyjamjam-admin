@@ -1,10 +1,12 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import type { KrBusinessDayCalendar } from "@babyjamjam/shared/utils/business-days";
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import {
     validateServiceRecordAnswers,
     validateServiceRecordEditText,
@@ -18,6 +20,9 @@ import {
 import {
     ServiceRecordEditConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordRevisionOperationUnresolvedError,
+    SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE,
+    SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE,
 } from "domain/errors/service-record-edit.error";
 import {
     buildServiceRecordContractRevisionSnapshot,
@@ -57,6 +62,7 @@ import type {
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
@@ -493,7 +499,13 @@ export class AdminServiceRecordEditService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly repository: IServiceRecordEditRepository,
         private readonly holidayCalendar: HolidayCalendarService,
+        @Optional() private readonly caseEventBus?: ServiceRecordCaseEventBus,
+        // Optional so positional construction in specs keeps working; without it the template
+        // ids fall back to process.env exactly like `configuredServiceRecordTemplateIds()`.
+        @Optional() private readonly configService?: ConfigService,
     ) {}
+
+    private readonly logger = new Logger(AdminServiceRecordEditService.name);
 
     async startDraft(
         branchId: string,
@@ -683,8 +695,9 @@ export class AdminServiceRecordEditService {
         // Loaded before the repository transaction: its `prepare` callback is synchronous.
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
 
+        let confirmed: ServiceRecordEditConfirmResponse;
         try {
-            return await this.repository.confirmDraft({
+            confirmed = await this.repository.confirmDraft({
                 branchId,
                 draftId,
                 expectedDraftVersion: dto.expectedDraftVersion,
@@ -692,6 +705,7 @@ export class AdminServiceRecordEditService {
                 idempotencyKey: dto.idempotencyKey,
                 requestFingerprint,
                 actorUserId,
+                serviceRecordTemplateIds: [...configuredServiceRecordTemplateIds(this.configService)],
                 prepare: ({ draft, source, revisionFactsSource }) => this.buildConfirmPlan({
                     draft,
                     source,
@@ -705,12 +719,41 @@ export class AdminServiceRecordEditService {
             });
         } catch (error) {
             if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
+            if (error instanceof ServiceRecordRevisionOperationUnresolvedError) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"),
+                    blockingOperation: {
+                        operation: error.operation,
+                        status: error.status,
+                        lastErrorCode: error.lastErrorCode,
+                    },
+                });
+            }
             if (error instanceof ServiceRecordEditConflictError) {
                 // 저장소 충돌 전체(버전 경합·문서 상태 경합)는 "작업 대상 변경"의
                 // 동일 원인이라 등록된 코드를 재사용해요(EM-CAT-02).
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             throw error;
+        }
+        this.emitCaseChanged(branchId, confirmed);
+        return confirmed;
+    }
+
+    /** Tell open editors the case changed; a bus failure must never fail the confirm. */
+    private emitCaseChanged(branchId: string, confirmed: ServiceRecordEditConfirmResponse): void {
+        if (!this.caseEventBus) return;
+        try {
+            this.caseEventBus.emit({
+                branchId,
+                clientId: confirmed.clientId,
+                caseId: confirmed.caseId,
+                caseVersion: confirmed.caseVersion,
+            });
+        } catch (error) {
+            this.logger.warn(
+                `case-changed emit failed case=${confirmed.caseId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
         }
     }
 
@@ -985,6 +1028,35 @@ export class AdminServiceRecordEditService {
                 targetPeriod,
             })
             : { facts: null, receiptInput: null, missingFacts: [] };
+        // The receipt refresh reads its facts from the receipt document: the client's CURRENT
+        // contract as `selectCurrentContractDocument` resolves it (the same rule the client
+        // summary uses). That can differ from the `client.eDocId`-pinned contract document above
+        // while that pointer lags a re-issued contract, and from the document the receipt tokens
+        // are attached to: receipt links are stable, so the token stays on its original document
+        // and promotion refreshes it from the target document. Promotion requires only that this
+        // target (receipt-facts) document is still the client's current contract, checked under
+        // the client-first lock order (client row first, then the client's document rows in id order).
+        // Contract-revision planning keeps using `document` untouched: it WRITES to eformsign, so
+        // its target is deliberately not retargeted here. When the receipt document is the same
+        // document (the common case) the single capture above already answers both.
+        const receiptDocument = revisionFactsSource?.receiptDocument;
+        const receiptFactsResult: ServiceRecordRevisionFactsResult = periodChanged
+            && revisionFactsSource
+            && receiptDocument !== undefined
+            && receiptDocument !== revisionFactsSource.document
+            ? captureServiceRecordRevisionFacts({
+                document: receiptDocument,
+                receiptTokens: revisionFactsSource.receiptTokens,
+                targetPeriod: {
+                    ...targetPeriod,
+                    fields: buildServiceRecordRevisionTargetFieldMap(
+                        receiptDocument,
+                        provisional.after.startDate,
+                        provisional.after.endDate,
+                    ).fields ?? {},
+                },
+            })
+            : factsResult;
         const builtContractSnapshot = factsResult.facts
             ? buildServiceRecordContractRevisionSnapshot(factsResult.facts)
             : { snapshot: null, reason: null };
@@ -1025,7 +1097,7 @@ export class AdminServiceRecordEditService {
                 status: contractOperationStatus,
                 step: contractOperationStatus,
                 lastErrorCode: contractRequiresSync && !contractFactsAvailable
-                    ? "SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE"
+                    ? SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE
                     : null,
                 documentVersion: contractSnapshot?.original.documentVersion ?? null,
                 sourceDocumentId: contractSnapshot?.original.documentId ?? contractDocumentId,
@@ -1050,7 +1122,7 @@ export class AdminServiceRecordEditService {
         // unverified receipt scope remains unknown when the period changes.
         const receiptRequiresSync = periodChanged
             && (!receiptScopeKnown || receiptTokenIds.length > 0);
-        const receiptInput = factsResult.receiptInput;
+        const receiptInput = receiptFactsResult.receiptInput;
         const receiptOperationStatus: ServiceRecordEditConfirmOperationPlan["status"] = receiptRequiresSync
             ? receiptInput ? "pending" : "manual_review"
             : "not_required";
@@ -1091,7 +1163,7 @@ export class AdminServiceRecordEditService {
                 status: receiptOperationStatus,
                 step: receiptOperationStatus,
                 lastErrorCode: receiptRequiresSync && !receiptInput
-                    ? "SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE"
+                    ? SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE
                     : null,
                 documentVersion: receiptInput?.source.documentVersion ?? null,
                 sourceDocumentId: receiptInput?.source.documentId ?? receiptScope?.sourceDocumentId ?? null,

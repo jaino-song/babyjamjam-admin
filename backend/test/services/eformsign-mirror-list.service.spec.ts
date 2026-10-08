@@ -71,6 +71,7 @@ describe("EformsignMirrorListService", () => {
         findAllVisibleInMirror: jest.Mock;
         findAllVisibleInMirrorForHeadquarters: jest.Mock;
         findContractEndDatesByDocumentIds: jest.Mock;
+        findByDocumentIdUnscoped: jest.Mock;
     };
     let service: EformsignMirrorListService;
 
@@ -79,6 +80,7 @@ describe("EformsignMirrorListService", () => {
             findAllVisibleInMirror: jest.fn().mockResolvedValue([]),
             findAllVisibleInMirrorForHeadquarters: jest.fn().mockResolvedValue([]),
             findContractEndDatesByDocumentIds: jest.fn().mockResolvedValue(new Map()),
+            findByDocumentIdUnscoped: jest.fn().mockResolvedValue(null),
         };
         service = new EformsignMirrorListService(repository as never, createHolidayCalendarStub());
     });
@@ -334,6 +336,61 @@ describe("EformsignMirrorListService", () => {
         const { documents } = await service.buildList(createQuery());
 
         expect(documents[0]).not.toHaveProperty("contract_end_date");
+    });
+
+    describe("buildDetailDisplayFields", () => {
+        const calendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, { supportedYears: [2026] });
+        const reviewStep = {
+            statusType: "070",
+            stepType: "06",
+            stepName: "제공기관 확인",
+        };
+
+        function stored(document: EformsignDocEntity) {
+            repository.findByDocumentIdUnscoped.mockResolvedValue({ document, branchId: "branch-1" });
+        }
+
+        it("resolves an unclaimed provider-review contract to unassigned, never review", async () => {
+            stored(createMirrorDocument({ documentId: "doc-unclaimed", ...reviewStep, clientId: null }));
+
+            const fields = await service.buildDetailDisplayFields("doc-unclaimed", calendar);
+
+            expect(repository.findByDocumentIdUnscoped).toHaveBeenCalledWith("doc-unclaimed");
+            expect(fields).toEqual({ display_status: "unassigned" });
+        });
+
+        it("resolves a claimed one with the same end date the list attaches", async () => {
+            stored(createMirrorDocument({ documentId: "doc-claimed", ...reviewStep, clientId: 7 }));
+            repository.findContractEndDatesByDocumentIds.mockResolvedValue(
+                new Map([["doc-claimed", "2026-03-31"]]),
+            );
+
+            const fields = await service.buildDetailDisplayFields("doc-claimed", calendar);
+
+            expect(repository.findContractEndDatesByDocumentIds).toHaveBeenCalledWith(["doc-claimed"]);
+            expect(fields).toEqual({ display_status: "review", contract_end_date: "2026-03-31" });
+        });
+
+        it("leaves the end date out when none is recoverable, as the list does", async () => {
+            stored(createMirrorDocument({ documentId: "doc-claimed", ...reviewStep, clientId: 7 }));
+
+            const fields = await service.buildDetailDisplayFields("doc-claimed", calendar);
+
+            expect(fields).toEqual({ display_status: "review" });
+        });
+
+        it("does not read the detail payload for a document outside the review step", async () => {
+            stored(createMirrorDocument({ documentId: "doc-waiting", clientId: 7 }));
+
+            const fields = await service.buildDetailDisplayFields("doc-waiting", calendar);
+
+            expect(fields).toEqual({ display_status: "pending" });
+            expect(repository.findContractEndDatesByDocumentIds).not.toHaveBeenCalled();
+        });
+
+        it("returns null when the row no longer exists", async () => {
+            await expect(service.buildDetailDisplayFields("gone", calendar)).resolves.toBeNull();
+        });
     });
 
     it("does not read detail payloads when nothing sits in the provider-review step", async () => {

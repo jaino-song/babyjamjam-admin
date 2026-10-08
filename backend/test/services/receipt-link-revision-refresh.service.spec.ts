@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS } from "application/usecases/eformsign-doc/service-record-field-ids";
+
 import {
     ReceiptLinkRevisionRefreshService,
     type ReceiptLinkRevisionPdfSource,
@@ -115,7 +117,10 @@ interface Harness {
     repository: Partial<Record<keyof IServiceRecordEditRepository, jest.Mock>>;
 }
 
-function makeHarness(overrides: Partial<ReceiptLinkRevisionRefreshState> = {}): Harness {
+function makeHarness(
+    overrides: Partial<ReceiptLinkRevisionRefreshState> = {},
+    configService?: { get: (key: string) => string | undefined },
+): Harness {
     const current = state(overrides);
     const source: jest.Mocked<ReceiptLinkRevisionPdfSource> = {
         download: jest.fn().mockResolvedValue({
@@ -174,6 +179,7 @@ function makeHarness(overrides: Partial<ReceiptLinkRevisionRefreshState> = {}): 
         rasterizer,
         storage,
         tokenRepository,
+        configService as never,
     );
     return { service, current, source, verifier, rasterizer, storage, promotion, repository };
 }
@@ -213,9 +219,21 @@ describe("ReceiptLinkRevisionRefreshService", () => {
             tokenIds: SNAPSHOT.tokens.tokenIds,
             targetDocumentId: SNAPSHOT.source.documentId,
             expectedStateVersion: 1,
+            serviceRecordTemplateIds: expect.any(Array),
             proof: expect.objectContaining({ officialPdfSha256: createHash("sha256").update(PDF).digest("hex") }),
         }));
         expect(harness.storage.delete).not.toHaveBeenCalled();
+    });
+
+    it("hands the configured service-record template ids to the promotion's current-contract check", async () => {
+        const [firstKey] = SERVICE_RECORD_TEMPLATE_TIER_ENV_KEYS.map(({ envKey }) => envKey);
+        const harness = makeHarness({}, { get: (key: string) => (key === firstKey ? " sr-template-1 " : undefined) });
+
+        await harness.service.processOperation(input);
+
+        expect(harness.promotion).toHaveBeenCalledWith(expect.objectContaining({
+            serviceRecordTemplateIds: expect.arrayContaining(["sr-template-1"]),
+        }));
     });
 
     it("leaves the existing image and token untouched when semantic PDF proof is unavailable", async () => {

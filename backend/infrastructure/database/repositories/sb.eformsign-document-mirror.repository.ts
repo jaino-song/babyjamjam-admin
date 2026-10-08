@@ -25,6 +25,8 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 
 const MAX_SYNC_ERROR_LENGTH = 2_000;
 const DELETED_EFORMSIGN_STATUS_TYPES = ["047", "049", "099"];
+const PURGE_OWNERSHIP_CHANGED = Symbol("PURGE_OWNERSHIP_CHANGED");
+const PURGE_OWNERSHIP_RETRY_LIMIT = 5;
 
 @Injectable()
 export class SbEformsignDocumentMirrorRepository
@@ -485,11 +487,64 @@ implements IEformsignDocumentMirrorRepository {
         });
     }
 
+    /**
+     * Lock order: client row(s) -> document rows, the project-wide order shared with
+     * `linkClientIfActive`, service-record confirmation, receipt promotion and the webhook
+     * completion guard.
+     *
+     * The purge used to lock the documents first and the owning client afterwards, which
+     * deadlocks (`40P01`) against `linkClientIfActive` (client first, then the document). With the
+     * link as the surviving side the purge was the aborted one, leaving the old document's
+     * customer data unpurged; a supersede purge records no retry intent. So the clients that own,
+     * or point at, the documents are discovered WITHOUT a lock, locked in id order, and only then
+     * are the documents locked. Ownership is re-read once the document locks are held; if it names
+     * a client that was not locked, nothing has been written yet, so the transaction is rolled
+     * back and the purge starts over.
+     */
     async purgeContent(documentIds: string[], deletedAt: Date): Promise<void> {
         if (documentIds.length === 0) {
             return;
         }
-        await this.prisma.$transaction(async (tx) => {
+        for (let attempt = 0; attempt < PURGE_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            const outcome = await this.purgeContentOnce(documentIds, deletedAt);
+            if (outcome !== PURGE_OWNERSHIP_CHANGED) return;
+        }
+        throw new Error("Eformsign document owner kept changing while purging content");
+    }
+
+    /** Clients that own, or hold the eDocId pointer of, any of the documents (no lock taken). */
+    private async findPurgeClientIds(
+        tx: Prisma.TransactionClient,
+        documentIds: string[],
+    ): Promise<number[]> {
+        const rows = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT client_id AS id
+            FROM eformsign_doc
+            WHERE document_id IN (${Prisma.join(documentIds)})
+              AND client_id IS NOT NULL
+            UNION
+            SELECT id
+            FROM client
+            WHERE e_doc_id IN (${Prisma.join(documentIds)})
+        `);
+        return [...new Set((rows ?? []).map((row) => row.id))].sort((left, right) => left - right);
+    }
+
+    private async purgeContentOnce(
+        documentIds: string[],
+        deletedAt: Date,
+    ): Promise<void | typeof PURGE_OWNERSHIP_CHANGED> {
+        return this.prisma.$transaction(async (tx) => {
+            const peekedClientIds = await this.findPurgeClientIds(tx, documentIds);
+            if (peekedClientIds.length > 0) {
+                await tx.$queryRaw(Prisma.sql`
+                    SELECT id
+                    FROM client
+                    WHERE id IN (${Prisma.join(peekedClientIds)})
+                    ORDER BY id
+                    FOR UPDATE
+                `);
+            }
             // Take the same parent-row lock as saveFile before deleting child
             // rows, so an in-flight download cannot recreate a purged file.
             const rows = await tx.$queryRaw<{
@@ -510,6 +565,14 @@ implements IEformsignDocumentMirrorRepository {
             `);
             if (rows.length === 0) {
                 return;
+            }
+            // The documents are locked now, so their owners are stable. A client that was not
+            // locked above (the owner moved between the unlocked read and the lock) would be
+            // locked document-first below, which is the inverted order: start over instead.
+            const lockedClientIds = new Set(peekedClientIds);
+            const currentClientIds = await this.findPurgeClientIds(tx, documentIds);
+            if (currentClientIds.some((id) => !lockedClientIds.has(id))) {
+                return PURGE_OWNERSHIP_CHANGED;
             }
             const rowIds = rows.map((row) => row.id);
             const purgedDocumentIds = rows.map((row) => row.documentId);

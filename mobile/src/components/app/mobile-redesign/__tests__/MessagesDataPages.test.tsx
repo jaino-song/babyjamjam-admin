@@ -143,6 +143,25 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     mockToast.mockReset();
   });
 
+  it.each(["processing", "dispatching"] as const)(
+    "labels a %s upcoming job 발송 중 with the info tone",
+    (status) => {
+      mockUseUpcomingMessageTriggerJobs.mockReturnValue({
+        isLoading: false,
+        isError: false,
+        data: [{ ...cancelableJob, status }],
+      });
+
+      const { container } = render(<MessagesHistoryPage />);
+
+      const badge = container.querySelector('[data-component$="_item-upcoming_status"]');
+      expect(badge).not.toBeNull();
+      expect(badge).toHaveTextContent("발송 중");
+      expect(badge).toHaveClass("bg-status-info");
+      expect(container.querySelector('[data-component$="_item-upcoming_cancel-action"]')).toBeNull();
+    },
+  );
+
   it("renders both zones with labelled dividers, soonest-first upcoming and most-recent-first past sends", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({
       isLoading: false,

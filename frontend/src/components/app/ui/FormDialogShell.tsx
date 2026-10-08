@@ -39,6 +39,8 @@ interface FormDialogShellProps {
   contentClassName?: string;
   footerClassName?: string;
   mobileSheet?: boolean;
+  /** Set false for a blocking dialog whose only exit is its own footer action. */
+  showCloseButton?: boolean;
 }
 
 export function FormDialogShell({
@@ -53,6 +55,7 @@ export function FormDialogShell({
   contentClassName,
   footerClassName,
   mobileSheet = false,
+  showCloseButton = true,
 }: FormDialogShellProps) {
   const canonicalDataComponentBase = canonicalDataComponent || undefined;
   const dataComponent = canonicalDataComponentBase ?? legacyDataComponent;
@@ -87,15 +90,17 @@ export function FormDialogShell({
             </DialogTitle>
           </div>
 
-          <DialogClose asChild>
-            <button
-              type="button"
-              className={cn(APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME, mobileSheet && "max-sm:h-11 max-sm:w-11")}
-            >
-              <X className={APP_DIALOG_CLOSE_ICON_CLASS_NAME} />
-              <span className="sr-only">{mobileSheet ? "닫기" : "Close"}</span>
-            </button>
-          </DialogClose>
+          {showCloseButton ? (
+            <DialogClose asChild>
+              <button
+                type="button"
+                className={cn(APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME, mobileSheet && "max-sm:h-11 max-sm:w-11")}
+              >
+                <X className={APP_DIALOG_CLOSE_ICON_CLASS_NAME} />
+                <span className="sr-only">{mobileSheet ? "닫기" : "Close"}</span>
+              </button>
+            </DialogClose>
+          ) : null}
         </div>
         {description ? <DialogDescription className="sr-only">{description}</DialogDescription> : null}
       </DialogHeader>

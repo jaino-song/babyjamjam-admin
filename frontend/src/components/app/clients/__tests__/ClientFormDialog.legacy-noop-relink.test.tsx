@@ -163,10 +163,11 @@ describe("ClientForm legacy no-op relink", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(mockUpdateClient).toHaveBeenCalledWith(expect.objectContaining({
+      // Only the edited field is sent; the missing due date is not rewritten.
+      expect(mockUpdateClient).toHaveBeenCalledWith({
         id: legacyClient.id,
-        dto: expect.objectContaining({ dueDate: null }),
-      }));
+        dto: { name: "변경된 고객" },
+      });
     });
   });
 
@@ -295,10 +296,11 @@ describe("ClientForm legacy no-op relink", () => {
     fireEvent.click(saveButton);
 
     await waitFor(() => {
-      expect(mockUpdateClient).toHaveBeenCalledWith(expect.objectContaining({
+      // Only the edited price is sent; the missing optional dates are not rewritten.
+      expect(mockUpdateClient).toHaveBeenCalledWith({
         id: clientWithAutoPrice.id,
-        dto: expect.objectContaining({ dueDate: null, birthDate: null }),
-      }));
+        dto: { fullPrice: "820000", actualPrice: "820000" },
+      });
     });
   });
 

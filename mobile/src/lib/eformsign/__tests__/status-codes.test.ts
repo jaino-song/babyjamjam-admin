@@ -129,3 +129,18 @@ describe("eformsign status code helpers", () => {
     });
   });
 });
+
+describe("040 (doc_request_revoke) 철회 요청됨", () => {
+  it("is labelled 철회 요청됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "040" }, null, "revoke_requested")).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "040" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+  });
+
+  it("keeps the expired category and leaves 042/090/080 labelled 기간 만료", () => {
+    expect(getStatusCategory("040")).toBe("expired");
+    for (const code of ["042", "090", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
+    }
+  });
+});

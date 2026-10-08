@@ -325,6 +325,7 @@ describe("ReceiptLinkTokenService", () => {
             state: "pending",
             branchName: "인천 아이미래로",
             storagePath: "receipts/b/42/abc.png",
+            eformsignDocId: 42,
             expiresAt: new Date(EXPIRES.getTime()).toISOString(),
             remainingAttempts: RECEIPT_LINK_MAX_FAILED_ATTEMPTS,
             lockedUntil: null,

@@ -22,6 +22,7 @@ import { ServiceRecordLinkService } from "../../application/services/service-rec
 import { SystemSettingService } from "../../application/services/system-setting.service";
 import { ClientEntity } from "../../domain/entities/client.entity";
 import { IClientRepository } from "../../domain/repositories/client.repository.interface";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
@@ -684,6 +685,15 @@ describe("ClientService", () => {
             );
         });
 
+        const phoneLinkQueries = () =>
+            prismaService.$queryRaw.mock.calls.map(([query]) => query as Prisma.Sql);
+        const phoneLinkQueryKind = (query: { sql: string }) => {
+            if (query.sql.includes("UNION")) return "owners";
+            if (query.sql.includes("FROM client") && query.sql.includes("FOR UPDATE")) return "client-lock";
+            if (query.sql.includes("eformsign_doc AS doc") && query.sql.includes("FOR UPDATE")) return "document-lock";
+            return "other";
+        };
+
         it("links every matching contract by normalized phone after manual client creation", async () => {
             const branchId = "11111111-1111-1111-1111-111111111111";
             const mockClient = createClientEntity();
@@ -802,12 +812,139 @@ describe("ClientService", () => {
                 data: { eDocId: "DOC-LATEST" },
             });
             expect(mockClient.eDocId).toBe("DOC-LATEST");
-            const [lockQuery] = prismaService.$queryRaw.mock.calls[0]!;
+            const lockQuery = phoneLinkQueries().find((query) => phoneLinkQueryKind(query) === "document-lock")!;
             expect(lockQuery.sql).toContain("ORDER BY doc.id");
             expect(lockQuery.strings.join(" ")).toMatch(/doc\.branch_id\s*=\s*::uuid/);
             expect(lockQuery.text).toMatch(/\$\d+::uuid/);
             expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
             expect(documentSnapshotService.bumpCompanyEpoch).toHaveBeenCalledTimes(1);
+        });
+
+        describe("phone-link lock order (client rows before document rows)", () => {
+            const CREATE_DTO = {
+                name: "New Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+            };
+
+            /** Documents 11 (unowned) and 10 (owned by client 99); both match the phone. */
+            const arrangeCandidates = () => {
+                const mockClient = createClientEntity();
+                createClientUsecase.execute.mockResolvedValue(mockClient);
+                prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 2 });
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    {
+                        id: 11,
+                        documentId: "DOC-LATEST",
+                        clientId: null,
+                        branchId: null,
+                        stepRecipientSms: "고객 010-1234-5678",
+                    },
+                    {
+                        id: 10,
+                        documentId: "DOC-OLDER",
+                        clientId: 99,
+                        branchId,
+                        stepRecipientSms: "연락처 +82 10 1234 5678",
+                    },
+                ]);
+                prismaService.client.findMany.mockResolvedValue([{
+                    id: mockClient.id,
+                    branchId,
+                    phone: mockClient.phone,
+                }]);
+                return mockClient;
+            };
+
+            /** `owners` answers each owner/pointer read in order; the last answer repeats. */
+            const arrangeQueries = (owners: number[][]) => {
+                let ownerReads = 0;
+                prismaService.$queryRaw.mockImplementation(async (query: { sql: string }) => {
+                    switch (phoneLinkQueryKind(query)) {
+                        case "owners": {
+                            const answer = owners[Math.min(ownerReads, owners.length - 1)]!;
+                            ownerReads += 1;
+                            return answer.map((id) => ({ id }));
+                        }
+                        case "document-lock":
+                            return [{ id: 10 }, { id: 11 }];
+                        default:
+                            return [];
+                    }
+                });
+            };
+
+            it("locks the target, every owner and every pointer client in id order before the documents", async () => {
+                const mockClient = arrangeCandidates();
+                // 99 owns DOC-OLDER; 55 points at one of the documents; the target is client 1.
+                arrangeQueries([[99, 55]]);
+
+                await service.create(branchId, CREATE_DTO);
+
+                const queries = phoneLinkQueries();
+                expect(queries.map(phoneLinkQueryKind)).toEqual([
+                    "owners", "client-lock", "document-lock", "owners",
+                ]);
+                const clientLock = queries.find((query) => phoneLinkQueryKind(query) === "client-lock")!;
+                expect(clientLock.sql).toContain("ORDER BY id");
+                expect(clientLock.values).toEqual([mockClient.id, 55, 99]);
+                const documentLock = queries.find((query) => phoneLinkQueryKind(query) === "document-lock")!;
+                expect(documentLock.values).toEqual([10, 11, branchId]);
+                // Nothing is written before both lock groups are held.
+                expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(1);
+                expect(mockClient.eDocId).toBe("DOC-LATEST");
+            });
+
+            it("starts over, re-reading the owners, when a document moved to an unlocked client", async () => {
+                const mockClient = arrangeCandidates();
+                // Attempt 1 locked [1, 99]; once the documents are locked 77 turns out to own one of
+                // them. Attempt 2 reads the owners afresh, locks 77 too, and its re-read agrees.
+                arrangeQueries([[99], [99, 77], [99, 77], [99, 77]]);
+
+                await service.create(branchId, CREATE_DTO);
+
+                const queries = phoneLinkQueries();
+                expect(queries.map(phoneLinkQueryKind)).toEqual([
+                    "owners", "client-lock", "document-lock", "owners",
+                    "owners", "client-lock", "document-lock", "owners",
+                ]);
+                const clientLocks = queries.filter((query) => phoneLinkQueryKind(query) === "client-lock");
+                expect(clientLocks.map((query) => query.values)).toEqual([
+                    [mockClient.id, 99],
+                    [mockClient.id, 77, 99],
+                ]);
+                // The aborted attempt wrote nothing; the retry wrote once.
+                expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(1);
+                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+                expect(mockClient.eDocId).toBe("DOC-LATEST");
+            });
+
+            it("gives up after three stale attempts, writes nothing and logs the phone-link failure", async () => {
+                const mockClient = arrangeCandidates();
+                // Every attempt finds one more owner after the document lock than it locked before.
+                const answers = [[99], [99, 70], [99, 70], [99, 70, 71], [99, 70, 71], [99, 70, 71, 72]];
+                arrangeQueries(answers);
+                const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                try {
+                    await expect(service.create(branchId, CREATE_DTO)).resolves.toBe(mockClient);
+
+                    expect(phoneLinkQueries().filter((query) => phoneLinkQueryKind(query) === "document-lock")).toHaveLength(3);
+                    expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+                    expect(mockClient.eDocId).toBeNull();
+                    expect(errorLog).toHaveBeenCalledWith(
+                        expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"),
+                    );
+                } finally {
+                    errorLog.mockRestore();
+                }
+            });
         });
 
         it("links a matching partial contract to a client created after mirror ingestion", async () => {
@@ -940,7 +1077,9 @@ describe("ClientService", () => {
                 breastPump: false,
             });
 
-            expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
+            expect(phoneLinkQueries().map(phoneLinkQueryKind)).toEqual([
+                "owners", "client-lock", "document-lock", "owners",
+            ]);
             expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
             expect(prismaService.client.updateMany).not.toHaveBeenCalled();
             expect(mockClient.eDocId).toBeNull();
@@ -3233,6 +3372,61 @@ describe("ClientService", () => {
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
             });
 
+            it("should read a cancellation-requested (040) document as revoke_requested and keep it a live contract", async () => {
+                const client = createWaitingClient("2026-07-16", "revoke-requested-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "040" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                // 040 is a pending request, not a cancellation: eformsign may still refuse it.
+                expect(result?.documentStatus).toBe("revoke_requested");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                expect(result?.actionRequired).toBeNull();
+            });
+
+            it("should read a signed-and-revoke-requested document as revoke_requested", async () => {
+                const client = createWaitingClient("2026-07-16", "revoke-requested-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "040", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("revoke_requested");
+            });
+
+            it.each([
+                ["060", "requested"],
+                ["042", "revoked"],
+            ])("should read a later %s after a 040 as %s", async (laterStatusType, documentStatus) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                // Newest first: the refused (060) or completed (042) cancellation is the latest row.
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, documentId: "doc", statusType: laterStatusType },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe(documentStatus);
+            });
+
+            it.each(["042", "090"])("should keep %s as revoked", async (statusType) => {
+                listClientsUsecase.execute.mockResolvedValue([
+                    createWaitingClient("2026-07-16", "doc"),
+                ]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([{ clientId: 1, statusType }]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("revoked");
+            });
+
             it("should preserve a completed lifecycle status while its mirror is syncing", async () => {
                 const client = createWaitingClient("2026-07-16", "completed-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
@@ -3672,6 +3866,15 @@ describe("ClientService", () => {
             expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
         });
 
+        it("drops the alert while the latest contract has a pending cancellation (040)", async () => {
+            prismaService.client.findMany.mockResolvedValue([alertClient()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([
+                { clientId: 1, statusType: "040" },
+            ]);
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([]);
+        });
+
         it("reads the latest contract rather than the document pinned by eDocId", async () => {
             prismaService.client.findMany.mockResolvedValue([alertClient()]);
             // Newest first: the latest document was revoked even though an older
@@ -3691,7 +3894,7 @@ describe("ClientService", () => {
         it("uses one branch calendar for both the scan cutoff and the per-client decision", async () => {
             const lteOf = (): Date => {
                 const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
-                return where.OR[1].startDate.lte as Date;
+                return where.OR[1].startDate.lt as Date;
             };
             const client = alertClient({ eDocId: null, startDate: new Date("2026-03-26T00:00:00.000Z") });
             prismaService.client.findMany.mockResolvedValue([client]);
@@ -3706,6 +3909,59 @@ describe("ClientService", () => {
             expect(alerts).toEqual([expect.objectContaining({ reason: "발송 필요", priority: 3 })]);
             expect(lteOf().getTime()).toBeGreaterThan(builtinCutoff.getTime());
             expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
+        });
+
+        // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea. A UTC server must still
+        // count business days from the Korean date (Oct 1), not from Sep 30.
+        // 2026-10-01T03:00:00Z (12:00 KST) is the control: both readings agree.
+        // Stored start dates are calendar dates held as UTC midnight, so the filter is
+        // judged by which of those it admits, not by one particular lte/lt form.
+        describe.each([
+            ["2026-09-30T16:30:00.000Z", "just after Korean midnight"],
+            ["2026-10-01T03:00:00.000Z", "midday in Korea (control)"],
+        ])("send-window cutoff at %s (%s)", (instant) => {
+            it("admits start dates up to the 6th business day after the Korean date, no later", async () => {
+                jest.setSystemTime(new Date(instant));
+                prismaService.client.findMany.mockResolvedValue([]);
+
+                await service.getActionRequiredAlerts(branchId);
+
+                const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+                const { lt } = where.OR[1].startDate as { lt: Date };
+                const admits = (calendarDate: string) =>
+                    new Date(`${calendarDate}T00:00:00.000Z`).getTime() < lt.getTime();
+                // 2026-10-01 (KST) + 6 business days over the built-in holidays = 2026-10-13.
+                expect(admits("2026-10-12")).toBe(true);
+                expect(admits("2026-10-13")).toBe(true);
+                expect(admits("2026-10-14")).toBe(false);
+            });
+        });
+
+        it("stores the cutoff as the UTC-midnight Date of the business day just past the window", async () => {
+            jest.setSystemTime(new Date("2026-09-30T16:30:00.000Z"));
+            prismaService.client.findMany.mockResolvedValue([]);
+
+            await service.getActionRequiredAlerts(branchId);
+
+            const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+            expect(where.OR[1].startDate).toEqual({ lt: new Date("2026-10-14T00:00:00.000Z") });
+        });
+
+        // 2026-03-12 (Thu) + 6 business days = 2026-03-20 (Fri). A start on Saturday 03-21
+        // is still 6 business days out, so it is due — the scan must not drop it.
+        it("scans a weekend start that the per-client decision counts as inside the window", async () => {
+            jest.setSystemTime(new Date("2026-03-12T03:00:00.000Z"));
+            prismaService.client.findMany.mockResolvedValue([
+                alertClient({ eDocId: null, startDate: new Date("2026-03-21T00:00:00.000Z") }),
+            ]);
+
+            const alerts = await service.getActionRequiredAlerts(branchId);
+
+            expect(alerts).toEqual([expect.objectContaining({ reason: "발송 필요", priority: 3 })]);
+            const where = prismaService.client.findMany.mock.calls.at(-1)![0].where;
+            const { lt } = where.OR[1].startDate as { lt: Date };
+            expect(new Date("2026-03-21T00:00:00.000Z").getTime()).toBeLessThan(lt.getTime());
+            expect(new Date("2026-03-23T00:00:00.000Z").getTime()).toBeGreaterThanOrEqual(lt.getTime());
         });
 
         it("reports 발송 필요 when no document has been sent", async () => {
@@ -3731,6 +3987,49 @@ describe("ClientService", () => {
             expect(alerts).toEqual([
                 expect.objectContaining({ id: 2, reason: "교체 요청", priority: 1 }),
             ]);
+        });
+    });
+
+    // ============================================
+    // getStats (dashboard counts)
+    // ============================================
+    describe("getStats month boundaries", () => {
+        type DateRangeFilter = { gte?: Date; gt?: Date; lte?: Date; lt?: Date };
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        // 2026-09-30T16:30:00Z is 2026-10-01 01:30 in Korea; the server runs in UTC, so
+        // the runtime's own month would still be September. 2026-10-01T03:00:00Z is the
+        // control where both readings already agree.
+        it.each([
+            ["2026-09-30T16:30:00.000Z"],
+            ["2026-10-01T03:00:00.000Z"],
+        ])("counts upcoming clients by the Korean month at %s", async (instant) => {
+            jest.useFakeTimers().setSystemTime(new Date(instant));
+            prismaService.client.count.mockResolvedValue(0);
+            prismaService.client.findMany.mockResolvedValue([]);
+
+            await service.getStats(branchId);
+
+            // Stored start dates are calendar dates held as UTC midnight, so judge each
+            // filter by which of those it admits rather than by one lte/lt form.
+            const rangeFilters = prismaService.client.count.mock.calls
+                .map(([args]: [{ where: { startDate?: DateRangeFilter } }]) => args.where.startDate)
+                .filter((filter: unknown): filter is DateRangeFilter => filter !== undefined);
+            expect(rangeFilters).toHaveLength(2);
+            const admitted = (filter: DateRangeFilter, calendarDate: string) => {
+                const t = new Date(`${calendarDate}T00:00:00.000Z`).getTime();
+                return (filter.gte === undefined || t >= filter.gte.getTime())
+                    && (filter.gt === undefined || t > filter.gt.getTime())
+                    && (filter.lte === undefined || t <= filter.lte.getTime())
+                    && (filter.lt === undefined || t < filter.lt.getTime());
+            };
+            const probes = ["2026-09-30", "2026-10-01", "2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"];
+            const [thisMonth, nextMonth] = rangeFilters as [DateRangeFilter, DateRangeFilter];
+            expect(probes.filter((d) => admitted(thisMonth, d))).toEqual(["2026-10-01", "2026-10-31"]);
+            expect(probes.filter((d) => admitted(nextMonth, d))).toEqual(["2026-11-01", "2026-11-30"]);
         });
     });
 
@@ -4818,6 +5117,141 @@ describe("ClientService", () => {
             const result = await service.getStats(branchId);
 
             expect(result.contractsPendingSignature).toBe(1);
+        });
+
+        // contractsNotSent must equal the number of clients whose list row carries the
+        // "발송 필요" badge: effective service status, latest-contract lookup, send window.
+        describe("contractsNotSent (계약서 발송 필요)", () => {
+            type StoredClient = {
+                id: number;
+                eDocId: string | null;
+                serviceStatus: string | null;
+                startDate: Date;
+                endDate: Date;
+            };
+            const storedClient = (overrides: Partial<StoredClient> = {}): StoredClient => ({
+                id: 1,
+                eDocId: null,
+                serviceStatus: "waiting",
+                startDate: new Date("2026-03-20T00:00:00.000Z"),
+                endDate: new Date("2026-04-04T00:00:00.000Z"),
+                ...overrides,
+            });
+            const contractDoc = (overrides: Record<string, unknown> = {}) => ({
+                clientId: 1,
+                documentId: "doc-1",
+                statusType: "060",
+                stepType: "02",
+                stepName: "이용자 서명",
+                detailPayload: null,
+                permanentPurgeRequestedAt: null,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: null,
+                ...overrides,
+            });
+
+            const seed = (clients: StoredClient[], docs: Record<string, unknown>[]) => {
+                // A tiny stand-in for the database so the legacy stored-status count query
+                // (eDocId IS NULL AND service_status = waiting) behaves like the real one.
+                prismaService.client.count.mockImplementation(async ({ where }: { where: { eDocId?: string | null; serviceStatus?: string } }) =>
+                    clients.filter((client) =>
+                        (where.eDocId === undefined || client.eDocId === where.eDocId)
+                        && (where.serviceStatus === undefined || client.serviceStatus === where.serviceStatus),
+                    ).length);
+                prismaService.client.findMany.mockResolvedValue(clients);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(docs);
+            };
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-03-17T09:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("counts a client whose only contract expired even though eDocId still points at it", async () => {
+                seed(
+                    [storedClient({ eDocId: "doc-1" })],
+                    [contractDoc({ statusType: "080" })],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+            });
+
+            it("does not count a client with a live contract that is linked only by clientId", async () => {
+                seed(
+                    [storedClient({ eDocId: null })],
+                    [contractDoc({ statusType: "060" })],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("does not count a client whose latest contract is completed or under provider review", async () => {
+                seed(
+                    [storedClient({ id: 1 }), storedClient({ id: 2 })],
+                    [
+                        contractDoc({ clientId: 1, documentId: "doc-1", statusType: "050", stepType: "05", stepName: "완료" }),
+                        contractDoc({ clientId: 2, documentId: "doc-2", statusType: "070", stepType: "06", stepName: "제공기관 확인" }),
+                    ],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("does not count a client whose latest contract has a pending cancellation (040)", async () => {
+                seed(
+                    [storedClient({ eDocId: "doc-1" })],
+                    [contractDoc({ statusType: "040" })],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("counts a client with no contract at all", async () => {
+                seed([storedClient()], []);
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+            });
+
+            it("counts a client whose latest contract was deleted or purged", async () => {
+                seed(
+                    [storedClient({ id: 1 }), storedClient({ id: 2 })],
+                    [
+                        contractDoc({ clientId: 1, documentId: "doc-1", statusType: "049" }),
+                        contractDoc({ clientId: 2, documentId: "doc-2", statusType: "003", permanentPurgeRequestedAt: new Date("2026-03-01T00:00:00.000Z") }),
+                    ],
+                );
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(2);
+            });
+
+            it("uses the effective service status, not the stored one", async () => {
+                // Stored "active" but the start date is still ahead: the list shows it as waiting.
+                seed([storedClient({ serviceStatus: "active" })], []);
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(1);
+
+                // Stored "waiting" but the service already ended: the list shows it as completed.
+                seed(
+                    [storedClient({
+                        serviceStatus: "waiting",
+                        startDate: new Date("2026-02-01T00:00:00.000Z"),
+                        endDate: new Date("2026-03-01T00:00:00.000Z"),
+                    })],
+                    [],
+                );
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
+
+            it("only counts clients inside the business-day send window", async () => {
+                // 2026-03-30 is more than six business days after 2026-03-17.
+                seed([storedClient({ startDate: new Date("2026-03-30T00:00:00.000Z") })], []);
+
+                expect((await service.getStats(branchId)).contractsNotSent).toBe(0);
+            });
         });
     });
 

@@ -25,6 +25,7 @@ import {
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
     TERMINAL_STATUS_CODES,
+    isRevokeRequestedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
     EformsignOperationAlreadyRunningError,
@@ -137,7 +138,12 @@ function finalizeProblemFields(reason: string): {
 const VENDOR_OUTCOME_RETRY_DELAYS_MS = [0, 500, 1_000, 2_000, 4_000, 8_000] as const;
 const POST_FINALIZE_MIRROR_RETRY_DELAYS_MS = [0, 1_000, 3_000, 8_000] as const;
 
-type VendorOutcome = "completed" | "advanced" | "failed" | "pending" | "unknown";
+/**
+ * "revoke_requested" (vendor 040) is neither progress nor a confirmed ending: the
+ * cancellation has been asked for and may still be refused (041) or completed (042). It
+ * must never settle as "advanced"/success, and it must never reopen the editor.
+ */
+type VendorOutcome = "completed" | "advanced" | "failed" | "revoke_requested" | "pending" | "unknown";
 
 function workflowStateAdvanced(
     initial: EformsignDocumentWorkflowState,
@@ -425,7 +431,9 @@ export class FinalizeDocumentHeadlessUsecase {
 
             const reason = settled === "failed"
                 ? "eformsign_terminal_failure"
-                : result.ok
+                : settled === "revoke_requested"
+                    ? "eformsign_revoke_requested"
+                    : result.ok
                     ? "eformsign reported success without submitting the document"
                     : resultReason!;
             this.logger.warn(
@@ -515,6 +523,9 @@ export class FinalizeDocumentHeadlessUsecase {
                 EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
             ].includes(document.documentKind)
             || TERMINAL_STATUS_CODES.has(document.statusType)
+            // 040 is not terminal, but a document whose cancellation was requested is
+            // not finalized as if nothing happened (it was refused here while 040 was terminal).
+            || isRevokeRequestedStatus(document.statusType)
             || document.expired
             || document.clientId === null) {
             return { ok: false };
@@ -621,6 +632,11 @@ export class FinalizeDocumentHeadlessUsecase {
                 if (current.statusCode && TERMINAL_STATUS_CODES.has(current.statusCode)) {
                     return "failed";
                 }
+                // Before the advancement check: a revoke request moves the status code, which
+                // would otherwise read as the document advancing to its next step.
+                if (isRevokeRequestedStatus(current.statusCode)) {
+                    return "revoke_requested";
+                }
                 if (workflowStateAdvanced(initialWorkflowState, current)) {
                     return "advanced";
                 }
@@ -636,6 +652,7 @@ export class FinalizeDocumentHeadlessUsecase {
                 return "unknown";
             }
             if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusCode)) return "completed";
+            if (isRevokeRequestedStatus(statusCode)) return "revoke_requested";
             return TERMINAL_STATUS_CODES.has(statusCode) ? "failed" : "pending";
         } catch (error) {
             const reason = sanitizeEformsignErrorMessage(error);
@@ -649,7 +666,7 @@ export class FinalizeDocumentHeadlessUsecase {
         accessToken: string,
         initialWorkflowState: EformsignDocumentWorkflowState | null,
     ): Promise<VendorOutcome> {
-        let latest: "pending" | "unknown" = "unknown";
+        let latest: "pending" | "unknown" | "revoke_requested" = "unknown";
 
         for (const delayMs of VENDOR_OUTCOME_RETRY_DELAYS_MS) {
             if (delayMs > 0) {

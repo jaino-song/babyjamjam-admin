@@ -101,6 +101,21 @@ describe('FilteredClientsDialog', () => {
             expect(screen.getByText('계약서 미완료')).toBeInTheDocument();
         });
 
+        it('should show a pending cancellation (040) as 철회 요청됨 from the shared status meta', () => {
+            mockFilteredClients = [{ ...mockClient, documentStatus: 'revoke_requested' }];
+
+            render(
+                <FilteredClientsDialog
+                    open={true}
+                    onClose={jest.fn()}
+                    filterType="incomplete-contracts"
+                />
+            );
+
+            expect(screen.getByText('철회 요청됨')).toBeInTheDocument();
+            expect(screen.queryByText('철회됨')).not.toBeInTheDocument();
+        });
+
         it('should display client data in table', () => {
             mockFilteredClients = [mockClient];
 

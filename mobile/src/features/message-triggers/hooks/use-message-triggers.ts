@@ -288,7 +288,7 @@ export function useUpcomingMessageTriggerJobs(limit = 200) {
         staleTime: 0,
         refetchOnMount: "always",
         refetchInterval: (query) =>
-            query.state.data?.some((job) => job.status === "processing") ? 1_000 : 5_000,
+            query.state.data?.some((job) => job.status === "processing" || job.status === "dispatching") ? 1_000 : 5_000,
     });
 }
 

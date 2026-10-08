@@ -213,7 +213,9 @@ describe("clients BFF problem conversion (BJJ-319 6.1e)", () => {
         await expect(response.json()).resolves.toEqual({ items: [] });
     });
 
-    it("sanitizes an analytics fetch failure with the status preserved", async () => {
+    // An unavailable upstream is not an error for the dashboard: every count is unknown (null,
+    // rendered "-"), and no upstream detail reaches the client.
+    it("answers an analytics upstream failure with unknown counts and no upstream detail", async () => {
         mockGet.mockRejectedValue({
             response: {
                 status: 502,
@@ -223,10 +225,16 @@ describe("clients BFF problem conversion (BJJ-319 6.1e)", () => {
 
         const response = await analytics(request("/api/clients/analytics"));
 
-        expect(response.status).toBe(502);
+        expect(response.status).toBe(200);
         const body = await response.json();
-        expect(typeof body.error).toBe("string");
-        expect(body.error).toMatch(/[가-힣]/);
+        expect(body).toEqual({
+            activeClients: null,
+            contractsNotSent: null,
+            contractsPendingSignature: null,
+            upcomingThisMonth: null,
+            upcomingNextMonth: null,
+            upcomingWithinWeek: null,
+        });
         expect(JSON.stringify(body)).not.toContain("analytics.internal");
         expect(JSON.stringify(body)).not.toContain("/tmp/clients");
     });

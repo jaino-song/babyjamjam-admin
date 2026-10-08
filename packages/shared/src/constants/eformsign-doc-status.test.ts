@@ -131,6 +131,60 @@ describe("isContractReviewWindowOpen with an explicit calendar", () => {
     });
 });
 
+/**
+ * 040 (doc_request_revoke): cancellation requested, not done. The category stays "expired" for
+ * tabs/filters/stats, but the display status is its own value. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("revoke_requested (eformsign 040)", () => {
+    it("labels 040 철회 요청됨, checked before the expired category", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested).toBe("철회 요청됨");
+        expect(resolveContractDocDisplayStatus({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: "040", now: kstNoon("2026-08-01"),
+        })).toBe("revoke_requested");
+        expect(resolveContractDocStatusLabel({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: "040", now: kstNoon("2026-08-01"),
+        })).toBe("철회 요청됨");
+        expect(resolveContractDocStatusLabel({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: 40, now: kstNoon("2026-08-01"),
+        })).toBe("철회 요청됨");
+    });
+
+    it("ignores step and end date for 040", () => {
+        for (const contractEndDate of ["2026-08-07", "2026-08-01", null]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired",
+                currentStatus: PROVIDER_REVIEW_STATUS,
+                contractEndDate,
+                statusType: "040",
+                now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress",
+            currentStatus: CUSTOMER_STEP_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "040",
+            now: kstNoon("2026-08-06"),
+        })).toBe("revoke_requested");
+    });
+
+    it("leaves other expired-bucket codes alone (042/090 revoked, 080 expired)", () => {
+        for (const statusType of ["042", "090", "080", "011", undefined, null]) {
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("기간 만료");
+        }
+    });
+
+    it("is recognised as a wire display status but never receipt-sendable", () => {
+        expect(isContractDocDisplayStatus("revoke_requested")).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "expired", displayStatus: "revoke_requested", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+    });
+});
+
 describe("resolveContractDocStatusLabel", () => {
     it("labels completed documents 계약 완료 and expired ones 기간 만료 regardless of dates", () => {
         expect(resolveContractDocStatusLabel({

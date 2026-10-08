@@ -1125,7 +1125,7 @@ function MessageHistorySection() {
                               variant={statusMeta.variant}
                               size="sm"
                             >
-                              {item.status === "processing" ? (
+                              {item.status === "processing" || item.status === "dispatching" ? (
                                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
                               ) : null}
                               {statusMeta.label}
@@ -1250,7 +1250,7 @@ function MessageHistorySection() {
               variant={getScheduledJobStatusMeta(selectedJob.status).variant}
               size="sm"
             >
-              {selectedJob.status === "processing" ? (
+              {selectedJob.status === "processing" || selectedJob.status === "dispatching" ? (
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
               ) : null}
               {getScheduledJobStatusMeta(selectedJob.status).label}

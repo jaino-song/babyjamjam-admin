@@ -14,6 +14,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
+import { normalizeKoreanPhoneLookupKey } from "infrastructure/database/repositories/stored-phone-lookup";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import {
@@ -322,6 +323,8 @@ interface MessageHistoryCandidate {
 const MESSAGE_HISTORY_CURSOR_VERSION = 1;
 const MESSAGE_HISTORY_MAX_LIMIT = 500;
 const MESSAGE_HISTORY_JOB_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CLIENT_HISTORY_MAX_LIMIT = 100;
+const CLIENT_HISTORY_DEFAULT_LIMIT = 50;
 const CLIENT_UPCOMING_CURSOR_VERSION = 1;
 const CLIENT_UPCOMING_MAX_LIMIT = 100;
 const CLIENT_UPCOMING_DEFAULT_LIMIT = 50;
@@ -330,6 +333,8 @@ const CLIENT_UPCOMING_CURSOR_ID_PATTERN = /^[A-Za-z0-9._:-]{1,200}$/;
 interface MessageHistoryCursorPayload {
     v: typeof MESSAGE_HISTORY_CURSOR_VERSION;
     branchId: string;
+    /** Present only on cursors minted by the client-scoped history endpoint. */
+    clientId?: number;
     snapshotAt: string;
     source: MessageHistorySource;
     nativeId: string;
@@ -393,6 +398,25 @@ function decodeMessageHistoryCursor(cursor: string, branchId: string): MessageHi
     } catch {
         throw new BadRequestException("메시지 발송 기록 페이지 커서가 올바르지 않습니다.");
     }
+}
+
+/**
+ * A client-scoped cursor is a history cursor that is also pinned to one client:
+ * a cursor minted for client A is refused for client B even inside one branch.
+ */
+function decodeClientHistoryCursor(
+    cursor: string,
+    branchId: string,
+    clientId: number,
+): ReturnType<typeof decodeMessageHistoryCursor> {
+    const decoded = decodeMessageHistoryCursor(cursor, branchId);
+    try {
+        const raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<MessageHistoryCursorPayload>;
+        if (raw.clientId !== clientId) throw new Error("cursor belongs to another client");
+    } catch {
+        throw new BadRequestException("메시지 발송 기록 페이지 커서가 올바르지 않습니다.");
+    }
+    return decoded;
 }
 
 function encodeClientUpcomingCursor(payload: ClientUpcomingCursorPayload): string {
@@ -1000,6 +1024,209 @@ export class MessageTriggerService {
             ? encodeMessageHistoryCursor({
                 v: MESSAGE_HISTORY_CURSOR_VERSION,
                 branchId,
+                snapshotAt: snapshotAt.toISOString(),
+                source: lastCandidate.source,
+                nativeId: lastCandidate.nativeId,
+            })
+            : null;
+
+        return {
+            items,
+            page: {
+                snapshotAt: snapshotAt.toISOString(),
+                nextCursor,
+                hasMore,
+            },
+        };
+    }
+
+    /**
+     * One client's message history, newest first, read straight from the
+     * database by client — never by slicing the branch-wide window in a browser.
+     * Same page shape, snapshot rule and native-id cursor as `listHistoryPage`
+     * (logs first, then terminal jobs that never produced a log), pinned to a
+     * branch-owned client exactly like `listClientUpcomingJobs`: another
+     * branch's client is a 404, and every query is also filtered by branch.
+     *
+     * Rows carrying no client id are included only when their stored phone
+     * normalises (`normalizeKoreanPhoneLookupKey`) to the client's current
+     * phone; a row owned by another client is never matched by phone.
+     */
+    async listClientHistoryPage(
+        branchId: string,
+        clientId: number,
+        limit = CLIENT_HISTORY_DEFAULT_LIMIT,
+        cursor?: string,
+    ): Promise<MessageHistoryPageView> {
+        if (!Number.isSafeInteger(clientId) || clientId < 1) {
+            throw new BadRequestException("고객 ID가 올바르지 않습니다.");
+        }
+        if (!Number.isSafeInteger(limit) || limit < 1 || limit > CLIENT_HISTORY_MAX_LIMIT) {
+            throw new BadRequestException("메시지 발송 기록 페이지 크기가 올바르지 않습니다.");
+        }
+
+        const decodedCursor = cursor === undefined
+            ? null
+            : decodeClientHistoryCursor(cursor, branchId, clientId);
+
+        const client = this.clientRepository
+            ? await this.clientRepository.findById(branchId, clientId)
+            : this.prisma.client?.findFirst
+                ? await this.prisma.client.findFirst({
+                    where: { id: clientId, branchId },
+                    select: { id: true, phone: true },
+                })
+                : null;
+        if (!client) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        const phoneKey = normalizeKoreanPhoneLookupKey(
+            (client as { phone?: string | null }).phone ?? "",
+        ) || null;
+        const scope = { clientId, phoneKey };
+
+        const snapshotAt = decodedCursor?.snapshotAt ?? new Date();
+        const after: MessageHistoryPageCursor | null = decodedCursor
+            ? { source: decodedCursor.source, nativeId: decodedCursor.nativeId }
+            : null;
+        const hasMessageLogTable = await hasTable(this.prisma, "message_log");
+        const hasTriggerSchema = await this.hasTriggerSchema();
+        const logs = hasMessageLogTable && (!after || after.source === "log")
+            ? await this.messageLogRepository.findClientHistoryPageByBranch(branchId, scope, {
+                snapshotAt,
+                after,
+                limit: limit + 1,
+            })
+            : [];
+        const visibleLogs = logs.slice(0, limit);
+        const logLookahead = logs.length > limit;
+        const remainingSlots = Math.max(limit - visibleLogs.length, 0);
+        const terminalJobs = hasTriggerSchema && !logLookahead
+            ? await this.jobRepository.findClientHistoryPageByBranch(branchId, scope, {
+                snapshotAt,
+                after,
+                limit: remainingSlots + 1,
+            })
+            : [];
+
+        const triggerJobIds = visibleLogs
+            .map((log) => log.triggerJobId)
+            .filter((id): id is string => Boolean(id));
+        const jobs = triggerJobIds.length > 0
+            ? await this.prisma.message_trigger_job.findMany({
+                where: { branchId, id: { in: triggerJobIds } },
+                select: {
+                    id: true,
+                    ruleId: true,
+                    scheduledFor: true,
+                    recipientType: true,
+                    payload: true,
+                },
+            })
+            : [];
+        const jobsById = new Map(jobs.map((job) => [job.id, job]));
+        const rules = visibleLogs.length > 0 || terminalJobs.length > 0
+            ? await this.ruleRepository.findAll(branchId)
+            : [];
+        const rulesById = new Map(rules.map((rule) => [rule.id, rule]));
+
+        const logCandidates: MessageHistoryCandidate[] = visibleLogs.map((log) => {
+            const job = log.triggerJobId ? jobsById.get(log.triggerJobId) : null;
+            const payload = (job?.payload as MessageTriggerJobEntity["payload"] | undefined) ?? null;
+            const rule = job ? rulesById.get(job.ruleId) ?? null : null;
+            return {
+                record: {
+                    id: log.id,
+                    provider: log.provider,
+                    templateKey: log.templateKey,
+                    triggerJobId: log.triggerJobId,
+                    receiver: log.receiver,
+                    clientId: log.clientId,
+                    recipientPhone: log.recipientPhone ?? log.receiver,
+                    messageBody: log.messageBody,
+                    variables: log.variables,
+                    status: log.status,
+                    aligoMid: log.aligoMid,
+                    errorMessage: log.errorMessage,
+                    attempts: log.attempts,
+                    lastAttemptAt: log.lastAttemptAt,
+                    nextRetryAt: log.nextRetryAt,
+                    createdAt: log.createdAt,
+                    updatedAt: log.updatedAt,
+                    ruleId: job?.ruleId ?? null,
+                    ruleName: rule?.name ?? null,
+                    eventType: rule?.eventType ?? null,
+                    offsetType: rule?.offsetType ?? null,
+                    offsetDays: rule?.offsetDays ?? 0,
+                    scheduledFor: job?.scheduledFor ?? null,
+                    recipientType: (job?.recipientType as MessageTriggerRecipientType | undefined) ?? null,
+                    recipientName: log.recipientName ?? payload?.recipientName ?? null,
+                    clientName: payload?.clientName ?? null,
+                    employeeName: payload?.employeeName ?? null,
+                },
+                source: "log",
+                nativeId: String(log.id),
+            };
+        });
+
+        const loggedTriggerJobIds = new Set(
+            visibleLogs
+                .map((log) => log.triggerJobId)
+                .filter((id): id is string => Boolean(id)),
+        );
+        const jobCandidates: MessageHistoryCandidate[] = terminalJobs
+            .filter((job) => !loggedTriggerJobIds.has(job.id))
+            .map((job) => {
+                const rule = rulesById.get(job.ruleId) ?? null;
+                const receiver = job.recipientPhone ?? job.payload.recipientPhone ?? "";
+                return {
+                    record: {
+                        id: `job:${job.id}`,
+                        provider: "message_job",
+                        templateKey: job.templateKey,
+                        triggerJobId: job.id,
+                        receiver,
+                        clientId: job.clientId,
+                        recipientPhone: receiver || null,
+                        messageBody: job.payload.messageBody ?? "",
+                        variables: {
+                            ...job.payload.templateVariables,
+                            recipientName: job.payload.recipientName,
+                            historySource: "message_trigger_job",
+                        },
+                        status: job.status === "canceled" ? "canceled" : "failed",
+                        aligoMid: null,
+                        errorMessage: job.cancelReason,
+                        attempts: job.attempts,
+                        lastAttemptAt: job.updatedAt,
+                        nextRetryAt: null,
+                        createdAt: job.createdAt,
+                        updatedAt: job.updatedAt,
+                        ruleId: job.ruleId,
+                        ruleName: rule?.name ?? null,
+                        eventType: rule?.eventType ?? null,
+                        offsetType: rule?.offsetType ?? null,
+                        offsetDays: rule?.offsetDays ?? 0,
+                        scheduledFor: job.scheduledFor,
+                        recipientType: job.recipientType,
+                        recipientName: job.payload.recipientName,
+                        clientName: job.payload.clientName ?? null,
+                        employeeName: job.payload.employeeName ?? null,
+                    },
+                    source: "job",
+                    nativeId: job.id,
+                };
+            });
+
+        const candidates = [...logCandidates, ...jobCandidates];
+        const hasMore = logLookahead || jobCandidates.length > remainingSlots;
+        const items = candidates.slice(0, limit).map((candidate) => candidate.record);
+        const lastCandidate = candidates[limit - 1];
+        const nextCursor = hasMore && lastCandidate
+            ? encodeMessageHistoryCursor({
+                v: MESSAGE_HISTORY_CURSOR_VERSION,
+                branchId,
+                clientId,
                 snapshotAt: snapshotAt.toISOString(),
                 source: lastCandidate.source,
                 nativeId: lastCandidate.nativeId,

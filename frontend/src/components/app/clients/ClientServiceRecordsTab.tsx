@@ -3,11 +3,10 @@ import Link from "next/link";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-    formatSignatureStatus,
     getServiceRecordStatusMeta,
-    getSignatureStatusVariant,
+    getSignatureStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
 import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -78,6 +77,11 @@ interface ClientServiceRecordsTabProps {
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
 const SEND_LINK_FAILURE_DESCRIPTION = "제공기록지 링크 발송에 실패했어요";
+const SEND_LINK_IN_PROGRESS_DESCRIPTION = "발송 처리 중이에요";
+const SEND_LINK_DEFERRED_DESCRIPTION = "잠시 후 다시 발송돼요";
+// A link in "sending" is already being delivered by the scheduler; a manual send
+// would queue a second SMS, so the button stays disabled until the job settles.
+const SEND_LINK_BLOCKED_HINT = "발송 처리 중이에요. 끝난 뒤에 다시 보낼 수 있어요.";
 const CANCELED_LINK_HINT = "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.";
 const MISSING_RECORD_ALERT_SESSION_COUNT = 2;
 const MISSING_RECORD_ALERT_HOUR_KST = 18;
@@ -105,6 +109,7 @@ const LINK_STATUS_META: Record<ServiceRecordLinkStatus, {
 }> = {
     none: { label: "발송 전", variant: "neutral" },
     scheduled: { label: "발송 예약", variant: "primary" },
+    sending: { label: "발송 중", variant: "neutral" },
     sent: { label: "발송됨", variant: "success" },
     failed: { label: "발송 실패", variant: "danger" },
     canceled: { label: "발송 취소", variant: "neutral" },
@@ -165,7 +170,17 @@ function ClientServiceRecordsTabContent({
     const activeAssignment = assignments.find((assignment) => !assignment.replaced)
         ?? assignments[0]
         ?? null;
-    const [pendingResendAssignment, setPendingResendAssignment] = useState<ServiceRecordAssignment | null>(null);
+    // The confirmation remembers only which assignment it was opened for; the
+    // assignment itself is always read from the latest overview, so a refresh that
+    // moves the link to "sending" while the dialog is open is seen by the approve
+    // button and the send handler.
+    const [pendingResendScheduleId, setPendingResendScheduleId] = useState<number | null>(null);
+    const pendingResendAssignment = pendingResendScheduleId === null
+        ? null
+        : assignments.find((assignment) => assignment.scheduleId === pendingResendScheduleId) ?? null;
+    const isPendingResendSending = pendingResendAssignment?.link.status === "sending";
+    const latestAssignmentsRef = useRef(assignments);
+    latestAssignmentsRef.current = assignments;
     const [sendingSchedule, setSendingSchedule] = useState<{
         scheduleId: number;
         isResend: boolean;
@@ -177,21 +192,40 @@ function ClientServiceRecordsTabContent({
     });
 
     const sendLink = async (assignment: ServiceRecordAssignment): Promise<boolean> => {
+        // The caller may hold an assignment captured before the latest refresh, so the
+        // send itself checks the newest status instead of trusting the click handler.
+        const latest = latestAssignmentsRef.current.find(
+            (candidate) => candidate.scheduleId === assignment.scheduleId,
+        );
+        if (!latest || latest.link.status === "sending") return false;
         setSendingSchedule(getSendingState(assignment));
         try {
             const result = await sendLinkMutation.mutateAsync({
                 scheduleId: assignment.scheduleId,
                 clientId: clientId ?? undefined,
             });
-            if (!result.ok || result.status !== "sent") {
-                toast({
-                    variant: "destructive",
-                    description: SEND_LINK_FAILURE_DESCRIPTION,
-                });
-                return false;
+            // The outcome is decided by the job status alone: `ok` is false for
+            // every non-sent job, including one the scheduler is already
+            // delivering, and treating that as a failure makes staff resend
+            // (the caregiver then gets two SMS).
+            switch (result.status) {
+                case "sent":
+                    toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
+                    return true;
+                case "processing":
+                case "dispatching":
+                    toast({ description: SEND_LINK_IN_PROGRESS_DESCRIPTION });
+                    return true;
+                case "pending":
+                    toast({ description: SEND_LINK_DEFERRED_DESCRIPTION });
+                    return true;
+                default:
+                    toast({
+                        variant: "destructive",
+                        description: SEND_LINK_FAILURE_DESCRIPTION,
+                    });
+                    return false;
             }
-            toast({ variant: "success", description: "제공기록지 링크를 보냈어요" });
-            return true;
         } catch (error) {
             toast({
                 description: getErrorDescription(error),
@@ -204,9 +238,10 @@ function ClientServiceRecordsTabContent({
     };
 
     const handleSendLink = async (assignment: ServiceRecordAssignment) => {
+        if (assignment.link.status === "sending") return;
         const isResend = assignment.link.status === "sent" || assignment.link.status === "failed";
         if (isResend) {
-            setPendingResendAssignment(assignment);
+            setPendingResendScheduleId(assignment.scheduleId);
             return;
         }
 
@@ -214,11 +249,11 @@ function ClientServiceRecordsTabContent({
     };
 
     const handleResendConfirm = async () => {
-        if (!pendingResendAssignment) return;
+        if (!pendingResendAssignment || isPendingResendSending) return;
 
         const sent = await sendLink(pendingResendAssignment);
         if (sent) {
-            setPendingResendAssignment(null);
+            setPendingResendScheduleId(null);
         }
     };
 
@@ -268,7 +303,13 @@ function ClientServiceRecordsTabContent({
                             data-component={`${dataComponent}_overview-grid`}
                             className={cn("grid grid-cols-1 items-stretch [&>*]:content-start", layout === "desktop" ? "gap-[calc(16px*var(--glint-ui-scale,1))] lg:grid-cols-3" : "gap-3")}
                         >
-                            <RecordStatusCard record={record} isRefreshing={isTextRefreshing} />
+                            <RecordStatusCard
+                                record={record}
+                                isRefreshing={isTextRefreshing}
+                                viewHref={layout === "desktop" && clientId != null
+                                    ? `/service-record-admin/${encodeURIComponent(String(clientId))}`
+                                    : null}
+                            />
                             {layout === "desktop" && (<ServiceRecordHeaderCard
                                 data-component={`${dataComponent}_overview-grid_header-card`}
                                 header={record.header}
@@ -396,14 +437,17 @@ function ClientServiceRecordsTabContent({
             <TwoButtonModal
                 open={pendingResendAssignment !== null}
                 onOpenChange={(open) => {
-                    if (!open) setPendingResendAssignment(null);
+                    if (!open) setPendingResendScheduleId(null);
                 }}
                 dataComponent={`${dataComponent}_resend-approval`}
                 title="제공기록지 메시지를 재전송하시겠습니까?"
-                description="기존 링크가 그대로 포함된 메시지를 다시 전송합니다."
+                description={isPendingResendSending
+                    ? SEND_LINK_BLOCKED_HINT
+                    : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="메시지 재전송"
                 pendingLabel="메시지 재전송 중..."
+                approvalDisabled={isPendingResendSending}
                 isPending={sendLinkMutation.isPending}
                 onApprove={() => void handleResendConfirm()}
             />
@@ -573,8 +617,19 @@ function ServiceRecordValueSkeleton() {
     );
 }
 
-function RecordStatusCard({ record, isRefreshing }: { record: ServiceRecordCase; isRefreshing: boolean }) {
+function RecordStatusCard({
+    record,
+    isRefreshing,
+    viewHref,
+}: {
+    record: ServiceRecordCase;
+    isRefreshing: boolean;
+    /** Same destination as the client menu's 제공기록지 보기 item. */
+    viewHref: string | null;
+}) {
     const dataComponent = useClientServiceRecordsDataComponent("overview-grid", "status-card");
+    const authUserQuery = useGetAuthUser();
+    const canViewServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const status = getRecordStatusMeta(record.status);
     const { activeSessions } = partitionSessionsByPeriod(
         record.startDate,
@@ -610,6 +665,22 @@ function RecordStatusCard({ record, isRefreshing }: { record: ServiceRecordCase;
                 value={formatDateTimeKo(record.finalizedAt)}
                 isRefreshing={isRefreshing}
             />
+            {viewHref && canViewServiceRecord && (
+                <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-col items-end">
+                    <Button
+                        asChild
+                        variant="positive"
+                        size="sm"
+                        width="lg"
+                        className="shrink-0"
+                        data-component={`${dataComponent}_actions_view`}
+                    >
+                        <a href={viewHref} target="_blank" rel="noopener noreferrer">
+                            제공기록지 보기
+                        </a>
+                    </Button>
+                </div>
+            )}
         </InfoCard>
     );
 }
@@ -931,7 +1002,10 @@ function LinkStatusCard({
     const canEditServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
     const statusMeta = LINK_STATUS_META[link.status];
     const isResend = link.status === "sent" || link.status === "failed";
+    const isLinkSending = link.status === "sending";
     const usesResendLayout = isResend || isSendingResend;
+    // "scheduled" stays sendable on purpose: it is the manual "send now" path.
+    // "sending" (an in-flight job) blocks the button so staff cannot double-send.
     const expiryDate = new Date(`${assignment.endDate?.slice(0, 10)}T00:00:00.000Z`);
     expiryDate.setUTCDate(expiryDate.getUTCDate() + 7);
     const expiresAt = link.token?.expiresAt ?? (Number.isNaN(expiryDate.getTime())
@@ -966,14 +1040,16 @@ function LinkStatusCard({
             <div className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-col items-end">
                 {/* Stays mounted and collapses so the button glides up instead of jumping. */}
                 <div
-                    aria-hidden={usesResendLayout || layout === "mobile"}
+                    aria-hidden={(usesResendLayout || layout === "mobile") && !isLinkSending}
                     className={cn(
                         "grid w-full transition-[grid-template-rows,opacity] duration-500 ease-out motion-reduce:transition-none",
-                        usesResendLayout || layout === "mobile" ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
+                        (usesResendLayout || layout === "mobile") && !isLinkSending ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]",
                     )}
                 >
                     <p className="overflow-hidden pb-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] leading-6 text-v3-text-muted">
-                        {link.status === "canceled"
+                        {isLinkSending
+                            ? SEND_LINK_BLOCKED_HINT
+                            : link.status === "canceled"
                             ? CANCELED_LINK_HINT
                             : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
@@ -988,7 +1064,7 @@ function LinkStatusCard({
                         "shrink-0 duration-500 ease-out motion-reduce:transition-none",
                         layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
-                    disabled={isPending}
+                    disabled={isPending || isLinkSending}
                     aria-busy={isPending}
                     onClick={onSendLink}
                     data-component={isResend
@@ -1537,6 +1613,7 @@ function EmptyValue() {
 
 function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }) {
     const dataComponent = useClientServiceRecordsDataComponent("signature-card");
+    const signatureStatus = getSignatureStatusMeta(signatureDoc);
     return (
         <InfoCard
             data-component={dataComponent}
@@ -1546,7 +1623,7 @@ function SignatureDocCard({ signatureDoc }: { signatureDoc: SignatureDocStatus }
             description="서비스 종료 후 자동 생성 · 제공기관 검토"
             titleTrailing={
                 <div className="ml-auto flex shrink-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]">
-                    <StatusPill variant={getSignatureVariant(signatureDoc.statusDetail)}>{formatSignatureStatus(signatureDoc.statusDetail)}</StatusPill>
+                    <StatusPill variant={signatureStatus.variant === "info" ? "primary" : signatureStatus.variant}>{signatureStatus.label}</StatusPill>
                 </div>
             }
         >
@@ -1711,8 +1788,6 @@ function formatUnknownValue(value: unknown): string {
     if (typeof value === "object" && value !== null) return JSON.stringify(value);
     return String(value);
 }
-
-const getSignatureVariant = getSignatureStatusVariant;
 
 function getErrorDescription(error: unknown): string {
     // Registered problem message (verified) or locally authored copy —

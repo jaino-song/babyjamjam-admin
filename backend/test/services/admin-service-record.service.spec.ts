@@ -1,8 +1,10 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { MESSAGE_AUTOMATION_PARENT_DISABLED_REASON } from "application/services/message-automation-activation.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
@@ -560,6 +562,7 @@ describe("AdminServiceRecordService", () => {
             {
                 employeeScheduleId: 3,
                 documentId: "service-record-doc-3",
+                statusType: "050",
                 statusDetail: "완료",
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-02T07:00:00.000Z"),
@@ -570,6 +573,7 @@ describe("AdminServiceRecordService", () => {
             {
                 employeeScheduleId: 3,
                 documentId: "service-record-doc-3-old",
+                statusType: "060",
                 statusDetail: "대기",
                 stepName: "제공기록지 서명",
                 createdDate: new Date("2026-07-01T07:00:00.000Z"),
@@ -618,6 +622,7 @@ describe("AdminServiceRecordService", () => {
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 1)?.signatureDoc).toBeNull();
         expect(overview.assignments.find((assignment) => assignment.scheduleId === 3)?.signatureDoc).toEqual({
             documentId: "service-record-doc-3",
+            statusType: "050",
             statusDetail: "완료",
             stepName: "제공기록지 서명",
             createdDate: new Date("2026-07-02T07:00:00.000Z"),
@@ -625,6 +630,210 @@ describe("AdminServiceRecordService", () => {
             snapshotVersion: null,
             snapshotChunkIndex: null,
             employeeScheduleId: 3,
+        });
+    });
+
+    describe("link status follows the newest attempt", () => {
+        const at = (iso: string) => new Date(`2026-07-0${iso}:00.000Z`);
+        const job = (id: string, status: string, updatedAt: Date, extra: Record<string, unknown> = {}) => ({
+            id,
+            branchId: "branch-1",
+            employeeScheduleId: 1,
+            ruleId: SERVICE_RECORD_LINK_RULE_ID,
+            status,
+            scheduledFor: updatedAt,
+            createdAt: updatedAt,
+            updatedAt,
+            ...extra,
+        });
+        const log = (id: number, triggerJobId: string, status: string, when: Date) => ({
+            id,
+            branchId: "branch-1",
+            templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            triggerJobId,
+            clientId: 100,
+            status,
+            lastAttemptAt: when,
+            createdAt: when,
+        });
+        const linkFor = async (jobs: unknown[], logs: unknown[]) => {
+            const prisma = createPrisma();
+            const service = new AdminServiceRecordService(
+                prisma as unknown as PrismaService,
+                createLinkService() as unknown as ServiceRecordLinkService,
+                createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
+            );
+            prisma.employee_schedule.findMany.mockResolvedValue([createSchedule(1, "2026-07-04T00:00:00.000Z")]);
+            // Deliberately not sorted newest-first: derivation must not depend on query order.
+            prisma.message_trigger_job.findMany.mockResolvedValue(jobs);
+            prisma.message_log.findMany.mockResolvedValue(logs);
+            const overview = await service.getClientOverview("branch-1", 100);
+            return overview.assignments[0]!.link;
+        };
+
+        it("shows failed when a newer resend failed after an older success", async () => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", "failed", at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00")), log(2, "job-new", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("failed");
+            expect(link.sentCount).toBe(1);
+            expect(link.lastSentAt).toEqual(at("1T06:00"));
+        });
+
+        it("shows failed for a job that failed during preparation and wrote no log", async () => {
+            const link = await linkFor([job("job-1", "failed", at("3T06:00"))], []);
+            expect(link.status).toBe("failed");
+        });
+
+        it("shows failed for a preparation failure that is newer than an old success", async () => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", "failed", at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(link.status).toBe("failed");
+            expect(link.sentCount).toBe(1);
+        });
+
+        it.each(["processing", "dispatching"])("shows sending while the newest job is %s", async (status) => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:00")), job("job-new", status, at("3T06:00"))],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(link.status).toBe("sending");
+            expect(link.scheduledFor).toBeNull();
+            expect(link.sentCount).toBe(1);
+        });
+
+        it("keeps a retried job scheduled even though its earlier attempt logged a failure", async () => {
+            const link = await linkFor(
+                [
+                    job("job-old", "sent", at("1T06:00")),
+                    job("job-retry", "pending", at("3T07:00"), { scheduledFor: at("9T06:00"), createdAt: at("2T06:00") }),
+                ],
+                [log(1, "job-old", "sent", at("1T06:00")), log(2, "job-retry", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("scheduled");
+            expect(link.scheduledFor).toEqual(at("9T06:00"));
+        });
+
+        it("keeps a retried job sending even though its earlier attempt logged a failure", async () => {
+            const link = await linkFor(
+                [job("job-retry", "dispatching", at("3T07:00"))],
+                [log(2, "job-retry", "failed", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sending");
+        });
+
+        it.each([
+            ["pending", "scheduled"],
+            ["processing", "sending"],
+            ["dispatching", "sending"],
+        ])(
+            "keeps an in-flight %s job as %s even when its own failure log is newer than the job row",
+            async (jobStatus, expected) => {
+                const link = await linkFor(
+                    [job("job-retry", jobStatus, at("3T06:00"), { scheduledFor: at("9T06:00") })],
+                    [log(2, "job-retry", "failed", at("3T07:00"))],
+                );
+                expect(link.status).toBe(expected);
+                expect(link.scheduledFor).toEqual(expected === "scheduled" ? at("9T06:00") : null);
+            },
+        );
+
+        it("orders an unrelated newer failure log chronologically against an in-flight job", async () => {
+            const link = await linkFor(
+                [job("job-other", "failed", at("2T06:00")), job("job-inflight", "processing", at("3T06:00"))],
+                [log(2, "job-other", "failed", at("3T07:00"))],
+            );
+            expect(link.status).toBe("failed");
+        });
+
+        it("orders an unrelated older failure log chronologically against an in-flight job", async () => {
+            const link = await linkFor(
+                [job("job-other", "failed", at("2T06:00")), job("job-inflight", "processing", at("3T06:00"))],
+                [log(2, "job-other", "failed", at("3T05:00"))],
+            );
+            expect(link.status).toBe("sending");
+        });
+
+        it("shows sent when the newest attempt succeeded after an older failure", async () => {
+            const link = await linkFor(
+                [job("job-old", "failed", at("1T06:00")), job("job-new", "sent", at("3T06:00"))],
+                [log(1, "job-old", "failed", at("1T06:00")), log(2, "job-new", "sent", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sent");
+            expect(link.lastSentAt).toEqual(at("3T06:00"));
+        });
+
+        it("shows canceled when nothing was ever sent", async () => {
+            expect((await linkFor([job("job-1", "canceled", at("3T06:00"))], [])).status).toBe("canceled");
+        });
+
+        it("shows canceled when a newer resend was canceled after an older success", async () => {
+            const link = await linkFor(
+                [
+                    job("job-old", "sent", at("1T06:00")),
+                    job("job-new", "canceled", at("3T06:00"), { canceledByUser: true }),
+                ],
+                [log(1, "job-old", "sent", at("1T06:00"))],
+            );
+            expect(link.status).toBe("canceled");
+            expect(link.sentCount).toBe(1);
+            expect(link.lastSentAt).toEqual(at("1T06:00"));
+        });
+
+        describe("canceled scheduling lease (automation deactivation cleanup)", () => {
+            const leaseReason = SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON;
+            // Jul 1 lease created (createdAt) -> Jul 4 deactivation cancels it (updatedAt bumped).
+            const canceledLease = (extra: Record<string, unknown> = {}) => job(
+                "job-lease",
+                "canceled",
+                at("4T06:00"),
+                { createdAt: at("1T06:00"), cancelReason: leaseReason, canceledByUser: false, ...extra },
+            );
+
+            it("shows sent when deactivation canceled a never-sent lease after a newer manual success", async () => {
+                const link = await linkFor(
+                    [canceledLease(), job("job-manual", "sent", at("3T06:00"))],
+                    [log(1, "job-manual", "sent", at("3T06:00"))],
+                );
+                expect(link.status).toBe("sent");
+                expect(link.sentCount).toBe(1);
+                expect(link.lastSentAt).toEqual(at("3T06:00"));
+            });
+
+            it("still shows canceled for a lease cancel with no success after the lease", async () => {
+                expect((await linkFor([canceledLease()], [])).status).toBe("canceled");
+                const olderSuccess = await linkFor(
+                    [job("job-old", "sent", new Date("2026-06-20T06:00:00.000Z")), canceledLease()],
+                    [log(1, "job-old", "sent", new Date("2026-06-20T06:00:00.000Z"))],
+                );
+                expect(olderSuccess.status).toBe("canceled");
+            });
+
+            it("does not hide a genuine resend cancellation that shares no lease marker", async () => {
+                const link = await linkFor(
+                    [
+                        job("job-manual", "sent", at("3T06:00")),
+                        canceledLease({ cancelReason: MESSAGE_AUTOMATION_PARENT_DISABLED_REASON }),
+                    ],
+                    [log(1, "job-manual", "sent", at("3T06:00"))],
+                );
+                expect(link.status).toBe("canceled");
+            });
+        });
+
+        it("shows sent when a canceled job is older than a later success", async () => {
+            const link = await linkFor(
+                [job("job-old", "canceled", at("1T06:00")), job("job-new", "sent", at("3T06:00"))],
+                [log(1, "job-new", "sent", at("3T06:00"))],
+            );
+            expect(link.status).toBe("sent");
+        });
+
+        it("shows none when there is no job and no log", async () => {
+            expect((await linkFor([], [])).status).toBe("none");
         });
     });
 

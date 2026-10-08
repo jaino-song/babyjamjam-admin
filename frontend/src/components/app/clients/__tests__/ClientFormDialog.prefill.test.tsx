@@ -149,7 +149,7 @@ describe("ClientFormDialog prefill", () => {
         fireEvent.click(screen.getByRole("button", { name: "저장" }));
         await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledWith({
             id: client.id,
-            dto: expect.objectContaining({ name: "수정된 고객", fullPrice: null, actualPrice: null, grant: "0" }),
+            dto: { name: "수정된 고객" },
         }));
     });
 

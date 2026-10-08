@@ -243,6 +243,16 @@ export class UpdateClientDto {
     @IsOptional()
     @IsString()
     areaId?: string | null;
+
+    /**
+     * Optimistic guard for a form that edited from a snapshot: the client's stored end date
+     * (`YYYY-MM-DD`, or null for none) when the form was opened. The write is refused with 409
+     * if the end date has moved since. Not a field to update.
+     */
+    @IsOptional()
+    @IsDateString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "expectedEndDate must be formatted as YYYY-MM-DD" })
+    expectedEndDate?: string | null;
 }
 
 /**

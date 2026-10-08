@@ -340,7 +340,13 @@ export type UpdateMessageTriggerRuleDto = z.infer<typeof updateMessageTriggerRul
 export interface UpdateMessageTriggerRuleBranchActivationDto {
     isActive: boolean;
 }
-export type MessageTriggerJobStatus = "pending" | "processing" | "sent" | "failed" | "canceled";
+export type MessageTriggerJobStatus = "pending" | "processing"
+/**
+ * Set by the backend once a claimed job is actually delivering — the point of
+ * no return after `processing`. It is not cancelable and to the user it reads
+ * the same as `processing` ("발송 중").
+ */
+ | "dispatching" | "sent" | "failed" | "canceled";
 export interface UpcomingMessageTriggerJobPayload {
     clientId?: number | null;
     clientName?: string | null;

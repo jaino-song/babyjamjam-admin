@@ -17,6 +17,11 @@ import { useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useOutOfPocketPriceInfos, useVoucherPriceInfos } from "@/hooks/useVoucherData";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "../employees/EmployeeFormDialog";
+import {
+    buildClientUpdatePayload,
+    CLIENT_END_DATE_CHANGED_MESSAGE,
+    END_DATE_CHANGED_PROBLEM_CODE,
+} from "./client-update-payload";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import type { Employee } from "@/hooks/useEmployees";
 import {
@@ -73,6 +78,20 @@ interface ClientFormDialogProps {
     client?: Client | null; // null/undefined for create mode, Client for edit mode
     onSuccess?: (client: Client) => void; // Optional callback when client is created/updated
 }
+
+// Fields that are the price fields or that the price table is looked up by.
+const PRICE_BASELINE_FREEZING_FIELDS: ReadonlySet<keyof CreateClientDto> = new Set<keyof CreateClientDto>([
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "duration",
+    "type",
+    "voucherClient",
+    "startDate",
+    "endDate",
+]);
+
+type ClientFormState = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmployeeId: number | null };
 
 interface ClientFormErrorState {
     message: string;
@@ -202,7 +221,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     const updateClient = useUpdateClient();
 
     // Form state - use extended type to allow null for primaryEmployeeId during form editing
-    const [formData, setFormData] = useState<Omit<CreateClientDto, 'primaryEmployeeId'> & { primaryEmployeeId: number | null }>({
+    const [formData, setFormData] = useState<ClientFormState>({
         name: "",
         birthday: "",
         dueDate: "",
@@ -271,6 +290,17 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Track if prices were manually edited
     const [pricesManuallyEdited, setPricesManuallyEdited] = useState(false);
 
+    // The form as it was opened on the client. An edit sends only what differs from it, so a field
+    // the backend changed meanwhile (the end date, on a session delay) is not written back.
+    const formDataBaselineRef = useRef<ClientFormState | null>(null);
+    // Turns on the first time staff touch a price field or anything the price table is looked up by,
+    // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
+    // catching up with its own table on open; once on, the price baseline stays what was stored.
+    const priceBaselineFrozenRef = useRef(false);
+    // The prices the form filled in from its price table before anything was touched. Not part of the
+    // baseline: that keeps the stored prices, so a price filled in after a touch is compared to them.
+    const openingTablePricesRef = useRef<Pick<ClientFormState, "fullPrice" | "grant" | "actualPrice"> | null>(null);
+
     // Fetch voucher price info based on selected type
     const { data: voucherPriceInfos, isLoading: isPriceLoading } = useVoucherPriceInfos(formData.type || "");
     const {
@@ -316,25 +346,39 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
             queueMicrotask(() => {
-                setFormData(prev => prev.voucherClient
-                    ? {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
-                        actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                setFormData(prev => {
+                    const next = prev.voucherClient
+                        ? {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
+                            actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                        }
+                        : {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "0",
+                            actualPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        };
+                    // Until staff touch a price field or a price driver, this fill is the form catching
+                    // up with its own price table, not an edit: the saved client is not being re-priced.
+                    // Remember it apart from the baseline, which keeps the STORED prices; see handleSubmit.
+                    if (isEditMode && !priceBaselineFrozenRef.current) {
+                        openingTablePricesRef.current = {
+                            fullPrice: next.fullPrice,
+                            grant: next.grant,
+                            actualPrice: next.actualPrice,
+                        };
                     }
-                    : {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "0",
-                        actualPrice: parsePrice(selectedPriceInfo.fullPrice),
-                    });
+                    return next;
+                });
             });
         }
-    }, [selectedPriceInfo, pricesManuallyEdited]);
+    }, [isEditMode, selectedPriceInfo, pricesManuallyEdited]);
 
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
+        priceBaselineFrozenRef.current = true;
         setFormData(prev => ({
             ...prev,
             type: newType,
@@ -349,6 +393,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     };
 
     const handleVoucherClientChange = (voucherClient: boolean) => {
+        priceBaselineFrozenRef.current = true;
         setPricesManuallyEdited(false);
         setFormData(prev => ({
             ...prev,
@@ -420,6 +465,9 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             : false;
 
         queueMicrotask(() => {
+            formDataBaselineRef.current = nextFormData;
+            priceBaselineFrozenRef.current = false;
+            openingTablePricesRef.current = null;
             setPricesManuallyEdited(nextPricesManuallyEdited);
             setFormData(nextFormData);
             if (!client) {
@@ -432,6 +480,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     }, [open, client, prefillName, clearPrefillName, resetFieldMessages]);
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
+        if (PRICE_BASELINE_FREEZING_FIELDS.has(field)) priceBaselineFrozenRef.current = true;
         setFormData(prev => ({ ...prev, [field]: value }));
     };
 
@@ -465,31 +514,22 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             focusFirstInvalidField(invalidFields);
             return;
         }
+        let endDateGuardSent = false;
         try {
             if (isEditMode && client) {
-                // Build update DTO, excluding null employee IDs to avoid validation errors
-                // (backend @IsOptional only skips undefined, not null)
-                const updateDto: UpdateClientDto = {
-                    name: formData.name,
-                    birthday: formData.birthday,
-                    dueDate: formData.dueDate || null,
-                    address: formData.address,
-                    phone: formData.phone,
-                    // Only include employee IDs if explicitly selected (not null)
-                    ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
-                    ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
-                    type: formData.voucherClient ? formData.type : null,
-                    duration: formData.duration || null,
-                    fullPrice: formData.fullPrice,
-                    grant: formData.voucherClient ? formData.grant : "0",
-                    actualPrice: formData.voucherClient ? formData.actualPrice : formData.fullPrice,
-                    startDate: formData.startDate || null,
-                    endDate: formData.endDate || null,
-                    careCenter: formData.careCenter,
-                    voucherClient: formData.voucherClient,
-                    breastPump: formData.breastPump,
-                    serviceStatus: formData.serviceStatus,
-                };
+                // Send only what the user changed since the form was opened. The backend moves the end
+                // date by itself (a delayed session extends it), so a full snapshot would roll that
+                // back. A save that touches the service period carries the end date this form was
+                // opened with, and the backend refuses it if the end date moved since.
+                const storedBaseline = formDataBaselineRef.current;
+                if (!storedBaseline) return;
+                // While nothing price-related was touched, the prices the form filled in from its table on
+                // open are not an edit; once touched, prices are compared against what was stored.
+                const baseline = openingTablePricesRef.current && !priceBaselineFrozenRef.current
+                    ? { ...storedBaseline, ...openingTablePricesRef.current }
+                    : storedBaseline;
+                const updateDto: UpdateClientDto = buildClientUpdatePayload({ baseline, current: formData });
+                endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 onSuccess?.(updatedClient);
             } else {
@@ -528,6 +568,15 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 && ("type" in responseData || "requestId" in responseData);
             const isLegacyClientError = !normalized.verified && !claimsProblem
                 && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+            // The save carried the end date this form was opened with and the backend found it moved.
+            if (
+                endDateGuardSent
+                && normalized.status === 409
+                && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
+            ) {
+                setErrorAndScroll(CLIENT_END_DATE_CHANGED_MESSAGE);
+                return;
+            }
             const shouldUseNormalized = !isLegacyClientError;
             if (shouldUseNormalized) {
                 setErrorAndScroll(normalized.message, normalized);

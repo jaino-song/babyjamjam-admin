@@ -12,6 +12,16 @@ import type {
     UpdateMessageTriggerRuleBranchActivationDto,
 } from "../types";
 
+/** One page of a single client's message history (`GET /message-logs/client/:clientId`). */
+export interface ClientMessageHistoryPageTransport {
+    items: MessageLogRecord[];
+    page: {
+        snapshotAt: string;
+        nextCursor: string | null;
+        hasMore: boolean;
+    };
+}
+
 export const messageTriggersApi = {
     list: () => api.get<MessageTriggerRule[]>("/message-trigger-rules"),
     getById: (id: string) => api.get<MessageTriggerRule>(`/message-trigger-rules/${id}`),
@@ -55,6 +65,19 @@ export const messageTriggersApi = {
         api.get<MessageLogRecord[]>("/message-logs", {
             params: { limit },
         }),
+    listClientHistory: (
+        clientId: number,
+        params: { limit?: number; cursor?: string | null } = {},
+    ) =>
+        api.get<ClientMessageHistoryPageTransport>(
+            `/message-logs/client/${encodeURIComponent(clientId)}`,
+            {
+                params: {
+                    limit: params.limit ?? 50,
+                    ...(params.cursor ? { cursor: params.cursor } : {}),
+                },
+            },
+        ),
     retryHistory: (id: number) =>
         api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
     cancelUpcomingJob: (id: string) =>

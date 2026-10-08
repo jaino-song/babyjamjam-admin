@@ -184,6 +184,7 @@ export class ClientController {
             serviceStatus: dto.serviceStatus,
             breastPump: dto.breastPump,
             areaId: dto.areaId,
+            expectedEndDate: dto.expectedEndDate,
         });
     }
 

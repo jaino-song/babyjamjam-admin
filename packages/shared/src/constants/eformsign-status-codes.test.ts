@@ -5,7 +5,9 @@ import {
     EFORMSIGN_STATUS_CATEGORY_LABELS,
     getEformsignStatusCategory,
     getEformsignStatusLabel,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     isDeletedEformsignStatusCode,
+    isRevokeRequestedEformsignStatus,
     normalizeEformsignStatusCode,
     REJECTED_STATUS_CODES,
 } from "./eformsign-status-codes";
@@ -86,5 +88,21 @@ describe("canonical eformsign status semantics", () => {
         expect(getEformsignStatusLabel("047")).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS.expired);
         expect(getEformsignStatusLabel("001")).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS["in-progress"]);
         expect(getEformsignStatusLabel(null)).toBe(EFORMSIGN_STATUS_CATEGORY_LABELS.unknown);
+    });
+});
+
+describe("040 (doc_request_revoke)", () => {
+    it("is recognised by code, name and number, and only 040", () => {
+        expect(EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE).toBe("040");
+        expect(isRevokeRequestedEformsignStatus("040")).toBe(true);
+        expect(isRevokeRequestedEformsignStatus(40)).toBe(true);
+        expect(isRevokeRequestedEformsignStatus("doc_request_revoke")).toBe(true);
+        for (const other of ["042", "090", "080", "060", null, undefined, ""]) {
+            expect(isRevokeRequestedEformsignStatus(other)).toBe(false);
+        }
+    });
+
+    it("keeps the expired category (filtering/tabs/stats are unchanged); only the display layer differs", () => {
+        expect(getEformsignStatusCategory("040")).toBe("expired");
     });
 });

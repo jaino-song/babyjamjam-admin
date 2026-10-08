@@ -45,6 +45,8 @@ export type ReceiptLinkStatus =
           state: "pending" | "verified";
           branchName: string;
           storagePath: string;
+          /** The contract document (eformsign_doc.id) this link was issued for. */
+          eformsignDocId: number;
           expiresAt: string;
           remainingAttempts: number;
           lockedUntil: string | null;
@@ -193,6 +195,7 @@ export class ReceiptLinkTokenService {
             state: row.verifiedAt ? "verified" : "pending",
             branchName: row.branchName ?? "",
             storagePath: row.storagePath,
+            eformsignDocId: row.eformsignDocId,
             expiresAt: row.expiresAt.toISOString(),
             remainingAttempts: lockedUntil ? 0 : Math.max(0, RECEIPT_LINK_MAX_FAILED_ATTEMPTS - failed),
             lockedUntil: lockedUntil ? lockedUntil.toISOString() : null,

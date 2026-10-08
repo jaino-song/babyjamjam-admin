@@ -1,4 +1,5 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 
 import type {
@@ -29,6 +30,7 @@ import {
     type ReceiptPdfVerificationResult,
     type ReceiptPdfVerificationScope,
 } from "infrastructure/pdf/receipt-pdf-verifier.service";
+import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 
 export const RECEIPT_LINK_REVISION_PDF_SOURCE = Symbol("ReceiptLinkRevisionPdfSource");
 export const RECEIPT_LINK_REVISION_RASTERIZER = Symbol("ReceiptLinkRevisionRasterizer");
@@ -339,6 +341,9 @@ export class ReceiptLinkRevisionRefreshService {
         private readonly storage: FileStoragePort,
         @Inject(RECEIPT_LINK_TOKEN_REPOSITORY)
         private readonly tokenRepository: IReceiptLinkTokenRepository,
+        // Optional so positional construction in specs keeps working; without it the template
+        // ids fall back to process.env exactly like `configuredServiceRecordTemplateIds()`.
+        @Optional() private readonly configService?: ConfigService,
     ) {}
 
     async processOperation(input: ReceiptLinkRevisionRefreshProcessInput): Promise<ReceiptLinkRevisionRefreshProcessResult> {
@@ -602,6 +607,7 @@ export class ReceiptLinkRevisionRefreshService {
             templateId: snapshot.source.templateId,
             templateVersion: snapshot.source.templateVersion,
             mirrorGeneration: snapshot.source.mirrorGeneration,
+            serviceRecordTemplateIds: [...configuredServiceRecordTemplateIds(this.configService)],
             eformsignDocId: snapshot.tokens.eformsignDocId,
             tokenIds: snapshot.tokens.tokenIds,
             storagePath: artifact.storagePath,

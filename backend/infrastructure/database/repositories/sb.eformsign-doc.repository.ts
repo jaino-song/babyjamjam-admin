@@ -16,6 +16,8 @@ import {
     EformsignDocOwnershipConflictError,
     EformsignDocStaleUpdateError,
     EformsignDocUnscopedResult,
+    EformsignDocStepWriteOptions,
+    EformsignContractCandidateRow,
     IEformsignDocRepository,
     RecentEformsignDocRow,
     ReviewStageContract,
@@ -33,6 +35,7 @@ import {
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc.mapper";
 import { extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
+import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.service";
 import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 
 const isUniqueConstraintError = (error: unknown): boolean =>
@@ -42,6 +45,9 @@ const isUniqueConstraintError = (error: unknown): boolean =>
     && (error as { code?: unknown }).code === "P2002";
 
 const DELETED_EFORMSIGN_STATUS_TYPES = ["047", "049", "099"];
+/** Sentinel: the document's owner moved between the unlocked read and its row lock in a link. */
+const LINK_OWNERSHIP_CHANGED = Symbol("LINK_OWNERSHIP_CHANGED");
+const LINK_OWNERSHIP_RETRY_LIMIT = 3;
 const COMPLETED_EFORMSIGN_STATUS_TYPES = [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES];
 const MIRROR_LIST_NON_COMPLETED_WHERE: Prisma.eformsign_docWhereInput = {
     statusType: { notIn: COMPLETED_EFORMSIGN_STATUS_TYPES },
@@ -184,8 +190,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         const data = {
             statusType: params.statusType,
             statusDetail: params.statusDetail,
-            stepType: params.stepType,
-            stepIndex: params.stepIndex,
+            // Omitted (not undefined-valued) so the stored step columns stay untouched.
+            ...(params.stepType !== undefined ? { stepType: params.stepType } : {}),
+            ...(params.stepIndex !== undefined ? { stepIndex: params.stepIndex } : {}),
             stepName: params.stepName,
             expired: params.expired,
             ...(params.sourceUpdatedDate
@@ -297,12 +304,45 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         });
     }
 
+    async findContractCandidatesByClientId(clientId: number): Promise<EformsignContractCandidateRow[]> {
+        return this.prismaService.eformsign_doc.findMany({
+            // Same row set as the client summary (ClientService.findLatestContractByClientId):
+            // no branch, purge or sync-state filter.
+            where: {
+                clientId,
+                serviceRecordCaseId: null,
+                OR: [
+                    { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                    { documentKind: null },
+                ],
+            },
+            // Newest first, ranked by the database at full timestamptz(6) precision (microseconds):
+            // selectCurrentContractDocument keeps this order and must not re-sort with a JS Date.
+            orderBy: [
+                { createdDate: "desc" },
+                { id: "desc" },
+            ],
+            select: {
+                id: true,
+                documentId: true,
+                documentKind: true,
+                serviceRecordCaseId: true,
+                templateId: true,
+                createdDate: true,
+                statusType: true,
+                stepType: true,
+                stepName: true,
+                permanentPurgeRequestedAt: true,
+            },
+        });
+    }
+
     async findRecentContracts(branchid: string, take: number): Promise<RecentEformsignDocRow[]> {
         const docs = await this.prismaService.eformsign_doc.findMany({
             where: {
                 branchId: branchid,
                 permanentPurgeRequestedAt: null,
-                statusType: { not: "deleted" },
+                statusType: { notIn: [...DELETED_DOCUMENT_STATUS_TYPES] },
                 OR: [
                     { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
                     { documentKind: null },
@@ -591,15 +631,17 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     async update(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<EformsignDocEntity> {
-        return (await this.updateDocument(branchid, doc, false)).document;
+        return (await this.updateDocument(branchid, doc, false, options)).document;
     }
 
     async updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
-        return this.updateDocument(branchid, doc, true);
+        return this.updateDocument(branchid, doc, true, options);
     }
 
     /**
@@ -612,159 +654,250 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         branchid: string,
         documentId: string,
     ): Promise<boolean> {
-        return this.prismaService.$transaction(async (tx) =>
-            this.isCurrentContractDocumentInTransaction(tx, branchid, documentId));
+        for (let attempt = 0; attempt < LINK_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            const outcome = await this.prismaService.$transaction(async (tx) =>
+                this.isCurrentContractDocumentInTransaction(tx, branchid, documentId));
+            if (outcome !== LINK_OWNERSHIP_CHANGED) return outcome;
+        }
+        throw new Error("Eformsign document owner kept changing while checking the current contract");
     }
 
+    /**
+     * Lock order: client row(s) -> document row -> case row(s) -> pointed document row.
+     *
+     * Service-record confirmation and receipt promotion take the client row FIRST and the
+     * client's contract document rows afterwards. This method used to take the document row
+     * first and the client rows second, which deadlocks (`40P01`) against them: link holds
+     * document B and waits for the client, confirmation holds the client and waits for B.
+     * The client row is therefore the single serialisation root of every cooperating path:
+     *
+     * 1. read the document's current owner WITHOUT a lock (it only decides which client rows
+     *    to lock);
+     * 2. lock the owner and the target client in id order;
+     * 3. lock the document row and re-check that its owner did not change between the read
+     *    and the lock; a changed owner means the wrong client rows are locked, so the whole
+     *    transaction is rolled back (no write has happened yet) and the link starts over.
+     */
     async linkClientIfActive(
         branchid: string,
         documentId: string,
         clientId: number,
     ): Promise<boolean> {
-        return this.prismaService.$transaction(async (tx) => {
-            // Permanent purge takes this same row lock before clearing eDocId and
-            // writing the tombstone. Whichever transaction follows it must observe
-            // the terminal row; whichever precedes it is cleared by the purge.
-            const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
+        for (let attempt = 0; attempt < LINK_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            const outcome = await this.prismaService.$transaction((tx) =>
+                this.linkClientIfActiveOnce(tx, branchid, documentId, clientId));
+            if (outcome !== LINK_OWNERSHIP_CHANGED) return outcome;
+        }
+        throw new Error("Eformsign document owner kept changing while linking client");
+    }
+
+    private async linkClientIfActiveOnce(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        documentId: string,
+        clientId: number,
+    ): Promise<boolean | typeof LINK_OWNERSHIP_CHANGED> {
+        // Unlocked read: only used to choose which client rows to lock first. The
+        // document is re-read under its own lock below and the owner is compared.
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND permanent_purge_requested_at IS NULL
+              AND status_type NOT IN ('047', '049', '099')
+        `);
+        const peek = peeked?.[0];
+        if (!peek) {
+            return false;
+        }
+
+        // Lock both client rows (in id order, so competing relinks cannot invert) BEFORE
+        // any document row: a missing target client must be a clean no-op.
+        const clientIdsToLock = [peek.clientId, clientId]
+            .filter((id): id is number => id !== null && id !== undefined)
+            .filter((id, index, ids) => ids.indexOf(id) === index)
+            .sort((left, right) => left - right);
+        const lockedClients = await tx.$queryRaw<Array<{
+            id: number;
+            eDocId?: string | null;
+            branchId?: string | null;
+        }>>(Prisma.sql`
+            SELECT id,
+                   e_doc_id AS "eDocId",
+                   branch_id AS "branchId"
+            FROM client
+            WHERE id IN (${Prisma.join(clientIdsToLock)})
+              AND branch_id = ${branchid}::uuid
+            ORDER BY id
+            FOR UPDATE
+        `);
+        const targetClient = lockedClients.find((client) => client.id === clientId);
+        if (!targetClient) {
+            return false;
+        }
+
+        // Permanent purge takes this same row lock before clearing eDocId and
+        // writing the tombstone. Whichever transaction follows it must observe
+        // the terminal row; whichever precedes it is cleared by the purge.
+        const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
+            SELECT id,
+                   document_id AS "documentId",
+                   client_id AS "clientId",
+                   branch_id AS "branchId",
+                   document_kind AS "documentKind",
+                   service_record_case_id AS "serviceRecordCaseId",
+                   revision_id AS "revisionId",
+                   updated_date AS "updatedDate",
+                   created_date AS "createdDate"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND permanent_purge_requested_at IS NULL
+              AND status_type NOT IN ('047', '049', '099')
+            FOR UPDATE
+        `);
+        const document = documents[0];
+        if (!document) {
+            return false;
+        }
+        if ((document.clientId ?? null) !== (peek.clientId ?? null)) {
+            // The owner moved after the unlocked read, so the client rows locked above
+            // are not the document's owners. Nothing was written: start over.
+            return LINK_OWNERSHIP_CHANGED;
+        }
+
+        if (!await this.hasCurrentContractRevisionEvidence(tx, branchid, {
+            ...document,
+            // A new/legacy document can be unassigned until the linker
+            // resolves its recipient phone. Use the locked target client
+            // only for the revision proof; the pointer/document ownership
+            // update below still establishes the actual relation.
+            clientId: document.clientId ?? clientId,
+        })) {
+            return false;
+        }
+
+        // A target already pointing at another document is strong evidence
+        // that this completion is stale. Permit a relink only when the
+        // candidate is demonstrably newer, preserving normal completion of
+        // a newly created contract while rejecting delayed old callbacks.
+        if (targetClient.eDocId && targetClient.eDocId !== documentId) {
+            const pointedDocuments = await tx.$queryRaw<ContractPointerFenceRow[]>(Prisma.sql`
                 SELECT id,
                        document_id AS "documentId",
                        client_id AS "clientId",
                        branch_id AS "branchId",
-                       document_kind AS "documentKind",
                        service_record_case_id AS "serviceRecordCaseId",
                        revision_id AS "revisionId",
                        updated_date AS "updatedDate",
                        created_date AS "createdDate"
                 FROM eformsign_doc
-                WHERE document_id = ${documentId}
+                WHERE document_id = ${targetClient.eDocId}
                   AND branch_id = ${branchid}::uuid
                   AND permanent_purge_requested_at IS NULL
-                  AND status_type NOT IN ('047', '049', '099')
                 FOR UPDATE
             `);
-            const document = documents[0];
-            if (!document) {
+            const pointedDocument = pointedDocuments?.[0];
+            if (!pointedDocument || this.isPointedDocumentNewer(document, pointedDocument)) {
                 return false;
             }
+        }
 
-            // Verify and lock the target before clearing the old pointer. Lock both
-            // client rows in id order to preserve a consistent document -> client
-            // order across competing relinks; a missing target must be a clean no-op.
-            const clientIdsToLock = [document.clientId, clientId]
-                .filter((id): id is number => id !== null && id !== undefined)
-                .filter((id, index, ids) => ids.indexOf(id) === index)
-                .sort((left, right) => left - right);
-            const lockedClients = await tx.$queryRaw<Array<{
+        if (document.clientId !== null && document.clientId !== clientId) {
+            // The eDocId unique key only permits one pointer. Clear the previous
+            // owner's pointer first, but only if it still points at this document:
+            // a newer contract pointer on that client must survive this relink.
+            await tx.client.updateMany({
+                where: {
+                    id: document.clientId,
+                    branchId: branchid,
+                    eDocId: documentId,
+                },
+                data: { eDocId: null },
+            });
+        }
+
+        const client = await tx.client.updateMany({
+            where: { id: clientId, branchId: branchid },
+            data: { eDocId: documentId },
+        });
+        if (client.count !== 1) {
+            // The target was locked above. A zero-row write after mutating the
+            // old pointer is unexpected, so abort the transaction rather than
+            // committing an orphaned document-to-client relationship.
+            throw new Error("Client changed while linking eformsign document");
+        }
+
+        if (document.clientId !== clientId) {
+            const reassigned = await tx.eformsign_doc.updateMany({
+                where: {
+                    id: document.id,
+                    branchId: branchid,
+                    permanentPurgeRequestedAt: null,
+                    statusType: { notIn: DELETED_EFORMSIGN_STATUS_TYPES },
+                },
+                data: {
+                    clientId,
+                    autoRegisteredClient: false,
+                },
+            });
+            if (reassigned.count !== 1) {
+                // We hold the parent-row lock, so this cannot be a normal
+                // contention result. Abort rather than commit a pointer that
+                // lacks its matching document ownership.
+                throw new Error("Eformsign document changed while linking client");
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Lock order: client row -> document row -> case row(s) (the same client-first order as
+     * `linkClientIfActive`, confirmation and receipt promotion). Taking the document row first
+     * deadlocked (`40P01`) against promotion, which holds the client row and then locks all of
+     * the client's documents, and the webhook skipped its completion effects on that error.
+     * The owner is read WITHOUT a lock only to decide which client row to lock; it is compared
+     * again under the document lock, and a changed owner restarts the check (nothing was
+     * written).
+     */
+    private async isCurrentContractDocumentInTransaction(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        documentId: string,
+    ): Promise<boolean | typeof LINK_OWNERSHIP_CHANGED> {
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND permanent_purge_requested_at IS NULL
+              AND status_type NOT IN ('047', '049', '099')
+        `);
+        const peek = peeked?.[0];
+        if (!peek) return false;
+        let client: { id: number; eDocId: string | null; branchId: string | null } | undefined;
+        if (peek.clientId !== null && peek.clientId !== undefined) {
+            const clients = await tx.$queryRaw<Array<{
                 id: number;
-                eDocId?: string | null;
-                branchId?: string | null;
+                eDocId: string | null;
+                branchId: string | null;
             }>>(Prisma.sql`
                 SELECT id,
                        e_doc_id AS "eDocId",
                        branch_id AS "branchId"
                 FROM client
-                WHERE id IN (${Prisma.join(clientIdsToLock)})
+                WHERE id = ${peek.clientId}
                   AND branch_id = ${branchid}::uuid
-                ORDER BY id
                 FOR UPDATE
             `);
-            const targetClient = lockedClients.find((client) => client.id === clientId);
-            if (!targetClient) {
-                return false;
-            }
+            // A missing client is not an answer yet: the document may have moved to another client
+            // (and the peeked one been deleted) since the unlocked read. The ownership comparison
+            // under the document lock below decides between a retry and `false`.
+            client = clients?.[0];
+        }
 
-            if (!await this.hasCurrentContractRevisionEvidence(tx, branchid, {
-                ...document,
-                // A new/legacy document can be unassigned until the linker
-                // resolves its recipient phone. Use the locked target client
-                // only for the revision proof; the pointer/document ownership
-                // update below still establishes the actual relation.
-                clientId: document.clientId ?? clientId,
-            })) {
-                return false;
-            }
-
-            // A target already pointing at another document is strong evidence
-            // that this completion is stale. Permit a relink only when the
-            // candidate is demonstrably newer, preserving normal completion of
-            // a newly created contract while rejecting delayed old callbacks.
-            if (targetClient.eDocId && targetClient.eDocId !== documentId) {
-                const pointedDocuments = await tx.$queryRaw<ContractPointerFenceRow[]>(Prisma.sql`
-                    SELECT id,
-                           document_id AS "documentId",
-                           client_id AS "clientId",
-                           branch_id AS "branchId",
-                           service_record_case_id AS "serviceRecordCaseId",
-                           revision_id AS "revisionId",
-                           updated_date AS "updatedDate",
-                           created_date AS "createdDate"
-                    FROM eformsign_doc
-                    WHERE document_id = ${targetClient.eDocId}
-                      AND branch_id = ${branchid}::uuid
-                      AND permanent_purge_requested_at IS NULL
-                    FOR UPDATE
-                `);
-                const pointedDocument = pointedDocuments?.[0];
-                if (!pointedDocument || this.isPointedDocumentNewer(document, pointedDocument)) {
-                    return false;
-                }
-            }
-
-            if (document.clientId !== null && document.clientId !== clientId) {
-                // The eDocId unique key only permits one pointer. Clear the previous
-                // owner's pointer first, but only if it still points at this document:
-                // a newer contract pointer on that client must survive this relink.
-                await tx.client.updateMany({
-                    where: {
-                        id: document.clientId,
-                        branchId: branchid,
-                        eDocId: documentId,
-                    },
-                    data: { eDocId: null },
-                });
-            }
-
-            const client = await tx.client.updateMany({
-                where: { id: clientId, branchId: branchid },
-                data: { eDocId: documentId },
-            });
-            if (client.count !== 1) {
-                // The target was locked above. A zero-row write after mutating the
-                // old pointer is unexpected, so abort the transaction rather than
-                // committing an orphaned document-to-client relationship.
-                throw new Error("Client changed while linking eformsign document");
-            }
-
-            if (document.clientId !== clientId) {
-                const reassigned = await tx.eformsign_doc.updateMany({
-                    where: {
-                        id: document.id,
-                        branchId: branchid,
-                        permanentPurgeRequestedAt: null,
-                        statusType: { notIn: DELETED_EFORMSIGN_STATUS_TYPES },
-                    },
-                    data: {
-                        clientId,
-                        autoRegisteredClient: false,
-                    },
-                });
-                if (reassigned.count !== 1) {
-                    // We hold the parent-row lock, so this cannot be a normal
-                    // contention result. Abort rather than commit a pointer that
-                    // lacks its matching document ownership.
-                    throw new Error("Eformsign document changed while linking client");
-                }
-            }
-
-            return true;
-        });
-    }
-
-    private async isCurrentContractDocumentInTransaction(
-        tx: Prisma.TransactionClient,
-        branchid: string,
-        documentId: string,
-    ): Promise<boolean> {
         const documents = await tx.$queryRaw<ContractDocumentFenceRow[]>(Prisma.sql`
             SELECT id,
                    document_id AS "documentId",
@@ -783,29 +916,17 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             FOR UPDATE
         `);
         const document = documents?.[0];
+        if (!document) return false;
+        if ((document.clientId ?? null) !== (peek.clientId ?? null)) {
+            return LINK_OWNERSHIP_CHANGED;
+        }
         if (
-            !document
-            || document.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
+            document.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
             || document.clientId === null
             || document.clientId === undefined
         ) {
             return false;
         }
-
-        const clients = await tx.$queryRaw<Array<{
-            id: number;
-            eDocId: string | null;
-            branchId: string | null;
-        }>>(Prisma.sql`
-            SELECT id,
-                   e_doc_id AS "eDocId",
-                   branch_id AS "branchId"
-            FROM client
-            WHERE id = ${document.clientId}
-              AND branch_id = ${branchid}::uuid
-            FOR UPDATE
-        `);
-        const client = clients?.[0];
         if (!client || client.eDocId !== documentId) return false;
 
         return this.hasCurrentContractRevisionEvidence(tx, branchid, document);
@@ -904,11 +1025,20 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         branchid: string,
         doc: EformsignDocEntity,
         onlyIfSourceNewer: boolean,
+        options?: EformsignDocStepWriteOptions,
     ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
-        const data = EformsignDocMapper.toPrismaUpdate(doc);
+        const { stepType, stepIndex, ...rest } = EformsignDocMapper.toPrismaUpdate(doc);
+        // A step column the caller did not supply holds the value it read earlier; leaving
+        // it out keeps whatever the mirror/backfill stored since, instead of reverting it.
+        // `data` feeds both the primary write and the pending-column retry below.
+        const data = {
+            ...rest,
+            ...(options?.updateStepType === false ? {} : { stepType }),
+            ...(options?.updateStepIndex === false ? {} : { stepIndex }),
+        };
         // Keep the purge/deleted fence in the UPDATE predicate for every write, not
         // only webhook CAS writes: a permanent purge can otherwise finish between
         // a caller's read and this write and let the stale payload restore scrubbed PII.
@@ -1012,8 +1142,8 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             statusType: doc.statusType,
             ...(options?.markMirrorPending ? { syncStatus: "pending" as const } : {}),
             ...(options?.updateStatusDetail === false ? {} : { statusDetail: doc.statusDetail }),
-            stepType: doc.stepType,
-            stepIndex: doc.stepIndex,
+            ...(options?.updateStepType === false ? {} : { stepType: doc.stepType }),
+            ...(options?.updateStepIndex === false ? {} : { stepIndex: doc.stepIndex }),
             stepName: doc.stepName,
             ...(options?.updateExpired === false ? {} : { expired: doc.expired }),
             ...(options?.updateExpiredDate === false ? {} : { expiredDate: doc.expiredDate }),

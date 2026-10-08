@@ -49,12 +49,12 @@ async function buildPromotionFixture(
             amount: RECEIPT_AMOUNT,
         },
     };
-    const documentData = (documentId: string) => ({
+    const documentData = (documentId: string, createdDate: Date = documentNow) => ({
         documentId,
         documentName: "Synthetic service receipt",
         documentNumber: `RECEIPT-${randomUUID()}`,
         templateName: "receipt-template",
-        createdDate: documentNow,
+        createdDate,
         updatedDate: documentNow,
         statusType: "070",
         statusDetail: "Synthetic in progress",
@@ -70,10 +70,12 @@ async function buildPromotionFixture(
         documentKind: "contract",
         detailPayload: asJson(receiptDetail),
     });
-    const [originalDocument, targetDocument] = await Promise.all([
-        prisma.eformsign_doc.create({ data: documentData(originalDocumentId) }),
-        prisma.eformsign_doc.create({ data: documentData(targetDocumentId) }),
-    ]);
+    // Promotion requires the target to still be the client's CURRENT contract (newest candidate by
+    // createdDate, id), so the re-issued target is created strictly after the original.
+    const originalDocument = await prisma.eformsign_doc.create({ data: documentData(originalDocumentId) });
+    const targetDocument = await prisma.eformsign_doc.create({
+        data: documentData(targetDocumentId, new Date(documentNow.getTime() + 60_000)),
+    });
     await prisma.client.update({
         where: { id: fixture.client.id },
         data: { eDocId: targetDocument.documentId },
@@ -196,6 +198,7 @@ async function buildPromotionFixture(
         templateId: "receipt-template",
         templateVersion: "1",
         mirrorGeneration: "mirror-generation-1",
+        serviceRecordTemplateIds: [],
         eformsignDocId: originalDocument.id,
         tokenIds: [token.id],
         storagePath: `receipts/${token.id}/new.pdf`,

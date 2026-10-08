@@ -27,6 +27,7 @@ import {
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  isRevokeRequestedEformsignStatus,
   normalizeEformsignStatusCode,
   type EformsignStatusCategory,
   type EformsignStatusInput,
@@ -117,6 +118,11 @@ export function mapDocStatusLabel(
   if (isContractDocDisplayStatus(displayStatus)) {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS[displayStatus];
   }
+  // 040 (cancellation requested) sits in the "expired" category for filtering/stats, but it
+  // is not expired — payloads that predate display_status must not label it 기간 만료.
+  if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) {
+    return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested;
+  }
   const category = getEformsignStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
   return resolveContractDocStatusLabel({
@@ -136,6 +142,10 @@ export function contractStatusBadgeType(
       return "completed";
     case "기간 만료":
       return "expired";
+    // 철회 요청됨 (040): cancellation asked, not done — a pending decision, so it takes the
+    // warning (review) tone like 검토 필요. The label text is what tells them apart.
+    case "철회 요청됨":
+      return "review";
     case "검토 필요":
     // Shares the attention colour with 검토 필요 because it is one — the row
     // needs an operator, just a different action. What must NOT be shared is

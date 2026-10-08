@@ -136,7 +136,7 @@ describe("ContractClientSelector", () => {
         canCreateNewContractDocument({ ...mockExistingClient, documentStatus }),
       ).toBe(true);
     }
-    for (const documentStatus of ["created", "requested", "opened", "completed"] as const) {
+    for (const documentStatus of ["created", "requested", "revoke_requested", "opened", "completed"] as const) {
       expect(
         canCreateNewContractDocument({ ...mockExistingClient, documentStatus }),
       ).toBe(false);

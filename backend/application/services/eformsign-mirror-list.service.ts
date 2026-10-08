@@ -141,6 +141,35 @@ export class EformsignMirrorListService {
         });
     }
 
+    /**
+     * The serve-time display fields for ONE stored document, for the detail response.
+     *
+     * The detail endpoint returns the vendor payload verbatim, which carries neither
+     * `display_status` nor `contract_end_date` — both are computed here, from the mirror row,
+     * and the list stamps them from exactly this path. So a document read through the detail
+     * must go through the same conversion, end-date attachment and resolver as the list,
+     * not a second copy of those rules: an unassigned review-step contract that the list
+     * calls "unassigned" must not read as "review" the moment its detail loads.
+     *
+     * Returns null when the row is gone (a purge raced the request); the caller decides.
+     * `contract_end_date` is present only when the list would have attached one.
+     */
+    async buildDetailDisplayFields(
+        documentId: string,
+        calendar: KrBusinessDayCalendar,
+    ): Promise<{ display_status: EformsignDocDisplayStatus; contract_end_date?: string } | null> {
+        const stored = await this.eformsignDocRepository.findByDocumentIdUnscoped(documentId);
+        if (!stored) return null;
+
+        const listDoc = eformsignListDocFromMirror(stored.document);
+        const withEndDate = (await this.attachContractEndDates([listDoc]))[0] ?? listDoc;
+        const contractEndDate = withEndDate["contract_end_date"];
+        return {
+            display_status: resolveEformsignDocDisplayStatus(withEndDate, new Date(), calendar),
+            ...(typeof contractEndDate === "string" ? { contract_end_date: contractEndDate } : {}),
+        };
+    }
+
     /** Applies the per-request filters to an already-loaded scope. */
     filterScope(
         documents: EformsignListDoc[],

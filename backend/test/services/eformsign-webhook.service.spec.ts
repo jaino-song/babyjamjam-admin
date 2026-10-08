@@ -735,7 +735,7 @@ describe("EformsignWebhookService", () => {
                 templateName: "template",
                 templateId: "template-1",
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
         expect(updateStatusUsecase.executeWithOutcome).not.toHaveBeenCalled();
         expect(linkDocumentUsecase.execute).not.toHaveBeenCalled();
@@ -762,7 +762,7 @@ describe("EformsignWebhookService", () => {
                 templateId: "template-1",
                 updatedDate: existing.updatedDate,
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
         expect(eformsignDocRepository.claimCompletionStatus).not.toHaveBeenCalled();
         expect(linkDocumentUsecase.execute).not.toHaveBeenCalled();
@@ -807,7 +807,7 @@ describe("EformsignWebhookService", () => {
                 statusType: "070",
                 expired: false,
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -830,7 +830,7 @@ describe("EformsignWebhookService", () => {
 
         expect(eformsignDocRepository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.objectContaining({ statusType: "070" }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -853,7 +853,7 @@ describe("EformsignWebhookService", () => {
 
         expect(eformsignDocRepository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.objectContaining({ statusType: "071", statusDetail: "검토 반려" }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -893,7 +893,7 @@ describe("EformsignWebhookService", () => {
                 statusType: "072",
                 expired: false,
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -970,7 +970,7 @@ describe("EformsignWebhookService", () => {
                 statusDetail: "만료",
                 expired: true,
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -1230,7 +1230,7 @@ describe("EformsignWebhookService", () => {
 
         expect(eformsignDocRepository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.objectContaining({ statusType: "080" }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -1309,7 +1309,7 @@ describe("EformsignWebhookService", () => {
 
         expect(eformsignDocRepository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.objectContaining({ documentName: null }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -1329,7 +1329,7 @@ describe("EformsignWebhookService", () => {
                 lastEditorName: "기존 편집자",
                 stepRecipientTypes: ["05", "06"],
             }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -1348,7 +1348,7 @@ describe("EformsignWebhookService", () => {
 
         expect(eformsignDocRepository.upsertUnassignedByDocumentId).toHaveBeenCalledWith(
             expect.objectContaining({ templateName: null }),
-            { updateCreatedDate: false },
+            { updateCreatedDate: false, updateStepType: false, updateStepIndex: false },
         );
     });
 
@@ -1478,6 +1478,91 @@ describe("EformsignWebhookService", () => {
             branchId,
             expect.objectContaining({ statusType: "070", statusDetail: "검토 요청" }),
         );
+    });
+
+    /**
+     * Rejection/revocation events used to be mapped to the synthesized 080/090.
+     * isCurrentMirrorStatus compares the mapped code with the mirror's REAL
+     * current_status.status_type (061 / 011 / 042 / 040), so every one of these
+     * webhooks was dropped as IGNORED_STALE_MIRROR and the stored row stayed at
+     * 060 until the 6-hourly sweep. The mapping must carry the real code.
+     */
+    describe("rejection and revocation events carry the real eformsign code", () => {
+        const cases: Array<{
+            event: string;
+            mirrorCode: string;
+            detail: string;
+        }> = [
+            { event: "doc_reject_participant", mirrorCode: "061", detail: "거부" },
+            { event: "doc_reject_approval", mirrorCode: "011", detail: "거부" },
+            { event: "doc_revoke", mirrorCode: "042", detail: "철회" },
+            { event: "doc_request_revoke", mirrorCode: "040", detail: "철회 요청" },
+        ];
+
+        const payloadFor = (event: string): EformsignWebhookPayloadDto => {
+            const payload = createDocumentPayload();
+            if (!payload.document) {
+                throw new Error("document payload is required");
+            }
+            payload.document.status = event;
+            return payload;
+        };
+
+        it.each(cases)(
+            "persists $event as the real code $mirrorCode when the mirror reports it",
+            async ({ event, mirrorCode, detail }) => {
+                const mirroredDocument = {
+                    current_status: { status_type: mirrorCode },
+                };
+
+                await expect(
+                    service.processWebhook(payloadFor(event), { mirroredDocument } as never),
+                ).resolves.toBeUndefined();
+
+                expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledTimes(1);
+                expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledWith(
+                    branchId,
+                    expect.objectContaining({
+                        documentId,
+                        statusType: mirrorCode,
+                        statusDetail: detail,
+                    }),
+                );
+            },
+        );
+
+        it.each(cases)(
+            "still ignores a stale $event when the mirror has already moved past it",
+            async ({ event }) => {
+                // The mirror advanced to the reviewer stage; a late rejection/
+                // revocation event for an earlier moment must not be applied.
+                const mirroredDocument = {
+                    current_status: { status_type: "070" },
+                };
+
+                await expect(
+                    service.processWebhook(payloadFor(event), { mirroredDocument } as never),
+                ).resolves.toBeUndefined();
+
+                expect(updateStatusUsecase.executeWithOutcome).not.toHaveBeenCalled();
+            },
+        );
+
+        it("keeps doc_decline on the synthesized 080 (it has no real code)", async () => {
+            const mirroredDocument = {
+                current_status: { status_type: "080" },
+            };
+
+            await service.processWebhook(
+                payloadFor("doc_decline"),
+                { mirroredDocument } as never,
+            );
+
+            expect(updateStatusUsecase.executeWithOutcome).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType: "080", statusDetail: "거부" }),
+            );
+        });
     });
 
     /**

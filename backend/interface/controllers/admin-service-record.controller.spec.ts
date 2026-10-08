@@ -1,11 +1,15 @@
 import "reflect-metadata";
 
-import { ExecutionContext, INestApplication } from "@nestjs/common";
+import { ExecutionContext, INestApplication, MessageEvent } from "@nestjs/common";
+import { GUARDS_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { Test } from "@nestjs/testing";
+import { Subscription } from "rxjs";
 import request from "supertest";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
+import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerOrAdminGuard } from "infrastructure/auth/owner-or-admin.guard";
 import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
@@ -47,6 +51,7 @@ describe("AdminServiceRecordController query boundary", () => {
             providers: [
                 { provide: AdminServiceRecordService, useValue: adminService },
                 { provide: AdminServiceRecordEditService, useValue: editService },
+                ServiceRecordCaseEventBus,
             ],
         })
             .overrideGuard(JwtGuard)
@@ -115,5 +120,72 @@ describe("AdminServiceRecordController query boundary", () => {
         expect(() => new AdminServiceRecordNoQueryPipe().transform(["branchId"])).toThrow(
             /query parameter/,
         );
+    });
+});
+
+describe("AdminServiceRecordController case-changed events", () => {
+    const BRANCH_B = "22222222-2222-2222-2222-222222222222";
+    let bus: ServiceRecordCaseEventBus;
+    let controller: AdminServiceRecordController;
+    let subscription: Subscription | undefined;
+
+    const tenantFor = (branchId: string | undefined) => ({ branchId } as never);
+
+    beforeEach(() => {
+        jest.useFakeTimers();
+        bus = new ServiceRecordCaseEventBus();
+        controller = new AdminServiceRecordController(
+            {} as AdminServiceRecordService,
+            {} as AdminServiceRecordEditService,
+            bus,
+        );
+    });
+
+    afterEach(() => {
+        subscription?.unsubscribe();
+        subscription = undefined;
+        jest.useRealTimers();
+    });
+
+    it("is GET /admin/service-records/events guarded by BranchManagerGuard", () => {
+        const handler = AdminServiceRecordController.prototype.events;
+        expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe("events");
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([BranchManagerGuard]);
+        expect(Reflect.getMetadata(PATH_METADATA, AdminServiceRecordController)).toBe("admin/service-records");
+    });
+
+    it("streams only the caller branch's events as case-changed without the branch id", () => {
+        const received: MessageEvent[] = [];
+        subscription = controller.events(tenantFor(BRANCH_ID)).subscribe((e) => received.push(e));
+
+        bus.emit({ branchId: BRANCH_B, clientId: 7, caseId: "case-b", caseVersion: 1 });
+        bus.emit({ branchId: BRANCH_ID, clientId: 42, caseId: "case-a", caseVersion: 3 });
+
+        expect(received).toEqual([
+            { type: "case-changed", data: { clientId: 42, caseId: "case-a", caseVersion: 3 } },
+        ]);
+        expect(JSON.stringify(received[0]!.data)).not.toContain("branchId");
+    });
+
+    it("emits no case events when the caller has no branch", () => {
+        const received: MessageEvent[] = [];
+        subscription = controller.events(tenantFor(undefined)).subscribe((e) => received.push(e));
+
+        bus.emit({ branchId: "", clientId: 1, caseId: "case-x", caseVersion: 1 });
+        bus.emit({ branchId: BRANCH_ID, clientId: 42, caseId: "case-a", caseVersion: 3 });
+
+        expect(received).toEqual([]);
+    });
+
+    it("sends a ping heartbeat every 30 seconds", () => {
+        const received: MessageEvent[] = [];
+        subscription = controller.events(tenantFor(BRANCH_ID)).subscribe((e) => received.push(e));
+
+        jest.advanceTimersByTime(29999);
+        expect(received).toHaveLength(0);
+        jest.advanceTimersByTime(1);
+        expect(received).toHaveLength(1);
+        expect(received[0]!.type).toBe("ping");
+        expect(received[0]!.data).toEqual({ at: expect.any(Number) });
     });
 });

@@ -1,3 +1,5 @@
+import { isoDateInKorea } from "domain/utils/business-days";
+
 /**
  * Service status values for client entity
  * Based on service lifecycle and date calculations
@@ -43,19 +45,35 @@ const AUTOMATIC_STATUSES: ServiceStatusType[] = [
     SERVICE_STATUS.COMPLETED,
 ];
 
+export type ClientCalendarDate = `${number}-${number}-${number}`;
+
+/**
+ * Calendar date (YYYY-MM-DD) of a stored date-only column. These columns are
+ * `@db.Date`, i.e. UTC-midnight Dates, so the UTC date parts are the stored
+ * calendar date; local getters would shift it in non-UTC runtimes.
+ */
+export function clientCalendarDate(date: Date): ClientCalendarDate {
+    return date.toISOString().slice(0, 10) as ClientCalendarDate;
+}
+
 /**
  * Compute service status based on start_date and end_date
  * Manual statuses (terminated, replacement_requested) are preserved
  *
+ * "Today" is the Korean (Asia/Seoul) calendar date, regardless of the runtime
+ * timezone, so it matches getEffectiveClientServiceStatus.
+ *
  * @param currentStatus - Current stored status
  * @param startDate - Service start date
  * @param endDate - Service end date
+ * @param now - Clock override for tests
  * @returns Computed status or current status if manual
  */
 export function computeServiceStatus(
     currentStatus: string | null,
     startDate: Date | null,
     endDate: Date | null,
+    now = new Date(),
 ): ServiceStatusType {
     // Preserve manual statuses
     if (currentStatus && MANUAL_STATUSES.includes(currentStatus as ServiceStatusType)) {
@@ -67,18 +85,17 @@ export function computeServiceStatus(
         return SERVICE_STATUS.PRE_BOOKING;
     }
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const start = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-    const end = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+    const today = isoDateInKorea(now);
+    const start = clientCalendarDate(startDate);
+    const end = clientCalendarDate(endDate);
 
     // Before start date → waiting
-    if (today < start) {
+    if (start > today) {
         return SERVICE_STATUS.WAITING;
     }
 
     // After end date → completed
-    if (today > end) {
+    if (end < today) {
         return SERVICE_STATUS.COMPLETED;
     }
 

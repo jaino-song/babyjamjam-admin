@@ -161,6 +161,31 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         expect(eformsignDocRepository.updateIfSourceNewer).toHaveBeenCalledWith(
             branchId,
             expect.objectContaining({ updatedDate: sourceUpdatedDate }),
+            // This call supplied no step fields, so the repository must not write the
+            // values read earlier back over a newer step.
+            { updateStepType: false, updateStepIndex: false },
+        );
+    });
+
+    it("passes no step-write options when the caller supplies both step fields", async () => {
+        const sourceUpdatedDate = new Date("2026-05-03T00:00:00.000Z");
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
+        eformsignDocRepository.updateIfSourceNewer.mockImplementation(
+            (_branchId, doc) => Promise.resolve({ document: doc, applied: true }),
+        );
+
+        await usecase.execute(branchId, {
+            documentId,
+            statusType: "070",
+            statusDetail: "검토 요청",
+            stepType: "06",
+            stepIndex: "3",
+            sourceUpdatedDate,
+        });
+
+        expect(eformsignDocRepository.updateIfSourceNewer).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ stepType: "06", stepIndex: "3" }),
         );
     });
 

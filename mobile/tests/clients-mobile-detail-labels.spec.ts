@@ -78,11 +78,16 @@ test.describe("Mobile clients detail labels", () => {
       });
     });
 
-    await page.route("**/api/message-logs**", async (route) => {
+    // The client detail reads GET /api/message-logs/client/:id, which answers
+    // with a cursor-paged envelope; a bare array is rejected as a broken contract.
+    await page.route("**/api/message-logs/client/**", async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify([CLIENT_SMS_LOG]),
+        body: JSON.stringify({
+          items: [CLIENT_SMS_LOG],
+          page: { snapshotAt: "2026-07-16T09:00:00.000Z", nextCursor: null, hasMore: false },
+        }),
       });
     });
   });

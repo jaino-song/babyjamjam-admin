@@ -436,7 +436,7 @@ describe("ClientsPage selection and draft transitions", () => {
     expect(formSource).toContain("onDirtyChange?: (dirty: boolean) => void");
     expect(formSource).toContain("onBeforeClose?: () => boolean");
     expect(formSource).toContain("formDataBaselineRef");
-    expect(formSource).toContain("JSON.stringify(formData) !== JSON.stringify(formDataBaselineRef.current)");
+    expect(formSource).toContain("JSON.stringify(formData) !== JSON.stringify(getEffectiveBaseline())");
     expect(formSource).toContain("if (onBeforeClose && !onBeforeClose()) {");
     expect(formSource).toContain("return;");
     expect(formSource.indexOf("if (onBeforeClose && !onBeforeClose())")).toBeLessThan(

@@ -1,5 +1,6 @@
 import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/business-days";
 import {
+  contractStatusBadgeType,
   getStatusCategory,
   mapDocStatusLabel,
   mapStatusToLabel,
@@ -108,5 +109,29 @@ describe("mapDocStatusLabel with a branch calendar", () => {
   it("does not throw for an end date outside the branch calendar's years", () => {
     const narrowCalendar = createKrBusinessDayCalendar([], { version: "kr-db-test", supportedYears: [2026] });
     expect(mapDocStatusLabel(reviewStep, "2024-12-31", null, narrowCalendar)).toBe("검토 필요");
+  });
+});
+
+describe("040 (doc_request_revoke) 철회 요청됨", () => {
+  it("is labelled 철회 요청됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "040" }, null, "revoke_requested")).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "040" })).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
+    expect(mapDocStatusLabel({ status_type: "doc_request_revoke" })).toBe("철회 요청됨");
+  });
+
+  it("keeps the expired category for filtering, tabs and stats", () => {
+    expect(getStatusCategory("040")).toBe("expired");
+  });
+
+  it("does not change 042/090 (revoked) or 080 (expired) labels", () => {
+    for (const code of ["042", "090", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
+    }
+  });
+
+  it("uses the warning (review) badge tone, distinct from the expired one", () => {
+    expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
+    expect(contractStatusBadgeType("기간 만료")).toBe("expired");
   });
 });

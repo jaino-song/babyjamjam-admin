@@ -128,6 +128,7 @@ describe("shared message presentation contract", () => {
     expect(MESSAGE_JOB_STATUS_LABELS).toEqual({
       pending: "발송 대기",
       processing: "발송 중",
+      dispatching: "발송 중",
       sent: "발송 완료",
       failed: "발송 실패",
       canceled: "발송 취소",
@@ -141,6 +142,7 @@ describe("shared message presentation contract", () => {
     expect(MESSAGE_JOB_STATUS_BADGE_VARIANT).toEqual({
       pending: "warning",
       processing: "info",
+      dispatching: "info",
       sent: "success",
       failed: "danger",
       canceled: "neutral",

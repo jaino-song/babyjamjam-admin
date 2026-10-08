@@ -42,6 +42,24 @@ describe("foldContractStats", () => {
     ).toBe(0);
   });
 
+  it("counts 040 (철회 요청됨) in no bucket — it must not grow 발송 필요, 검토 필요, 서명 완료 or 기간 만료", () => {
+    const empty = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
+    expect(
+      foldContractStats([
+        { status_type: "040", step_type: null, step_name: null, step_recipient_types: [], display_status: "revoke_requested" },
+        { status_type: "040", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: PAST_CONTRACT_END_DATE, display_status: "revoke_requested" },
+        { status_type: "040", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+      ]),
+    ).toEqual(empty);
+    // A plain 060 customer-step doc still counts as 발송 필요 beside them.
+    expect(
+      foldContractStats([
+        { status_type: "040", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+        { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+      ]).sendRequired,
+    ).toBe(1);
+  });
+
   it("counts draft (001) as drafting, before the reviewNeeded split", () => {
     expect(
       foldContractStats([{ status_type: "001", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]),

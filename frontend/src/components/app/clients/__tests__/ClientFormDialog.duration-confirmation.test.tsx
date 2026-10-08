@@ -144,6 +144,8 @@ describe("client duration confirmation", () => {
     };
     render(<ClientFormPanel open activeStep={3} client={client} onClose={jest.fn()} />);
     await act(async () => { await Promise.resolve(); });
+    // Editing the period is what makes the saved period need confirming; a save that leaves it alone does not.
+    fireEvent.change(screen.getByLabelText("종료일"), { target: { value: "2026-09-13" } });
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
     expect(mockUpdateClient).not.toHaveBeenCalled();
@@ -151,9 +153,16 @@ describe("client duration confirmation", () => {
     fireEvent.click(confirm);
     fireEvent.click(confirm);
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
-    expect(mockUpdateClient).toHaveBeenCalledWith({ id: 2, dto: expect.objectContaining({
-      duration: 15, startDate: "2026-08-26", endDate: "2026-09-14", allowBusinessDayMismatch: true,
-    }) });
+    expect(mockUpdateClient).toHaveBeenCalledWith({
+      id: 2,
+      dto: {
+        startDate: "2026-08-26",
+        endDate: "2026-09-13",
+        duration: 15,
+        expectedEndDate: "2026-09-14",
+        allowBusinessDayMismatch: true,
+      },
+    });
     await act(async () => { finish({ id: 2 }); });
   });
 });

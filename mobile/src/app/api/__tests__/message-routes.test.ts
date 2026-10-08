@@ -6,6 +6,7 @@ import { NextRequest } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
 import { GET as listMessageLogs } from "../message-logs/route";
 import { GET as listMessageLogsPage } from "../message-logs/page/route";
+import { GET as listClientMessageLogs } from "../message-logs/client/[clientId]/route";
 import { GET as listUpcomingJobs } from "../message-trigger-jobs/upcoming/route";
 import { GET as listTriggerTemplates } from "../message-trigger-templates/route";
 
@@ -120,6 +121,48 @@ describe("Message API routes", () => {
         limit: "500",
         cursor: "cursor-v1",
       },
+    });
+  });
+
+  describe("client message history", () => {
+    const context = (clientId: string) => ({ params: Promise.resolve({ clientId }) });
+
+    it("rejects an unauthenticated read before proxying", async () => {
+      const response = await listClientMessageLogs(
+        createRequest("/api/message-logs/client/42", { headers: { cookie: "" } }),
+        context("42"),
+      );
+
+      expect(response.status).toBe(401);
+      expect(mockGet).not.toHaveBeenCalled();
+    });
+
+    it("forwards the client id, page size and cursor to the client-scoped backend endpoint", async () => {
+      mockGet.mockResolvedValue({
+        status: 200,
+        data: { items: [], page: { snapshotAt: "2026-10-01T00:00:00.000Z", nextCursor: null, hasMore: false } },
+      });
+
+      const response = await listClientMessageLogs(
+        createRequest("/api/message-logs/client/42?limit=100&cursor=cursor-v1"),
+        context("42"),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockGet).toHaveBeenCalledWith("/message-logs/client/42", {
+        headers: { Authorization: "Bearer auth-token" },
+        params: { limit: "100", cursor: "cursor-v1" },
+      });
+    });
+
+    it("rejects a malformed client id without calling the backend", async () => {
+      const response = await listClientMessageLogs(
+        createRequest("/api/message-logs/client/abc"),
+        context("abc"),
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockGet).not.toHaveBeenCalled();
     });
   });
 

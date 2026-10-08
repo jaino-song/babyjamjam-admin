@@ -10,6 +10,7 @@ import { ServiceRecordEntryController } from "interface/controllers/service-reco
 import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
+import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
@@ -39,6 +40,7 @@ import { HolidayModule } from "./holiday.module";
     providers: [
         AdminServiceRecordService,
         AdminServiceRecordEditService,
+        ServiceRecordCaseEventBus,
         ServiceRecordEntryService,
         ScheduleChangeService,
         ServiceRecordTokenService,

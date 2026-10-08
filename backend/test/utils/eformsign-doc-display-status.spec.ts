@@ -151,6 +151,32 @@ describe("resolveEformsignDocDisplayStatus", () => {
         )).toBe("unknown");
     });
 
+    it("shows 040 (doc_request_revoke) as revoke_requested, not expired, whatever the step or end date", () => {
+        // Parity: packages/shared/src/constants/eformsign-doc-status.test.ts. 040 stays in the
+        // "expired" category for filtering/stats (see eformsign-document-list), but is not expired.
+        const at = (current_status: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+            resolveEformsignDocDisplayStatus({ id: "d", current_status, ...extra }, kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR);
+        expect(at({ status_type: "040" })).toBe("revoke_requested");
+        expect(at({ status_type: 40 })).toBe("revoke_requested");
+        expect(at({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-07" })).toBe("revoke_requested");
+        expect(at({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-01" })).toBe("revoke_requested");
+        expect(at({ status_type: "040", step_type: "05", step_name: "이용자 서명" })).toBe("revoke_requested");
+        expect(at({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, { [MIRROR_UNASSIGNED_KEY]: true })).toBe("revoke_requested");
+    });
+
+    it("leaves 042/090 (revoked) and 080 (expired) as expired and 047/049 as unknown", () => {
+        for (const code of ["042", "090", "080", "011", "045"]) {
+            expect(resolveEformsignDocDisplayStatus(
+                { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
+            )).toBe("expired");
+        }
+        for (const code of ["047", "049"]) {
+            expect(resolveEformsignDocDisplayStatus(
+                { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
+            )).toBe("unknown");
+        }
+    });
+
     it("splits provider-review docs on the review window", () => {
         expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("signed");
         expect(resolveEformsignDocDisplayStatus(reviewStepDoc("2026-08-07"), kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR)).toBe("review");

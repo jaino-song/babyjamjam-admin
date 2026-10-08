@@ -10,7 +10,7 @@ import type {
 } from "@/features/message-triggers/types";
 import { eformsignApi } from "@/services/api";
 
-const mockUseMessageHistory = jest.fn();
+const mockUseClientMessageHistory = jest.fn();
 const mockUseClientUpcomingMessageTriggerJobs = jest.fn();
 
 jest.mock("@/providers/LocaleProvider", () => ({
@@ -23,7 +23,7 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
-    useMessageHistory: (...args: unknown[]) => mockUseMessageHistory(...args),
+    useClientMessageHistory: (...args: unknown[]) => mockUseClientMessageHistory(...args),
     useClientUpcomingMessageTriggerJobs: (...args: unknown[]) => mockUseClientUpcomingMessageTriggerJobs(...args),
 }));
 
@@ -248,6 +248,22 @@ const upcomingJob: ClientUpcomingMessageTriggerJob = {
     recipientName: "김고객",
 };
 
+function historyQuery(
+    items: MessageLogRecord[],
+    overrides: Partial<{ isError: boolean; isLoading: boolean; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: jest.Mock }> = {},
+) {
+    return {
+        items,
+        isError: false,
+        isLoading: false,
+        isFetchingNextPage: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        refetch: jest.fn(),
+        ...overrides,
+    };
+}
+
 function renderPanel(layout: "desktop" | "mobile" = "desktop") {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
@@ -261,7 +277,7 @@ describe("ClientDetailPanel messages tab", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         (eformsignApi.getDocumentsByClientId as jest.Mock).mockResolvedValue([]);
-        mockUseMessageHistory.mockReturnValue({ data: [historyRecord], isError: false, isLoading: false });
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord]));
         mockUseClientUpcomingMessageTriggerJobs.mockReturnValue({
             items: [upcomingJob],
             isError: false,
@@ -308,11 +324,7 @@ describe("ClientDetailPanel messages tab", () => {
     });
 
     it("shows inline failure and cancellation reasons with status-specific icon colors", () => {
-        mockUseMessageHistory.mockReturnValue({
-            data: [failedHistoryRecord, canceledHistoryRecord],
-            isError: false,
-            isLoading: false,
-        });
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([failedHistoryRecord, canceledHistoryRecord]));
         openMessagesTab();
 
         expect(screen.getByText("사유: 수신자 번호 오류")).toBeInTheDocument();
@@ -322,6 +334,66 @@ describe("ClientDetailPanel messages tab", () => {
         const canceledRow = screen.getByRole("heading", { name: "취소 안내" }).closest('[role="button"]');
         expect(failedRow?.querySelector('[data-slot="icon"]')).toHaveClass("status-avatar-failed");
         expect(canceledRow?.querySelector('[data-slot="icon"]')).toHaveClass("status-avatar-canceled");
+    });
+
+    it("reads this client's history by client id, and only while the messages tab is open", () => {
+        renderPanel();
+        expect(mockUseClientMessageHistory).toHaveBeenLastCalledWith(
+            client.id,
+            expect.objectContaining({ enabled: false, limit: 50 }),
+        );
+
+        fireEvent.click(screen.getByRole("button", { name: "알림 발송" }));
+        expect(mockUseClientMessageHistory).toHaveBeenLastCalledWith(
+            client.id,
+            expect.objectContaining({ enabled: true, limit: 50 }),
+        );
+    });
+
+    it("shows a record far older than any branch-wide window, since the server scopes it to the client", () => {
+        const ancientRecord: MessageLogRecord = {
+            ...historyRecord,
+            id: 1,
+            ruleName: "오래된 안내",
+            createdAt: "2024-01-02T00:00:00.000Z",
+            updatedAt: "2024-01-02T00:00:00.000Z",
+            lastAttemptAt: "2024-01-02T00:00:00.000Z",
+        };
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([ancientRecord]));
+
+        openMessagesTab();
+
+        expect(screen.getByText("오래된 안내")).toBeInTheDocument();
+        expect(screen.queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+    });
+
+    it("says only recent records are shown when the server holds older ones, and loads them on request", () => {
+        const fetchNextPage = jest.fn();
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], { hasNextPage: true, fetchNextPage }));
+
+        openMessagesTab();
+
+        expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "이전 발송 기록 더 불러오기" }));
+        expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    });
+
+    it("never reports an empty history while older pages are still on the server", () => {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([], { hasNextPage: true }));
+
+        openMessagesTab();
+
+        expect(screen.queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+        expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+    });
+
+    it("reports an empty history only when the server has nothing more", () => {
+        mockUseClientMessageHistory.mockReturnValue(historyQuery([]));
+
+        openMessagesTab();
+
+        expect(screen.getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+        expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
     });
 
     it("constrains the messages track for both desktop and mobile presentations", () => {

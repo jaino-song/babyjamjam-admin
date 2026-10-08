@@ -141,3 +141,86 @@ describe("due labels on the branch calendar", () => {
     expect(screen.getAllByText("서비스 시작 1 영업일 남음").length).toBeGreaterThan(0);
   });
 });
+
+describe("summary cards", () => {
+  const statCards = () =>
+    Object.fromEntries(
+      Array.from(document.querySelectorAll('[data-slot="stat-mini"]')).map((card) => {
+        const text = card.textContent ?? "";
+        const label = ["서비스 진행 중", "7일 내 시작 예정", "검토 필요 문서", "계약서 발송 필요", "계약서 미완료"].find(
+          (candidate) => text.includes(candidate),
+        );
+        return [label ?? text, text.replace(label ?? "", "").trim()];
+      }),
+    );
+
+  const withAnalytics = (data: Record<string, number | null>) =>
+    analyticsQuery.mockReturnValue({
+      data,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useDashboardAnalytics>);
+
+  it("shows the seven-day start count under the seven-day label and the server 발송 필요 count under its own label", () => {
+    withAnalytics({
+      activeClients: 5,
+      contractsNotSent: 4,
+      contractsPendingSignature: 2,
+      upcomingThisMonth: 40,
+      upcomingNextMonth: 1,
+      upcomingWithinWeek: 2,
+    });
+
+    render(<DashboardPage />);
+
+    // 40 is the backend's month-wide count; it must never appear under the 7-day label.
+    expect(statCards()).toEqual({
+      "서비스 진행 중": "5",
+      "7일 내 시작 예정": "2",
+      "검토 필요 문서": "2",
+      "계약서 발송 필요": "4",
+    });
+  });
+
+  it("shows a dash for server-decided counts that are unknown instead of a guessed zero", () => {
+    withAnalytics({
+      activeClients: 5,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: 2,
+    });
+
+    render(<DashboardPage />);
+
+    expect(statCards()).toEqual({
+      "서비스 진행 중": "5",
+      "7일 내 시작 예정": "2",
+      "검토 필요 문서": "-",
+      "계약서 발송 필요": "-",
+    });
+  });
+
+  it("still shows a real zero as 0", () => {
+    withAnalytics({
+      activeClients: 0,
+      contractsNotSent: 0,
+      contractsPendingSignature: 0,
+      upcomingThisMonth: 0,
+      upcomingNextMonth: 0,
+      upcomingWithinWeek: 0,
+    });
+
+    render(<DashboardPage />);
+
+    expect(statCards()).toEqual({
+      "서비스 진행 중": "0",
+      "7일 내 시작 예정": "0",
+      "검토 필요 문서": "0",
+      "계약서 발송 필요": "0",
+    });
+  });
+});

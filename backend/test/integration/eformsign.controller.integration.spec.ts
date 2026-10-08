@@ -88,7 +88,7 @@ describe("EformsignController (Integration)", () => {
     };
 
     const shadowCompareService = { compareInBackground: jest.fn() };
-    const mirrorListService = { buildList: jest.fn() };
+    const mirrorListService = { buildList: jest.fn(), buildDetailDisplayFields: jest.fn() };
     const documentMirrorService = {
         getStoredDetail: jest.fn(),
         getStoredFile: jest.fn(),
@@ -259,6 +259,8 @@ describe("EformsignController (Integration)", () => {
         documentMirrorService.getStoredDetail.mockImplementation(
             async (documentId: string) => ({ id: documentId }),
         );
+        mirrorListService.buildDetailDisplayFields.mockReset();
+        mirrorListService.buildDetailDisplayFields.mockResolvedValue({ display_status: "pending" });
         documentMirrorService.getStoredFile.mockResolvedValue(null);
         documentMirrorService.getStoredFileMetadata.mockResolvedValue(null);
         documentMirrorService.markDocumentsDeleted.mockResolvedValue(undefined);
@@ -1433,6 +1435,31 @@ describe("EformsignController (Integration)", () => {
         expect(eformsignService.getDocumentById).not.toHaveBeenCalled();
     });
 
+    it("adds the serve-time display fields to the stored detail from the shared list service", async () => {
+        eformsignDocService.findAll.mockResolvedValue([
+            { documentId: "branch-1-doc" },
+        ] as any);
+        documentMirrorService.getStoredDetail.mockResolvedValue({ id: "branch-1-doc" });
+        mirrorListService.buildDetailDisplayFields.mockResolvedValue({
+            display_status: "unassigned",
+            contract_end_date: "2026-08-31",
+        });
+
+        const response = await request(app.getHttpServer())
+            .get("/api/documents/branch-1-doc");
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({
+            id: "branch-1-doc",
+            display_status: "unassigned",
+            contract_end_date: "2026-08-31",
+        });
+        expect(mirrorListService.buildDetailDisplayFields).toHaveBeenCalledWith(
+            "branch-1-doc",
+            expect.anything(),
+        );
+    });
+
     it("does not fall back to eformsign while a local detail snapshot is pending", async () => {
         eformsignDocService.findAll.mockResolvedValue([
             { documentId: "branch-1-doc" },
@@ -1518,6 +1545,7 @@ describe("EformsignController (Integration)", () => {
             findAllVisibleInMirror: jest.fn().mockResolvedValue([]),
             findAllVisibleInMirrorForHeadquarters: jest.fn().mockResolvedValue([]),
             findContractEndDatesByDocumentIds: jest.fn().mockResolvedValue(new Map()),
+            findByDocumentIdUnscoped: jest.fn().mockResolvedValue(null),
         };
 
         const createMirrorRow = (overrides: {
@@ -1902,6 +1930,75 @@ describe("EformsignController (Integration)", () => {
                 ["claimed-review", "review"],
                 ["unclaimed-review", "unassigned"],
             ]);
+        });
+
+        it("stamps the detail with the display_status and contract_end_date the list shows for the same row", async () => {
+            const rows = [
+                createMirrorRow({
+                    documentId: "claimed-review",
+                    createdDate: "2026-07-03T00:00:00.000Z",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+                createMirrorRow({
+                    documentId: "unclaimed-review",
+                    createdDate: "2026-07-02T00:00:00.000Z",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                    clientId: null,
+                }),
+                createMirrorRow({ documentId: "claimed-pending", statusType: "060" }),
+            ];
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue(rows);
+            mirrorRepository.findContractEndDatesByDocumentIds.mockImplementation(
+                async (ids: string[]) => new Map(
+                    ids.map((id) => [id, "2026-03-31"] as const),
+                ),
+            );
+            mirrorRepository.findByDocumentIdUnscoped.mockImplementation(
+                async (documentId: string) => {
+                    const document = rows.find((row) => row.documentId === documentId);
+                    return document ? { document, branchId: "branch-1" } : null;
+                },
+            );
+            eformsignDocService.findAll.mockResolvedValue(
+                rows.map((row) => ({ documentId: row.documentId })) as any,
+            );
+            documentMirrorService.getStoredDetail.mockImplementation(
+                async (documentId: string) => ({
+                    id: documentId,
+                    current_status: { status_type: "070", step_type: "06" },
+                    fields: [{ id: "이용자 성명", value: "로컬 고객" }],
+                }),
+            );
+
+            const list = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?accessToken=access-token");
+            expect(list.status).toBe(200);
+            const listed = new Map(list.body.documents.map(
+                (doc: { id: string; display_status: string; contract_end_date?: string }) =>
+                    [doc.id, doc] as const,
+            ));
+
+            for (const [documentId, expected] of [
+                ["claimed-review", "review"],
+                ["unclaimed-review", "unassigned"],
+                ["claimed-pending", "pending"],
+            ] as const) {
+                const detail = await request(mirrorApp.getHttpServer())
+                    .get(`/api/documents/${documentId}`);
+
+                expect(detail.status).toBe(200);
+                // The vendor payload is untouched; only the two serve-time fields are added.
+                expect(detail.body.fields).toEqual([{ id: "이용자 성명", value: "로컬 고객" }]);
+                expect(detail.body.display_status).toBe(expected);
+                expect(detail.body.display_status)
+                    .toBe((listed.get(documentId) as { display_status: string }).display_status);
+                expect(detail.body.contract_end_date)
+                    .toBe((listed.get(documentId) as { contract_end_date?: string }).contract_end_date);
+            }
         });
 
         it("stamps and filters display_status on the request branch's calendar, fetched once per request", async () => {

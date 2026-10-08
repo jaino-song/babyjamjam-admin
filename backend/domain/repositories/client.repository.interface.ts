@@ -1,5 +1,5 @@
 import { ClientEntity } from "domain/entities/client.entity";
-import { SERVICE_STATUS, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, ServiceStatusType, clientCalendarDate } from "domain/value-objects/service-status.vo";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import type { Prisma } from "@prisma/client";
 
@@ -61,12 +61,6 @@ const MANUAL_CLIENT_SERVICE_STATUSES = [
     SERVICE_STATUS.TERMINATED,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
 ] as const;
-
-type ClientCalendarDate = `${number}-${number}-${number}`;
-
-function clientCalendarDate(date: Date): ClientCalendarDate {
-    return date.toISOString().slice(0, 10) as ClientCalendarDate;
-}
 
 function parseKoreaCalendarDate(isoDate: string): KoreaCalendarDate {
     const [year = "0", month = "0", day = "0"] = isoDate.split("-");

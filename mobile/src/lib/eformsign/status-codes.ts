@@ -13,6 +13,7 @@ import {
   getEformsignStatusCategory,
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
+  isRevokeRequestedEformsignStatus,
   normalizeEformsignStatusCode,
   type EformsignStatusCategory,
   type EformsignStatusInput,
@@ -35,6 +36,7 @@ export {
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
+  isRevokeRequestedEformsignStatus,
   normalizeEformsignStatusCode,
 } from "@babyjamjam/shared/constants/eformsign-status-codes";
 export { isContractReviewWindowOpen } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -89,6 +91,11 @@ export function mapDocStatusLabel(
   // The backend's serve-time display_status is authoritative when present.
   if (isContractDocDisplayStatus(displayStatus)) {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS[displayStatus];
+  }
+  // 040 (cancellation requested) sits in the "expired" category for filtering/stats, but it
+  // is not expired — payloads that predate display_status must not label it 기간 만료.
+  if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) {
+    return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested;
   }
   const category = getStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;

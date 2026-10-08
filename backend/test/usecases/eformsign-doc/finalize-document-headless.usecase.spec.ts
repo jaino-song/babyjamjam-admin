@@ -1,5 +1,6 @@
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EformsignOperationAlreadyRunningError } from "infrastructure/locking/eformsign-operation-lock.service";
+import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 
 const RECOVERY_NONE = { action: "NONE", retry: { mode: "NEVER" } } as const;
 const RECOVERY_CHECK_STATUS = { action: "CHECK_STATUS", retry: { mode: "NEVER" } } as const;
@@ -522,4 +523,182 @@ describe("FinalizeDocumentHeadlessUsecase", () => {
             expect(fetchDocumentStatusCode).not.toHaveBeenCalled();
         });
     });
+});
+
+/**
+ * 040 (doc_request_revoke) is a cancellation REQUEST, not progress and not an ending. It is
+ * deliberately non-terminal (a later 060 must still land), so finalize has to handle it by
+ * name: a status that merely changed from the starting one must not read as "advanced".
+ */
+describe("FinalizeDocumentHeadlessUsecase revoke-requested documents", () => {
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
+    const STEP_070 = { statusCode: "070", stepType: "06", stepIndex: "4", stepName: "제공기관 검토" };
+
+    function build(options: {
+        workflowStates?: Array<Record<string, string>>;
+        statusCodes?: string[];
+        localStatusType?: string;
+    }) {
+        const fetchDocumentWorkflowState = options.workflowStates
+            ? options.workflowStates.reduce(
+                (mock, state) => mock.mockResolvedValueOnce(state),
+                jest.fn(),
+            )
+            : undefined;
+        const fetchDocumentStatusCode = (options.statusCodes ?? []).reduce(
+            (mock, code) => mock.mockResolvedValueOnce(code),
+            jest.fn(),
+        );
+        const eformsignService = {
+            generateStaffCompletionOptions: jest.fn().mockResolvedValue({ mode: { type: "02" } }),
+            fetchDocumentStatusCode,
+            ...(fetchDocumentWorkflowState ? { fetchDocumentWorkflowState } : {}),
+        };
+        const headlessService = {
+            dispatchFinalize: jest.fn().mockImplementation(async ({ onProgress }) => {
+                onProgress?.("client-started");
+                onProgress?.("creating");
+                return { ok: false, reason: "gate timeout", durationMs: 31_000 };
+            }),
+        };
+        const dispatchBoundary = {
+            claim: jest.fn().mockResolvedValue({
+                disposition: "claimed",
+                intent: { id: "intent-1", branchId: "branch-1" },
+            }),
+            markAccepted: jest.fn().mockResolvedValue(null),
+            markUncertain: jest.fn().mockResolvedValue(null),
+            releaseBeforeSend: jest.fn().mockResolvedValue(null),
+        };
+        const repository = {
+            findByDocumentId: jest.fn().mockResolvedValue({
+                id: 42,
+                documentId: "doc-1",
+                documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT,
+                clientId: 7,
+                employeeScheduleId: null,
+                templateId: "template-1",
+                statusType: options.localStatusType ?? "070",
+                expired: false,
+                updatedDate: new Date("2026-10-01T00:00:00.000Z"),
+            }),
+        };
+        const assignmentGuard = { assertAssignedClient: jest.fn().mockResolvedValue({ scheduleId: 1 }) };
+        const progressService = { emit: jest.fn() };
+        return {
+            headlessService,
+            dispatchBoundary,
+            progressService,
+            eformsignService,
+            usecase: new FinalizeDocumentHeadlessUsecase(
+                eformsignService as never,
+                headlessService as never,
+                createCredentialBoundary() as never,
+                progressService as never,
+                undefined,
+                undefined,
+                repository as never,
+                assignmentGuard as never,
+                dispatchBoundary as never,
+            ),
+        };
+    }
+
+    async function run(usecase: FinalizeDocumentHeadlessUsecase) {
+        jest.useFakeTimers();
+        const result = usecase.execute({ documentId: "doc-1", branchId: "branch-1", progressId: "p-1" }, TEST_PRINCIPAL);
+        await jest.runAllTimersAsync();
+        return result;
+    }
+
+    it("does not report a send timeout followed by vendor 040 as an advanced finalize", async () => {
+        // Same step metadata, only the status code moved 070 -> 040: before this fix the
+        // status change alone read as advancement.
+        const { usecase, dispatchBoundary, progressService } = build({
+            workflowStates: [STEP_070, ...Array.from({ length: 6 }, () => ({ ...STEP_070, statusCode: "040" }))],
+        });
+
+        const result = await run(usecase);
+
+        expect(result).toEqual(expect.objectContaining({
+            ok: false,
+            reason: "eformsign_revoke_requested",
+            fallbackHint: "manual_check",
+            code: "DOCUMENT_FINALIZE_UNCONFIRMED",
+            outcome: "UNKNOWN",
+            recovery: RECOVERY_CHECK_STATUS,
+        }));
+        expect(result).not.toHaveProperty("completed");
+        expect(dispatchBoundary.markAccepted).not.toHaveBeenCalled();
+        expect(dispatchBoundary.markUncertain).toHaveBeenCalledTimes(1);
+        expect(progressService.emit).not.toHaveBeenCalledWith("p-1", "sent");
+    });
+
+    it("applies the same classification when only the status code can be read", async () => {
+        const { usecase, dispatchBoundary } = build({
+            statusCodes: Array.from({ length: 6 }, () => "040"),
+        });
+
+        const result = await run(usecase);
+
+        expect(result).toEqual(expect.objectContaining({
+            ok: false,
+            reason: "eformsign_revoke_requested",
+            fallbackHint: "manual_check",
+        }));
+        expect(dispatchBoundary.markAccepted).not.toHaveBeenCalled();
+    });
+
+    it("still settles a request that the vendor completes (042) as a terminal failure", async () => {
+        const { usecase } = build({
+            workflowStates: [
+                STEP_070,
+                { ...STEP_070, statusCode: "040" },
+                { ...STEP_070, statusCode: "042" },
+            ],
+        });
+
+        await expect(run(usecase)).resolves.toEqual(expect.objectContaining({
+            ok: false,
+            reason: "eformsign_terminal_failure",
+            code: "EFORMSIGN_TERMINAL_FAILURE",
+        }));
+    });
+
+    it("still reports a genuine advancement as advanced and records it", async () => {
+        const { usecase, dispatchBoundary } = build({
+            workflowStates: [
+                { statusCode: "060", stepType: "05", stepIndex: "3", stepName: "제공기관 확인" },
+                STEP_070,
+            ],
+        });
+
+        await expect(run(usecase)).resolves.toEqual({ ok: true, completed: false, durationMs: 31_000 });
+        expect(dispatchBoundary.markAccepted).toHaveBeenCalledWith(
+            expect.anything(),
+            "doc-1",
+            { outcome: "advanced" },
+        );
+    });
+
+    it.each(["040", "doc_request_revoke"])(
+        "refuses up front when the local row is already revoke-requested (%s)",
+        async (localStatusType) => {
+            const { usecase, headlessService, dispatchBoundary } = build({
+                workflowStates: [STEP_070],
+                localStatusType,
+            });
+
+            await expect(run(usecase)).resolves.toEqual(expect.objectContaining({
+                ok: false,
+                reason: "authorization_denied",
+                fallbackHint: "manual_check",
+            }));
+            expect(headlessService.dispatchFinalize).not.toHaveBeenCalled();
+            expect(dispatchBoundary.claim).not.toHaveBeenCalled();
+        },
+    );
 });
