@@ -19,6 +19,11 @@ export interface CountUnitFieldProps {
   onBlur?: () => void;
   onFocus?: () => void;
   inputMode?: "numeric" | "decimal";
+  /** `text` (default) keeps maxLength working; `number` filters non-numeric keys like a native number input. */
+  type?: "text" | "number";
+  /** Native `min` / `step`; only meaningful with `type="number"`. */
+  min?: number;
+  step?: number;
   placeholder?: string;
   invalid?: boolean;
   describedBy?: string;
@@ -30,7 +35,8 @@ export interface CountUnitFieldProps {
 
 /**
  * One horizontal "label · number · unit" box, 48px tall, that never stacks at
- * any width. It is `type="text"` + `inputMode` (no spinners, `maxLength` works).
+ * any width. It is `type="text"` + `inputMode` by default (no spinners, `maxLength`
+ * works); `type="number"` gives the native number input (spinners hidden).
  * The whole box is a `<label>`, so tapping the caption focuses the input.
  */
 export function CountUnitField({
@@ -44,6 +50,9 @@ export function CountUnitField({
   onBlur,
   onFocus,
   inputMode = "numeric",
+  type = "text",
+  min,
+  step,
   placeholder,
   invalid = false,
   describedBy,
@@ -72,7 +81,9 @@ export function CountUnitField({
       </span>
       <input
         id={id}
-        type="text"
+        type={type}
+        min={type === "number" ? min : undefined}
+        step={type === "number" ? step : undefined}
         inputMode={inputMode}
         data-component={`${dataComponent}_input`}
         aria-label={ariaLabel}
@@ -85,7 +96,11 @@ export function CountUnitField({
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
         onFocus={onFocus}
-        className="h-full min-w-0 flex-1 bg-transparent text-right text-[17px] font-semibold text-v3-dark outline-none placeholder:font-normal placeholder:text-v3-text-muted placeholder:opacity-60 disabled:cursor-not-allowed disabled:text-v3-text-muted"
+        className={cn(
+          "h-full min-w-0 flex-1 bg-transparent text-right text-[17px] font-semibold text-v3-dark outline-none placeholder:font-normal placeholder:text-v3-text-muted placeholder:opacity-60 disabled:cursor-not-allowed disabled:text-v3-text-muted",
+          type === "number" &&
+            "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
+        )}
       />
       {unit ? (
         <span

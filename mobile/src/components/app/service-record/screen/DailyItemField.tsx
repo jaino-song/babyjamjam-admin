@@ -164,6 +164,9 @@ export function DailyItemField({
                                 ariaLabel={countAccessibleName(item.label, count.label)}
                                 value={String(draft[fieldKey] ?? "")}
                                 onChange={(next) => onFieldChange(fieldKey, next)}
+                                type="number"
+                                min={count.min ?? 0}
+                                step={count.step ?? 1}
                                 inputMode={count.k === "temp" ? "decimal" : "numeric"}
                                 placeholder={countPlaceholder(count)}
                                 invalid={invalidCountKeys.has(fieldKey)}

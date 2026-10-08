@@ -58,8 +58,8 @@ describe("DayPageStep", () => {
         expect(screen.getByRole("textbox", { name: "제공일자" })).toHaveValue("2026-09-21");
         expect(screen.getByRole("group", { name: /회음절개부위/ })).toBeInTheDocument();
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
-        expect(screen.getByRole("textbox", { name: "식사" })).toBeInTheDocument();
-        expect(screen.getByRole("textbox", { name: "간식" })).toBeInTheDocument();
+        expect(screen.getByRole("spinbutton", { name: "식사" })).toBeInTheDocument();
+        expect(screen.getByRole("spinbutton", { name: "간식" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
     });
 
@@ -67,9 +67,9 @@ describe("DayPageStep", () => {
         render(<DayPageStep {...makeProps({ pageIdx: 1 })} />);
         const breast = document.querySelector(`[data-component="${ROOT}_body_day-field_breast-feeding"]`) as HTMLElement;
         const formula = document.querySelector(`[data-component="${ROOT}_body_day-field_formula-feeding"]`) as HTMLElement;
-        expect(within(breast).getByRole("textbox", { name: "모유수유 횟수" })).toBeInTheDocument();
-        expect(within(formula).getByRole("textbox", { name: "분유수유 횟수" })).toBeInTheDocument();
-        expect(within(formula).getByRole("textbox", { name: "분유수유 회당" })).toBeInTheDocument();
+        expect(within(breast).getByRole("spinbutton", { name: "모유수유 횟수" })).toBeInTheDocument();
+        expect(within(formula).getByRole("spinbutton", { name: "분유수유 횟수" })).toBeInTheDocument();
+        expect(within(formula).getByRole("spinbutton", { name: "분유수유 회당" })).toBeInTheDocument();
     });
 
     it("forwards option and count changes with the shared wizard's arguments", async () => {
@@ -81,7 +81,7 @@ describe("DayPageStep", () => {
         expect(props.onToggleMulti).toHaveBeenCalledWith("perineum", "열상");
         await user.click(within(screen.getByRole("radiogroup", { name: /좌욕/ })).getByRole("button", { name: "미실시" }));
         expect(props.onFieldChange).toHaveBeenCalledWith("sitzBath", "미실시");
-        await user.type(screen.getByRole("textbox", { name: "식사" }), "3");
+        await user.type(screen.getByRole("spinbutton", { name: "식사" }), "3");
         expect(props.onFieldChange).toHaveBeenCalledWith(mealKeys()[0], "3");
     });
 
@@ -109,8 +109,8 @@ describe("DayPageStep", () => {
         );
         expect(expectedId).toBeTruthy();
         expect(document.activeElement).toBe(document.getElementById(expectedId!));
-        expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "식사" }));
-        expect(screen.getByRole("textbox", { name: "식사" })).toHaveAttribute("aria-invalid", "true");
+        expect(document.activeElement).toBe(screen.getByRole("spinbutton", { name: "식사" }));
+        expect(screen.getByRole("spinbutton", { name: "식사" })).toHaveAttribute("aria-invalid", "true");
     });
 
     it("advances once every item of the page is answered", async () => {

@@ -33,6 +33,19 @@ describe("CountUnitField", () => {
     expect(screen.getByText("회")).toBeInTheDocument();
   });
 
+  it("is a native number input with min/step when type is number, and a text input otherwise", () => {
+    const { rerender } = render(<Harness ariaLabel="체온" type="number" min={30} step={0.1} inputMode="decimal" />);
+    const input = screen.getByLabelText("체온");
+    expect(input).toHaveAttribute("type", "number");
+    expect(input).toHaveAttribute("min", "30");
+    expect(input).toHaveAttribute("step", "0.1");
+
+    rerender(<Harness ariaLabel="체온" min={30} step={0.1} />);
+    expect(screen.getByLabelText("체온")).toHaveAttribute("type", "text");
+    expect(screen.getByLabelText("체온")).not.toHaveAttribute("min");
+    expect(screen.getByLabelText("체온")).not.toHaveAttribute("step");
+  });
+
   it("stays unique when the visible label repeats the accessible name", () => {
     render(<Harness label="식사" ariaLabel="식사" unit={undefined} id="meal" />);
     expect(screen.getAllByLabelText(/식사/)).toHaveLength(1);

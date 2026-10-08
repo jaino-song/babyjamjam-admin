@@ -102,8 +102,8 @@ describe("DailyItemField", () => {
 
     it("gives every count input the accessible name the shared wizard exposes", () => {
         setup("meals");
-        expect(screen.getByRole("textbox", { name: "식사" })).toBeInTheDocument();
-        expect(screen.getByRole("textbox", { name: "간식" })).toBeInTheDocument();
+        expect(screen.getByRole("spinbutton", { name: "식사" })).toBeInTheDocument();
+        expect(screen.getByRole("spinbutton", { name: "간식" })).toBeInTheDocument();
     });
 
     it.each([
@@ -112,7 +112,7 @@ describe("DailyItemField", () => {
         ["formulaFeeding", ["분유수유 횟수", "분유수유 회당"]],
     ])("names the %s count inputs", (key, names) => {
         setup(key);
-        for (const name of names) expect(screen.getByRole("textbox", { name })).toBeInTheDocument();
+        for (const name of names) expect(screen.getByRole("spinbutton", { name })).toBeInTheDocument();
     });
 
     it("reports a typed count with its full draft key", async () => {
@@ -120,14 +120,14 @@ describe("DailyItemField", () => {
         const { onFieldChange, item } = setup("meals");
         const mealKey = `${item.key}_${item.counts![0].k}`;
 
-        await user.type(screen.getByRole("textbox", { name: "식사" }), "3");
+        await user.type(screen.getByRole("spinbutton", { name: "식사" }), "3");
         expect(onFieldChange).toHaveBeenCalledWith(mealKey, "3");
     });
 
     it("shows the required message only after a count held a value and was cleared", async () => {
         const user = userEvent.setup();
         render(<Harness itemKey="meals" />);
-        const meal = screen.getByRole("textbox", { name: "식사" });
+        const meal = screen.getByRole("spinbutton", { name: "식사" });
         const slot = slotOf(meal);
 
         expect(slot).toBeEmptyDOMElement();
@@ -137,13 +137,13 @@ describe("DailyItemField", () => {
         expect(slot).toHaveTextContent("식사를 입력해 주세요");
         expect(slot).toHaveAttribute("data-tone", "error");
         expect(meal).toHaveAttribute("aria-invalid", "true");
-        expect(screen.getByRole("textbox", { name: "간식" })).not.toHaveAttribute("aria-invalid");
+        expect(screen.getByRole("spinbutton", { name: "간식" })).not.toHaveAttribute("aria-invalid");
     });
 
     it("shows the required message of every empty count after a blocked next", () => {
         setup("meals", { submitted: true });
-        expect(slotOf(screen.getByRole("textbox", { name: "식사" }))).toHaveTextContent("식사를 입력해 주세요");
-        expect(screen.getByRole("textbox", { name: "간식" })).toHaveAttribute("aria-invalid", "true");
+        expect(slotOf(screen.getByRole("spinbutton", { name: "식사" }))).toHaveTextContent("식사를 입력해 주세요");
+        expect(screen.getByRole("spinbutton", { name: "간식" })).toHaveAttribute("aria-invalid", "true");
     });
 
     it("shows the numeric error of a count from the shared rules", () => {
@@ -151,7 +151,7 @@ describe("DailyItemField", () => {
             draft: { temperature_temp: "abc" },
             numericErrors: { temperature_temp: "숫자만 입력해 주세요" },
         });
-        const input = screen.getByRole("textbox", { name: "체온" });
+        const input = screen.getByRole("spinbutton", { name: "체온" });
         expect(item.key).toBe("temperature");
         expect(slotOf(input)).toHaveTextContent("숫자만 입력해 주세요");
         expect(input).toHaveAttribute("aria-invalid", "true");
@@ -224,6 +224,6 @@ describe("DailyItemField", () => {
         setup("meals");
         const id = getDailyItemProblemId(item, dataComponent, problem);
         expect(id).toBeTruthy();
-        expect(document.getElementById(id!)).toBe(screen.getByRole("textbox", { name: "식사" }));
+        expect(document.getElementById(id!)).toBe(screen.getByRole("spinbutton", { name: "식사" }));
     });
 });
