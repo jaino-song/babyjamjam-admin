@@ -49,6 +49,7 @@ describe("ContractsListItem", () => {
     ["review", "검토 필요", "bg-v3-orange-light", "text-v3-orange"],
     ["completed", "계약 완료", "bg-v3-green-light", "text-v3-green"],
     ["revoke_requested", "철회 요청됨", "bg-v3-orange-light", "text-v3-orange"],
+    ["revoked", "철회됨", "bg-v3-burgundy-light", "text-v3-burgundy"],
     ["expired", "기간 만료", "bg-v3-burgundy-light", "text-v3-burgundy"],
   ] as const)(
     "matches the avatar tone to the %s status badge",
@@ -76,10 +77,11 @@ describe("ContractsListItem", () => {
   it.each([
     ["040", "철회 요청됨", "bg-v3-orange-light"],
     ["045", "철회 요청됨", "bg-v3-orange-light"],
-    ["042", "기간 만료", "bg-v3-burgundy-light"],
+    ["042", "철회됨", "bg-v3-burgundy-light"],
+    ["090", "철회됨", "bg-v3-burgundy-light"],
     ["080", "기간 만료", "bg-v3-burgundy-light"],
   ] as const)(
-    "without display_status, labels status code %s as %s (040 is not 기간 만료)",
+    "without display_status, labels status code %s as %s (040 is not 기간 만료, 042/090 are 철회됨)",
     (statusType, statusLabel, avatarBackgroundClass) => {
       const base = documentFixture();
       const { container } = render(

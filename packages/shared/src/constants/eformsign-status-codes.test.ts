@@ -7,9 +7,11 @@ import {
     getEformsignStatusLabel,
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE,
     EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES,
+    EFORMSIGN_REVOKED_STATUS_CODES,
     IN_PROGRESS_STATUS_CODES,
     isDeletedEformsignStatusCode,
     isRevokeRequestedEformsignStatus,
+    isRevokedEformsignStatus,
     normalizeEformsignStatusCode,
     REJECTED_STATUS_CODES,
 } from "./eformsign-status-codes";
@@ -116,6 +118,26 @@ describe("045 (doc_request_reject) is treated exactly like 040", () => {
         expect(isRevokeRequestedEformsignStatus(45)).toBe(true);
         expect(isRevokeRequestedEformsignStatus("doc_request_reject")).toBe(true);
         expect(getEformsignStatusCategory("045")).toBe("expired");
+    });
+});
+
+describe("042 (doc_revoke) and 090 (withdrawal) are revoked", () => {
+    it("is exactly 042 and 090, by code, name and number", () => {
+        expect([...EFORMSIGN_REVOKED_STATUS_CODES]).toEqual(["042", "090"]);
+        expect(isRevokedEformsignStatus("042")).toBe(true);
+        expect(isRevokedEformsignStatus(42)).toBe(true);
+        expect(isRevokedEformsignStatus("doc_revoke")).toBe(true);
+        expect(isRevokedEformsignStatus("090")).toBe(true);
+        expect(isRevokedEformsignStatus("doc_withdraw")).toBe(true);
+        for (const other of ["040", "045", "041", "080", "060", "003", null, undefined, ""]) {
+            expect(isRevokedEformsignStatus(other)).toBe(false);
+        }
+    });
+
+    it("keeps the expired category (tabs/filters/stats unchanged)", () => {
+        expect(getEformsignStatusCategory("042")).toBe("expired");
+        expect(getEformsignStatusCategory("090")).toBe("expired");
+        expect(EXPIRED_STATUS_CODES).toEqual(expect.arrayContaining(["042", "090"]));
     });
 });
 

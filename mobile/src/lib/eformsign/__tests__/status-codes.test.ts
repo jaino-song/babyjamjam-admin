@@ -137,11 +137,29 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
     expect(mapDocStatusLabel({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회 요청됨");
   });
 
-  it("keeps the expired category and leaves 042/090/080 labelled 기간 만료", () => {
+  it("keeps the expired category and leaves 080 labelled 기간 만료", () => {
     expect(getStatusCategory("040")).toBe("expired");
-    for (const code of ["042", "090", "080"]) {
-      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+  });
+});
+
+describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
+  it("is labelled 철회됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "042" }, null, "revoked")).toBe("철회됨");
+    for (const code of ["042", "090", "doc_revoke"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("철회됨");
     }
+    expect(mapDocStatusLabel({ status_type: "042", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회됨");
+  });
+
+  it("keeps the expired category for filtering, tabs and stats", () => {
+    expect(getStatusCategory("042")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
+  });
+
+  it("uses the destructive variant, distinct from the 철회 요청됨 one", () => {
+    expect(getStatusColor("철회됨")).toBe("destructive");
+    expect(getStatusColor("철회 요청됨")).not.toBe("destructive");
   });
 });
 

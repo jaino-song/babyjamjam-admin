@@ -208,17 +208,35 @@ describe("Release A domain read capabilities", () => {
 
         const status = await capabilities.find(({ meta }) => meta.name === "contracts.status")!.execute(context, { clientId: 10 }) as { documents: Array<{ documentId: string; status: string }> };
         expect(status.documents.map((doc) => `${doc.documentId}:${doc.status}`)).toEqual([
-            "doc-040:revoke_requested", "doc-042:expired", "doc-080:expired",
+            "doc-040:revoke_requested", "doc-042:revoked", "doc-080:expired",
         ]);
 
         const recent = capabilities.find(({ meta }) => meta.name === "contracts.recent")!;
         const all = await recent.execute(context, {}) as { documents: Array<{ documentId: string; status: string }> };
         expect(all.documents.map((doc) => `${doc.documentId}:${doc.status}`)).toEqual([
-            "doc-040:revoke_requested", "doc-042:expired", "doc-080:expired",
+            "doc-040:revoke_requested", "doc-042:revoked", "doc-080:expired",
         ]);
         const filtered = await recent.execute(context, { status: "revoke_requested" }) as { documents: Array<{ documentId: string }> };
         expect(filtered.documents.map((doc) => doc.documentId)).toEqual(["doc-040"]);
         expect(recent.meta.description).toContain("revoke_requested");
+        expect(recent.meta.description).toContain("revoked");
+        const revokedOnly = await recent.execute(context, { status: "revoked" }) as { documents: Array<{ documentId: string }> };
+        expect(revokedOnly.documents.map((doc) => doc.documentId)).toEqual(["doc-042"]);
+    });
+
+    it("keeps 042 revoked and 040 revoke_requested in contracts.recent even when the expired column is set", async () => {
+        const rows = ["040", "042", "080"].map((statusType) => ({
+            documentId: `doc-${statusType}`, documentName: "계약서", clientId: 10, clientName: "산모",
+            statusType, statusDetail: "x", stepType: "05", stepName: "이용자",
+            updatedDate: new Date("2026-09-20T00:00:00.000Z"), expired: true,
+        }));
+        const findRecentContracts = { execute: jest.fn().mockResolvedValue(rows) };
+        const provider = new EformsignAgentCapabilitiesProvider({ execute: jest.fn() } as never, createHolidayCalendarStub(), findRecentContracts as never);
+        const recent = provider.getCapabilities().find(({ meta }) => meta.name === "contracts.recent")!;
+        const all = await recent.execute(context, {}) as { documents: Array<{ documentId: string; status: string }> };
+        expect(all.documents.map((doc) => `${doc.documentId}:${doc.status}`)).toEqual([
+            "doc-040:revoke_requested", "doc-042:revoked", "doc-080:expired",
+        ]);
     });
 
     it("resolves contract display statuses on the principal's branch calendar, fetched once per call", async () => {

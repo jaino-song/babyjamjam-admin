@@ -1804,6 +1804,14 @@ export function ContractDetail({
       text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
+  } else if (statusLabel === "철회됨") {
+    // 042/090 share the "expired" category (tabs/filters) but the document was revoked, not timed out.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서가 철회됐어요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
   } else if (category === "expired") {
     activityItems.push({
       icon: AlertTriangle,

@@ -117,6 +117,13 @@ export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES = ["040", "045"] as const;
 /** The canonical (040) member of {@link EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES}. */
 export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE = "040";
 
+/**
+ * "042" (doc_revoke) and "090" (backend-synthesized withdrawal): the document was revoked —
+ * terminal. They stay in the "expired" category above for tabs, filters and stats, but display
+ * layers show them as "철회됨" (danger), never as 기간 만료 (080).
+ */
+export const EFORMSIGN_REVOKED_STATUS_CODES = ["042", "090"] as const;
+
 export type EformsignStatusCategory = "completed" | "expired" | "in-progress" | "unknown";
 
 export const EFORMSIGN_STATUS_CATEGORY_LABELS = {
@@ -184,6 +191,12 @@ export const normalizeEformsignStatusName = normalizeEformsignStatusCode;
 
 export function isRevokeRequestedEformsignStatus(status: EformsignStatusInput): boolean {
     return (EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES as readonly string[]).includes(
+        normalizeEformsignStatusCode(status),
+    );
+}
+
+export function isRevokedEformsignStatus(status: EformsignStatusInput): boolean {
+    return (EFORMSIGN_REVOKED_STATUS_CODES as readonly string[]).includes(
         normalizeEformsignStatusCode(status),
     );
 }

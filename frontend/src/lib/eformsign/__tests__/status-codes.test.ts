@@ -2,6 +2,7 @@ import { createKrBusinessDayCalendar, KR_BUILTIN_HOLIDAYS } from "@/lib/date/bus
 import {
   contractStatusBadgeType,
   getStatusCategory,
+  getStatusColor,
   isCustomerSignedDisplayStatus,
   mapDocStatusLabel,
   resolveDocDisplayStatus,
@@ -126,15 +127,40 @@ describe("040 (doc_request_revoke) 철회 요청됨", () => {
     expect(getStatusCategory("040")).toBe("expired");
   });
 
-  it("does not change 042/090 (revoked) or 080 (expired) labels", () => {
-    for (const code of ["042", "090", "080"]) {
-      expect(mapDocStatusLabel({ status_type: code })).toBe("기간 만료");
-    }
+  it("does not change the 080 (expired) label", () => {
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
   });
 
   it("uses the warning (review) badge tone, distinct from the expired one", () => {
     expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
     expect(contractStatusBadgeType("기간 만료")).toBe("expired");
+  });
+});
+
+describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
+  it("is labelled 철회됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "042" }, null, "revoked")).toBe("철회됨");
+    for (const code of ["042", "090", "doc_revoke"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("철회됨");
+      expect(resolveDocDisplayStatus({ status_type: code })).toBe("revoked");
+    }
+    expect(mapDocStatusLabel({ status_type: "042", step_type: "06", step_name: "제공기관 확인" }, "2026-01-01")).toBe("철회됨");
+  });
+
+  it("keeps the expired category for filtering, tabs and stats", () => {
+    expect(getStatusCategory("042")).toBe("expired");
+    expect(getStatusCategory("090")).toBe("expired");
+  });
+
+  it("uses the danger (expired) badge token and the destructive variant, distinct from the 철회 요청됨 warning", () => {
+    expect(contractStatusBadgeType("철회됨")).toBe("expired");
+    expect(contractStatusBadgeType("철회 요청됨")).toBe("review");
+    expect(getStatusColor("철회됨")).toBe("destructive");
+    expect(getStatusColor("철회 요청됨")).not.toBe("destructive");
+  });
+
+  it("never counts as a customer signature", () => {
+    expect(isCustomerSignedDisplayStatus("revoked")).toBe(false);
   });
 });
 

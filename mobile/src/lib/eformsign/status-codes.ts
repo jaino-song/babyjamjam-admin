@@ -14,6 +14,7 @@ import {
   getEformsignStatusLabel,
   isDeletedEformsignStatusCode,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
   type EformsignStatusCategory,
   type EformsignStatusInput,
@@ -37,6 +38,7 @@ export {
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
 } from "@babyjamjam/shared/constants/eformsign-status-codes";
 export { isContractReviewWindowOpen } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -97,6 +99,10 @@ export function mapDocStatusLabel(
   if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) {
     return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested;
   }
+  // 042/090 (revoked) are expired-category too: terminal, but 철회됨 rather than 기간 만료.
+  if (isRevokedEformsignStatus(currentStatus?.status_type)) {
+    return CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked;
+  }
   const category = getStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return CONTRACT_DOC_DISPLAY_STATUS_LABELS.unknown;
   const params = { category, currentStatus, contractEndDate: contractEndDate ?? null };
@@ -148,7 +154,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("만료") || lowerStatus.includes("expired") || lowerStatus.includes("reject")) {
+  if (lowerStatus.includes("철회됨") || lowerStatus.includes("기간 만료") || lowerStatus.includes("만료") || lowerStatus.includes("expired") || lowerStatus.includes("reject")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {
