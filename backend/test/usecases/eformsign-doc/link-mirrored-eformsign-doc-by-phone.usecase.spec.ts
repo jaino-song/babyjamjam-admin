@@ -583,9 +583,9 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     });
 
     describe("another client still points at the unassigned document", () => {
-        const arrange = (pointerReads: number[][]) => {
-            const document = mirroredDocument({ branchId: "branch-1", clientId: null });
-            const { transaction, usecase } = setup(document);
+        const arrange = (pointerReads: number[][], documentOverrides: Record<string, unknown> = {}) => {
+            const document = mirroredDocument({ branchId: "branch-1", clientId: null, ...documentOverrides });
+            const { document: mirrored, transaction, usecase } = setup(document);
             const tx = transaction as typeof transaction & {
                 employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
                 service_record_case: { findUnique: jest.Mock };
@@ -602,8 +602,69 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 }
                 return Promise.resolve([{ id: 11 }]);
             });
-            return { transaction, usecase };
+            return { document: mirrored, transaction, usecase };
         };
+        const linkOnly = { linkExistingOnly: true, existingClientId: 21, existingClientBranchId: "branch-1" };
+
+        it("releases the pointer holder even when the target keeps a newer contract's pointer (F1)", async () => {
+            const { document, transaction, usecase } = arrange([[55]]);
+            transaction.client.findUnique.mockResolvedValue({ id: 21, branchId: "branch-1", eDocId: "newer-doc" });
+            transaction.client.findMany.mockResolvedValue([
+                { id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: "newer-doc" },
+            ]);
+            transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
+                Promise.resolve(
+                    where.documentId === document.documentId
+                        ? document
+                        : { createdDate: new Date("2026-07-21T00:00:00.000Z") },
+                ));
+
+            await expect(usecase.execute("doc-1", linkOnly, expectedMirrorGeneration()))
+                .resolves.toBe("linked");
+
+            // client 55 no longer points at the document the target now owns; the target keeps its pointer
+            expect(transaction.client.updateMany.mock.calls).toEqual([
+                [{
+                    where: { id: { in: [55] }, branchId: "branch-1", eDocId: "doc-1" },
+                    data: { eDocId: null },
+                }],
+            ]);
+        });
+
+        it("repairing a document the target already owns locks and releases the pointer holder (F2)", async () => {
+            const { transaction, usecase } = arrange([[55]], { clientId: 21 });
+
+            await expect(usecase.execute("doc-1", linkOnly, expectedMirrorGeneration()))
+                .resolves.toBe("linked");
+
+            const clientLocks = transaction.$queryRaw.mock.calls
+                .map(([query]) => query as { strings: string[]; values: unknown[] })
+                .filter((query) => {
+                    const sql = query.strings.join(" ").toLowerCase();
+                    return sql.includes("for update") && /from\s+client\b/.test(sql);
+                });
+            expect(clientLocks[0]!.values).toEqual([21, 55]);
+            expect(transaction.client.updateMany.mock.calls).toEqual([
+                [{
+                    where: { id: { in: [55] }, branchId: "branch-1", eDocId: "doc-1" },
+                    data: { eDocId: null },
+                }],
+                [{
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                }],
+            ]);
+        });
+
+        it("repairing an owned document fails closed when a new pointer client appears after the lock (F2)", async () => {
+            const { transaction, usecase } = arrange([[55], [55, 77]], { clientId: 21 });
+
+            await expect(usecase.execute("doc-1", linkOnly, expectedMirrorGeneration()))
+                .resolves.toBe("mirror_not_ready");
+
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
 
         it("locks the pointer client with the matched one, then releases it before taking the pointer", async () => {
             const { transaction, usecase } = arrange([[55]]);
@@ -700,6 +761,11 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 clientId: 21,
             }),
         };
+        // No other client points at the document (the default double would report client 11).
+        transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) =>
+            Promise.resolve(
+                (query.strings?.join(" ").toLowerCase() ?? "").includes("pointer_client") ? [] : [{ id: 11 }],
+            ));
 
         await expect(usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
             .resolves.toBe("linked");

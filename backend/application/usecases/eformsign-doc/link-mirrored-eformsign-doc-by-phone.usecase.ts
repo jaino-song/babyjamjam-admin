@@ -1264,6 +1264,15 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
     }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
             if (this.hasCompleteServiceRecordWriteLockSurface(transaction)) {
+                // Another client pointing at this document would make writing the owner's
+                // pointer fail with P2002 (unique `eDocId`). Lock those clients together with
+                // the owner, ascending, before any other lock; re-validated after the
+                // document lock below.
+                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                    branchId: document.branchId,
+                    documentId: document.documentId,
+                    clientId: document.clientId,
+                });
                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                     branchId: document.branchId,
                     clientId: document.clientId,
@@ -1300,7 +1309,22 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 ) {
                     return "ambiguous";
                 }
-                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
+                    branchId: locked.branchId,
+                    documentId: document.documentId,
+                    clientId: document.clientId,
+                });
+                if (currentPointerClientIds.some((id) => !lockedPointerClientIds.has(id))) {
+                    // A pointer client appeared after the unlocked read: writing it would be
+                    // unlocked, locking it now inverts the order. Fail closed, nothing written.
+                    return "mirror_not_ready";
+                }
+                const linked = await this.linkExistingClient(
+                    transaction,
+                    current,
+                    locked.client,
+                    [...lockedPointerClientIds],
+                );
                 if (
                     initializeLifecycle
                     && (linked === "linked" || linked === "already_linked")
@@ -1507,6 +1531,20 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             return "ambiguous";
         }
 
+        // Unique `eDocId`: the document now belongs to this client, so no other (locked)
+        // client may keep pointing at it - whether or not this client also takes the
+        // pointer below (it keeps a newer contract's pointer otherwise).
+        if (lockedOtherPointerClientIds.length > 0) {
+            await transaction.client.updateMany({
+                where: {
+                    id: { in: [...lockedOtherPointerClientIds] },
+                    branchId: clientBranchId,
+                    eDocId: document.documentId,
+                },
+                data: { eDocId: null },
+            });
+        }
+
         let shouldPointToMirroredDocument = client.eDocId === null
             || client.eDocId === document.documentId;
         if (!shouldPointToMirroredDocument && client.eDocId) {
@@ -1531,18 +1569,6 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 || document.createdDate >= currentDocument.createdDate;
         }
         if (shouldPointToMirroredDocument) {
-            if (lockedOtherPointerClientIds.length > 0) {
-                // Unique `eDocId`: release the document from the other (locked) clients that
-                // still point at it before this client takes it.
-                await transaction.client.updateMany({
-                    where: {
-                        id: { in: [...lockedOtherPointerClientIds] },
-                        branchId: clientBranchId,
-                        eDocId: document.documentId,
-                    },
-                    data: { eDocId: null },
-                });
-            }
             await transaction.client.updateMany({
                 where: {
                     id: client.id,
