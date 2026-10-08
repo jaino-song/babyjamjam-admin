@@ -17,7 +17,6 @@ import type {
 } from "@babyjamjam/service-record-ui";
 
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
-import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
 import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
@@ -729,40 +728,40 @@ export default function ServiceRecordPage() {
                     />
                 ),
                 scheduleChangeModal: (
-                    <MobileTwoButtonModal
+                    <ApprovalTwoButtonModal
                         data-component="mobile_service-record_schedule-change-modal"
                         open={scheduleChangeModalOpen}
                         title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정 변경"}
                         description={scheduleChangePreview
                             ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 관리자 승인 후 일정이 조정됩니다.`
                             : "변경 가능한 일정을 확인하고 있어요."}
+                        isDescriptionVisuallyHidden={false}
                         cancelLabel="취소"
-                        confirmLabel={scheduleChangeBusy
-                            ? scheduleChangePreview ? "요청 중…" : "불러오는 중…"
-                            : "승인 요청"}
-                        loading={scheduleChangeBusy}
-                        confirmDisabled={!scheduleChangePreview}
+                        approvalLabel="승인 요청"
+                        pendingLabel={scheduleChangePreview ? "요청 중…" : "불러오는 중…"}
+                        isPending={scheduleChangeBusy}
+                        approvalDisabled={!scheduleChangePreview}
                         onOpenChange={(open) => {
                             if (!open) closeScheduleChangeModal();
                         }}
-                        onCancel={closeScheduleChangeModal}
-                        onConfirm={submitScheduleChangeRequest}
+                        onApprove={submitScheduleChangeRequest}
                     />
                 ),
                 serviceDateChangeModal: (
-                    <MobileTwoButtonModal
+                    <ApprovalTwoButtonModal
                         data-component="mobile_service-record_service-date-change-modal"
                         open={ctx?.plannedSessionDates === undefined && pendingServiceDate !== null}
                         title={`${day}회차 제공일을 변경할까요?`}
                         description={serviceDateChangeDescription}
+                        isDescriptionVisuallyHidden={false}
+                        size="detail"
                         cancelLabel="취소"
-                        confirmLabel="확인"
-                        confirmDisabled={!calendarReady || pendingShift === null}
+                        approvalLabel="확인"
+                        approvalDisabled={!calendarReady || pendingShift === null}
                         onOpenChange={(open) => {
                             if (!open) cancelServiceDateChange();
                         }}
-                        onCancel={cancelServiceDateChange}
-                        onConfirm={confirmServiceDateChange}
+                        onApprove={confirmServiceDateChange}
                     >
                         <CalendarLoadNotice
                             error={calendarError}
@@ -770,7 +769,7 @@ export default function ServiceRecordPage() {
                             loading={!calendarReady && calendarError === null}
                             dataComponent="mobile_service-record_service-date-change-modal_calendar-notice"
                         />
-                    </MobileTwoButtonModal>
+                    </ApprovalTwoButtonModal>
                 ),
                 errorNotification: (
                     <NotificationOneButtonModal
