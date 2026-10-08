@@ -253,9 +253,9 @@ test("기본정보 저장 실패 시 입력값을 보존하고 다음 단계로 
   const momBirthSlot = page.locator("#service-record-header-momBirth-error");
   await expect(momBirthSlot).toHaveText("");
   await momBirth.fill("1990");
-  await expect(momBirthSlot).toHaveText("YYYY-MM-DD 형식");
+  await expect(momBirthSlot).toHaveText("예: 19940315");
   await momBirth.blur();
-  await expect(momBirthSlot).toHaveText("YYYY-MM-DD로 입력해 주세요");
+  await expect(momBirthSlot).toHaveText("8자리로 입력해 주세요");
   await expect(momBirth).toHaveAttribute("aria-invalid", "true");
   await page.getByLabel("산모 성명", { exact: true }).fill(header.momName);
   await momBirth.fill("19900101");
