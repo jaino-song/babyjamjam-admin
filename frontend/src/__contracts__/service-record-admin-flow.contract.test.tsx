@@ -12,6 +12,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/service-record-ui";
 import { ServiceRecordAdminWizard } from "@/components/app/service-record/ServiceRecordAdminWizard";
 import { adminServiceRecordEditApi } from "@/features/service-records/api/admin-service-record-edit.api";
+import type { AdminServiceRecordEditChanges } from "@/features/service-records/types";
 
 import {
     CLIENT_ID,
@@ -41,21 +42,34 @@ jest.mock("@/features/service-records/api/admin-service-record-edit.api", () => 
 }));
 
 // The rebuilt UI must keep these strings (Phase 3 brief input).
-// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
 const PINNED_COPY = {
     /** Step title of a session's review page. */
     reviewTitle: "기록 내용 확인",
     back: "이전",
-    /** Overview action that opens the basic-information editor (ServiceRecordAdminWizard.tsx:868). */
+    /** Overview action that opens the basic-information editor. */
     headerEdit: "기본정보 수정",
-    /** Confirms a changed basic-information form or session (ServiceRecordAdminWizard.tsx:874, :891). */
-    saveChange: "수정 확인",
-    /** The read-only signature image (ServiceRecordAdminWizard.tsx:394) and its empty state (:372). */
+    /** Keeps a changed basic-information form or session in the browser (nothing is sent yet). */
+    keepChange: "수정 확인",
+    /** Overview action that sends every kept edit; the preview dialog's approval button has the same name. */
+    commit: "수정 확정",
+    previewDialog: "초안 변경 미리보기",
+    /** The preview's content-change summary: one line for the basic information, one for the changed sessions. */
+    previewHeader: (changed: boolean) => `기본정보: ${changed ? "변경됨" : "변경 없음"}`,
+    previewSessions: (sessionIndexes: number[]) =>
+        `기록 회차: ${sessionIndexes.length > 0 ? sessionIndexes.map((index) => `${index}회차`).join(", ") : "변경 없음"}`,
+    /** The preview lists each session's date as YYYY.MM.DD. */
+    previewDate: (isoDate: string) => isoDate.replaceAll("-", "."),
+    /** Moves to the review after a session input page. */
+    next: "다음",
+    /** The read-only signature image and its empty state. */
     signatureImage: "산모 서명",
     signatureMissing: "저장된 서명이 없어요",
-    /** Banner action that opens a preview of an earlier unconfirmed edit (:808), and its confirm action. */
-    reviewEarlierEdit: "이전 수정사항 검토",
-    confirmEarlierEdit: "수정 확정",
+    /** Admin service-date edit button (invisible accessible name). */
+    dateEdit: "제공일 수정",
+    dateDialog: (sessionIndex: number) => `${sessionIndex}회차 서비스 제공일 수정`,
+    dateApply: "수정",
+    followDialog: "뒷 회차들도 변경할까요?",
+    followApply: "변경하기",
 };
 
 const HEADER_LABELS = {
@@ -100,54 +114,38 @@ const UUID = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[8
 const decoration = /^[✓●]\s*/;
 
 /**
- * Chooses one option of an item. `scope` is the item's visible title (or a
- * region element). The lookup stays inside the semantic container (group,
- * radiogroup or region) named or titled so; when none is found it throws
- * instead of widening to the whole screen. Without a scope the whole screen is
- * searched only when the option text is unique there.
- * Options are looked up as radio, then checkbox, then button.
+ * The semantic container (group, radiogroup or region) with exactly this
+ * accessible name. It throws when there is none, so a lookup never widens to the
+ * whole screen.
  */
-function chooseOption(scope: string | HTMLElement | undefined, optionText: string) {
-    const root = scopeFor(scope, optionText);
+function scoped(name: string): ReturnType<typeof within> {
+    const named = [
+        ...screen.queryAllByRole("radiogroup", { name }),
+        ...screen.queryAllByRole("group", { name }),
+        ...screen.queryAllByRole("region", { name }),
+    ];
+    if (named.length !== 1) throw new Error(`expected exactly one group, radiogroup or region named "${name}", found ${named.length}`);
+    return within(named[0]);
+}
+
+/**
+ * Chooses one option of an item. The item's group name is required: the option is
+ * looked up inside that group as radio, then checkbox, then button, and the call
+ * throws when the group is missing.
+ */
+function chooseOption(groupName: string, optionText: string) {
+    const root = scoped(groupName);
     for (const role of ["radio", "checkbox", "button"] as const) {
         const found = root.queryAllByRole(role, {
             name: (accessibleName: string) => accessibleName.replace(decoration, "").trim() === optionText,
         });
-        if (found.length > 1) throw new Error(`option "${optionText}" is ambiguous (${found.length} ${role}s); scope it`);
+        if (found.length > 1) throw new Error(`option "${optionText}" is ambiguous in "${groupName}" (${found.length} ${role}s)`);
         if (found.length === 1) {
             fireEvent.click(found[0]);
             return;
         }
     }
-    throw new Error(`option "${optionText}" not found as radio, checkbox or button`);
-}
-
-function scopeFor(scope: string | HTMLElement | undefined, optionText: string): ReturnType<typeof within> {
-    if (scope instanceof HTMLElement) return within(scope);
-    if (typeof scope !== "string") {
-        // No scope: the whole screen, but only when the target is unambiguous there.
-        const matches = screen.queryAllByText(optionText);
-        if (matches.length !== 1) {
-            throw new Error(`option "${optionText}" matches ${matches.length} elements on the screen; pass a scope`);
-        }
-        return screen;
-    }
-    const named = [
-        ...screen.queryAllByRole("radiogroup", { name: scope }),
-        ...screen.queryAllByRole("group", { name: scope }),
-        ...screen.queryAllByRole("region", { name: scope }),
-    ];
-    if (named.length === 1) return within(named[0]);
-    // A semantic container that holds the item's title as text; the innermost one wins.
-    const containers = [
-        ...screen.queryAllByRole("radiogroup"),
-        ...screen.queryAllByRole("group"),
-        ...screen.queryAllByRole("region"),
-    ];
-    const holding = containers.filter((group) => within(group).queryAllByText(scope).length > 0);
-    const innermost = holding.filter((group) => !holding.some((other) => other !== group && group.contains(other)));
-    if (innermost.length === 1) return within(innermost[0]);
-    throw new Error(`no group, radiogroup or region labelled or titled "${scope}" was found; refusing to search the whole screen`);
+    throw new Error(`option "${optionText}" not found in "${groupName}" as radio, checkbox or button`);
 }
 
 function renderWizard(props: Partial<React.ComponentProps<typeof ServiceRecordAdminWizard>> = {}) {
@@ -161,16 +159,63 @@ function renderWizard(props: Partial<React.ComponentProps<typeof ServiceRecordAd
     );
 }
 
-/** A saved edit goes start -> update -> preview -> confirm, then the overview is read again. */
-function scriptSavedEdit(savedChanges: Record<string, unknown>, contentChanges: { headerChanged: boolean; changedSessionIndexes: number[] }) {
-    jest.mocked(adminServiceRecordEditApi.startDraft).mockResolvedValue(makeDraftState());
-    jest.mocked(adminServiceRecordEditApi.updateDraft).mockResolvedValue(makeDraftState(savedChanges, 2));
+/**
+ * Content and date moves reach the server only on 수정 확정:
+ * getDraft -> (discardDraft) -> startDraft(content) -> updateDraft per date move -> previewDraft -> confirmDraft.
+ * The wizard checks the draft it gets back against what it sent, so the mocks
+ * store (echo) what they receive, as the real server does.
+ */
+let sentChanges: AdminServiceRecordEditChanges = {};
+let movedDates: Record<number, string> = {};
+
+function echoedDraft(draftVersion: number, withMoves: boolean) {
+    const sessions = new Map((sentChanges.sessions ?? []).map((session) => [session.sessionIndex, { ...session }]));
+    if (withMoves) {
+        for (const [index, serviceDate] of Object.entries(movedDates)) {
+            sessions.set(Number(index), { ...sessions.get(Number(index)), sessionIndex: Number(index), serviceDate });
+        }
+    }
+    return makeDraftState({
+        ...(sentChanges.header ? { header: sentChanges.header } : {}),
+        ...(sessions.size ? { sessions: [...sessions.values()] } : {}),
+    }, draftVersion);
+}
+
+/** Echoing draft API; `moved` is the date every session ends on after the scripted date moves. */
+function scriptCommit(contentChanges: { headerChanged: boolean; changedSessionIndexes: number[] }, moved: Record<number, string> = {}) {
+    sentChanges = {};
+    movedDates = moved;
+    const previewDraftVersion = 1 + (Object.keys(moved).length > 0 ? 1 : 0);
+    jest.mocked(adminServiceRecordEditApi.startDraft).mockImplementation(async (_clientId, changes) => {
+        sentChanges = changes ?? {};
+        return echoedDraft(1, false);
+    });
+    jest.mocked(adminServiceRecordEditApi.updateDraft).mockImplementation(async (_draftId, version) => echoedDraft(version + 1, true));
+    jest.mocked(adminServiceRecordEditApi.discardDraft).mockResolvedValue(noDraftState());
+    const basePreview = makePreview(contentChanges, previewDraftVersion);
+    const preview = Object.keys(moved).length === 0
+        ? basePreview
+        : {
+            ...basePreview,
+            after: {
+                ...basePreview.after,
+                startDate: moved[1] ?? basePreview.after.startDate,
+                endDate: moved[3] ?? basePreview.after.endDate,
+                sessions: basePreview.after.sessions.map((entry) => ({ ...entry, serviceDate: moved[entry.sessionIndex] ?? entry.serviceDate })),
+            },
+        };
     jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue(
-        makePreview(contentChanges) as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>,
+        preview as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>,
     );
     jest.mocked(adminServiceRecordEditApi.confirmDraft).mockResolvedValue(
         confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>,
     );
+}
+
+/** 수정 확정 on the overview, then wait for the preview dialog. */
+async function startCommit() {
+    fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.commit }));
+    return screen.findByRole("dialog", { name: PINNED_COPY.previewDialog });
 }
 
 describe("service-record admin editor contract", () => {
@@ -233,36 +278,55 @@ describe("service-record admin editor contract", () => {
     });
 
     describe("session edit, preview and confirm", () => {
-        it.todo("8. edit a session answer, then 수정 확인: updateDraft -> previewDraft -> confirmDraft carry the change — blocked: packages/service-record-ui/src/ServiceRecordWizard.tsx:452-459 the review's per-section 수정 buttons (three, plus the date editor at frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx:885) share one accessible name and have no accessible container, so the one that opens the input pages cannot be told apart without picking by position");
+        it("8. an edited session answer is kept in the browser, then sent on 수정 확정 and confirmed with the preview's ids", async () => {
+            // An ACTIVE draft left by an earlier session must be discarded before the new one starts.
+            const leftover = makeDraftState({ header: { momName: "기존 수정 산모" } }, 2);
+            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(leftover);
+            scriptCommit({ headerChanged: false, changedSessionIndexes: [1] });
+            renderWizard();
 
-        it("8. confirming an earlier unconfirmed edit previews it and confirms with the preview's ids, without a new update", async () => {
-            const earlier = makeDraftState({ header: { momName: "기존 수정 산모" }, sessions: [{ sessionIndex: 2, etcService: "이전 수정 내용" }] }, 2);
-            jest.mocked(adminServiceRecordEditApi.getDraft).mockResolvedValue(earlier);
-            jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue(
-                makePreview({ headerChanged: true, changedSessionIndexes: [2] }) as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>,
-            );
-            jest.mocked(adminServiceRecordEditApi.confirmDraft).mockResolvedValue(
-                confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>,
-            );
-            renderWizard({ initialDraftState: earlier });
+            fireEvent.click(screen.getByRole("button", dayCard(1)));
+            fireEvent.click(screen.getByRole("button", { name: "산모 수정" }));
+            chooseOption("④ 좌욕", "미실시");
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.next }));
+            expect(within(scoped("산모").getByRole("group", { name: "④ 좌욕" })).getByText(/미실시/)).toBeInTheDocument();
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
 
-            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.reviewEarlierEdit }));
-            const confirm = await screen.findByRole("button", { name: PINNED_COPY.confirmEarlierEdit });
-            await waitFor(() => expect(confirm).toBeEnabled());
+            // Kept in the browser: the overview offers 수정 확정 and nothing was sent.
+            expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
+            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
-            fireEvent.click(confirm);
+
+            const preview = await startCommit();
+            // The preview names the changed session, and nothing else as changed.
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([1]))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
+            expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 2);
+            expect(jest.mocked(adminServiceRecordEditApi.discardDraft).mock.invocationCallOrder[0])
+                .toBeLessThan(jest.mocked(adminServiceRecordEditApi.startDraft).mock.invocationCallOrder[0]);
+            expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledTimes(1);
+            expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([
+                CLIENT_ID,
+                { sessions: [{ sessionIndex: 1, answers: { sitzBath: "미실시" } }] },
+            ]);
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 1);
+
+            fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
 
             await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
-            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
-            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 2, PREVIEW_ID, UUID);
-            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
-            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 1, PREVIEW_ID, UUID);
+            expect(global.fetch).toHaveBeenCalledWith(EDITOR_URL, expect.objectContaining({ cache: "no-store" }));
+            expect(await screen.findByRole("button", dayCard(1))).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: PINNED_COPY.commit })).not.toBeInTheDocument();
         });
     });
 
     describe("basic information (header) edit", () => {
-        it("9. a partial birthday is flagged and cannot be confirmed; a valid one is formatted and saved as ISO", async () => {
-            scriptSavedEdit({ header: { momBirth: "1999-01-01" } }, { headerChanged: true, changedSessionIndexes: [] });
+        it("9. a partial birthday is flagged and cannot be confirmed; a valid one is formatted and reaches the server as ISO", async () => {
+            scriptCommit({ headerChanged: true, changedSessionIndexes: [] });
             renderWizard();
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.headerEdit }));
             const birth = screen.getByLabelText(HEADER_LABELS.momBirth);
@@ -274,30 +338,55 @@ describe("service-record admin editor contract", () => {
 
             expect(screen.getByText(getServiceRecordHeaderFieldError("momBirth", "1999")!)).toBeInTheDocument();
             expect(getServiceRecordHeaderFieldError("momBirth", "1999")).toBe("8자리로 입력해 주세요");
-            const save = screen.getByRole("button", { name: PINNED_COPY.saveChange });
-            expect(save).toBeDisabled();
-            fireEvent.click(save);
+            const keep = screen.getByRole("button", { name: PINNED_COPY.keepChange });
+            expect(keep).toBeDisabled();
+            fireEvent.click(keep);
+            expect(screen.queryByRole("button", { name: PINNED_COPY.commit })).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
 
             fireEvent.change(birth, { target: { value: "19990101" } });
             expect(birth).toHaveValue("1999-01-01");
             expect(screen.queryByText("8자리로 입력해 주세요")).not.toBeInTheDocument();
-            expect(save).toBeEnabled();
-            fireEvent.click(save);
+            expect(keep).toBeEnabled();
+            fireEvent.click(keep);
+
+            // Kept in the browser until 수정 확정.
+            expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
+            expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+            const preview = await startCommit();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
+            expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, { header: { momBirth: "1999-01-01" } }]);
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
 
             await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
-            expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith(
-                "draft-1", 1, { header: { momBirth: "1999-01-01" } }, undefined,
-            );
-            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
-            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 2, PREVIEW_ID, UUID);
+            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 1);
+            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 1, PREVIEW_ID, UUID);
             // The saved record is read again and the editor returns to the overview.
             expect(global.fetch).toHaveBeenCalledWith(EDITOR_URL, expect.objectContaining({ cache: "no-store" }));
             expect(await screen.findByRole("button", dayCard(1))).toBeInTheDocument();
         });
 
-        it.todo("9. changing the delivery type saves only that field — blocked: packages/service-record-ui/src/ServiceRecordWizard.tsx:150-167 the option buttons sit in a plain div (no group/radiogroup role or accessible name), so \"제왕절개\" cannot be scoped to the 분만형태 item without searching the whole screen");
+        it("9. changing the delivery type sends only that field", async () => {
+            scriptCommit({ headerChanged: true, changedSessionIndexes: [] });
+            renderWizard();
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.headerEdit }));
+
+            chooseOption(DELIVERY_LABEL, "제왕절개");
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
+            expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
+            const preview = await startCommit();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
+            fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
+
+            await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+            expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, { header: { deliveryType: "제왕절개" } }]);
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 1, PREVIEW_ID, UUID);
+        });
 
         it("9. a new name with a space is rejected and nothing is saved", () => {
             renderWizard();
@@ -306,7 +395,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.change(screen.getByLabelText(HEADER_LABELS.momName), { target: { value: "이 예지" } });
 
             expect(screen.getByText(getServiceRecordHeaderFieldError("momName", "이 예지")!)).toBeInTheDocument();
-            const save = screen.getByRole("button", { name: PINNED_COPY.saveChange });
+            const save = screen.getByRole("button", { name: PINNED_COPY.keepChange });
             expect(save).toBeDisabled();
             fireEvent.click(save);
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
@@ -315,7 +404,38 @@ describe("service-record admin editor contract", () => {
     });
 
     describe("session date edit", () => {
-        it.todo("10. open the date editor, pick a later business day, 수정 확인: updateDraft carries the date move — blocked: frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx:885 the date editor's 수정 button shares its accessible name with the three review-section 수정 buttons (packages/service-record-ui/src/ServiceRecordWizard.tsx:452-459) and sits in a div without an accessible container");
+        it("10. a later business day for the 1회차, with the later sessions following, reaches the server as a date move", async () => {
+            // 9/7 (Mon) -> 9/10 (Thu): the 2회차 and 3회차 follow by the same three business days.
+            scriptCommit({ headerChanged: false, changedSessionIndexes: [1, 2, 3] }, { 1: "2026-09-10", 2: "2026-09-11", 3: "2026-09-14" });
+            renderWizard();
+            fireEvent.click(screen.getByRole("button", dayCard(1)));
+
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.dateEdit }));
+            fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+            fireEvent.click(screen.getByRole("option", { name: "10일" }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.dateDialog(1) })).getByRole("button", { name: PINNED_COPY.dateApply }));
+            fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.followDialog })).getByRole("button", { name: PINNED_COPY.followApply }));
+            expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
+            fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
+
+            expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
+            const preview = await startCommit();
+            // The preview shows the moved 1회차 date; the server reports every session whose date moved as changed (service-record-edit-preview.policy.ts:755-764).
+            expect(within(preview).getByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([1, 2, 3]))).toBeInTheDocument();
+            // No content changed, so the draft starts empty and the move is applied on top.
+            expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, undefined]);
+            expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
+            expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith(
+                "draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-09-10", shiftFollowing: true },
+            );
+            expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
+            fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
+
+            await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+            expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledWith("draft-1", 2, PREVIEW_ID, UUID);
+        });
     });
 
     describe("draft load failure", () => {
