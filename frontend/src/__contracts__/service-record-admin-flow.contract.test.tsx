@@ -53,6 +53,12 @@ const PINNED_COPY = {
     /** Overview action that sends every kept edit; the preview dialog's approval button has the same name. */
     commit: "수정 확정",
     previewDialog: "초안 변경 미리보기",
+    /** The preview's content-change summary: one line for the basic information, one for the changed sessions. */
+    previewHeader: (changed: boolean) => `기본정보: ${changed ? "변경됨" : "변경 없음"}`,
+    previewSessions: (sessionIndexes: number[]) =>
+        `기록 회차: ${sessionIndexes.length > 0 ? sessionIndexes.map((index) => `${index}회차`).join(", ") : "변경 없음"}`,
+    /** The preview lists each session's date as YYYY.MM.DD. */
+    previewDate: (isoDate: string) => isoDate.replaceAll("-", "."),
     /** Moves to the review after a session input page. */
     next: "다음",
     /** The read-only signature image and its empty state. */
@@ -186,8 +192,20 @@ function scriptCommit(contentChanges: { headerChanged: boolean; changedSessionIn
     });
     jest.mocked(adminServiceRecordEditApi.updateDraft).mockImplementation(async (_draftId, version) => echoedDraft(version + 1, true));
     jest.mocked(adminServiceRecordEditApi.discardDraft).mockResolvedValue(noDraftState());
+    const basePreview = makePreview(contentChanges, previewDraftVersion);
+    const preview = Object.keys(moved).length === 0
+        ? basePreview
+        : {
+            ...basePreview,
+            after: {
+                ...basePreview.after,
+                startDate: moved[1] ?? basePreview.after.startDate,
+                endDate: moved[3] ?? basePreview.after.endDate,
+                sessions: basePreview.after.sessions.map((entry) => ({ ...entry, serviceDate: moved[entry.sessionIndex] ?? entry.serviceDate })),
+            },
+        };
     jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue(
-        makePreview(contentChanges, previewDraftVersion) as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>,
+        preview as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>,
     );
     jest.mocked(adminServiceRecordEditApi.confirmDraft).mockResolvedValue(
         confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>,
@@ -281,6 +299,9 @@ describe("service-record admin editor contract", () => {
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
 
             const preview = await startCommit();
+            // The preview names the changed session, and nothing else as changed.
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([1]))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 2);
             expect(jest.mocked(adminServiceRecordEditApi.discardDraft).mock.invocationCallOrder[0])
@@ -334,6 +355,8 @@ describe("service-record admin editor contract", () => {
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
             const preview = await startCommit();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, { header: { momBirth: "1999-01-01" } }]);
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
@@ -355,6 +378,8 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
 
             await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
@@ -395,6 +420,10 @@ describe("service-record admin editor contract", () => {
 
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
+            // The preview shows the moved 1회차 date and no content change.
+            expect(within(preview).getByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
             // No content changed, so the draft starts empty and the move is applied on top.
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, undefined]);
             expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
