@@ -130,19 +130,26 @@ export function SignaturePad({
     };
 
     return (
-        <div data-component={dataComponent} className={`sign-fld ${locked ? "locked" : ""}`}>
-            <div className="sign-head">
-                <label className="lab">산모 서명</label>
+        // The Tailwind classes are the v3 look outside `.srec`; the package's `.srec` classes (kept) still style the old wizard.
+        <div data-component={dataComponent} className={`sign-fld mt-4 border-t border-dashed border-v3-border pt-3.5 ${locked ? "locked" : ""}`}>
+            <div className="sign-head mb-2 flex items-baseline justify-between">
+                <label className="lab m-0 text-sm font-semibold text-v3-text">산모 서명</label>
                 {!locked && (
-                    <button type="button" className="sign-clear" aria-label="서명 지우기" onClick={clearSignature}>
+                    <button type="button" className="sign-clear cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-bold text-v3-primary" aria-label="서명 지우기" onClick={clearSignature}>
                         지우기
                     </button>
                 )}
             </div>
-            <div className={`padwrap ${hasInk ? "inked" : ""} ${locked ? "locked" : ""}`}>
+            <div className={`padwrap relative ${hasInk ? "inked" : ""} ${locked ? "locked" : ""}`}>
                 <canvas
                     ref={canvasRef}
-                    className="pad"
+                    className={`pad block h-[150px] w-full touch-none rounded-[12px] border-[1.5px] ${
+                        locked
+                            ? "pointer-events-none border-solid border-v3-border bg-v3-dim-white"
+                            : hasInk
+                                ? "border-solid border-v3-primary bg-white"
+                                : "border-dashed border-v3-text-muted/60 bg-white"
+                    }`}
                     aria-label="산모 서명 입력"
                     onPointerDown={handlePointerDown}
                     onPointerMove={handlePointerMove}
@@ -150,11 +157,11 @@ export function SignaturePad({
                     onPointerCancel={finishDrawing}
                     onPointerLeave={finishDrawing}
                 />
-                <div className="pad-hint">여기에 손가락으로 서명해 주세요</div>
+                <div className={`pad-hint pointer-events-none absolute inset-0 flex items-center justify-center text-[13.5px] text-v3-text-muted transition-opacity duration-200 ${hasInk || locked ? "opacity-0" : ""}`}>여기에 손가락으로 서명해 주세요</div>
             </div>
-            <p className="sign-note">기록 내용을 확인하였음을 서명으로 확인합니다.</p>
+            <p className="sign-note m-0 mt-2 text-xs leading-relaxed text-v3-text-muted">기록 내용을 확인하였음을 서명으로 확인합니다.</p>
             {locked && signedAt && (
-                <span className="signed-chip show">서명 완료 · {formatSignedAt(signedAt)}</span>
+                <span className="signed-chip show mt-2.5 inline-block rounded-full bg-v3-primary-light px-3 py-1 text-xs font-bold text-v3-primary">서명 완료 · {formatSignedAt(signedAt)}</span>
             )}
         </div>
     );

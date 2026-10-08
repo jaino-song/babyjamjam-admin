@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
-import { SERVICE_RECORD_HEADER_KEYS } from "@babyjamjam/shared/utils/service-record-input";
 import {
     HEADER_DATE_KEYS,
     HEADER_FIELDS,
@@ -10,7 +8,6 @@ import {
     focusFirstProblem,
     getHeaderFieldMessage,
     resolveHeaderErrors,
-    useHadValue,
     type ServiceRecordHeaderValidationKey,
     type ServiceRecordWizardProps,
     type SlotMessage,
@@ -38,6 +35,7 @@ import {
     headerLabelId,
     headerSlotId,
 } from "./ids";
+import type { HeaderFieldState } from "./fieldInteractionState";
 
 const SOURCE_COMPONENT = "ServiceInfoStep";
 
@@ -51,12 +49,13 @@ export type ServiceInfoStepProps = Pick<
 > & {
     /** The step only renders with a loaded context (SRW:749). */
     context: NonNullable<ServiceRecordWizardProps["context"]>;
+    /** The header fields' interaction state, owned by the screen root so it outlives this step (SRW:523-525, :534). */
+    fieldState: HeaderFieldState;
 };
 
 /**
  * The service basic-information step (SRW:749-811 with `readOnly` and `adminMode`
- * false). It owns the header fields' touched / focused / submitted state and the
- * "held a value before" ref of every header key (SRW:523-525, :534, :543-545).
+ * false).
  */
 export function ServiceInfoStep({
     "data-component": root,
@@ -67,22 +66,23 @@ export function ServiceInfoStep({
     onHeaderChange,
     onDeliveryTypeChange,
     onSaveHeader,
+    fieldState,
 }: ServiceInfoStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
-    const [touchedHeader, setTouchedHeader] = useState<Partial<Record<ServiceRecordHeaderValidationKey, boolean>>>({});
-    const [focusedHeader, setFocusedHeader] = useState<ServiceRecordHeaderValidationKey | null>(null);
-    const [headerSubmitted, setHeaderSubmitted] = useState(false);
-    // "Held a value before", so a prefilled value that is later cleared shows "required" (SRW:534, :543-545).
-    // Every key is tracked on every render, before any message reads the flags.
-    const trackHadValue = useHadValue();
-    const touchHeader = (key: ServiceRecordHeaderValidationKey) => setTouchedHeader((current) => ({ ...current, [key]: true }));
+    const {
+        touched: touchedHeader,
+        touch: touchHeader,
+        focused: focusedHeader,
+        setFocused: setFocusedHeader,
+        submitted: headerSubmitted,
+        setSubmitted: setHeaderSubmitted,
+        hadValue: hadHeaderValue,
+    } = fieldState;
     const { headerErrors, isHeaderComplete } = resolveHeaderErrors(header, {
         adminMode: false,
         suppliedHeaderErrors: undefined,
         now: new Date(),
     });
-    const hadHeaderValue: Partial<Record<ServiceRecordHeaderValidationKey, boolean>> = {};
-    for (const key of SERVICE_RECORD_HEADER_KEYS) hadHeaderValue[key] = trackHadValue(key, header[key]);
     const headerFieldMessage = (key: ServiceRecordHeaderValidationKey): SlotMessage | null => getHeaderFieldMessage(key, {
         value: header[key] ?? "",
         hadValue: Boolean(hadHeaderValue[key]),

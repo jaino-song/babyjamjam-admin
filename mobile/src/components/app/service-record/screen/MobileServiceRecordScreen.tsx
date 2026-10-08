@@ -25,6 +25,7 @@ import { OverviewStep } from "./OverviewStep";
 import { PhoneStep } from "./PhoneStep";
 import { ReviewStep } from "./ReviewStep";
 import { useServiceDateFieldState } from "./serviceDateFieldState";
+import { useHeaderFieldState, usePhoneFieldState } from "./fieldInteractionState";
 import { ServiceInfoStep } from "./ServiceInfoStep";
 
 const SOURCE_COMPONENT = "MobileServiceRecordScreen";
@@ -104,6 +105,9 @@ export function MobileServiceRecordScreen({
     });
     // The service-date field's state outlives the day pages (SRW:529-536), so it lives here.
     const dateState = useServiceDateFieldState({ currentServiceDate, day });
+    // Phone and header interaction state also lives at wizard level (SRW:523-528), so it survives history navigation.
+    const phoneState = usePhoneFieldState(phone);
+    const headerState = useHeaderFieldState(header);
     const progress = getWizardProgress(screen, pageIdx);
 
     const crumbs = (
@@ -170,6 +174,7 @@ export function MobileServiceRecordScreen({
                     busy={busy}
                     onPhoneChange={onPhoneChange}
                     onSubmitPhone={onSubmitPhone}
+                    fieldState={phoneState}
                 />
             )}
 
@@ -183,6 +188,7 @@ export function MobileServiceRecordScreen({
                     onHeaderChange={onHeaderChange}
                     onDeliveryTypeChange={onDeliveryTypeChange}
                     onSaveHeader={onSaveHeader}
+                    fieldState={headerState}
                 />
             )}
 

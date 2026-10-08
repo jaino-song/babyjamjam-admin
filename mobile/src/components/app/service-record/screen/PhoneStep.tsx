@@ -1,7 +1,6 @@
 "use client";
 
-import { useState } from "react";
-import { focusFirstProblem, getPhoneState, useHadValue, type ServiceRecordWizardProps } from "@babyjamjam/service-record-ui";
+import { focusFirstProblem, getPhoneState, type ServiceRecordWizardProps } from "@babyjamjam/service-record-ui";
 
 import { Input } from "@/components/app/v3/Input";
 import { ServiceRecordItemLabel } from "@/components/app/v3/ServiceRecordItemLabel";
@@ -19,18 +18,19 @@ import {
     PHONE_SUBMIT_LABEL,
     PHONE_TITLE,
 } from "./ids";
+import type { PhoneFieldState } from "./fieldInteractionState";
 
 const SOURCE_COMPONENT = "PhoneStep";
 
 export type PhoneStepProps = Pick<
     ServiceRecordWizardProps,
     "data-component" | "phone" | "phoneError" | "phoneFieldError" | "busy" | "onPhoneChange" | "onSubmitPhone"
->;
+> & {
+    /** The phone field's interaction state, owned by the screen root so it outlives this step (SRW:526-528, :535). */
+    fieldState: PhoneFieldState;
+};
 
-/**
- * The identity check (SRW:716-747). It owns the phone field's focused / touched /
- * submitted state and the "held a value before" ref (SRW:526-528, :535, :557).
- */
+/** The identity check (SRW:716-747). */
 export function PhoneStep({
     "data-component": root,
     phone,
@@ -39,15 +39,18 @@ export function PhoneStep({
     busy,
     onPhoneChange,
     onSubmitPhone,
+    fieldState,
 }: PhoneStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
-    const [phoneFocused, setPhoneFocused] = useState(false);
-    const [phoneTouched, setPhoneTouched] = useState(false);
-    const [phoneSubmitted, setPhoneSubmitted] = useState(false);
-    // "Held a value before", so a prefilled value that is later cleared shows "required" (SRW:535, :557).
-    // Tracked on every render, before the message reads it.
-    const trackHadValue = useHadValue();
-    const hadPhoneValue = trackHadValue("phone", phone);
+    const {
+        focused: phoneFocused,
+        setFocused: setPhoneFocused,
+        touched: phoneTouched,
+        setTouched: setPhoneTouched,
+        submitted: phoneSubmitted,
+        setSubmitted: setPhoneSubmitted,
+        hadValue: hadPhoneValue,
+    } = fieldState;
     const { complete: phoneComplete, message: phoneMessage } = getPhoneState(phone, {
         hadValue: hadPhoneValue,
         touched: phoneTouched,

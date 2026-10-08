@@ -221,3 +221,51 @@ describe("MobileServiceRecordScreen", () => {
         });
     });
 });
+
+describe("MobileServiceRecordScreen: field state survives leaving a step and coming back", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+
+    it("keeps the header messages after service -> overview/phone -> service", () => {
+        const props = makeProps({ screen: "service", header: {} });
+        const { rerender } = render(<MobileServiceRecordScreen {...props} />);
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(document.getElementById("service-record-header-momName-error")).toHaveTextContent("산모 성명을 입력해 주세요");
+
+        rerender(<MobileServiceRecordScreen {...props} screen="phone" />);
+        expect(document.getElementById("service-record-header-momName-error")).toBeNull();
+        rerender(<MobileServiceRecordScreen {...props} screen="service" />);
+
+        expect(document.getElementById("service-record-header-momName-error")).toHaveTextContent("산모 성명을 입력해 주세요");
+        expect(document.getElementById("service-record-header-deliveryType-error")).toHaveTextContent("분만형태를 선택해 주세요");
+    });
+
+    it("keeps a touched birthday error and the had-value flag of a cleared field", () => {
+        const props = makeProps({ screen: "service", header: { momBirth: "1999-01-0", momName: "이예지" } });
+        const { rerender } = render(<MobileServiceRecordScreen {...props} />);
+        const birth = screen.getByLabelText("산모 생년월일");
+        fireEvent.focus(birth);
+        fireEvent.blur(birth);
+        expect(document.getElementById("service-record-header-momBirth-error")).toHaveTextContent("8자리로 입력해 주세요");
+
+        rerender(<MobileServiceRecordScreen {...props} screen="overview" />);
+        // The name is cleared while the step is away: it held a value before, so "required" shows on return.
+        rerender(<MobileServiceRecordScreen {...props} header={{ momBirth: "1999-01-0", momName: "" }} screen="service" />);
+        expect(document.getElementById("service-record-header-momBirth-error")).toHaveTextContent("8자리로 입력해 주세요");
+        expect(document.getElementById("service-record-header-momName-error")).toHaveTextContent("산모 성명을 입력해 주세요");
+    });
+
+    it("keeps the phone message after phone -> service -> phone", () => {
+        const props = makeProps({ screen: "phone", context: null, phone: "010-12" });
+        const { rerender } = render(<MobileServiceRecordScreen {...props} />);
+        const phone = screen.getByLabelText("휴대폰 번호");
+        fireEvent.focus(phone);
+        fireEvent.blur(phone);
+        expect(document.getElementById("service-record-phone-helper")).toHaveTextContent("010-1234-5678로 입력해 주세요");
+
+        rerender(<MobileServiceRecordScreen {...props} screen="service" context={makeProps().context} />);
+        rerender(<MobileServiceRecordScreen {...props} />);
+        expect(document.getElementById("service-record-phone-helper")).toHaveTextContent("010-1234-5678로 입력해 주세요");
+        expect(screen.getByLabelText("휴대폰 번호")).toHaveAttribute("aria-invalid", "true");
+    });
+});
