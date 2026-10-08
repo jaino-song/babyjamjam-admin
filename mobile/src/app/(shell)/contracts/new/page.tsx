@@ -21,7 +21,7 @@ import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { toast } from "@/hooks/use-toast";
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { useVoucherYears, useVoucherPriceInfos, useAreaTemplates, useAllVoucherPrices } from "@/hooks";
-import { useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
+import { clientQueryKeys, useAllClients, useCreateClient, useUpdateClient } from "@/hooks/useClients";
 import { useEmployees, type Employee } from "@/hooks/useEmployees";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { eformsignApi } from "@/services/api";
@@ -1233,13 +1233,27 @@ export default function ContractCreationPage() {
 
       // 기존 고객을 골랐고 입력값이 저장된 고객 정보와 다르면 어떻게 반영할지 먼저 물어봐요.
       // 자동 등록·새로 만든 고객은 이 확인을 거치지 않아요.
-      const loadedBaseline = clientId !== null && loadedClientBaselineRef.current?.id === clientId
+      const pickedBaseline = clientId !== null && loadedClientBaselineRef.current?.id === clientId
         ? loadedClientBaselineRef.current
         : null;
+      // 이름과 전화번호를 직접 입력해 기존 고객과 일치한 경우에도 고르는 경우와 같은 확인을 거쳐요.
+      // 저장값은 이미 받아 둔 고객 목록의 레코드에서 만들고, 제출 단계에서 따로 불러오지 않아요.
+      // 이 기준값은 이번 제출에서만 써요. 폼의 선택 고객 기준값(loadedClientBaselineRef)은 건드리지 않아요.
+      // 전화번호만 일치한 고객은 어떤 고객인지 사용자가 확인하지 않았으니 기간을 쓰지 않아요.
+      const identityBaseline = !pickedBaseline
+        && clientId === null
+        && storedClientByIdentity
+        && finalClientId === storedClientByIdentity.id
+        // 직전 제출에서 이미 저장했고 이후 바뀐 값이 없으면 다시 묻지 않아요.
+        && !(reusePersistedClient && persistedClientSnapshotRef.current === clientPersistenceSnapshot)
+        ? buildLoadedBaseline(storedClientByIdentity)
+        : null;
+      const loadedBaseline = pickedBaseline ?? identityBaseline;
       const omitPeriodFields = loadedBaseline?.periodLocked === true;
       let clientUpdateMode: "full" | "assignment-only" | "skip" = "full";
       let formDiffSnapshot: ClientDiffSnapshot | null = null;
-      if (loadedBaseline && clientId !== null) {
+      if (loadedBaseline) {
+        const baselineClientId = loadedBaseline.id;
         const formSnapshot = buildFormDiffSnapshot();
         formDiffSnapshot = formSnapshot;
         const diffRows = diffClientSnapshots(loadedBaseline.snapshot, formSnapshot);
@@ -1248,7 +1262,7 @@ export default function ContractCreationPage() {
         let decision: ClientDiffDecision = "update-client";
         if (diffRows.length === 0) {
           clientUpdateMode = "skip";
-        } else if (previousChoice?.clientId === clientId && previousChoice.formKey === formKey) {
+        } else if (previousChoice?.clientId === baselineClientId && previousChoice.formKey === formKey) {
           decision = "contract-only";
         } else {
           decision = await requestClientDiffDecision({
@@ -1258,7 +1272,7 @@ export default function ContractCreationPage() {
           if (decision === "cancel") return;
         }
         if (decision === "contract-only") {
-          contractOnlyChoiceRef.current = { clientId, formKey };
+          contractOnlyChoiceRef.current = { clientId: baselineClientId, formKey };
           // 저장된 고객에 주 담당 인력이 없으면 배정만은 저장해요.
           clientUpdateMode = loadedBaseline.snapshot.primaryEmployeeId.value === null
             && assignment.primaryEmployeeId !== null
@@ -1333,21 +1347,27 @@ export default function ContractCreationPage() {
                 : { ...clientData, expectedEndDate: loadedBaseline.snapshot.endDate.value ?? null },
           });
         } catch (error) {
+          // 직접 입력으로 일치한 고객은 목록의 저장값이 오래돼서 거절됐을 수 있어요. 목록을 새로 받아 두어야
+          // 다시 제출할 때 현재 저장된 종료일을 보여 주고 다시 확인받아요. 그대로 두면 매번 거절돼요.
+          if (identityBaseline && isRecord(error) && isRecord(error.response) && error.response.status === 409) {
+            await queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
+          }
           // 고객 저장은 계약서 발송보다 앞서요. 여기서 실패하면 계약서는 만들어지지 않았으니 다시 제출할 수 있어야 해요.
           showSubmissionFailure(error, "NOT_APPLIED");
           return;
         }
         // 저장된 값이 바뀌었으니 다음 비교는 방금 저장한 값을 기준으로 해요.
-        if (loadedBaseline && formDiffSnapshot) {
-          const persistedSnapshot: ClientDiffSnapshot = { ...loadedBaseline.snapshot };
+        // (직접 입력으로 일치한 고객의 기준값은 이번 제출에서만 쓰는 값이라 폼 기준값을 갱신하지 않아요.)
+        if (pickedBaseline && formDiffSnapshot) {
+          const persistedSnapshot: ClientDiffSnapshot = { ...pickedBaseline.snapshot };
           for (const key of Object.keys(persistedSnapshot) as ClientDiffKey[]) {
             const isAssignmentKey = key === "primaryEmployeeId" || key === "secondaryEmployeeId";
             if (clientUpdateMode === "assignment-only" && !isAssignmentKey) continue;
             if (omitPeriodFields && CLIENT_PERIOD_DIFF_KEYS.has(key)) continue;
             persistedSnapshot[key] = formDiffSnapshot[key];
           }
-          loadedBaseline.snapshot = persistedSnapshot;
-          setRegisteredBaseline({ ...loadedBaseline, snapshot: persistedSnapshot });
+          pickedBaseline.snapshot = persistedSnapshot;
+          setRegisteredBaseline({ ...pickedBaseline, snapshot: persistedSnapshot });
         }
       }
       if (!reusePersistedClient || shouldUpdatePersistedClient) {
