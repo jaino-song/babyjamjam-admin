@@ -24,8 +24,11 @@ const describeWithDatabase = DATABASE_URL ? describe : describe.skip;
 const URL = DATABASE_URL ?? "";
 if (DATABASE_URL) {
     const parsed = new globalThis.URL(DATABASE_URL);
+    // No query parameters at all: Prisma honors `?host=` / `?hostaddr=` overrides, which would
+    // make the checked hostname differ from the server this destructive suite connects to.
     if (!["127.0.0.1", "localhost", "::1", "[::1]"].includes(parsed.hostname)
-        || !parsed.pathname.startsWith("/g3_concurrency_")) {
+        || !parsed.pathname.startsWith("/g3_concurrency_")
+        || parsed.search !== "") {
         throw new Error("B6_CONCURRENCY_DATABASE_URL must be a loopback database named g3_concurrency_*");
     }
 }
