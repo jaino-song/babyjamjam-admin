@@ -1,4 +1,7 @@
 import {
+    isActiveContractSignal,
+    isContractSendRequired,
+    isIncompleteContractSignal,
     selectCurrentContractDocument,
     type CurrentContractCandidate,
 } from "application/utils/current-contract-document";
@@ -84,5 +87,43 @@ describe("selectCurrentContractDocument", () => {
         const snapshot = rows.map((r) => r.documentId);
         selectCurrentContractDocument(rows, NO_TEMPLATES);
         expect(rows.map((r) => r.documentId)).toEqual(snapshot);
+    });
+});
+
+describe("requested-state contract signals (060 / 063 / 064)", () => {
+    // Start date inside the send window, no other reason to skip: only the contract signal decides.
+    const calendar = { diffBusinessDays: () => 0 } as unknown as Parameters<typeof isContractSendRequired>[1];
+    const sendRequiredFor = (statusType: string | null) =>
+        isContractSendRequired(
+            {
+                serviceStatus: "active",
+                startDate: new Date("2026-07-16T00:00:00Z"),
+                hasActiveContractDocument:
+                    statusType === null
+                        ? false
+                        : isActiveContractSignal({ statusType, permanentPurgeRequestedAt: null }),
+                now: new Date("2026-07-14T03:00:00Z"),
+            },
+            calendar,
+        );
+
+    it.each(["060", "063", "064"])("treats a current %s document as active, incomplete and not 발송 필요", (statusType) => {
+        const contract = { statusType, permanentPurgeRequestedAt: null };
+        expect(isActiveContractSignal(contract)).toBe(true);
+        expect(isIncompleteContractSignal(contract)).toBe(true);
+        expect(sendRequiredFor(statusType)).toBe(false);
+    });
+
+    it("keeps a purge-requested 063/064 document dead so 발송 필요 still fires", () => {
+        for (const statusType of ["063", "064"]) {
+            expect(isActiveContractSignal({ statusType, permanentPurgeRequestedAt: new Date() })).toBe(false);
+        }
+    });
+
+    it("still requires sending when there is no document or the document is dead (control)", () => {
+        expect(sendRequiredFor(null)).toBe(true);
+        for (const statusType of ["080", "061", "049", "099", "042"]) {
+            expect(sendRequiredFor(statusType)).toBe(true);
+        }
     });
 });
