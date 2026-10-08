@@ -939,7 +939,18 @@ export class EformsignController {
             if (!document) {
                 throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
             }
-            return document;
+            // The stored payload is the vendor's; the list stamps display_status and
+            // contract_end_date on top of it at serve time. The detail must say the same
+            // thing the list does, so it stamps them through the same service.
+            const calendar = await this.holidayCalendar.forBranch(tenant.branchId ?? "");
+            const displayFields = await this.mirrorListService.buildDetailDisplayFields(
+                documentId,
+                calendar,
+            );
+            if (!displayFields) {
+                throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+            }
+            return { ...document, ...displayFields };
         } catch (error) {
             throwHttpOrInternalError(error);
         }

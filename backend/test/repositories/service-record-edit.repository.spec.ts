@@ -359,7 +359,7 @@ describe("ServiceRecordEditRepository", () => {
         expect(prisma.$transaction).toHaveBeenCalled();
     });
 
-    it("loads the draft and branch-owned source from one repeatable-read snapshot", async () => {
+    function buildDraftSourceFixture(contractStatus = "060") {
         const currentRevisionId = "66666666-6666-4666-8666-666666666666";
         const service_record_edit_draft = {
             findFirst: jest.fn().mockResolvedValue(draftRow()),
@@ -431,7 +431,7 @@ describe("ServiceRecordEditRepository", () => {
                 {
                     documentId: "contract-1",
                     documentKind: "contract",
-                    statusType: "060",
+                    statusType: contractStatus,
                     clientId: 101,
                     serviceRecordCaseId: null,
                     employeeScheduleId: null,
@@ -460,6 +460,25 @@ describe("ServiceRecordEditRepository", () => {
         };
         const prisma = transactionalPrisma(tx);
         const repository = new ServiceRecordEditRepository(prisma as never);
+        return {
+            prisma,
+            repository,
+            currentRevisionId,
+            service_record_edit_draft,
+            service_record_case,
+            eformsign_doc,
+        };
+    }
+
+    it("loads the draft and branch-owned source from one repeatable-read snapshot", async () => {
+        const {
+            prisma,
+            repository,
+            currentRevisionId,
+            service_record_edit_draft,
+            service_record_case,
+            eformsign_doc,
+        } = buildDraftSourceFixture();
 
         await expect(repository.loadDraftWithSource(branchId, draftId)).resolves.toMatchObject({
             draft: { id: draftId, draftVersion: 1 },
@@ -496,6 +515,21 @@ describe("ServiceRecordEditRepository", () => {
         expect(eformsign_doc.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({ branchId }),
         }));
+    });
+
+    it.each([
+        ["060", "in_progress"],
+        ["040", "in_progress"],
+        ["042", "rejected"],
+        ["050", "completed"],
+    ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
+        const { repository } = buildDraftSourceFixture(contractStatus);
+
+        await expect(repository.loadDraftWithSource(branchId, draftId)).resolves.toMatchObject({
+            source: {
+                documentScope: { contract: { currentDocumentId: "contract-1", stage } },
+            },
+        });
     });
 
     it("does not probe or create a draft when the case is foreign to the requested branch", async () => {

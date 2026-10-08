@@ -43,7 +43,7 @@ function getServiceRecordHeaderFieldError(key, rawValue, now = new Date(), { req
             ? null : "0보다 큰 숫자로 (예: 3.2)";
     }
     if (rawValue.length !== 10 || !BIRTH_PATTERN.test(rawValue)) {
-        return "YYYY-MM-DD로 입력해 주세요";
+        return "8자리로 입력해 주세요";
     }
     if ((0, birthday_1.isValidBirthdayIsoDate)(rawValue, now))
         return null;

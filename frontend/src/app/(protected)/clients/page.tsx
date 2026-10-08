@@ -692,7 +692,7 @@ export default function ClientsPage() {
         }
         setContractReissue({
             paymentDate,
-            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus)
+            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus, { hasSigned: client.hasSigned })
                 ? client.latestContractDocumentId
                 : undefined,
         });

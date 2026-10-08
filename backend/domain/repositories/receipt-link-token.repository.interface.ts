@@ -81,12 +81,22 @@ export interface PromoteReceiptLinkRevisionArtifactInput {
     documentStateId: string;
     expectedGeneration: string;
     expectedStateVersion: number;
-    /** Current contract document's external eformsign document id. */
+    /**
+     * Current contract document's external eformsign document id: the document the refreshed
+     * receipt image was rendered from. It is promoted only while it is still the client's current
+     * contract (`selectCurrentContractDocument`), never by comparing it with the `client.eDocId`
+     * pointer, which can lag behind a re-issued contract.
+     */
     targetDocumentId: string;
     documentVersion: number | null;
     templateId: string;
     templateVersion: string;
     mirrorGeneration: string;
+    /**
+     * Configured service-record template ids: the "current contract" rule excludes these
+     * documents, so the repository needs the same set the client summary uses.
+     */
+    serviceRecordTemplateIds: readonly string[];
     /** Original contract document row id(s) held by the stable receipt link. */
     eformsignDocId: number;
     tokenIds: string[];

@@ -2,6 +2,7 @@
 
 import { useClients } from "@/hooks/useClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
+import { formatAnalyticsCount } from "@/lib/dashboard/analytics";
 import "@/components/app/mobile-redesign/redesign.css";
 
 export default function DashboardAnalyticsPage() {
@@ -16,16 +17,19 @@ export default function DashboardAnalyticsPage() {
   const hasData = !isLoading && analytics && clientsPage;
 
   const totalClients = clientsPage?.total ?? 0;
-  const activeClients = analytics?.activeClients ?? 0;
-  const upcomingThisMonth = analytics?.upcomingThisMonth ?? 0;
+  // Unknown counts (server stats unavailable) show "-", never 0.
+  const pendingReview = analytics?.contractsPendingSignature;
+  const pendingSend = analytics?.contractsNotSent;
   const pendingActions =
-    (analytics?.contractsPendingSignature ?? 0) + (analytics?.contractsNotSent ?? 0);
+    typeof pendingReview === "number" && typeof pendingSend === "number"
+      ? pendingReview + pendingSend
+      : null;
 
   const cards: Array<[string, string]> = [
     [String(totalClients), "전체 고객"],
-    [String(activeClients), "진행중"],
-    [String(upcomingThisMonth), "7일 내 시작"],
-    [String(pendingActions), "처리 필요"],
+    [formatAnalyticsCount(analytics?.activeClients), "진행중"],
+    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작"],
+    [formatAnalyticsCount(pendingActions), "처리 필요"],
   ];
 
   return (

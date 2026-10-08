@@ -31,6 +31,13 @@ import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/clie
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
+import {
+  buildClientUpdatePayload,
+  CLIENT_END_DATE_CHANGED_MESSAGE,
+  END_DATE_CHANGED_PROBLEM_CODE,
+  hasServicePeriodChange,
+  type ClientUpdateFormFields,
+} from "@/components/app/clients/client-update-payload";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -349,6 +356,12 @@ export default function NewClientPage() {
   const lastHydratedIdRef = useRef<number | null>(null);
   const lastHydratedContractDocIdRef = useRef<string | null>(null);
   const hasUserEditedServicePeriodRef = useRef(false);
+  // The client as the edit form was opened on it. An edit sends only what differs from it, so a field the
+  // backend changed meanwhile (the end date, on a session delay) is not written back. Cleared with the form.
+  const editBaselineRef = useRef<ClientUpdateFormFields | null>(null);
+  // The prices the form filled in from its price table while staff had touched nothing, so the table's own
+  // fill on open is not mistaken for an edit. `editBaselineRef` keeps the STORED prices untouched.
+  const openingTablePricesRef = useRef<Pick<ClientUpdateFormFields, "fullPrice" | "grant" | "actualPrice"> | null>(null);
   const previousServicePeriodRef = useRef<{
     startDate: string;
     duration: number | null | undefined;
@@ -411,6 +424,8 @@ export default function NewClientPage() {
     lastHydratedIdRef.current = null;
     lastHydratedContractDocIdRef.current = null;
     hasUserEditedServicePeriodRef.current = false;
+    editBaselineRef.current = null;
+    openingTablePricesRef.current = null;
     previousServicePeriodRef.current = null;
     submissionInFlightRef.current = false;
     setPendingDurationConfirmation(null);
@@ -489,6 +504,29 @@ export default function NewClientPage() {
     lastHydratedIdRef.current = editingClient.id;
     hasUserEditedServicePeriodRef.current = false;
     previousServicePeriodRef.current = null;
+    editBaselineRef.current = {
+      name: editingClient.name,
+      // Normalized exactly like `currentForm` in handleComplete, so an untouched field compares equal.
+      birthday: (normalizeBirthdayIsoDate(editingClient.birthday) ?? editingClient.birthday ?? "") || null,
+      dueDate: normalizeIsoDate(editingClient.dueDate),
+      birthDate: normalizeIsoDate(editingClient.birthDate),
+      address: editingClient.address || null,
+      phone: editingClient.phone || null,
+      primaryEmployeeId: editingClient.primaryEmployee?.id ?? null,
+      secondaryEmployeeId: editingClient.secondaryEmployee?.id ?? null,
+      type: editingClient.type ?? "",
+      duration: editingClient.duration,
+      fullPrice: editingClient.fullPrice ?? "",
+      grant: editingClient.grant ?? "",
+      actualPrice: editingClient.actualPrice ?? "",
+      startDate: normalizeIsoDate(editingClient.startDate),
+      endDate: normalizeIsoDate(editingClient.endDate),
+      careCenter: editingClient.careCenter,
+      voucherClient: editingClient.voucherClient,
+      breastPump: editingClient.breastPump,
+      serviceStatus: editingClient.serviceStatus ?? "pre_booking",
+      areaId: editingClient.areaId ?? "",
+    };
 
     setField("name", editingClient.name);
     setField("birthday", normalizeBirthdayIsoDate(editingClient.birthday) ?? editingClient.birthday ?? "");
@@ -774,13 +812,15 @@ export default function NewClientPage() {
 
   useEffect(() => {
     if (selectedPriceInfo && !pricesManuallyEdited) {
-      setField("fullPrice", parsePrice(selectedPriceInfo.fullPrice));
-      if (store.voucherClient && "grant" in selectedPriceInfo && "actualPrice" in selectedPriceInfo) {
-        setField("grant", parsePrice(selectedPriceInfo.grant));
-        setField("actualPrice", parsePrice(selectedPriceInfo.actualPrice));
-      } else {
-        setField("grant", "0");
-        setField("actualPrice", parsePrice(selectedPriceInfo.fullPrice));
+      const fullPrice = parsePrice(selectedPriceInfo.fullPrice);
+      const hasVoucherAmounts = store.voucherClient && "grant" in selectedPriceInfo && "actualPrice" in selectedPriceInfo;
+      const grant = hasVoucherAmounts ? parsePrice(selectedPriceInfo.grant) : "0";
+      const actualPrice = hasVoucherAmounts ? parsePrice(selectedPriceInfo.actualPrice) : fullPrice;
+      setField("fullPrice", fullPrice);
+      setField("grant", grant);
+      setField("actualPrice", actualPrice);
+      if (!hasUserEditedServicePeriodRef.current) {
+        openingTablePricesRef.current = { fullPrice, grant, actualPrice };
       }
     }
   }, [selectedPriceInfo, pricesManuallyEdited, setField, store.voucherClient]);
@@ -985,6 +1025,7 @@ export default function NewClientPage() {
 
     setPendingUnavailableEmployeeConfirmation(null);
     submissionInFlightRef.current = true;
+    let endDateGuardSent = false;
 
     try {
       const fresh = await refreshForSave();
@@ -1015,9 +1056,50 @@ export default function NewClientPage() {
         return;
       }
       setCalendarSaveMessage(null);
-      const { hasMismatch, periodKey } = getServiceDateDurationCheck(
+      // What this save would write, as the update body sees the form.
+      const currentForm: ClientUpdateFormFields = {
+        name: store.name,
+        birthday: store.birthday || null,
+        dueDate: isoOrNull(store.dueDate) ?? "",
+        birthDate: isoOrNull(store.birthDate) ?? "",
+        address: store.address || null,
+        phone: store.phone || null,
+        primaryEmployeeId: store.primaryEmployeeId,
+        secondaryEmployeeId: store.secondaryEmployeeId,
+        type: store.type,
+        duration: chosenDuration,
+        fullPrice: store.fullPrice,
+        grant: store.grant,
+        actualPrice: store.actualPrice,
+        startDate: isoOrNull(store.startDate) ?? "",
+        endDate: isoOrNull(store.endDate) ?? "",
+        careCenter: store.careCenter,
+        voucherClient: store.voucherClient,
+        breastPump: store.breastPump,
+        serviceStatus: store.serviceStatus || null,
+        areaId: store.areaId,
+      };
+      const storedBaseline = editingClientId !== null ? editBaselineRef.current : null;
+      // Until staff touch a price or anything the price table is looked up by, the prices the form filled in
+      // from its table are the form catching up on open, not an edit: the saved client is not being
+      // re-priced, so they are not sent back over a price someone else changed since. Once staff touch
+      // one, prices are compared against what was STORED, so a filled-in price that differs from it
+      // (stored null) is sent.
+      const editBaseline = storedBaseline && openingTablePricesRef.current && !hasUserEditedServicePeriodRef.current
+        ? { ...storedBaseline, ...openingTablePricesRef.current }
+        : storedBaseline;
+      if (editingClientId !== null && !editBaseline) {
+        // The client has not been loaded into the form yet; there is nothing to compare against.
+        setPendingDurationConfirmation(null);
+        return;
+      }
+      const { hasMismatch: periodMismatch, periodKey } = getServiceDateDurationCheck(
         isoOrNull(store.startDate), isoOrNull(store.endDate), chosenDuration, fresh.calendar,
       );
+      // An edit that leaves the service period alone sends no period field, so a period whose length
+      // differs from its business days (a delayed client) needs no confirmation to save an address.
+      const hasMismatch = periodMismatch
+        && (!editBaseline || hasServicePeriodChange(editBaseline, currentForm));
       if (hasMismatch && confirmedPeriod !== periodKey) {
         setPendingDurationConfirmation(periodKey);
         return;
@@ -1051,8 +1133,15 @@ export default function NewClientPage() {
         serviceStatus: store.serviceStatus || null,
         areaId: store.areaId || null,
       };
-      if (editingClientId !== null) {
-        await updateClient.mutateAsync({ id: editingClientId, dto: dto as UpdateClientDto });
+      if (editingClientId !== null && editBaseline) {
+        // Send only what the user changed since the form was opened; see `editBaselineRef`.
+        const updateDto: UpdateClientDto = buildClientUpdatePayload({
+          baseline: editBaseline,
+          current: currentForm,
+          allowBusinessDayMismatch: hasMismatch && confirmedPeriod === periodKey,
+        });
+        endDateGuardSent = updateDto.expectedEndDate !== undefined;
+        await updateClient.mutateAsync({ id: editingClientId, dto: updateDto });
       } else {
         await createClient.mutateAsync(dto);
       }
@@ -1093,6 +1182,16 @@ export default function NewClientPage() {
         locale: locale === "en" ? "en-US" : "ko-KR",
         operation: "mutation",
       });
+      // The save carried the end date this form was opened with and the backend found it moved.
+      if (
+        endDateGuardSent
+        && normalized.status === 409
+        && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
+      ) {
+        setErrorState({ ...normalized, message: CLIENT_END_DATE_CHANGED_MESSAGE });
+        setHasUnknownMutationOutcome(false);
+        return;
+      }
       setErrorState(normalized);
       if (normalized.outcome === "UNKNOWN" || normalized.outcome === "PARTIALLY_APPLIED") {
         setHasUnknownMutationOutcome(true);

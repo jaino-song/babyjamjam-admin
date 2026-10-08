@@ -396,6 +396,7 @@
       "doc-requested": "Requested",
       "doc-rejected": "Rejected",
       "doc-revoked": "Revoked",
+      "doc-revoke-requested": "Revocation requested",
       "doc-deleted": "Deleted",
       "add-description": "Fill in the form to register a new client",
       "edit-description": "Modify the client information"

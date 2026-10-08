@@ -508,6 +508,63 @@ describe("recipient phone input layout", () => {
     });
   });
 
+  it.each(["processing", "dispatching"] as const)(
+    "reports a %s service-record link as being sent, not as a failure",
+    async (status) => {
+      useFormStore.setState({
+        clientId: 20,
+        name: "김산모",
+        employeeId: 0,
+        employeeName: "홍제공",
+        employeePhone: "010-1111-2222",
+      });
+      mockedGetClientOverview.mockResolvedValue({
+        data: {
+          assignments: [
+            { scheduleId: 11, replaced: false, employee: { id: 0, name: "홍제공", phone: "010-1111-2222" } },
+          ],
+        },
+      } as never);
+      mockedSendServiceRecordLink.mockResolvedValue({
+        data: { ok: true, jobId: "job-11", status, scheduledFor: "2026-07-10T00:00:00.000Z" },
+      } as never);
+      const onSubmitStateChange = jest.fn();
+
+      render(
+        <TemplateSendForm
+          templateId="builtin:service-feedback-link"
+          templateName="제공기록지 작성 링크"
+          message="{{employeeName}} {{clientName}} {{serviceRecordUrl}}"
+          deliveryMode="service-feedback-link"
+          serviceRecordLinkPreparation={{
+            scheduleId: 11,
+            serviceStartDate: "2026-07-03",
+            serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
+            preparedLinkToken: "efl_prepared",
+            expiresAt: "2026-07-20T00:00:00.000Z",
+            recipientPhone: "01011112222",
+          }}
+          onSubmitStateChange={onSubmitStateChange}
+        >
+          <div data-testid="service-feedback-fields" />
+        </TemplateSendForm>,
+      );
+      await waitFor(() => {
+        expect(onSubmitStateChange).toHaveBeenLastCalledWith(
+          expect.objectContaining({ isSubmitDisabled: false }),
+        );
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+
+      await waitFor(() => expect(
+        document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]'),
+      ).toHaveTextContent("제공기록지 링크를 보내고 있어요"));
+      const toast = mockedUseToast.mock.results[0]?.value.toast;
+      expect(toast).toHaveBeenCalledWith({ description: "제공기록지 링크를 보내고 있어요" });
+    },
+  );
+
   it("explains why a service-record link could not be sent without exposing error codes", async () => {
     useFormStore.setState({
       clientId: 20,

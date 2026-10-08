@@ -32,9 +32,11 @@ jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [] }),
 }));
 
+let mockHistoryHasMore = false;
 jest.mock("@/hooks/useClientMessageHistory", () => ({
   useClientMessageHistory: () => ({
     notificationLogs: [],
+    hasMore: mockHistoryHasMore,
     isLoading: false,
     isError: false,
     refetch: jest.fn(),
@@ -145,9 +147,21 @@ function getClientDetailProps(node: ReactNode): {
   return null;
 }
 
+function findHasMoreNotificationLogs(node: ReactNode): boolean | undefined {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    const props = child.props as { hasMoreNotificationLogs?: boolean; children?: ReactNode };
+    if (props.hasMoreNotificationLogs !== undefined) return props.hasMoreNotificationLogs;
+    const nested = findHasMoreNotificationLogs(props.children);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 describe("useClientDetailController", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHistoryHasMore = false;
     mockedFetchClient.mockResolvedValue(makeClient(1));
     mockedUseClient.mockReturnValue({ data: undefined } as ReturnType<typeof useClient>);
     mockedUseDeleteClient.mockReturnValue({
@@ -185,6 +199,19 @@ describe("useClientDetailController", () => {
       await Promise.resolve();
     });
     await waitFor(() => expect(result.current.detailClient?.name).toBe("최신 고객"));
+  });
+
+  it.each([true, false])("forwards the history truncation signal (hasMore=%s) to the detail content", (hasMore) => {
+    mockHistoryHasMore = hasMore;
+    const { result } = renderHook(
+      () => useClientDetailController({
+        client: makeClient(1),
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createWrapper() },
+    );
+
+    expect(findHasMoreNotificationLogs(result.current.detail)).toBe(hasMore);
   });
 
   it("preserves the selected tab when a same-client fresh response completes", async () => {

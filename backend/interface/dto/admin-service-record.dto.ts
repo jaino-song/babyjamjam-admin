@@ -41,7 +41,7 @@ export interface AdminServiceRecordResetLinkDto {
     expiresAt: Date;
 }
 
-export type AdminServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
+export type AdminServiceRecordLinkStatus = "none" | "scheduled" | "sending" | "sent" | "failed" | "canceled";
 export type AdminServiceRecordTokenState = "active" | "expired" | "revoked" | null;
 
 export interface AdminServiceRecordTokenDto {
@@ -96,6 +96,7 @@ export interface AdminServiceRecordSessionDto {
 
 export interface AdminServiceRecordSignatureDocDto {
     documentId: string;
+    statusType: string;
     statusDetail: string;
     stepName: string;
     createdDate: Date;

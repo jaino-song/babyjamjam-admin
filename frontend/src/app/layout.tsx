@@ -5,6 +5,7 @@ import localFont from "next/font/local";
 import { LocaleProvider } from "@/providers/LocaleProvider";
 import { getLocale } from "./actions/locale";
 import { Toaster } from "@/components/ui/toaster";
+import { LeaveGuardPopStateBootstrap } from "@/providers/LeaveGuardPopStateBootstrap";
 
 const Pretendard = localFont({
   src: "./fonts/Pretendard.woff2",
@@ -48,6 +49,7 @@ export default async function RootLayout({
   return (
     <html lang={locale}>
       <body className={`${Pretendard.variable} antialiased min-h-screen`} suppressHydrationWarning>
+        <LeaveGuardPopStateBootstrap />
         <div data-component="desktop_shell_root">
           <div data-component="desktop_shell_root_providers">
             <QueryProvider>

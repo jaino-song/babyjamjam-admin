@@ -156,6 +156,7 @@ export function useClientDetailController({
 
   const {
     notificationLogs: detailNotificationLogs,
+    hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
     refetch: refetchNotificationLogs,
@@ -274,6 +275,7 @@ export function useClientDetailController({
           contractDocument={detailContractDocument ?? null}
           activeTab={detailSheetTab}
           notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
+          hasMoreNotificationLogs={hasMoreNotificationLogs}
           isNotificationLogsLoading={isNotificationLogsLoading}
           isNotificationLogsError={isNotificationLogsError}
           onRetryNotificationLogs={() => {
