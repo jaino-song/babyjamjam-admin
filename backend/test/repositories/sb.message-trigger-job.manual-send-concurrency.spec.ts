@@ -205,7 +205,10 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
         RETURNING id
     `;
 
-    const linkService = (jobRepository: SbMessageTriggerJobRepository): ServiceRecordLinkService => {
+    const linkService = (
+        jobRepository: SbMessageTriggerJobRepository,
+        logRepository: unknown = { findRetryableServiceRecordSmsByScheduleId: async () => [] },
+    ): ServiceRecordLinkService => {
         const prisma = {
             employee_schedule: {
                 findUnique: async () => ({
@@ -225,7 +228,7 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             } as never,
             { get: (_key: string, fallback: string) => fallback } as unknown as ConfigService,
             jobRepository,
-            { findRetryableServiceRecordSmsByScheduleId: async () => [] } as never,
+            logRepository as never,
             {} as never,
         );
         (service as unknown as { ensureSystemRule: () => Promise<void> }).ensureSystemRule = async () => undefined;
@@ -238,7 +241,10 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
      * faked, and `duringLinkPreparation` runs inside its `reuseActiveLink`, i.e.
      * between the automatic claim and its promotion.
      */
-    const automaticService = (duringLinkPreparation: () => Promise<void> = async () => undefined): ServiceRecordLinkService => {
+    const automaticService = (
+        duringLinkPreparation: () => Promise<void> = async () => undefined,
+        duringLifecyclePreparation?: () => Promise<void>,
+    ): ServiceRecordLinkService => {
         const schedule = {
             id: SCHEDULE, branchId: BRANCH, clientId: 20, replaced: false,
             startDate: new Date(), endDate: new Date(Date.now() + 30 * 86_400_000),
@@ -267,7 +273,11 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             { findRetryableServiceRecordSmsByScheduleId: async () => [] } as never,
             {} as never,
             undefined,
-            undefined,
+            // Runs before the automatic path's (former) pre-promotion cancel: the
+            // "lifecycle preparation" window in which a manual send can commit.
+            duringLifecyclePreparation
+                ? { ensureForClient: async () => { await duringLifecyclePreparation(); return null; } } as never
+                : undefined,
             new MessageAutomationBranchLockService(db as never),
             { getTriggerDispatchEnabled: async () => true } as never,
         );
@@ -284,6 +294,8 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             `CREATE TABLE message_trigger_rule_branch_override (branch_id uuid, rule_id text, is_active boolean,
                 created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
                 PRIMARY KEY (branch_id, rule_id))`,
+            "DROP TABLE IF EXISTS g9_concurrency_retry_log",
+            "CREATE TABLE g9_concurrency_retry_log (id integer PRIMARY KEY, superseded boolean NOT NULL DEFAULT false)",
             `CREATE TABLE message_trigger_job (
                 id text PRIMARY KEY DEFAULT gen_random_uuid()::text, branch_id uuid,
                 rule_id text NOT NULL REFERENCES message_trigger_rule(id) ON DELETE CASCADE ON UPDATE NO ACTION,
@@ -311,6 +323,7 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
 
     beforeEach(async () => {
         await db.$executeRaw`DELETE FROM message_trigger_job`;
+        await db.$executeRaw`DELETE FROM g9_concurrency_retry_log`;
     });
 
     jest.setTimeout(60000);
@@ -727,6 +740,31 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(lease2.next_attempt_at!.getTime()).toBeGreaterThan(Date.now() + 9 * 60_000);
         });
 
+        it.each(["pending", "processing"])(
+            "a manual send accepted (%s) while the automatic path prepares its lifecycle is never cancelled by it (F2)",
+            async (state) => {
+                let manualId = "";
+                let token: string | null = null;
+                const service = automaticService(undefined, async () => {
+                    manualId = (await linkService(repository).sendNow(SCHEDULE)).jobId!;
+                    if (state === "processing") token = await repository.claimPendingWithRuleFence(manualId, BRANCH);
+                });
+
+                const outcome = await settle(service.scheduleForServiceStart(SCHEDULE));
+
+                expect(outcome).toEqual({ ok: true, value: false });
+                // The manual send survives untouched: not cancelled, claim token kept.
+                expect(await rowOf(manualId)).toMatchObject({ status: state, cancel_reason: null });
+                if (state === "processing") {
+                    expect(token).not.toBeNull();
+                    expect(await authorizeDispatch(db, manualId, token)).toEqual([{ id: manualId }]);
+                }
+                // No automatic replacement was queued: the promotion refused behind the manual send.
+                expect(await liveJobs()).toEqual([expect.objectContaining({ id: manualId })]);
+                expect(await leaseRow()).toMatchObject({ status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+            },
+        );
+
         it("a manual job that already went out (sent) before the promotion blocks it", async () => {
             const { run, release } = await automaticRun();
 
@@ -851,6 +889,54 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             expect(await statusOf(marker.id)).toBe("failed");
             expect(await liveJobs(RULE, OTHER_SCHEDULE)).toHaveLength(1);
             expect(await liveJobs()).toHaveLength(0);
+        });
+    });
+
+    describe("manual send: retry-log supersession is part of the replacement transaction (F3)", () => {
+        /**
+         * A log repository whose write goes through the transaction it is given
+         * (or straight to the database when it is given none, the way the old
+         * after-commit call did) and can fail once its write is done.
+         */
+        const retryLogRepository = (failAfterWrite: boolean) => ({
+            findRetryableServiceRecordSmsByScheduleId: async () => [{ markRetrySuperseded: () => undefined }],
+            update: async (_log: unknown, transaction?: Prisma.TransactionClient) => {
+                await (transaction ?? db).$executeRaw`UPDATE g9_concurrency_retry_log SET superseded = true WHERE id = 1`;
+                if (failAfterWrite) throw new Error("retry-log cleanup failed");
+            },
+        });
+        const retryLogSuperseded = async () => (await db.$queryRaw<Array<{ superseded: boolean }>>`
+            SELECT superseded FROM g9_concurrency_retry_log WHERE id = 1
+        `)[0]!.superseded;
+
+        beforeEach(async () => {
+            await db.$executeRaw`INSERT INTO g9_concurrency_retry_log (id) VALUES (1)`;
+        });
+
+        it("supersedes the retry log and replaces the job together", async () => {
+            const original = await seed("pending");
+
+            const result = await linkService(repository, retryLogRepository(false)).sendNow(SCHEDULE);
+
+            expect(await statusOf(original)).toBe("canceled");
+            expect(await liveJobs()).toEqual([expect.objectContaining({ id: result.jobId, status: "pending" })]);
+            expect(await retryLogSuperseded()).toBe(true);
+        });
+
+        it("a cleanup failure rolls the replacement back: no committed send behind a reported failure", async () => {
+            const original = await seed("pending");
+
+            await expect(linkService(repository, retryLogRepository(true)).sendNow(SCHEDULE))
+                .rejects.toThrow("retry-log cleanup failed");
+
+            // Nothing committed: the old job is still the one live, dispatchable job, so a
+            // retry replaces it instead of adding a second send next to a completed one.
+            expect(await statusOf(original)).toBe("pending");
+            expect(await jobs()).toHaveLength(1);
+            expect(await retryLogSuperseded()).toBe(false);
+
+            const retry = await linkService(repository, retryLogRepository(false)).sendNow(SCHEDULE);
+            expect(await liveJobs()).toEqual([expect.objectContaining({ id: retry.jobId, status: "pending" })]);
         });
     });
 });
