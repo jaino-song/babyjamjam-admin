@@ -1,7 +1,11 @@
-import { isCancellableUnsignedContract } from "./eformsign-customer-signature";
+import {
+    hasCustomerSigned,
+    isCancellableUnsignedContract,
+    REQUESTED_DOCUMENT_STATUS_TYPES,
+} from "./eformsign-customer-signature";
 
 describe("isCancellableUnsignedContract", () => {
-    it.each(["001", "002", "010", "043", "020", "030", "041", "060", "070"])(
+    it.each(["001", "002", "010", "043", "020", "030", "041", "060", "063", "064", "070"])(
         "allows unsigned status %s only outside provider review",
         (statusType) => {
             expect(isCancellableUnsignedContract({ statusType, stepType: "05", stepName: "고객 서명" })).toBe(true);
@@ -23,5 +27,16 @@ describe("isCancellableUnsignedContract", () => {
 
     it.each([null, undefined])("rejects a missing contract (%s)", (contract) => {
         expect(isCancellableUnsignedContract(contract)).toBe(false);
+    });
+});
+
+describe("REQUESTED_DOCUMENT_STATUS_TYPES", () => {
+    it("holds exactly the pre-signature requested states, 063/064 included", () => {
+        expect([...REQUESTED_DOCUMENT_STATUS_TYPES].sort()).toEqual(["030", "041", "060", "063", "064", "070"]);
+    });
+
+    it.each(["063", "064"])("reads %s as unsigned outside provider review and signed inside it, like 060", (statusType) => {
+        expect(hasCustomerSigned({ statusType, stepType: "05", stepName: "고객 서명" })).toBe(false);
+        expect(hasCustomerSigned({ statusType, stepType: "06", stepName: "제공기관 확인" })).toBe(true);
     });
 });

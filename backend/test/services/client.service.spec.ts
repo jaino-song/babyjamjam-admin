@@ -3470,6 +3470,8 @@ describe("ClientService", () => {
                 ["045", "revoke_requested"],
                 ["041", "requested"],
                 ["060", "requested"],
+                ["063", "requested"],
+                ["064", "requested"],
                 ["070", "requested"],
                 ["042", "revoked"],
                 ["090", "revoked"],
@@ -3487,7 +3489,7 @@ describe("ClientService", () => {
                 expect(result?.documentStatus).toBe(documentStatus);
             });
 
-            it.each(["040", "045", "041", "060"])(
+            it.each(["040", "045", "041", "060", "063", "064"])(
                 "should keep a %s document a live contract: no 계약서 필요 badge, no action required",
                 async (statusType) => {
                     listClientsUsecase.execute.mockResolvedValue([
@@ -4504,7 +4506,7 @@ describe("ClientService", () => {
             ]);
         });
 
-        it.each(["060", "050", "041"])("does not emit it for a current %s contract", async (statusType) => {
+        it.each(["060", "063", "064", "050", "041"])("does not emit it for a current %s contract", async (statusType) => {
             listClientsUsecase.execute.mockResolvedValue([activeClient()]);
             prismaService.eformsign_doc.findMany.mockResolvedValue([
                 { clientId: 1, documentId: "d", statusType, stepType: "02", stepName: "x" },
