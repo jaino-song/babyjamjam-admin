@@ -203,10 +203,15 @@ export interface IMessageTriggerJobRepository {
      * Otherwise the pending jobs are canceled with `reason` and the replacement
      * is inserted in the same transaction, so a concurrent dispatcher claim
      * either wins first (-> `in_flight`) or loses against the canceled row.
+     * `afterReplace` runs inside that same transaction once the replacement is
+     * inserted, after every schedule/rule/job lock was taken (so any row it
+     * locks, e.g. message_log, comes last). If it throws, the cancel and the
+     * insert roll back with it: a failure never escapes after a commit.
      */
     replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        afterReplace?: (transaction: Prisma.TransactionClient) => Promise<void>,
     ): Promise<ReplacePendingJobsResult>;
     /**
      * Upsert a pending job only while its rule is at the inspected generation

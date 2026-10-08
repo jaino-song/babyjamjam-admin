@@ -1013,6 +1013,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     async replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        afterReplace?: (transaction: Prisma.TransactionClient) => Promise<void>,
     ): Promise<ReplacePendingJobsResult> {
         this.assertOrdinaryJob(replacement);
         const { ruleId, employeeScheduleId } = replacement;
@@ -1096,6 +1097,11 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 }
 
                 const job = await this.upsertPendingWithClient(transaction, replacement);
+                // Last statement of the transaction, after the schedule advisory
+                // lock, the rule row and the job rows: the caller's follow-up
+                // (retry-log supersession) can only fail by rolling this whole
+                // replacement back, never after it committed.
+                await afterReplace?.(transaction);
                 return { kind: "replaced", job, canceledJobIds: pendingIds };
             }, { timeout: 10_000 });
         } catch (error) {

@@ -65,7 +65,10 @@ export interface IMessageLogRepository {
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findPendingRetriesSystemScope(): Promise<MessageLogEntity[]>;
-    findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]>;
+    findRetryableServiceRecordSmsByScheduleId(
+        scheduleId: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity[]>;
     findRecentByBranch(
         branchId: string,
         limit?: number,
