@@ -406,7 +406,7 @@ describe("service-record admin editor contract", () => {
     describe("session date edit", () => {
         it("10. a later business day for the 1회차, with the later sessions following, reaches the server as a date move", async () => {
             // 9/7 (Mon) -> 9/10 (Thu): the 2회차 and 3회차 follow by the same three business days.
-            scriptCommit({ headerChanged: false, changedSessionIndexes: [] }, { 1: "2026-09-10", 2: "2026-09-11", 3: "2026-09-14" });
+            scriptCommit({ headerChanged: false, changedSessionIndexes: [1, 2, 3] }, { 1: "2026-09-10", 2: "2026-09-11", 3: "2026-09-14" });
             renderWizard();
             fireEvent.click(screen.getByRole("button", dayCard(1)));
 
@@ -420,10 +420,10 @@ describe("service-record admin editor contract", () => {
 
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
-            // The preview shows the moved 1회차 date and no content change.
+            // The preview shows the moved 1회차 date; the server reports every session whose date moved as changed (service-record-edit-preview.policy.ts:755-764).
             expect(within(preview).getByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
+            expect(within(preview).getByText(PINNED_COPY.previewSessions([1, 2, 3]))).toBeInTheDocument();
             // No content changed, so the draft starts empty and the move is applied on top.
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, undefined]);
             expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
