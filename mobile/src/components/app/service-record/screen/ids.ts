@@ -119,3 +119,52 @@ export const textareaPlaceholder = (itemKey: string): string => (
 export const countPlaceholder = (count: { k: string; unit?: string }): string => (
     count.k === "temp" ? "36.5" : count.unit === "ml" ? "60" : "0"
 );
+
+/* ---- copy of the root, phone, service-info and overview screens ---- */
+
+/** SRW:680 */
+export const SCREEN_TITLE = "산모·신생아 건강관리 서비스 제공기록지";
+/** SRW:702 */
+export const LOADING_COPY = "불러오는 중…";
+/** SRW:705 */
+export const PLANNED_DATE_ERROR_COPY = "서버 일정 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.";
+/** SRW:711-712 */
+export const INVALID_TITLE = "링크를 사용할 수 없습니다";
+export const INVALID_COPY = "만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.";
+/** SRW:1044 */
+export const DONE_TITLE = "제공기록지 제출이 완료되었습니다.";
+
+/** SRW:718-719 */
+export const PHONE_TITLE = "제공인력 본인 확인";
+export const PHONE_HELP_COPY = "본인 휴대폰 번호를 입력하면 서비스 기간 동안 유효한 접근 권한이 발급됩니다.";
+/** SRW:725 */
+export const PHONE_LABEL = "휴대폰 번호";
+/** Id of the phone label (the shared wizard's label has none; the item label needs one). */
+export const PHONE_LABEL_ID = "service-record-phone-label";
+/** SRW:737 */
+export const PHONE_PLACEHOLDER = "010-1234-5678";
+/** SRW:745 */
+export const PHONE_SUBMIT_LABEL = "확인하기";
+export const PHONE_SUBMIT_BUSY_LABEL = "확인 중…";
+
+/** SRW:752-754 */
+export const SERVICE_TITLE = "서비스 기본정보";
+export const PROVIDER_EMPLOYEE_LABEL = "제공인력";
+export const PROVIDER_ORG_LABEL = "제공기관";
+export const EMPLOYEE_FALLBACK_NAME = "정보 없음";
+/** SRW:763, :766 */
+export const DELIVERY_TYPE_LABEL = "분만형태";
+export const DELIVERY_TYPE_OPTIONS = ["자연분만", "제왕절개"] as const;
+/** SRW:808 (non-admin branch) */
+export const SERVICE_SAVE_BUSY_LABEL = "저장 중…";
+
+/** SRW:815-816 (non-readonly branch) */
+export const OVERVIEW_TITLE = "제공기록표";
+export const OVERVIEW_HELP_COPY = "제출된 기록은 눌러서 수정할 수 있습니다.";
+/** SRW:846 (non-admin, non-readonly branch) */
+export const DAY_STATUS_DONE = "제출완료";
+export const DAY_STATUS_OPEN = "입력 가능";
+export const DAY_STATUS_WAITING = "대기";
+/** SRW:865 */
+export const START_RECORD_LABEL = "기록 시작";
+export const NEXT_SESSION_LABEL = "다음 회차 입력";
