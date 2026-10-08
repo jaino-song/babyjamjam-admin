@@ -1136,7 +1136,7 @@ export function ServiceRecordAdminWizard({
                         </span>;
                     },
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} onClick={onOpen}>수정</button>
+                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} aria-label="제공일 수정" onClick={onOpen}>수정</button>
                     ),
                     adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
