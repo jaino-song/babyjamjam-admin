@@ -10,8 +10,8 @@ export type SlotMessage = { tone: "hint" | "error"; text: string };
 export const FIELD_COPY = {
     phoneHint: "010-1234-5678 형식",
     phoneError: "010-1234-5678로 입력해 주세요",
-    dateHint: "YYYY-MM-DD 형식",
-    dateError: "YYYY-MM-DD로 입력해 주세요",
+    dateHint: "예: 19940315",
+    dateError: "8자리로 입력해 주세요",
     dateInvalid: "존재하지 않는 날짜예요",
     serviceDateBefore: "이전 날짜는 선택할 수 없어요",
     serviceDateMismatch: "오늘과 다른 날짜예요",

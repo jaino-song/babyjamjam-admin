@@ -38,7 +38,7 @@ describe("service record validation scope", () => {
         expect(birth).toHaveFocus();
         // Focused and incomplete: the grey format hint, like every other form.
         expect(birth).not.toHaveAttribute("aria-invalid", "true");
-        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("YYYY-MM-DD 형식");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("예: 19940315");
         // Once the user leaves the field it turns into the red error.
         fireEvent.blur(birth);
         expect(birth).toHaveAttribute("aria-invalid", "true");
