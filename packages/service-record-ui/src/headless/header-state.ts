@@ -6,7 +6,6 @@ import {
     SERVICE_RECORD_HEADER_KEYS,
     getServiceRecordHeaderErrors,
     hasServiceRecordHeaderValues,
-    isServiceRecordHeaderComplete,
     type ServiceRecordHeaderErrors,
     type ServiceRecordHeaderValidationKey,
 } from "../form-definition";
@@ -33,9 +32,8 @@ export function resolveHeaderErrors(
         ...suppliedHeaderErrors,
         ...getServiceRecordHeaderErrors(header, now, { required: !adminMode }),
     };
-    const isHeaderComplete = (usesScopedHeaderErrors
-        ? hasServiceRecordHeaderValues(header)
-        : isServiceRecordHeaderComplete(header)) && Object.keys(headerErrors).length === 0;
+    // Presence plus the `now`-aware error map; never re-validate against the ambient clock.
+    const isHeaderComplete = hasServiceRecordHeaderValues(header) && Object.keys(headerErrors).length === 0;
     return { headerErrors, usesScopedHeaderErrors, isHeaderComplete };
 }
 

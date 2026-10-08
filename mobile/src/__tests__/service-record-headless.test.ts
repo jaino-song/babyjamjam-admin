@@ -396,6 +396,18 @@ describe("header state", () => {
             expect(result.headerErrors.babyBirth).toBeTruthy();
             expect(result.isHeaderComplete).toBe(false);
         });
+        it("validates dates against the supplied now, not the ambient clock", () => {
+            // 2030-01-01 is in the future for the real clock but past for the supplied now.
+            const laterNow = new Date("2031-01-01T00:00:00Z");
+            const accepted = resolveHeaderErrors({ ...validHeader, babyBirth: "2030-01-01" }, { adminMode: false, suppliedHeaderErrors: undefined, now: laterNow });
+            expect(accepted.headerErrors).toEqual({});
+            expect(accepted.isHeaderComplete).toBe(true);
+            // 2020-01-01 is in the past for the real clock but future for the supplied now.
+            const earlierNow = new Date("2019-01-01T00:00:00Z");
+            const rejected = resolveHeaderErrors({ ...validHeader, babyBirth: "2020-01-01" }, { adminMode: false, suppliedHeaderErrors: undefined, now: earlierNow });
+            expect(rejected.headerErrors.babyBirth).toBeTruthy();
+            expect(rejected.isHeaderComplete).toBe(false);
+        });
         it("supplied errors are merged into the computed ones for employees", () => {
             const result = resolveHeaderErrors(validHeader, { adminMode: false, suppliedHeaderErrors: { babyWeight: "서버 오류" }, now });
             expect(result.headerErrors).toEqual({ babyWeight: "서버 오류" });
