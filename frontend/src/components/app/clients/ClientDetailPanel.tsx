@@ -119,6 +119,8 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     "계약 완료": "completed",
     // eformsign 040/045: cancellation requested, not done — warning tone, same as 검토 필요.
     "철회 요청됨": "review",
+    // eformsign 042/090: revoked, terminal — danger tone (the expired token), distinct label.
+    "철회됨": "expired",
     "기간 만료": "expired",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 

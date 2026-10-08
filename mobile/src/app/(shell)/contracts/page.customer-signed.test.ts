@@ -8,6 +8,7 @@ import {
   isContractReviewWindowOpen,
   isProviderReviewWorkflowStep,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
@@ -39,7 +40,7 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
 interface StageItem {
   text: string;
 }
@@ -53,6 +54,7 @@ const helpers = vm.runInNewContext(
     isContractReviewWindowOpen,
     isProviderReviewWorkflowStep,
     isRevokeRequestedEformsignStatus,
+    isRevokedEformsignStatus,
     normalizeStatusCode,
     isContractDocDisplayStatus,
     KR_BUILTIN_CALENDAR,
@@ -248,12 +250,31 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     expect(view(doc041).stages).toContain(SIGNED_STAGE);
   });
 
-  it("leaves 042 / 080 as expired and keeps 040 files under the 기간 만료 filter pill", () => {
-    for (const statusType of ["042", "080"]) {
-      const { category, progress } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "expired" }));
-      expect(category).toBe("expired");
-      expect(progress).toBe("기간 만료");
-    }
+  it.each([
+    ["042", "with display_status revoked", "revoked"],
+    ["090", "with display_status revoked", "revoked"],
+    ["042", "without display_status (legacy payload)", undefined],
+    ["090", "without display_status (legacy payload)", undefined],
+  ])("shows %s (revoked) as its own category, never expired or signed — %s", (statusType, _label, displayStatus) => {
+    const doc = makeDoc({ statusType, stepType: "06", stepName: "제공기관 검토", displayStatus });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("revoked");
+    expect(progress).toBe("철회됨");
+    expect(stages).toContain("문서가 철회됐어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+  });
+
+  it("leaves 080 as expired and keeps 040 and 042/090 filed under the 기간 만료 filter pill", () => {
+    const { category, progress } = view(makeDoc({ statusType: "080", stepType: "05", stepName: "이용자", displayStatus: "expired" }));
+    expect(category).toBe("expired");
+    expect(progress).toBe("기간 만료");
+    expect(helpers.categorize(makeDoc({ statusType: "080", stepType: "05", stepName: "이용자" }), KR_BUILTIN_CALENDAR)).toBe("expired");
+    // The tab/pill is unchanged: revoked files under 기간 만료 like revoke-requested.
+    expect(/revoked: "기간 만료"/.test(source)).toBe(true);
+    // 철회됨 takes the danger (burgundy) tone, not the muted 만료 one.
+    expect(/case "revoked":\s*return \{\s*badge: "철회됨",\s*badgeTone: "burgundy"/.test(source)).toBe(true);
     // FILTER_BY_CATEGORY / categoryTones live beside the helpers in page.tsx; pin them in source.
     expect(/"revoke-requested": "기간 만료"/.test(source)).toBe(true);
     expect(/case "revoke-requested":\s*return \{\s*badge: "철회 요청됨",\s*badgeTone: "orange"/.test(source)).toBe(true);

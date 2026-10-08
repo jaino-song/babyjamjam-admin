@@ -28,6 +28,7 @@ import {
   isDeletedEformsignStatusCode,
   isProviderReviewWorkflowStep,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   normalizeEformsignStatusCode,
   type EformsignStatusCategory,
   type EformsignStatusInput,
@@ -136,6 +137,8 @@ export function resolveDocDisplayStatus(
   // 040/045 (cancellation requested) sit in the "expired" category for filtering/stats, but
   // they are not expired — payloads that predate display_status must not label them 기간 만료.
   if (isRevokeRequestedEformsignStatus(currentStatus?.status_type)) return "revoke_requested";
+  // 042/090 (revoked) likewise sit in the "expired" category: terminal, but not expired.
+  if (isRevokedEformsignStatus(currentStatus?.status_type)) return "revoked";
   const category = getEformsignStatusCategory(currentStatus?.status_type);
   if (category === "unknown") return "unknown";
   return resolveContractDocDisplayStatus({
@@ -164,6 +167,10 @@ export function contractStatusBadgeType(
     case "계약 완료":
       return "completed";
     case "기간 만료":
+      return "expired";
+    // 철회됨 (042/090): terminal revocation — the danger tone, same token as 기간 만료. The
+    // label text is what tells them apart.
+    case "철회됨":
       return "expired";
     // 철회 요청됨 (040/045): cancellation asked, not done — a pending decision, so it takes the
     // warning (review) tone like 검토 필요. The label text is what tells them apart.
@@ -206,7 +213,7 @@ export function getStatusColor(status: string): BadgeVariant {
   if (lowerStatus.includes("대기") || lowerStatus.includes("pending") || lowerStatus.includes("진행")) {
     return "warning";
   }
-  if (lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject") || lowerStatus.includes("expired")) {
+  if (lowerStatus.includes("철회됨") || lowerStatus.includes("기간 만료") || lowerStatus.includes("거부") || lowerStatus.includes("reject") || lowerStatus.includes("expired")) {
     return "destructive";
   }
   if (lowerStatus.includes("전체") || lowerStatus.includes("all")) {

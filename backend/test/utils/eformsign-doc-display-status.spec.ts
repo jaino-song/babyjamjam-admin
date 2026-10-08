@@ -188,11 +188,29 @@ describe("resolveEformsignDocDisplayStatus", () => {
         expect(at({ status_type: "040", step_type: "06", step_name: "제공기관 확인" }, { [MIRROR_UNASSIGNED_KEY]: true })).toBe("revoke_requested");
     });
 
-    it("leaves 042/090 (revoked) and 080 (expired) as expired and 047/049 as unknown", () => {
-        for (const code of ["042", "090", "080", "011"]) {
+    it.each(["042", "090", 42, 90, "doc_revoke"])(
+        "shows %s (revoked) as revoked, not expired, whatever the step, end date or assignment",
+        (code) => {
+            // Parity: packages/shared/src/constants/eformsign-doc-status.test.ts.
+            const at = (current_status: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+                resolveEformsignDocDisplayStatus({ id: "d", current_status, ...extra }, kstNoon("2026-08-06"), KR_BUILTIN_CALENDAR);
+            expect(at({ status_type: code })).toBe("revoked");
+            expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { contract_end_date: "2026-08-07" })).toBe("revoked");
+            expect(at({ status_type: code, step_type: "05", step_name: "이용자 서명" })).toBe("revoked");
+            expect(at({ status_type: code, step_type: "06", step_name: "제공기관 확인" }, { [MIRROR_UNASSIGNED_KEY]: true })).toBe("revoked");
+        },
+    );
+
+    it("leaves 080 (expired) as expired, 040/045 as revoke_requested, and 047/049 as unknown", () => {
+        for (const code of ["080", "011"]) {
             expect(resolveEformsignDocDisplayStatus(
                 { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
             )).toBe("expired");
+        }
+        for (const code of ["040", "045"]) {
+            expect(resolveEformsignDocDisplayStatus(
+                { id: "d", current_status: { status_type: code } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,
+            )).toBe("revoke_requested");
         }
         for (const code of ["047", "049"]) {
             expect(resolveEformsignDocDisplayStatus(

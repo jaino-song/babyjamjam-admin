@@ -56,6 +56,7 @@ import {
   isDeletedStatusCode,
   isReceiptSendableOnCalendar,
   isRevokeRequestedEformsignStatus,
+  isRevokedEformsignStatus,
   mapDocStatusLabel,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
@@ -188,8 +189,9 @@ const ContractPdfViewer = dynamic(
 
 // "revoke-requested" is eformsign 040/045 (cancellation asked, not done). It is display-only: the
 // server still files it under the "기간 만료" filter, so FILTER_BY_CATEGORY maps it there and the
-// pill counts keep matching the server's expired filter.
-type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "expired" | "unknown";
+// pill counts keep matching the server's expired filter. "revoked" is eformsign 042/090 (the
+// document was revoked): terminal, shown 철회됨 in the danger tone, and filed the same way.
+type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
 type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
@@ -301,6 +303,7 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   unassigned: "signed",
   completed: "completed",
   revoke_requested: "revoke-requested",
+  revoked: "revoked",
   expired: "expired",
   unknown: "unknown",
 };
@@ -329,6 +332,8 @@ function categorize(doc: EformsignDocument, calendar: KrBusinessDayCalendar): Co
   // 040 is in the server's "expired" bucket but is not expired — payloads without display_status
   // must not show it as 기간 만료.
   if (isRevokeRequestedEformsignStatus(doc.current_status?.status_type)) return "revoke-requested";
+  // 042/090 are in the "expired" bucket too, but the document was revoked, not timed out.
+  if (isRevokedEformsignStatus(doc.current_status?.status_type)) return "revoked";
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewStep(doc)) return "drafting";
@@ -358,6 +363,7 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
   completed: "계약 완료",
   // Filed under the server's expired filter, so the pill counts match it.
   "revoke-requested": "기간 만료",
+  revoked: "기간 만료",
   expired: "기간 만료",
   unknown: "알 수 없음",
 };
@@ -368,6 +374,7 @@ function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDay
     return CATEGORY_BY_DISPLAY_STATUS[signal.display_status] ?? "unknown";
   }
   if (isRevokeRequestedEformsignStatus(signal.status_type)) return "revoke-requested";
+  if (isRevokedEformsignStatus(signal.status_type)) return "revoked";
   const cat = getStatusCategory(signal.status_type ?? undefined);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
@@ -406,9 +413,9 @@ function yymmddPrefillToIso(value: string | undefined): string | undefined {
 
 function categoryTones(category: ContractCategory): {
   badge: string;
-  badgeTone: "primary" | "green" | "muted" | "orange";
-  badgeMini: "primary" | "green" | "muted" | "orange";
-  infoTone: "primary" | "green" | "muted" | "orange";
+  badgeTone: "primary" | "green" | "muted" | "orange" | "burgundy";
+  badgeMini: "primary" | "green" | "muted" | "orange" | "burgundy";
+  infoTone: "primary" | "green" | "muted" | "orange" | "burgundy";
 } {
   switch (category) {
     case "completed":
@@ -424,6 +431,13 @@ function categoryTones(category: ContractCategory): {
         badgeTone: "orange",
         badgeMini: "orange",
         infoTone: "orange",
+      };
+    case "revoked":
+      return {
+        badge: "철회됨",
+        badgeTone: "burgundy",
+        badgeMini: "burgundy",
+        infoTone: "burgundy",
       };
     case "expired":
       return {
@@ -626,6 +640,7 @@ function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar):
   const category = categorize(doc, calendar);
   if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "revoke-requested") return "철회 요청됨";
+  if (category === "revoked") return "철회됨";
   if (category === "expired") return "기간 만료";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
@@ -1221,6 +1236,17 @@ function contractStageItems(
       icon: AlertTriangle,
       iconVariant: "warning",
       text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
+      time: updatedAt,
+    });
+    return items;
+  }
+
+  if (category === "revoked") {
+    // 042/090 share the "expired" filter but the document was revoked, not timed out.
+    items.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서가 철회됐어요",
       time: updatedAt,
     });
     return items;
