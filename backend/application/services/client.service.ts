@@ -576,6 +576,29 @@ export class ClientService {
                     }
                 }
 
+                // `client.e_doc_id` is unique: another client still pointing at a document that
+                // is moving to (or becoming the pointer of) the target would raise P2002 and
+                // leave the link undone. Release exactly those pointers, only on clients that
+                // are in the locked set (every pointer client of these documents was verified
+                // to be above), and only for documents this link hands to the target.
+                const releasedDocumentIds = [
+                    ...matchingDocs
+                        .filter((doc) => documentIdsToReassign.includes(doc.id))
+                        .map((doc) => doc.documentId),
+                    ...(shouldUpdateClientDocument && latestContract ? [latestContract.documentId] : []),
+                ];
+                const otherLockedClientIds = [...lockedClientIds].filter((id) => id !== client.id);
+                if (releasedDocumentIds.length > 0 && otherLockedClientIds.length > 0) {
+                    await transaction.client.updateMany({
+                        where: {
+                            id: { in: otherLockedClientIds },
+                            branchId: branchid,
+                            eDocId: { in: Array.from(new Set(releasedDocumentIds)) },
+                        },
+                        data: { eDocId: null },
+                    });
+                }
+
                 if (shouldUpdateClientDocument) {
                     const updated = await transaction.client.updateMany({
                         where: {
