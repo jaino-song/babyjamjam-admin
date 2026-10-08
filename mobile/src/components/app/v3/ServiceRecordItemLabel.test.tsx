@@ -57,6 +57,7 @@ describe("ServiceRecordItemLabel", () => {
     expect(slot).toHaveAttribute("id", "temp-message");
     expect(slot).toHaveAttribute("aria-live", "polite");
     expect(slot).toHaveAttribute("data-tone", "error");
+    expect(slot).toHaveAttribute("data-slot", "lab-msg");
     expect(slot).toHaveClass("text-v3-burgundy", "truncate");
 
     rerender(

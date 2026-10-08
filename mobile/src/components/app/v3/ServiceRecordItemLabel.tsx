@@ -79,6 +79,7 @@ export function ServiceRecordItemLabel({
       <span
         id={messageId}
         data-component={`${dataComponent}_message`}
+        data-slot="lab-msg"
         data-tone={message?.tone}
         aria-live="polite"
         title={message?.text}

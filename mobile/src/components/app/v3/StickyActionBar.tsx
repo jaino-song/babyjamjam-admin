@@ -31,7 +31,7 @@ export function StickyActionBar({
       role={ariaLabel ? "group" : undefined}
       aria-label={ariaLabel}
       className={cn(
-        "sticky bottom-0 z-10 flex gap-2 border-t border-v3-border bg-background px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] [&>*]:flex-1",
+        "sticky bottom-0 z-10 flex gap-2 border-t border-v3-border bg-white px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] [&>*]:flex-1",
         className,
       )}
     >
