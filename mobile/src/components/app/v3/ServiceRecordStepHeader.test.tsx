@@ -55,7 +55,7 @@ describe("ServiceRecordStepHeader", () => {
 
     expect(container.firstElementChild).toHaveAttribute("data-component", BASE);
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "ServiceRecordStepHeader");
-    for (const suffix of ["title", "meta-row", "meta", "crumbs", "progress", "progress_fill"]) {
+    for (const suffix of ["title", "meta-row", "meta-row_meta", "meta-row_crumbs", "progress", "progress_fill"]) {
       expect(container.querySelector(`[data-component="${BASE}_${suffix}"]`)).not.toBeNull();
     }
   });

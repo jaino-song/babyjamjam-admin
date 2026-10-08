@@ -80,7 +80,7 @@ describe("ReviewSection", () => {
       </ReviewSection>,
     );
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "ReviewSection");
-    for (const suffix of ["header", "title", "edit", "rows"]) {
+    for (const suffix of ["header", "header_title", "header_edit", "rows"]) {
       expect(container.querySelector(`[data-component="${BASE}_${suffix}"]`)).not.toBeNull();
     }
   });

@@ -50,18 +50,18 @@ export function ReviewSection({
       >
         <span
           id={titleId}
-          data-component={`${dataComponent}_title`}
-          className={cn("inline-block rounded-md px-[7px] py-0.5 text-[10.5px] font-extrabold", TAG_TONE_CLASS[tone])}
+          data-component={`${dataComponent}_header_title`}
+          className={cn("inline-block rounded-[6px] px-[7px] py-0.5 text-[10.5px] font-extrabold", TAG_TONE_CLASS[tone])}
         >
           {title}
         </span>
         {onEdit ? (
           <button
             type="button"
-            data-component={`${dataComponent}_edit`}
+            data-component={`${dataComponent}_header_edit`}
             aria-label={`${title} 수정`}
             onClick={onEdit}
-            className="min-h-8 rounded-md px-1 text-[12.5px] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
+            className="min-h-8 rounded-[6px] px-1 text-[12.5px] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
           >
             {editLabel}
           </button>

@@ -31,7 +31,7 @@ export interface OptionButtonGroupProps {
 }
 
 const OPTION_BASE =
-  "inline-flex min-h-10 items-center gap-[7px] rounded-xl border-[1.5px] px-[11px] text-left text-sm transition-colors " +
+  "inline-flex min-h-10 items-center gap-[7px] rounded-[12px] border-[1.5px] px-[11px] text-left text-sm transition-colors " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-1 " +
   "disabled:cursor-not-allowed disabled:opacity-45";
 
@@ -66,12 +66,14 @@ export function OptionButtonGroup({
     >
       {options.map((option, index) => {
         const isSelected = selected.includes(option.value);
+        // Each option is its own named part: `${base}_option-<0-based index>`.
+        const optionBase = `${dataComponent}_option-${index}`;
         return (
           <button
             key={option.value}
             id={index === 0 ? firstOptionId : undefined}
             type="button"
-            data-component={`${dataComponent}_option`}
+            data-component={optionBase}
             aria-pressed={isSelected}
             aria-describedby={describedBy}
             disabled={disabled || option.disabled}
@@ -85,7 +87,7 @@ export function OptionButtonGroup({
           >
             <span
               aria-hidden="true"
-              data-component={`${dataComponent}_option_indicator`}
+              data-component={`${optionBase}_indicator`}
               className={cn(
                 "grid size-4 shrink-0 place-items-center border-2 text-[10px] leading-none",
                 single ? "rounded-full" : "rounded-[5px]",
@@ -96,7 +98,7 @@ export function OptionButtonGroup({
             >
               {isSelected ? (single ? "●" : "✓") : null}
             </span>
-            <span data-component={`${dataComponent}_option_label`}>{option.label}</span>
+            <span data-component={`${optionBase}_label`}>{option.label}</span>
           </button>
         );
       })}

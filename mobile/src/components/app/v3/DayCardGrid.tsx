@@ -86,7 +86,7 @@ export function DayCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex min-w-0 flex-col items-center rounded-xl border-[1.5px] px-1 py-2.5 text-center transition-colors",
+        "flex min-w-0 flex-col items-center rounded-[12px] border-[1.5px] px-1 py-2.5 text-center transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed",
         CARD_STATE_CLASS[state],

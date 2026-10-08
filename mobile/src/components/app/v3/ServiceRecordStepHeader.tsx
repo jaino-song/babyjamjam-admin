@@ -54,11 +54,11 @@ export function ServiceRecordStepHeader({
           data-component={`${dataComponent}_meta-row`}
           className="mt-0.5 flex items-center justify-between gap-3 text-[11.5px]"
         >
-          <div data-component={`${dataComponent}_meta`} className="min-w-0 opacity-90">
+          <div data-component={`${dataComponent}_meta-row_meta`} className="min-w-0 opacity-90">
             {meta}
           </div>
           <div
-            data-component={`${dataComponent}_crumbs`}
+            data-component={`${dataComponent}_meta-row_crumbs`}
             className="ml-auto flex items-center gap-1.5 text-white/80 [&_b]:text-white"
           >
             {crumbs}

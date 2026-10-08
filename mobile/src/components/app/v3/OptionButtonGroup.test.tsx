@@ -53,7 +53,7 @@ describe("OptionButtonGroup", () => {
   it("keeps option names plain (indicator is aria-hidden)", () => {
     const { container } = setup({ selected: ["none"] });
     expect(screen.getByRole("button", { name: "이상없음" })).toBeInTheDocument();
-    expect(container.querySelector(`[data-component="${BASE}_option_indicator"]`)).toHaveAttribute(
+    expect(container.querySelector(`[data-component="${BASE}_option-0_indicator"]`)).toHaveAttribute(
       "aria-hidden",
       "true",
     );
@@ -120,13 +120,25 @@ describe("OptionButtonGroup", () => {
     expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-burgundy");
   });
 
-  it("names its children from the root data-component", () => {
+  it("names its children from the root data-component, one unique base per option", () => {
     const { container } = setup();
     expect(container.querySelector(`[data-component="${BASE}"]`)).toHaveAttribute(
       "data-source-component",
       "OptionButtonGroup",
     );
-    expect(container.querySelectorAll(`[data-component="${BASE}_option"]`)).toHaveLength(3);
-    expect(container.querySelectorAll(`[data-component="${BASE}_option_label"]`)).toHaveLength(3);
+    options.forEach((_, index) => {
+      const optionBase = `${BASE}_option-${index}`;
+      expect(container.querySelectorAll(`[data-component="${optionBase}"]`)).toHaveLength(1);
+      expect(container.querySelectorAll(`[data-component="${optionBase}_indicator"]`)).toHaveLength(1);
+      expect(container.querySelectorAll(`[data-component="${optionBase}_label"]`)).toHaveLength(1);
+    });
+  });
+
+  it("gives every element a unique data-component value", () => {
+    const { container } = setup({ selected: ["none"] });
+    const values = Array.from(container.querySelectorAll("[data-component]")).map((el) =>
+      el.getAttribute("data-component"),
+    );
+    expect(new Set(values).size).toBe(values.length);
   });
 });
