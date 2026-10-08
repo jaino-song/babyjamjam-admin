@@ -101,18 +101,20 @@ function FieldLabelRow({
     dataComponent,
     label,
     htmlFor,
+    labelId,
     slotId,
     message,
 }: {
     dataComponent: string;
     label: string;
     htmlFor?: string;
+    labelId?: string;
     slotId: string;
     message: SlotMessage | null;
 }) {
     return (
         <div data-component={`${dataComponent}_label-row`} data-slot="lab-row" className="lab-row">
-            <label data-slot="lab" className="lab" htmlFor={htmlFor}>{label}</label>
+            <label id={labelId} data-slot="lab" className="lab" htmlFor={htmlFor}>{label}</label>
             <span
                 id={slotId}
                 data-component={`${dataComponent}_helper`}
@@ -136,6 +138,7 @@ function FieldOptions({
     disabled = false,
     firstOptionId,
     describedBy,
+    labelId,
 }: {
     dataComponent: string;
     options: string[];
@@ -145,9 +148,10 @@ function FieldOptions({
     disabled?: boolean;
     firstOptionId?: string;
     describedBy?: string;
+    labelId?: string;
 }) {
     return (
-        <div data-component={dataComponent} data-slot="opts" className="opts">
+        <div data-component={dataComponent} data-slot="opts" className="opts" role={radio ? "radiogroup" : "group"} aria-labelledby={labelId}>
             {options.map((option, optionIndex) => (
                 <button
                     type="button"
@@ -166,6 +170,12 @@ function FieldOptions({
         </div>
     );
 }
+
+/** A count input whose label is not already part of its item's label needs the item name to be unambiguous (모유수유 횟수 vs 분유수유 횟수). */
+const countAccessibleName = (itemLabel: string, countLabel: string): string => {
+    const plainItemLabel = itemLabel.replace(/^[①-⑳]\s*/u, "").trim();
+    return plainItemLabel.includes(countLabel) ? countLabel : `${plainItemLabel} ${countLabel}`;
+};
 
 const dailyFieldSuffix = (key: string): string => key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 const countInputId = (dataComponent: string, countKey: string): string => `${dataComponent}_count-options_${countKey}-input-control`;
@@ -221,6 +231,7 @@ function DailyField({
 }) {
     const value = draft[item.key];
     const slotId = `${dataComponent}-helper`;
+    const labelId = `${slotId}-label`;
     const label = shortItemLabel(item.label);
     const [textFocused, setTextFocused] = useState(false);
     // A "required" message only appears once the field held a value and was cleared (or after submit).
@@ -272,6 +283,7 @@ function DailyField({
             dataComponent={dataComponent}
             label={item.label}
             htmlFor={item.type === "textarea" ? textareaInputId(dataComponent, item.key) : undefined}
+            labelId={labelId}
             slotId={slotId}
             message={message}
         />
@@ -289,6 +301,7 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
             </>
         );
@@ -310,6 +323,7 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
                 {item.type === "stool" && value === "이상변" && (
                     <div data-component={`${dataComponent}_stool-color`} data-slot="sub-fld" className="sub-fld">
@@ -359,7 +373,7 @@ function DailyField({
                                     <input
                                         data-slot="segnum-input"
                                         type="number"
-                                        aria-label={count.label}
+                                        aria-label={countAccessibleName(item.label, count.label)}
                                         aria-invalid={invalid ? "true" : undefined}
                                         id={countInputId(dataComponent, count.k)}
                                         data-component={`${countComponent}_control-row_control`}
@@ -421,6 +435,7 @@ function DailyField({
                     disabled={readOnly}
                     firstOptionId={firstOptionIdOf(dataComponent)}
                     describedBy={slotId}
+                    labelId={labelId}
                 />
             </>
         );
@@ -445,15 +460,22 @@ function MomConfirmationReview({
     return (
         <div data-component={dataComponent} data-slot="review" className="review">
             {REVIEW_SECTIONS.map((section, sectionIndex) => (
-                <section data-component={`${dataComponent}_section`} data-slot="review-section" className="review-section" key={section.id}>
+                <section
+                    data-component={`${dataComponent}_section`}
+                    data-slot="review-section"
+                    className="review-section"
+                    key={section.id}
+                    aria-labelledby={`${dataComponent}_section_${section.id}-title`}
+                >
                     <div data-component={`${dataComponent}_section_header`} data-slot="sec-head" className="sec-head">
-                        <span data-slot="tag" className={`tag ${section.tone === "finish" ? "etc" : section.tone}`}>{section.title}</span>
+                        <span id={`${dataComponent}_section_${section.id}-title`} data-slot="tag" className={`tag ${section.tone === "finish" ? "etc" : section.tone}`}>{section.title}</span>
                         {editing && !readOnly && (
                             <button
                                 type="button"
                                 data-slot="sec-edit"
                                 className="sec-edit"
                                 data-component={`${dataComponent}_section_header_edit`}
+                                aria-label={`${section.title} 수정`}
                                 onClick={() => onEdit(sectionIndex)}
                             >
                                 수정
@@ -482,19 +504,20 @@ function ReviewFieldRow({
     const isText = field.type === "textarea";
     const valueClassName = display.value ? (display.ok ? "ok" : "") : "empty";
     const value = display.value || REVIEW_EMPTY_LABEL;
+    const labelId = `${dataComponent}_section_${field.key}-label`;
 
     if (isText) {
         return (
-            <div data-component={`${dataComponent}_section_note`} data-slot="review-note" className="review-note">
-                <span>{field.label}</span>
+            <div data-component={`${dataComponent}_section_note`} data-slot="review-note" className="review-note" role="group" aria-labelledby={labelId}>
+                <span id={labelId}>{field.label}</span>
                 <b className={valueClassName}>{value}</b>
             </div>
         );
     }
 
     return (
-        <div data-component={`${dataComponent}_section_row`} data-slot="review-row" className="review-row">
-            <span>{field.label}</span>
+        <div data-component={`${dataComponent}_section_row`} data-slot="review-row" className="review-row" role="group" aria-labelledby={labelId}>
+            <span id={labelId}>{field.label}</span>
             <b className={valueClassName}>{value}</b>
         </div>
     );
@@ -871,7 +894,7 @@ export function ServiceRecordWizard({
                                 const deliveryComponent = child("body_delivery-field_options");
                                 return (
                                     <div data-component={child("body_delivery-field")} data-slot="fld" className="fld" key={key}>
-                                        <FieldLabelRow dataComponent={deliveryComponent} label="분만형태" slotId={slotId} message={message} />
+                                        <FieldLabelRow dataComponent={deliveryComponent} label="분만형태" labelId={`${slotId}-label`} slotId={slotId} message={message} />
                                         <FieldOptions
                                             dataComponent={deliveryComponent}
                                             options={["자연분만", "제왕절개"]}
@@ -881,6 +904,7 @@ export function ServiceRecordWizard({
                                             disabled={readOnly}
                                             firstOptionId={inputId}
                                             describedBy={slotId}
+                                            labelId={`${slotId}-label`}
                                         />
                                     </div>
                                 );
