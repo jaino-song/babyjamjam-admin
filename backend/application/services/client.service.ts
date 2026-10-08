@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
+import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import {
@@ -52,6 +53,7 @@ import {
     CLIENT_REPOSITORY,
     ClientListSummary,
     ClientListTab,
+    getClientListDateRanges,
     getEffectiveClientServiceStatus,
     IClientRepository,
 } from "domain/repositories/client.repository.interface";
@@ -66,6 +68,7 @@ import {
     ServiceStatusType,
 } from "domain/value-objects/service-status.vo";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import {
     COMPLETED_DOCUMENT_STATUS_TYPES,
     CREATED_DOCUMENT_STATUS_TYPES,
@@ -91,11 +94,18 @@ const FILTER_DAYS_THRESHOLD = 7;
 // The badge and the action-required feeds all read this number.
 const CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD = 6;
 const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
-const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"]);
-const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
+// 040 (cancellation REQUESTED, not done) is deliberately absent: it is its own
+// non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
+const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"]);
+// Exported so repository/provider filters exclude the same stored deletion codes
+// (the stored value is never the literal "deleted").
+export const DELETED_DOCUMENT_STATUS_TYPES = new Set(["047", "049", "099"]);
 const CONTRACT_AUTO_REGISTRATION_SOURCE = "contract_auto_registration";
 const DEFAULT_SERVICE_PERIOD_MS = 365 * 24 * 60 * 60 * 1000;
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
+const PHONE_LINK_LOCK_RETRY_LIMIT = 3;
+/** Returned by a phone-link attempt whose locked client set no longer matches the document owners. */
+const PHONE_LINK_LOCK_SET_CHANGED = Symbol("PHONE_LINK_LOCK_SET_CHANGED");
 
 // Document status type for eformsign documents
 // Maps to eformsign_doc.statusType values:
@@ -104,14 +114,17 @@ const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
 // - 020: opened (서명 페이지 열림)
 // - 060: requested (서명 요청됨/진행중)
 // - 080: rejected (거부됨)
-// - 090: revoked (철회됨)
+// - 040: revoke_requested (철회 요청됨 — cancellation requested, not done; eformsign may
+//   still refuse it and the signer may continue, so it is non-terminal)
+// - 042/045/090: revoked (철회됨)
 // - 099: deleted (삭제됨)
-export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
 // A document in one of these states is still "alive" — the client already has
 // a contract in flight (or finished), so the "계약서 필요" signal must not fire
-// even if it is unsigned. Everything else (rejected/revoked/deleted/no document
-// at all) is a dead document and falls back to the "발송 필요" check.
-const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "opened", "completed"]);
+// even if it is unsigned. A pending cancellation (revoke_requested) is still a live
+// contract until eformsign actually revokes it. Everything else (rejected/revoked/
+// deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
+const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
 export type ClientBadgeKey = "contract_required" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
 export type ClientBadgeStatus =
@@ -272,6 +285,66 @@ export class ClientService {
         }
     }
 
+    /**
+     * Runs one phone-link transaction attempt, starting over (each attempt is its own
+     * transaction that re-reads the owners) while the locked client set turned out stale.
+     * Running out of attempts throws into the caller's failure path.
+     */
+    private async retryWhilePhoneLinkLockSetChanges(
+        runAttempt: () => Promise<unknown>,
+    ): Promise<void> {
+        for (let attempt = 0; attempt < PHONE_LINK_LOCK_RETRY_LIMIT; attempt += 1) {
+            if (await runAttempt() !== PHONE_LINK_LOCK_SET_CHANGED) return;
+        }
+        throw new Error("Contract document owner kept changing while linking by phone");
+    }
+
+    /**
+     * Clients that must be locked before any of the documents: those that own one of them and
+     * those whose eDocId points at one of them (same branch). Read without a lock; it only
+     * chooses which client rows to lock and is re-read once the document locks are held.
+     */
+    private async findPhoneLinkClientIds(
+        transaction: Prisma.TransactionClient,
+        branchId: string,
+        documentIds: number[],
+    ): Promise<number[]> {
+        const rows = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT doc.client_id AS id
+            FROM eformsign_doc AS doc
+            WHERE doc.id IN (${Prisma.join(documentIds)})
+              AND doc.client_id IS NOT NULL
+            UNION
+            SELECT pointer_client.id
+            FROM client AS pointer_client
+            JOIN eformsign_doc AS pointed_doc
+              ON pointed_doc.document_id = pointer_client.e_doc_id
+            WHERE pointed_doc.id IN (${Prisma.join(documentIds)})
+              AND pointer_client.branch_id = ${branchId}::uuid
+        `);
+        return (rows ?? []).map((row) => row.id);
+    }
+
+    /** Locks the target client and every owner/pointer client of the documents, in id order. */
+    private async lockPhoneLinkClients(
+        transaction: Prisma.TransactionClient,
+        branchId: string,
+        targetClientId: number,
+        documentIds: number[],
+    ): Promise<Set<number>> {
+        const peekedClientIds = await this.findPhoneLinkClientIds(transaction, branchId, documentIds);
+        const clientIdsToLock = Array.from(new Set([targetClientId, ...peekedClientIds]))
+            .sort((left, right) => left - right);
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id IN (${Prisma.join(clientIdsToLock)})
+            ORDER BY id
+            FOR UPDATE
+        `);
+        return new Set(clientIdsToLock);
+    }
+
     private async linkContractDocumentsByPhone(
         branchid: string,
         client: ClientEntity,
@@ -378,11 +451,21 @@ export class ClientService {
                 return;
             }
 
-            await this.prismaService.$transaction(async (transaction) => {
+            await this.retryWhilePhoneLinkLockSetChanges(() => this.prismaService.$transaction(async (transaction) => {
                 const documentIdsToLock = Array.from(new Set([
                     ...documentIdsToReassign,
                     ...(shouldUpdateClientDocument && latestContract ? [latestContract.id] : []),
                 ])).sort((left, right) => left - right);
+                // Lock order (project-wide): client row(s) -> eformsign_doc rows (id order) ->
+                // case rows. The client rows come first so this link serialises with
+                // `linkClientIfActive`, permanent purge and service-record confirmation
+                // instead of deadlocking (40P01) against them.
+                const lockedClientIds = await this.lockPhoneLinkClients(
+                    transaction,
+                    branchid,
+                    client.id,
+                    documentIdsToLock,
+                );
                 const lockedDocuments = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
                     SELECT doc.id
                     FROM eformsign_doc AS doc
@@ -414,6 +497,18 @@ export class ClientService {
                     ORDER BY doc.id
                     FOR UPDATE
                 `);
+                // The documents are locked, so their owners are stable now. An owner (or a
+                // client pointing at one of them) that was not locked above moved between the
+                // unlocked read and the document lock; locking it now would invert the order.
+                // Nothing has been written yet: start the attempt over.
+                const currentClientIds = await this.findPhoneLinkClientIds(
+                    transaction,
+                    branchid,
+                    documentIdsToLock,
+                );
+                if (currentClientIds.some((id) => !lockedClientIds.has(id))) {
+                    return PHONE_LINK_LOCK_SET_CHANGED;
+                }
                 const lockedDocumentIds = new Set(lockedDocuments.map(({ id }) => id));
                 if (documentIdsToLock.some((id) => !lockedDocumentIds.has(id))) {
                     throw new Error("Contract document mirror generation changed");
@@ -500,7 +595,8 @@ export class ClientService {
                         throw new Error("Client contract pointer update failed");
                     }
                 }
-            });
+                return undefined;
+            }));
 
             if (shouldUpdateClientDocument) {
                 // SAVED computation: update() re-derives the client's duration.
@@ -649,7 +745,11 @@ export class ClientService {
         }
     }
 
-    /** Latest non-service-record contract document per client. */
+    /**
+     * Latest non-service-record contract document per client. The selection rule lives in
+     * `selectCurrentContractDocument`, shared with the receipt-link automatic path so the
+     * screen and the receipt always judge the same "current" contract.
+     */
     private async findLatestContractByClientId(
         clientIds: number[],
     ): Promise<Map<number, LatestContractSignal>> {
@@ -670,6 +770,7 @@ export class ClientService {
                     { documentKind: null },
                 ],
             },
+            // Newest first at full timestamptz(6) precision: selectCurrentContractDocument keeps this order.
             orderBy: [
                 { createdDate: "desc" },
                 { id: "desc" },
@@ -688,27 +789,38 @@ export class ClientService {
             },
         });
 
+        const docsByClientId = new Map<number, typeof contractDocs>();
         for (const doc of contractDocs) {
             if (doc.clientId === null) continue;
-            if (isServiceRecordEformsignDocument(doc, serviceRecordTemplateIds)) {
-                continue;
-            }
-            if (!latestContractMap.has(doc.clientId)) {
-                latestContractMap.set(doc.clientId, {
-                    statusType: doc.statusType,
-                    permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
-                    documentId: doc.documentId,
-                    stepType: doc.stepType,
-                    stepName: doc.stepName,
-                    detailPayload: doc.detailPayload,
-                });
-            }
+            const docs = docsByClientId.get(doc.clientId);
+            if (docs) docs.push(doc);
+            else docsByClientId.set(doc.clientId, [doc]);
+        }
+
+        for (const [clientId, docs] of docsByClientId) {
+            const doc = selectCurrentContractDocument(docs, serviceRecordTemplateIds);
+            if (!doc) continue;
+            latestContractMap.set(clientId, {
+                statusType: doc.statusType,
+                permanentPurgeRequestedAt: doc.permanentPurgeRequestedAt,
+                documentId: doc.documentId,
+                stepType: doc.stepType,
+                stepName: doc.stepName,
+                detailPayload: doc.detailPayload,
+            });
         }
 
         return latestContractMap;
     }
 
     /** Whether a client's latest contract document is still active (see `ACTIVE_DOCUMENT_STATUSES`). */
+    private isActiveContractDocument(contract: LatestContractSignal | undefined): boolean {
+        if (!contract) return false;
+        return contract.permanentPurgeRequestedAt == null
+            && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
+            && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType));
+    }
+
     private async findHasActiveContractDocumentByClientId(
         clientIds: number[],
     ): Promise<Map<number, boolean>> {
@@ -717,9 +829,7 @@ export class ClientService {
         return new Map(
             [...latestContractMap].map(([clientId, contract]) => [
                 clientId,
-                contract.permanentPurgeRequestedAt == null
-                && !DELETED_DOCUMENT_STATUS_TYPES.has(contract.statusType.trim().padStart(3, "0"))
-                && ACTIVE_DOCUMENT_STATUSES.has(this.mapStatusTypeToDocumentStatus(contract.statusType)),
+                this.isActiveContractDocument(contract),
             ]),
         );
     }
@@ -1686,6 +1796,7 @@ export class ClientService {
         if (normalized === "000") return null;
 
         if (COMPLETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "completed";
+        if (isRevokeRequestedStatus(normalized)) return "revoke_requested";
         if (REJECTED_DOCUMENT_STATUS_TYPES.has(normalized)) return "rejected";
         if (REVOKED_DOCUMENT_STATUS_TYPES.has(normalized)) return "revoked";
         if (DELETED_DOCUMENT_STATUS_TYPES.has(normalized)) return "deleted";
@@ -2584,38 +2695,31 @@ export class ClientService {
         upcomingNextMonth: number;
     }> {
         const now = new Date();
-        const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const nextMonthEnd = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59);
+        // Month boundaries follow the Korean calendar date, as UTC-midnight dates
+        // like the stored @db.Date start dates (the server runs in UTC).
+        const { thisMonthStart, nextMonthStart, nextMonthEndExclusive } =
+            getClientListDateRanges(now);
 
-        const [activeClients, contractsNotSent, branchClients, upcomingThisMonth, upcomingNextMonth] =
+        const [activeClients, branchClients, upcomingThisMonth, upcomingNextMonth] =
             await Promise.all([
                 this.prismaService.client.count({
                     where: { serviceStatus: SERVICE_STATUS.ACTIVE, branchId: branchid },
                 }),
-                this.prismaService.client.count({
-                    where: {
-                        eDocId: null,
-                        serviceStatus: SERVICE_STATUS.WAITING,
-                        branchId: branchid,
-                    },
-                }),
                 this.prismaService.client.findMany({
                     where: { branchId: branchid },
-                    select: { id: true },
+                    select: { id: true, startDate: true, endDate: true, serviceStatus: true },
                 }),
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: thisMonthStart, lte: thisMonthEnd },
+                        startDate: { gte: thisMonthStart, lt: nextMonthStart },
                         branchId: branchid,
                     },
                 }),
                 this.prismaService.client.count({
                     where: {
                         serviceStatus: SERVICE_STATUS.WAITING,
-                        startDate: { gte: nextMonthStart, lte: nextMonthEnd },
+                        startDate: { gte: nextMonthStart, lt: nextMonthEndExclusive },
                         branchId: branchid,
                     },
                 }),
@@ -2627,6 +2731,22 @@ export class ClientService {
             branchClients.map((client) => client.id),
         );
         const calendar = await this.holidayCalendar.forBranch(branchid);
+
+        // "계약서 발송 필요": exactly the clients whose list row carries the "발송 필요"
+        // contract badge — same effective service status, same latest-contract lookup
+        // and the same business-day send window as the list (computeContractActionRequired).
+        const contractsNotSent = branchClients.filter((client) =>
+            this.computeContractActionRequired({
+                serviceStatus: getEffectiveClientServiceStatus(
+                    client.serviceStatus ?? null,
+                    client.startDate ?? null,
+                    client.endDate ?? null,
+                ),
+                startDate: client.startDate ?? null,
+                hasActiveContractDocument: this.isActiveContractDocument(latestContracts.get(client.id)),
+            }, calendar)?.reason === "발송 필요",
+        ).length;
+
         const contractsPendingSignature = [...latestContracts.values()].filter((doc) => {
             if (
                 doc.permanentPurgeRequestedAt != null
@@ -2667,26 +2787,22 @@ export class ClientService {
         branchid: string,
         limit = 3,
     ): Promise<ClientActionRequiredAlert[]> {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        const today = isoDateInKorea(new Date());
 
         // Display-only: one cached calendar instance serves both the cutoff
         // pre-filter and the per-client decision below.
         const calendar = await this.holidayCalendar.forBranch(branchid);
 
         // The window is business days, which spans more calendar days than its
-        // count. Translate it into the exact calendar date it reaches so this
-        // pre-filter only narrows the scan — computeActionRequired still decides
-        // (it alone knows whether the latest document is active).
-        const businessDayCutoff = (businessDays: number): Date => {
-            const cutoff = new Date(
-                `${calendar.addBusinessDays(isoDateInKorea(today), businessDays)}T00:00:00.000Z`,
-            );
-            cutoff.setHours(23, 59, 59, 999);
-            return cutoff;
-        };
-
-        const sendThresholdDate = businessDayCutoff(CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD);
+        // count. computeActionRequired counts the business days in (today, start],
+        // so a start inside the window is any date before the business day just past
+        // it — including a weekend or holiday after the last one. Translate that into
+        // an exclusive calendar bound so this pre-filter only narrows the scan;
+        // computeActionRequired still decides (it alone knows whether the latest
+        // document is active).
+        const sendWindowEndExclusive = new Date(
+            `${calendar.addBusinessDays(today, CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD + 1)}T00:00:00.000Z`,
+        );
 
         const clients = await this.prismaService.client.findMany({
             where: {
@@ -2698,7 +2814,7 @@ export class ClientService {
                             { serviceStatus: null },
                             { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
                         ],
-                        startDate: { lte: sendThresholdDate },
+                        startDate: { lt: sendWindowEndExclusive },
                     },
                 ],
             },

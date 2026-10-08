@@ -740,6 +740,24 @@ describe("messages page — merged 발송 기록 section", () => {
     expect(within(pastZone as HTMLElement).getByText("이하은")).toBeInTheDocument();
   });
 
+  it.each(["processing", "dispatching"] as const)(
+    "labels a %s upcoming job 발송 중 with the info tone",
+    (status) => {
+      mockData({
+        upcoming: [buildUpcomingJob({ status })],
+      });
+
+      render(<MessagesPage />);
+      goToHistorySection();
+
+      const upcomingZone = getZoneContainer("upcoming") as HTMLElement;
+      const badge = upcomingZone.querySelector('[data-slot="status-badge"]');
+      expect(badge).not.toBeNull();
+      expect(badge).toHaveTextContent("발송 중");
+      expect(badge).toHaveClass("bg-status-info");
+    },
+  );
+
   it("filters to only the matching zone when a status tab is selected", () => {
     mockData({
       upcoming: [buildUpcomingJob()],

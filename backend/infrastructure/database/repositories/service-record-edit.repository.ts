@@ -6,7 +6,10 @@ import {
     ServiceRecordEditConflictError,
     ServiceRecordEditDraftConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordRevisionOperationUnresolvedError,
+    SERVICE_RECORD_BORN_STUCK_ERROR_CODES,
 } from "domain/errors/service-record-edit.error";
+import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
@@ -39,6 +42,7 @@ import {
 } from "domain/repositories/service-record-edit.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import {
     persistClientMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
@@ -153,7 +157,12 @@ function contractStage(document: DocumentScopeRow): Exclude<ServiceRecordEditCon
     if (["003", "012", "022", "032", "050", "062", "072", "092"].includes(status)) {
         return "completed";
     }
-    if (["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
+    // "040" (revoke requested) is a live, non-terminal document: eformsign can still refuse the
+    // request or the signer can carry on, so it is in progress, not rejected.
+    if (isRevokeRequestedStatus(status)) {
+        return "in_progress";
+    }
+    if (["011", "021", "031", "042", "045", "047", "049", "061", "071", "080"].includes(status)) {
         return "rejected";
     }
     if (["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"].includes(status)) {
@@ -361,26 +370,38 @@ async function loadDocumentScope(
  * A missing pointer is authoritative only when the preceding scoped lookup
  * observed it.  Query failures therefore leave token evidence undefined so
  * the operation planner cannot misclassify an unknown source as not-required.
+ *
+ * Two documents are read, for two different jobs:
+ *
+ * - `document` feeds contract-revision planning, which WRITES to eformsign. It keeps
+ *   following the `client.eDocId`-pinned contract exactly as before.
+ * - `receiptDocument` feeds the receipt refresh. It is the client's CURRENT contract by the
+ *   same rule the client summary and the automatic receipt path use
+ *   (`selectCurrentContractDocument` over candidates ranked by the database), because a
+ *   receipt must be rebuilt from the contract the screen shows. `client.eDocId` can lag a
+ *   re-issued contract, so it must not decide which document a receipt is rebuilt from. The
+ *   receipt tokens keep whatever document they are attached to (the stable link); only the
+ *   source of the receipt facts follows the current contract. If the current contract cannot be
+ *   resolved to a branch/client-owned contract row, `receiptDocument` is `null` and the receipt
+ *   operation fails closed instead of falling back to the pointer's document.
  */
-async function loadRevisionFactsSource(
+export async function loadRevisionFactsSource(
     tx: Prisma.TransactionClient,
     branchId: string,
     source: ServiceRecordEditSource,
+    serviceRecordTemplateIds: ReadonlySet<string> = new Set(),
 ): Promise<ServiceRecordEditRevisionFactsSource> {
     const contractDocumentId = source.documentScope?.contract.currentDocumentId ?? null;
-    const receiptDocumentId = source.documentScope?.receipt?.sourceDocumentId ?? null;
+    const tokenDocumentId = source.documentScope?.receipt?.sourceDocumentId ?? null;
     // A receipt token can outlive a cleared client.eDocId pointer.  When the
     // contract pointer is absent, the branch/client-owned receipt document is
-    // still the authoritative source for receipt facts.  Prefer the explicit
-    // contract pointer when both are present; never search by phone or across
-    // branches.
-    const factsDocumentId = contractDocumentId ?? receiptDocumentId;
-    const documentIds = [...new Set(
-        [contractDocumentId, receiptDocumentId].filter((id): id is string => typeof id === "string" && id.length > 0),
-    )];
+    // still the authoritative source for the contract facts (unchanged).  Prefer
+    // the explicit contract pointer when both are present; never search by
+    // phone or across branches.
+    const factsDocumentId = contractDocumentId ?? tokenDocumentId;
     const observedEmptyTokens = source.documentScope?.receipt?.evidence === "observed"
         && (source.documentScope.receipt?.tokenIds.length ?? 0) === 0;
-    if (documentIds.length === 0) {
+    if (contractDocumentId === null && tokenDocumentId === null) {
         return {
             document: null,
             ...(observedEmptyTokens ? { receiptTokens: [] } : {}),
@@ -388,6 +409,45 @@ async function loadRevisionFactsSource(
     }
 
     try {
+        // Only when receipt tokens exist: rank the client's contract candidates with the
+        // shared rule.  The scope query above orders differently (updatedDate first), so the
+        // candidates are re-queried here in database order (createdDate desc, id desc) and the
+        // result is never re-sorted in JS.  The candidate rows are already locked by
+        // lockClientOwnedContractDocuments, so this check and the later write see one state.
+        let currentContractDocumentId: string | null = null;
+        if (tokenDocumentId !== null) {
+            const candidates = await tx.eformsign_doc.findMany({
+                where: {
+                    clientId: source.client.id,
+                    serviceRecordCaseId: null,
+                    OR: [
+                        { documentKind: "contract" },
+                        { documentKind: null },
+                    ],
+                },
+                orderBy: [
+                    { createdDate: "desc" },
+                    { id: "desc" },
+                ],
+                select: {
+                    id: true,
+                    documentId: true,
+                    documentKind: true,
+                    serviceRecordCaseId: true,
+                    templateId: true,
+                },
+            });
+            currentContractDocumentId = selectCurrentContractDocument(
+                candidates,
+                serviceRecordTemplateIds,
+            )?.documentId ?? null;
+        }
+        // Token observations come from the documents the scope already named plus the current
+        // contract; with the pointer in sync that is the same single document as before.
+        const documentIds = [...new Set(
+            [contractDocumentId, tokenDocumentId, currentContractDocumentId]
+                .filter((id): id is string => typeof id === "string" && id.length > 0),
+        )];
         const documents = await tx.eformsign_doc.findMany({
             where: {
                 branchId,
@@ -421,11 +481,25 @@ async function loadRevisionFactsSource(
                 },
             },
         });
-        const contractDocument = factsDocumentId === null
-            ? null
-            : documents.find((document) => document.documentId === factsDocumentId) ?? null;
-        const receiptTokens: ServiceRecordEditRevisionFactsReceiptToken[] = documents
-            .flatMap((document) => document.receiptLinkTokens)
+        type FactsRow = (typeof documents)[number];
+        const toFactsDocument = (row: FactsRow): ServiceRecordEditRevisionFactsDocument => ({
+            documentId: row.documentId,
+            branchId: row.branchId,
+            clientId: row.clientId,
+            documentVersion: row.snapshotVersion,
+            templateId: row.templateId,
+            statusType: row.statusType,
+            stepType: row.stepType,
+            stepIndex: row.stepIndex,
+            stepName: row.stepName,
+            stepRecipientType: row.stepRecipientType,
+            stepRecipientName: row.stepRecipientName,
+            stepRecipientSms: row.stepRecipientSms,
+            detailPayload: row.detailPayload === null
+                ? null
+                : toDomainJson(row.detailPayload),
+        });
+        const toFactsTokens = (row: FactsRow): ServiceRecordEditRevisionFactsReceiptToken[] => row.receiptLinkTokens
             .map((token) => ({
                 id: token.id,
                 eformsignDocId: token.eformsignDocId,
@@ -434,26 +508,31 @@ async function loadRevisionFactsSource(
                 active: token.active,
                 revokedAt: token.revokedAt,
             }));
-        const document: ServiceRecordEditRevisionFactsDocument | null = contractDocument === null
+
+        const contractRow = factsDocumentId === null
             ? null
-            : {
-                documentId: contractDocument.documentId,
-                branchId: contractDocument.branchId,
-                clientId: contractDocument.clientId,
-                documentVersion: contractDocument.snapshotVersion,
-                templateId: contractDocument.templateId,
-                statusType: contractDocument.statusType,
-                stepType: contractDocument.stepType,
-                stepIndex: contractDocument.stepIndex,
-                stepName: contractDocument.stepName,
-                stepRecipientType: contractDocument.stepRecipientType,
-                stepRecipientName: contractDocument.stepRecipientName,
-                stepRecipientSms: contractDocument.stepRecipientSms,
-                detailPayload: contractDocument.detailPayload === null
-                    ? null
-                    : toDomainJson(contractDocument.detailPayload),
-            };
-        return { document, receiptTokens };
+            : documents.find((candidate) => candidate.documentId === factsDocumentId) ?? null;
+        const document = contractRow === null ? null : toFactsDocument(contractRow);
+
+        const receiptTokens = documents.flatMap(toFactsTokens);
+        if (tokenDocumentId === null) {
+            // No receipt token was observed: nothing to refresh, receipt facts mirror the
+            // contract document (and yield no receipt input without tokens).
+            return { document, receiptTokens };
+        }
+
+        // The receipt facts come from the client's current contract.  When that row is not a
+        // branch/client-owned contract we can read (or there is no current contract at all),
+        // fail closed: never fall back to the eDocId-pinned document for the receipt.
+        const currentRow = currentContractDocumentId === null
+            ? null
+            : documents.find((candidate) => candidate.documentId === currentContractDocumentId) ?? null;
+        if (currentRow === null) return { document, receiptTokens, receiptDocument: null };
+        return {
+            document,
+            receiptTokens,
+            receiptDocument: currentRow === contractRow ? document : toFactsDocument(currentRow),
+        };
     } catch {
         return { document: null, receiptTokens: undefined };
     }
@@ -1448,11 +1527,6 @@ type BlockingRevisionDocumentStateRow = {
     lastErrorCode: string | null;
 };
 
-/** Stable conflict code surfaced when a current revision operation is unresolved. */
-class ServiceRecordRevisionOperationUnresolvedError extends ServiceRecordEditConflictError {
-    readonly code = "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED";
-}
-
 function operationRevisionDispatchContext(
     state: ServiceRecordRevisionDocumentState,
 ): ServiceRecordRevisionDispatchContext | null {
@@ -1526,8 +1600,13 @@ function operationRevisionDispatchContext(
  * retained editor history and has no executable provider job yet.  The case
  * row is already held by the common confirmation lock sequence, so this
  * scoped query is both the fresh read and the state-row lock before writes.
+ *
+ * Also excluded: a state born in `manual_review` because its provider facts
+ * were unavailable at confirm time (see SERVICE_RECORD_BORN_STUCK_ERROR_CODES).
+ * It has no provider job and no target document, so it cannot duplicate a
+ * send; blocking on it would make the record uneditable forever.
  */
-async function assertNoBlockingRevisionDocumentStates(
+export async function assertNoBlockingRevisionDocumentStates(
     tx: Prisma.TransactionClient,
     input: { branchId: string; clientId: number; serviceRecordCaseId: string },
 ): Promise<void> {
@@ -1552,6 +1631,11 @@ async function assertNoBlockingRevisionDocumentStates(
           AND NOT (
                 state.status IN ('not_required', 'completed')
                 OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+                OR (
+                    state.status = 'manual_review'
+                    AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
+                    AND state.target_document_id IS NULL
+                )
           )
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
@@ -1561,16 +1645,44 @@ async function assertNoBlockingRevisionDocumentStates(
     const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
     throw new ServiceRecordRevisionOperationUnresolvedError(
         `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+        blocking.operation,
+        blocking.status,
+        blocking.lastErrorCode,
     );
 }
 
 /**
- * Lock contract documents proven by the currently locked client's canonical
- * e_doc_id before locking document jobs.  Case-linked service-record snapshot
- * documents are locked by lockCaseChildren; this closes the historical
+ * Lock the client's contract documents before locking document jobs.  Case-linked
+ * service-record snapshot documents are locked by lockCaseChildren; this closes the historical
  * contract-document gap without locking arbitrary branch documents.
+ *
+ * The set is the client's canonical `e_doc_id` document PLUS every branch/client contract
+ * candidate (`service_record_case_id IS NULL`, kind contract or legacy NULL).  The receipt
+ * refresh reads its facts from the client's CURRENT contract, which can be a newer document
+ * than the (possibly lagging) `e_doc_id` pointer; that document must be locked for the same
+ * reason the pointer's document always was.  Rows are locked in `id` order so overlapping
+ * transactions cannot invert the order.
+ *
+ * Lock order across the paths that take both a client row and document rows: client row FIRST,
+ * document rows after it, for every path that cooperates with this one -
+ *  - confirmation (here): client -> ... -> these documents (`id` order) -> draft -> revisions;
+ *  - receipt promotion (`SbReceiptLinkTokenRepository`): client -> case -> revision -> state ->
+ *    the client's documents (`id` order) -> receipt tokens;
+ *  - `SbEformsignDocRepository.linkClientIfActive`: client row(s) (`id` order) -> the document ->
+ *    case rows; it used to take the document first, which deadlocked with this lock;
+ *  - receipt-link issue (`createOrRefreshContractLink`): client row -> token insert (key-share on
+ *    the document row it references).
+ *  - permanent purge (`purgeContent`) and the phone based link in `ClientService`
+ *    (`linkContractDocumentsByPhone`): each reads the document owners and the clients pointing at
+ *    the documents WITHOUT a lock, locks those client rows in `id` order, then the document rows,
+ *    then re-reads them and starts over if one was not locked;
+ *  - `isCurrentContractDocument`: the same, for the document's owner only.
+ * Every listed path therefore takes the client rows first and the document rows in `id` order.
+ * Case/revision rows are not in one fixed place relative to the documents (promotion takes them
+ * before the documents, `linkClientIfActive` after); what keeps them deadlock-free is that every
+ * such path already holds the client row.
  */
-async function lockClientOwnedContractDocuments(
+export async function lockClientOwnedContractDocuments(
     tx: Prisma.TransactionClient,
     branchId: string,
     clientId: number,
@@ -1580,12 +1692,22 @@ async function lockClientOwnedContractDocuments(
         await transaction.$queryRaw(Prisma.sql`
             SELECT owner_doc.id
             FROM "eformsign_doc" AS owner_doc
-            INNER JOIN "client" AS owner_client
-                ON owner_client.id = ${clientId}
-               AND owner_client.branch_id = ${branchId}::uuid
-               AND owner_client.e_doc_id = owner_doc.document_id
             WHERE owner_doc.branch_id = ${branchId}::uuid
               AND owner_doc.client_id = ${clientId}
+              AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM "client" AS owner_client
+                        WHERE owner_client.id = ${clientId}
+                          AND owner_client.branch_id = ${branchId}::uuid
+                          AND owner_client.e_doc_id = owner_doc.document_id
+                    )
+                    OR (
+                        owner_doc.service_record_case_id IS NULL
+                        AND (owner_doc.document_kind = 'contract' OR owner_doc.document_kind IS NULL)
+                    )
+              )
+            ORDER BY owner_doc.id
             FOR UPDATE OF owner_doc
         `);
         return;
@@ -3034,7 +3156,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         // planner; public editor/draft projections never expose detail JSON or
         // receipt token metadata.  A failed observation remains explicitly
         // unknown so auxiliary operations fail closed.
-        const revisionFactsSource = await loadRevisionFactsSource(tx, input.branchId, source);
+        const revisionFactsSource = await loadRevisionFactsSource(
+            tx,
+            input.branchId,
+            source,
+            new Set(input.serviceRecordTemplateIds ?? []),
+        );
         const snapshot: ServiceRecordEditConfirmSnapshot = {
             draft,
             source,

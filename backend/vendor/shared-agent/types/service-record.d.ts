@@ -1,5 +1,5 @@
 import type { MessageTriggerJobStatus } from "./message";
-export type ServiceRecordLinkStatus = "none" | "scheduled" | "sent" | "failed" | "canceled";
+export type ServiceRecordLinkStatus = "none" | "scheduled" | "sending" | "sent" | "failed" | "canceled";
 export type ServiceRecordTokenState = "active" | "expired" | "revoked" | null;
 export interface ServiceRecordToken {
     issuedAt: string;
@@ -311,6 +311,12 @@ export interface ServiceRecordRevisionDocumentState {
 }
 export interface SignatureDocStatus {
     documentId: string;
+    /**
+     * eformsign status code (`eformsign_doc.statusType`, e.g. "050"). Tone and
+     * label come from this code; `statusDetail` is display text only. Optional
+     * so a client talking to a backend that predates the field still renders.
+     */
+    statusType?: string | null;
     statusDetail: string;
     stepName: string;
     createdDate: string;
@@ -358,6 +364,7 @@ export interface ServiceRecordOverview {
 export interface SendServiceRecordLinkResponse {
     ok: boolean;
     jobId: string;
+    /** Includes `dispatching`, which the backend sets while a claimed job is delivering. */
     status: MessageTriggerJobStatus;
     scheduledFor: string;
 }

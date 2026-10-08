@@ -261,6 +261,12 @@ export interface UpdateMessageTriggerRuleBranchActivationDto {
 export type MessageTriggerJobStatus =
   | "pending"
   | "processing"
+  /**
+   * Set by the backend once a claimed job is actually delivering — the point of
+   * no return after `processing`. It is not cancelable and to the user it reads
+   * the same as `processing` ("발송 중").
+   */
+  | "dispatching"
   | "sent"
   | "failed"
   | "canceled";

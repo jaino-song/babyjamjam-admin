@@ -602,6 +602,8 @@ describe("mobile client service date confirmation", () => {
     act(() => {
       useClientWizardStore.getState().setCurrentStep(2);
     });
+    // Editing the period is what makes the saved period need confirming; a save that leaves it alone does not.
+    fireEvent.change(document.getElementById("endDate") as HTMLInputElement, { target: { value: "2026-09-09" } });
 
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
     const modal = await screen.findByRole("dialog", { name: "서비스 기간 확인" });
@@ -612,12 +614,13 @@ describe("mobile client service date confirmation", () => {
     await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(1));
     expect(mockUpdateClient).toHaveBeenCalledWith({
       id: 7,
-      dto: expect.objectContaining({
+      dto: {
         duration: 15,
         startDate: "2026-09-03",
-        endDate: "2026-09-08",
+        endDate: "2026-09-09",
+        expectedEndDate: "2026-09-08",
         allowBusinessDayMismatch: true,
-      }),
+      },
     });
     await act(async () => {
       finish({ id: 7 });

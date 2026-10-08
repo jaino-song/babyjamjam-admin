@@ -19,7 +19,14 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
-    useMessageHistory: () => ({ data: [], isError: false, isLoading: false }),
+    useClientMessageHistory: () => ({
+        items: [],
+        isError: false,
+        isLoading: false,
+        isFetchingNextPage: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+    }),
     useClientUpcomingMessageTriggerJobs: () => ({
         items: [],
         isError: false,
@@ -261,7 +268,7 @@ describe("ClientDetailPanel employee phones", () => {
         ]));
     });
 
-    it("falls back to the client document status for its current local document", async () => {
+    it("never overrides its current document with the client document status summary", async () => {
         mockGetDocumentsByClientId.mockResolvedValueOnce([{
             documentId: "contract-document-1",
             createdDate: "2026-07-18",
@@ -291,9 +298,10 @@ describe("ClientDetailPanel employee phones", () => {
         await waitFor(() => expect(queryClient.getQueryData(["eformsign-docs", "client", client.id])).toEqual([
             expect.objectContaining({
                 documentId: "contract-document-1",
-                statusDetail: "검토 필요",
-                stepName: "검토 필요",
-                displayStatus: null,
+                statusType: "doc_tempsave",
+                statusDetail: "대기",
+                stepName: "이용자",
+                displayStatus: "signed",
             }),
         ]));
     });

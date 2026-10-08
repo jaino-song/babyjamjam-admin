@@ -7,6 +7,7 @@ export const messageTriggerKeys = {
     upcoming: (limit = 200) => [...messageTriggerKeys.all, "upcoming", limit] as const,
     clientUpcoming: (clientId: number) => [...messageTriggerKeys.upcoming(), "client", clientId] as const,
     history: (limit = 200) => [...messageTriggerKeys.all, "history", limit] as const,
+    clientHistory: (clientId: number) => [...messageTriggerKeys.all, "client-history", clientId] as const,
     templates: (provider: string, eventType?: string, recipientType?: string) =>
         [...messageTriggerKeys.all, "templates", provider, eventType ?? "all", recipientType ?? "all"] as const,
 };

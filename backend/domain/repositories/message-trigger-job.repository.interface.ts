@@ -1,6 +1,6 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
-import type { MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
+import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
     clientId?: number;
@@ -29,6 +29,29 @@ export interface ClientUpcomingMessageTriggerJobRecord {
 export interface ClientUpcomingMessageTriggerJobCursor {
     effectiveDueAt: Date;
     id: string;
+}
+
+/**
+ * Outcome of replacing a schedule's not-yet-started jobs with one manual job.
+ * `in_flight` means a job was already claimed by the dispatcher
+ * (`processing`/`dispatching`); nothing was written in that case.
+ * `lock_timeout` means the rule or a job row stayed locked by another
+ * transaction for longer than the fence is willing to wait; nothing was
+ * written and the caller should ask the user to retry.
+ */
+export type ReplacePendingJobsResult =
+    | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
+    | { kind: "in_flight"; inFlightJobIds: string[] }
+    | { kind: "lock_timeout" };
+
+/**
+ * Outcome of cancelling a schedule's not-yet-sent jobs. `inFlightJobIds` are
+ * jobs the dispatcher had already moved to `dispatching` (a send may already
+ * be on its way): they are left untouched and only reported.
+ */
+export interface CancelPendingJobsResult {
+    canceledJobIds: string[];
+    inFlightJobIds: string[];
 }
 
 export interface IMessageTriggerJobRepository {
@@ -72,6 +95,12 @@ export interface IMessageTriggerJobRepository {
         branchId: string,
         query: MessageHistoryPageQuery,
     ): Promise<MessageTriggerJobEntity[]>;
+    /** `findHistoryPageByBranch` restricted to one client (and its unowned phone matches) in the branch. */
+    findClientHistoryPageByBranch(
+        branchId: string,
+        scope: ClientHistoryScope,
+        query: MessageHistoryPageQuery,
+    ): Promise<MessageTriggerJobEntity[]>;
     /**
      * Terminal (failed or canceled) jobs for a branch whose terminal
      * transition landed in `[since, until)` — `canceledAt` for a canceled
@@ -110,6 +139,19 @@ export interface IMessageTriggerJobRepository {
         ruleId: string,
         employeeScheduleId: number,
     ): Promise<MessageTriggerJobEntity[]>;
+    /**
+     * Cancel, in ONE atomic statement, every `pending` and `processing` job of
+     * a rule and employee schedule (a `processing` claim is the reversible
+     * one: clearing its token makes the dispatcher's later
+     * `processing -> dispatching` authorization a no-op). A `dispatching` job
+     * is never touched; its id is returned so the caller knows a send may
+     * already have left.
+     */
+    cancelPendingByRuleAndEmployeeSchedule(
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+    ): Promise<CancelPendingJobsResult>;
     cancelPendingByClientContext(branchId: string, clientId: number, reason: string): Promise<number>;
     cancelOrphanedPending(reason: string, branchId?: string): Promise<number>;
     findRecoverableOrphanedClientJobs(branchId: string, limit?: number): Promise<MessageTriggerJobEntity[]>;
@@ -150,6 +192,22 @@ export interface IMessageTriggerJobRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<number | null>;
     upsertPending(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
+    /**
+     * Atomically replace every `pending` job of the replacement's rule and
+     * employee schedule with the replacement, unless one is already claimed.
+     * Under one transaction the schedule's live jobs are row-locked; if any is
+     * `processing`/`dispatching` (claimed by the dispatcher, so a send may
+     * already be on its way) nothing is written and `in_flight` is returned.
+     * The transaction waits at most one second for any lock; past that nothing
+     * is written and `lock_timeout` is returned.
+     * Otherwise the pending jobs are canceled with `reason` and the replacement
+     * is inserted in the same transaction, so a concurrent dispatcher claim
+     * either wins first (-> `in_flight`) or loses against the canceled row.
+     */
+    replacePendingJobsUnlessInFlight(
+        replacement: MessageTriggerJobEntity,
+        reason: string,
+    ): Promise<ReplacePendingJobsResult>;
     /**
      * Upsert a pending job only while its rule is at the inspected generation
      * and expected stale state. A null result means the producer lost the

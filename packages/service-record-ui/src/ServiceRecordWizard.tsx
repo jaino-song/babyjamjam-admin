@@ -960,6 +960,11 @@ export function ServiceRecordWizard({
                             })}
                         </div>
                         {(readOnly || adminMode) && slots?.overviewSupplemental}
+                        {adminMode && slots?.adminCommitActions ? (
+                            <div data-component={child("body_overview-commit")} data-slot="overview-commit" className="overview-commit">
+                                {slots.adminCommitActions}
+                            </div>
+                        ) : null}
                         {adminMode && slots?.adminConfirmAction ? (
                             <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
                                 {slots.adminConfirmAction}

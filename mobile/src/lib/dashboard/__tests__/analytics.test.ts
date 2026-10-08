@@ -1,7 +1,8 @@
 import {
   deriveDashboardAnalyticsFromClients,
-  isContractIncompleteNearServiceStart,
+  formatAnalyticsCount,
   isServiceStartingWithinWeek,
+  normalizeDashboardAnalyticsPayload,
   type DashboardAnalyticsClient,
 } from "@/lib/dashboard/analytics";
 
@@ -16,54 +17,6 @@ function client(overrides: Partial<DashboardAnalyticsClient> = {}): DashboardAna
     ...overrides,
   };
 }
-
-describe("isContractIncompleteNearServiceStart", () => {
-  it("counts incomplete contracts within seven days before or after service start", () => {
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-03T00:00:00+09:00" }),
-        NOW,
-      ),
-    ).toBe(true);
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({
-          startDate: "2026-06-17T23:59:00+09:00",
-          eDocId: "doc-1",
-          documentStatus: "opened",
-        }),
-        NOW,
-      ),
-    ).toBe(true);
-  });
-
-  it("excludes completed contracts, ended services, and dates outside the window", () => {
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-10T00:00:00+09:00", documentStatus: "completed" }),
-        NOW,
-      ),
-    ).toBe(false);
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "terminated" }),
-        NOW,
-      ),
-    ).toBe(false);
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "pre_booking" }),
-        NOW,
-      ),
-    ).toBe(false);
-    expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-18T00:00:00+09:00" }),
-        NOW,
-      ),
-    ).toBe(false);
-  });
-});
 
 describe("isServiceStartingWithinWeek", () => {
   it("counts service starts from today through seven days later", () => {
@@ -122,45 +75,22 @@ describe("isServiceStartingWithinWeek", () => {
 });
 
 describe("deriveDashboardAnalyticsFromClients", () => {
-  it("derives contract attention count from service-start window and incomplete status", () => {
+  it("leaves the server-decided contract counts unknown instead of guessing them from the client rows", () => {
     const analytics = deriveDashboardAnalyticsFromClients(
       [
+        // Would have been counted by the old local "incomplete near start" rule.
         client({ startDate: "2026-06-03T00:00:00+09:00" }),
-        client({
-          startDate: "2026-06-17T23:59:00+09:00",
-          eDocId: "doc-1",
-          documentStatus: "opened",
-        }),
-        client({ startDate: "2026-06-18T00:00:00+09:00" }),
-        client({ startDate: "2026-06-10T00:00:00+09:00", documentStatus: "completed" }),
-        client({ startDate: "2026-06-10T00:00:00+09:00", serviceStatus: "completed" }),
+        client({ startDate: "2026-06-17T23:59:00+09:00", eDocId: "doc-1", documentStatus: "opened" }),
       ],
       NOW,
     );
 
-    expect(analytics.contractsNotSent).toBe(2);
+    expect(analytics.contractsNotSent).toBeNull();
+    expect(analytics.contractsPendingSignature).toBeNull();
+    expect(analytics.upcomingThisMonth).toBeNull();
   });
 
-  it("only counts pending-signature contracts once the review window opens", () => {
-    const base = { eDocId: "doc-1", documentStatus: "opened" as const };
-    const analytics = deriveDashboardAnalyticsFromClients(
-      [
-        // Ends far in the future → review window closed → not counted.
-        client({ ...base, endDate: "2099-12-31" }),
-        // Already past its end date → counted.
-        client({ ...base, endDate: "2026-06-01" }),
-        // No end date → window treated as open (server parity) → counted.
-        client({ ...base }),
-        // Completed docs are never counted regardless of dates.
-        client({ ...base, documentStatus: "completed", endDate: "2026-06-01" }),
-      ],
-      NOW,
-    );
-
-    expect(analytics.contractsPendingSignature).toBe(0);
-  });
-
-  it("derives weekly upcoming starts from service-start window", () => {
+  it("derives weekly upcoming starts from the same rule the dashboard list uses", () => {
     const analytics = deriveDashboardAnalyticsFromClients(
       [
         client({ startDate: "2026-06-09T23:59:00+09:00" }),
@@ -173,33 +103,91 @@ describe("deriveDashboardAnalyticsFromClients", () => {
       NOW,
     );
 
-    expect(analytics.upcomingThisMonth).toBe(3);
+    expect(analytics.upcomingWithinWeek).toBe(3);
+  });
+
+  it("counts active clients", () => {
+    const analytics = deriveDashboardAnalyticsFromClients(
+      [client({ serviceStatus: "active" }), client({ serviceStatus: "active" }), client()],
+      NOW,
+    );
+
+    expect(analytics.activeClients).toBe(2);
+  });
+});
+
+describe("normalizeDashboardAnalyticsPayload", () => {
+  it("keeps a missing count unknown (null) instead of turning it into zero", () => {
+    expect(
+      normalizeDashboardAnalyticsPayload({ activeClients: 3, contractsNotSent: 2 }),
+    ).toEqual({
+      activeClients: 3,
+      contractsNotSent: 2,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: null,
+    });
+  });
+
+  it("accepts a well-formed all-null payload as all-unknown instead of rejecting it", () => {
+    const allUnknown = {
+      activeClients: null,
+      contractsNotSent: null,
+      contractsPendingSignature: null,
+      upcomingThisMonth: null,
+      upcomingNextMonth: null,
+      upcomingWithinWeek: null,
+    };
+
+    expect(normalizeDashboardAnalyticsPayload(allUnknown)).toEqual(allUnknown);
+    expect(normalizeDashboardAnalyticsPayload({})).toEqual(allUnknown);
+    expect(
+      Object.values(normalizeDashboardAnalyticsPayload(allUnknown) ?? {}).map(formatAnalyticsCount),
+    ).toEqual(["-", "-", "-", "-", "-", "-"]);
+  });
+
+  it("rejects a payload that is not an object", () => {
+    expect(normalizeDashboardAnalyticsPayload(null)).toBeNull();
+    expect(normalizeDashboardAnalyticsPayload("down")).toBeNull();
+    expect(normalizeDashboardAnalyticsPayload([])).toBeNull();
+  });
+
+  it("reads an explicit zero as a real zero", () => {
+    expect(normalizeDashboardAnalyticsPayload({ contractsNotSent: 0 })?.contractsNotSent).toBe(0);
+  });
+});
+
+describe("formatAnalyticsCount", () => {
+  it("renders zero as 0 and unknown as a dash", () => {
+    expect(formatAnalyticsCount(0)).toBe("0");
+    expect(formatAnalyticsCount(7)).toBe("7");
+    expect(formatAnalyticsCount(null)).toBe("-");
+    expect(formatAnalyticsCount(undefined)).toBe("-");
   });
 });
 
 describe("KST anchoring (server-timezone independence)", () => {
-  // 2026-06-05T20:00:00Z = 2026-06-06 05:00 KST. The KST ±7d contract window
-  // is [2026-05-30 00:00 KST, 2026-06-13 23:59:59.999 KST], i.e.
-  // [2026-05-29T15:00:00Z, 2026-06-13T14:59:59.999Z]. A server-local
-  // UTC-anchored window would start/end 9 hours later — these cases fail
-  // under local-TZ day math on a UTC runner.
+  // 2026-06-05T20:00:00Z = 2026-06-06 05:00 KST. The KST window for "within a week" is
+  // [2026-06-06 00:00 KST, 2026-06-13 23:59:59.999 KST]. A server-local UTC-anchored
+  // window would start/end 9 hours later — these cases fail under local-TZ day math
+  // on a UTC runner.
   const utcEveningNow = new Date("2026-06-05T20:00:00Z");
 
-  it("opens the contract window at KST midnight, not UTC midnight", () => {
+  it("opens the weekly window at KST midnight, not UTC midnight", () => {
+    // 2026-06-05T10:00:00Z = 2026-06-05 19:00 KST: yesterday in KST, but already "today" under UTC.
     expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-05-29T20:00:00Z" }),
-        utcEveningNow,
-      ),
+      isServiceStartingWithinWeek(client({ startDate: "2026-06-05T10:00:00Z" }), utcEveningNow),
+    ).toBe(false);
+    // 2026-06-05T16:00:00Z = 2026-06-06 01:00 KST: today in KST.
+    expect(
+      isServiceStartingWithinWeek(client({ startDate: "2026-06-05T16:00:00Z" }), utcEveningNow),
     ).toBe(true);
   });
 
-  it("closes the contract window at KST end-of-day, not UTC end-of-day", () => {
+  it("closes the weekly window at KST end-of-day, not UTC end-of-day", () => {
     expect(
-      isContractIncompleteNearServiceStart(
-        client({ startDate: "2026-06-13T18:00:00Z" }),
-        utcEveningNow,
-      ),
+      isServiceStartingWithinWeek(client({ startDate: "2026-06-13T18:00:00Z" }), utcEveningNow),
     ).toBe(false);
   });
 

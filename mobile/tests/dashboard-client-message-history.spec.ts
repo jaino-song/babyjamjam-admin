@@ -125,11 +125,16 @@ test("dashboard client detail uses the same message history as the clients page"
       }),
     });
   });
-  await page.route("**/api/message-logs**", async (route) => {
+  // The client detail reads GET /api/message-logs/client/:id, which answers
+  // with a cursor-paged envelope; a bare array is rejected as a broken contract.
+  await page.route("**/api/message-logs/client/**", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify([SMS_LOG]),
+      body: JSON.stringify({
+        items: [SMS_LOG],
+        page: { snapshotAt: "2026-07-12T16:58:00.710Z", nextCursor: null, hasMore: false },
+      }),
     });
   });
 

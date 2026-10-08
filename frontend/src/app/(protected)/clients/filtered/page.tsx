@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { X } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
+import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { useFilteredClients, useDeleteClient } from "@/hooks/useClients";
 import { Client, DocumentStatus } from "@/lib/client/types";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -33,18 +35,18 @@ const FILTER_CONFIG: Record<FilterType, { title: string }> = {
     "no-contract": { title: "계약서 미발송" },
 };
 
-const getDocumentStatusBadge = (status: DocumentStatus) => {
-    switch (status) {
-        case "completed":
-            return <Badge variant="success">완료</Badge>;
-        case "opened":
-        case "requested":
-            return <Badge variant="warning">진행중</Badge>;
-        case "created":
-            return <Badge variant="info">생성됨</Badge>;
-        default:
-            return <Badge variant="outline">미발송</Badge>;
-    }
+const DOCUMENT_STATUS_BADGE_VARIANTS = {
+    success: "success",
+    warning: "warning",
+    info: "info",
+    primary: "info",
+    danger: "destructive",
+    neutral: "outline",
+} as const satisfies Record<StatusBadgeVariant, string>;
+
+const getDocumentStatusBadge = (status: DocumentStatus, hasSigned: boolean) => {
+    const meta = getClientDocumentStatusMeta(status, { hasSigned });
+    return <Badge variant={DOCUMENT_STATUS_BADGE_VARIANTS[meta.variant]}>{meta.label}</Badge>;
 };
 
 const formatDate = (dateStr: string | null): string => {
@@ -190,7 +192,7 @@ export default function FilteredClientsPage() {
                                         {formatDate(client.startDate)}
                                     </TableCell>
                                     <TableCell>
-                                        {getDocumentStatusBadge(client.documentStatus)}
+                                        {getDocumentStatusBadge(client.documentStatus, client.hasSigned)}
                                     </TableCell>
                                 </TableRow>
                             ))}

@@ -89,6 +89,7 @@ const STATUS_FILTER_ORDER: MessageRecordStatusFilter[] = ["all", "upcoming", "se
 const JOB_STATUS: Record<MessageTriggerJobStatus, StatusMeta> = {
   pending: { label: MESSAGE_JOB_STATUS_LABELS.pending, icon: Clock3 },
   processing: { label: MESSAGE_JOB_STATUS_LABELS.processing, icon: Loader2 },
+  dispatching: { label: MESSAGE_JOB_STATUS_LABELS.dispatching, icon: Loader2 },
   sent: { label: MESSAGE_JOB_STATUS_LABELS.sent, icon: CheckCircle2 },
   failed: { label: MESSAGE_JOB_STATUS_LABELS.failed, icon: XCircle },
   canceled: { label: MESSAGE_JOB_STATUS_LABELS.canceled, icon: AlertCircle },
@@ -529,7 +530,7 @@ function UpcomingRow({
           <StatusBadge variant={variant} data-component={`${UPCOMING_ROW_BASE}_status`}>
             <StatusIcon
               aria-hidden="true"
-              className={job.status === "processing" ? "message-data-spinner" : undefined}
+              className={job.status === "processing" || job.status === "dispatching" ? "message-data-spinner" : undefined}
             />
             {meta.label}
           </StatusBadge>

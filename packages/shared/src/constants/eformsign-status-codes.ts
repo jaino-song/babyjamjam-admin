@@ -11,7 +11,9 @@
  *    terminal-negative status: eformsign-webhook.service.ts:614 synthesizes
  *    `{ statusType: "090", statusDetail: "철회" }`, and
  *    backend/application/services/client.service.ts:26 groups it with the
- *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["040", "042", "045", "090"])`.
+ *    other revoke-family codes: `REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "045", "090"])` (040 is the
+ *    separate non-terminal "revoke_requested" client status; this per-document
+ *    category list below still buckets 040 with the revoke family).
  *    "090" is not part of eformsign's own API status-code table — it is a
  *    backend-synthesized status — which is why neither frontend nor mobile
  *    (whose code sets are transcribed from the eformsign API docs) had it.
@@ -102,6 +104,15 @@ export const DELETED_STATUS_CODES = [
     "099", // legacy backend webhook tombstone
 ] as const;
 
+/**
+ * "040" (doc_request_revoke): cancellation was requested but has not happened — it may still
+ * be refused (→ 060) or completed (→ 042). It keeps the "expired" category above for
+ * filtering, tabs and stats, but it is not expired: display layers show it as "철회 요청됨"
+ * (warning), never as 기간 만료 or 철회됨. The backend has its own copy
+ * (backend/domain/constants/eformsign-doc-status.constants.ts).
+ */
+export const EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE = "040";
+
 export type EformsignStatusCategory = "completed" | "expired" | "in-progress" | "unknown";
 
 export const EFORMSIGN_STATUS_CATEGORY_LABELS = {
@@ -165,6 +176,10 @@ export function normalizeEformsignStatusCode(status: EformsignStatusInput): stri
 }
 
 export const normalizeEformsignStatusName = normalizeEformsignStatusCode;
+
+export function isRevokeRequestedEformsignStatus(status: EformsignStatusInput): boolean {
+    return normalizeEformsignStatusCode(status) === EFORMSIGN_REVOKE_REQUESTED_STATUS_CODE;
+}
 
 export function isDeletedEformsignStatusCode(status: EformsignStatusInput): boolean {
     const normalized = normalizeEformsignStatusCode(status);

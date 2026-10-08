@@ -29,13 +29,13 @@ import {
     useVoucherYears,
 } from "@/hooks/useVoucherData";
 import type { ClientFormData } from "@/features/clients/types";
+import { buildClientUpdatePayload, hasServicePeriodChange } from "./client-update-payload";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
 import {
     Client,
     CreateClientDto,
-    UpdateClientDto,
     SERVICE_STATUS_OPTIONS
 } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
@@ -110,10 +110,24 @@ export type { ClientFormData };
 /** Static guidance shown in a field's label-row slot while nothing more urgent applies. */
 const AREA_FIELD_GUIDANCE = "자동문자 입금 계좌에 쓰여요";
 const OUT_OF_POCKET_PRICE_ERROR = "자부담 요금을 불러오지 못했어요";
+const CLIENT_END_DATE_CHANGED_MESSAGE =
+    "그동안 서비스 종료일이 바뀌어 저장하지 않았어요. 창을 닫고 다시 열어 최신 정보로 수정해 주세요.";
 
 const PANEL_STEP_CONTENT_CLASS_NAME =
     "grid w-full grid-cols-1 gap-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] md:grid-cols-2";
 const PANEL_FULL_FIELD_CLASS_NAME = "md:col-span-2";
+// Fields that are the price fields or that the price table is looked up by (the voucher year
+// defaults from the end date, which follows the start date and duration).
+const PRICE_BASELINE_FREEZING_FIELDS: ReadonlySet<keyof CreateClientDto> = new Set<keyof CreateClientDto>([
+    "fullPrice",
+    "grant",
+    "actualPrice",
+    "duration",
+    "type",
+    "voucherClient",
+    "startDate",
+    "endDate",
+]);
 export const CLIENT_FORM_STEPPER_STEPS = [
     { label: "이용자\n정보" },
     { label: "제공인력\n정보" },
@@ -543,6 +557,13 @@ function ClientFormContent({
     const contentRef = useRef<HTMLDivElement>(null);
     const formSessionRef = useRef<{ open: boolean; clientId: number | null }>({ open: false, clientId: null });
     const formDataBaselineRef = useRef<ClientFormData>(formData);
+    // Turns on the first time staff touch a price field or anything the price table is looked up by,
+    // and stays on until the dialog reopens. While it is off, a price-table fill is still the form
+    // catching up with its own table on open; once on, the price baseline stays what was stored.
+    const priceBaselineFrozenRef = useRef(false);
+    // The prices the form filled in from its price table before anything was touched. Not part of the
+    // baseline: that keeps the stored prices, so a price filled in after a touch is compared to them.
+    const openingTablePricesRef = useRef<Pick<ClientFormData, "fullPrice" | "grant" | "actualPrice"> | null>(null);
     const [initializedEditClientId, setInitializedEditClientId] = useState<number | null>(null);
     const [hasUserEditedSinceOpen, setHasUserEditedSinceOpen] = useState(false);
     const [internalActiveStep, setInternalActiveStep] = useState(0);
@@ -721,22 +742,37 @@ function ClientFormContent({
     useEffect(() => {
         if (selectedPriceInfo && !pricesManuallyEdited) {
             queueMicrotask(() => {
-                setFormData(prev => prev.voucherClient
-                    ? {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
-                        actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                setFormData(prev => {
+                    const next = prev.voucherClient
+                        ? {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "grant" in selectedPriceInfo ? parsePrice(selectedPriceInfo.grant) : prev.grant,
+                            actualPrice: "actualPrice" in selectedPriceInfo ? parsePrice(selectedPriceInfo.actualPrice) : prev.actualPrice,
+                        }
+                        : {
+                            ...prev,
+                            fullPrice: parsePrice(selectedPriceInfo.fullPrice),
+                            grant: "0",
+                            actualPrice: parsePrice(selectedPriceInfo.fullPrice),
+                        };
+                    // Until staff touch a price field or a price driver, this fill is the form catching up
+                    // with its own price table, not an edit: the saved client is not being re-priced.
+                    // Remember it apart from the baseline, which keeps the STORED prices, so a save before
+                    // any touch does not send it, and a save after a touch compares to what was stored.
+                    // A driver that merely matches its opening value again does not prove nothing was touched.
+                    if (isEditMode && !priceBaselineFrozenRef.current) {
+                        openingTablePricesRef.current = {
+                            fullPrice: next.fullPrice,
+                            grant: next.grant,
+                            actualPrice: next.actualPrice,
+                        };
                     }
-                    : {
-                        ...prev,
-                        fullPrice: parsePrice(selectedPriceInfo.fullPrice),
-                        grant: "0",
-                        actualPrice: parsePrice(selectedPriceInfo.fullPrice),
-                    });
+                    return next;
+                });
             });
         }
-    }, [selectedPriceInfo, pricesManuallyEdited]);
+    }, [isEditMode, selectedPriceInfo, pricesManuallyEdited]);
 
     // 종료일은 고객 정보로 저장되므로 지점 달력을 다 받은 뒤에만 자동 계산해요.
     const {
@@ -795,6 +831,7 @@ function ClientFormContent({
     // Reset duration/prices when the voucher year changes (same semantics as handleTypeChange)
     const handleVoucherYearChange = (newYear: string) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         const parsedYear = Number(newYear);
         setVoucherYear(Number.isNaN(parsedYear) ? null : parsedYear);
         setFormData(prev => ({
@@ -812,6 +849,7 @@ function ClientFormContent({
     // Reset duration when type changes
     const handleTypeChange = (newType: string) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         setFormData(prev => ({
             ...prev,
             type: newType,
@@ -827,6 +865,7 @@ function ClientFormContent({
 
     const handleVoucherClientChange = (voucherClient: boolean) => {
         setHasUserEditedSinceOpen(true);
+        priceBaselineFrozenRef.current = true;
         setPricesManuallyEdited(false);
         setFormData(prev => ({
             ...prev,
@@ -926,6 +965,8 @@ function ClientFormContent({
             }
             queueMicrotask(() => {
                 formDataBaselineRef.current = nextFormData;
+                priceBaselineFrozenRef.current = false;
+                openingTablePricesRef.current = null;
                 setFormData(nextFormData);
                 setIsEndDateUnsupported(false);
                 setInitializedEditClientId(client?.id ?? null);
@@ -978,11 +1019,20 @@ function ClientFormContent({
         });
     }, [client, hasUserEditedSinceOpen, open, prefill]);
 
+    // What the form is compared to when deciding what changed. Until a price field or a price driver is
+    // touched, the prices the form filled in from its table on open are not an edit; once touched, prices
+    // are compared against what was stored.
+    const getEffectiveBaseline = useCallback((): ClientFormData => (
+        openingTablePricesRef.current && !priceBaselineFrozenRef.current
+            ? { ...formDataBaselineRef.current, ...openingTablePricesRef.current }
+            : formDataBaselineRef.current
+    ), []);
+
     useEffect(() => {
         if (surface !== "panel" || !open || !onDirtyChange) return;
 
-        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(formDataBaselineRef.current));
-    }, [formData, onDirtyChange, open, surface]);
+        onDirtyChange(JSON.stringify(formData) !== JSON.stringify(getEffectiveBaseline()));
+    }, [formData, getEffectiveBaseline, onDirtyChange, open, surface]);
 
     const isLegacyNoopEdit = Boolean(
         isEditMode
@@ -994,6 +1044,7 @@ function ClientFormContent({
 
     const handleChange = (field: keyof CreateClientDto, value: unknown) => {
         setHasUserEditedSinceOpen(true);
+        if (PRICE_BASELINE_FREEZING_FIELDS.has(field)) priceBaselineFrozenRef.current = true;
         setFormData(prev => ({ ...prev, [field]: value }));
         if (isClientFormField(field)) {
             setEditedServerErrorFields((current) => (current.includes(field) ? current : [...current, field]));
@@ -1171,11 +1222,26 @@ function ClientFormContent({
         setTimeout(scrollToTop, 0);
     };
 
-    const setMutationError = (cause: unknown) => {
+    const setMutationError = (cause: unknown, options: { endDateGuardSent?: boolean } = {}) => {
         const normalized = normalizeApiError(cause, {
             locale: locale === "en" ? "en-US" : "ko-KR",
             operation: "mutation",
         });
+
+        // The save carried the end date this form was opened with and the backend found it moved.
+        if (
+            options.endDateGuardSent
+            && normalized.status === 409
+            && normalized.problem?.code === "SERVICE_RECORD_WRITE_TARGET_CHANGED"
+        ) {
+            setError({
+                message: CLIENT_END_DATE_CHANGED_MESSAGE,
+                fieldErrors: [],
+                requestId: normalized.problem.requestId,
+                outcome: normalized.outcome,
+            });
+            return;
+        }
 
         if (isUnstructuredLegacyClientError(cause, normalized)) {
             setError({
@@ -1272,6 +1338,7 @@ function ClientFormContent({
                 return;
             }
         }
+        let endDateGuardSent = false;
         try {
             submissionInFlightRef.current = true;
             const fresh = await refreshForSave();
@@ -1297,7 +1364,13 @@ function ClientFormContent({
             const businessDays = normalizedStartDate && normalizedEndDate
                 ? fresh.calendar.countBusinessDays(normalizedStartDate, normalizedEndDate)
                 : null;
-            const hasDurationMismatch = businessDays !== null
+            // An edit that leaves the service period alone sends no period field, so a period whose
+            // length differs from its business days (a delayed client) needs no confirmation to save,
+            // say, an address.
+            const writesServicePeriod = !(isEditMode && client)
+                || hasServicePeriodChange(formDataBaselineRef.current, formData);
+            const hasDurationMismatch = writesServicePeriod
+                && businessDays !== null
                 && Number.isSafeInteger(formData.duration)
                 && (formData.duration ?? 0) > 0
                 && formData.duration !== businessDays;
@@ -1314,32 +1387,16 @@ function ClientFormContent({
             setPendingDurationConfirmation(null);
 
             if (isEditMode && client) {
-                // Build update DTO, excluding null employee IDs to avoid validation errors
-                // (backend @IsOptional only skips undefined, not null)
-                const updateDto: UpdateClientDto = {
-                    name: formData.name,
-                    birthday: formData.birthday,
-                    dueDate: normalizedDueDate || null,
-                    birthDate: normalizedBirthDate || null,
-                    address: formData.address,
-                    phone: formData.phone,
-                    // Only include employee IDs if explicitly selected (not null)
-                    ...(formData.primaryEmployeeId !== null && { primaryEmployeeId: formData.primaryEmployeeId }),
-                    ...(formData.secondaryEmployeeId !== null && { secondaryEmployeeId: formData.secondaryEmployeeId }),
-                    type: formData.voucherClient ? formData.type : null,
-                    duration: formData.duration || null,
-                    ...durationConfirmation,
-                    fullPrice: formData.fullPrice || null,
-                    grant: formData.voucherClient ? formData.grant || null : "0",
-                    actualPrice: formData.voucherClient ? formData.actualPrice || null : formData.fullPrice || null,
-                    startDate: normalizedStartDate || null,
-                    endDate: normalizedEndDate || null,
-                    careCenter: formData.careCenter,
-                    voucherClient: formData.voucherClient,
-                    breastPump: formData.breastPump,
-                    serviceStatus: formData.serviceStatus,
-                    areaId: formData.areaId || null,
-                };
+                // Send only what the user changed since the form was opened. The backend moves the
+                // end date by itself (a delayed session extends it), so a full snapshot would roll
+                // that back. A save that touches the service period carries the end date this form
+                // was opened with, and the backend refuses it if the end date moved since.
+                const updateDto = buildClientUpdatePayload({
+                    baseline: getEffectiveBaseline(),
+                    current: formData,
+                    allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
+                });
+                endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 onSuccess?.(updatedClient);
             } else {
@@ -1373,7 +1430,7 @@ function ClientFormContent({
             onClose();
             onDirtyChange?.(false);
         } catch (error: unknown) {
-            setMutationError(error);
+            setMutationError(error, { endDateGuardSent });
         } finally {
             submissionInFlightRef.current = false;
         }

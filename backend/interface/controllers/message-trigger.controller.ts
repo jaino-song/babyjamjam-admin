@@ -78,6 +78,26 @@ export class MessageTriggerController {
         );
     }
 
+    /**
+     * One client's history, scoped to the caller's branch like
+     * `message-trigger-jobs/client/:clientId/upcoming` (another branch's client
+     * is a 404). Replaces slicing the branch-wide `message-logs` window per client.
+     */
+    @Get("message-logs/client/:clientId")
+    listClientHistoryPage(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Param("clientId") clientId: string,
+        @Query("limit") limit?: string,
+        @Query("cursor") cursor?: string,
+    ) {
+        return this.triggerService.listClientHistoryPage(
+            tenant.branchId ?? "",
+            parseInteger(clientId, "clientId", { min: 1 }),
+            parseInteger(limit, "limit", { defaultValue: 50, min: 1, max: 100 }),
+            cursor,
+        );
+    }
+
     @Get("message-logs")
     listHistory(
         @CurrentTenant() tenant: { branchId?: string },

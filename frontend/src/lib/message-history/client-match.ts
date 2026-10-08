@@ -22,6 +22,11 @@ export function matchesMessageHistoryClient(
   if (clientId !== null && record.clientId === clientId) {
     return true;
   }
+  // A record already owned by another client never matches by phone: phone numbers are
+  // reassigned, so the fallback is only for records that carry no client id at all.
+  if (record.clientId != null) {
+    return false;
+  }
 
   const clientPhoneKey = normalizeKoreanPhoneLookupKey(client.phone ?? "");
   return (
