@@ -26,6 +26,11 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
+import { findManyFrom } from "../utils/prisma-where-evaluator";
+import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
+import { isActiveContractSignal } from "application/utils/current-contract-document";
+import { legacyClientBadges } from "../../../packages/shared/src/client/badges";
 
 /** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
 const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
@@ -4045,8 +4050,6 @@ describe("ClientService", () => {
     // getStats (dashboard counts)
     // ============================================
     describe("getStats month boundaries", () => {
-        type DateRangeFilter = { gte?: Date; gt?: Date; lte?: Date; lt?: Date };
-
         afterEach(() => {
             jest.useRealTimers();
         });
@@ -4059,28 +4062,426 @@ describe("ClientService", () => {
             ["2026-10-01T03:00:00.000Z"],
         ])("counts upcoming clients by the Korean month at %s", async (instant) => {
             jest.useFakeTimers().setSystemTime(new Date(instant));
-            prismaService.client.count.mockResolvedValue(0);
+            // Stored start dates are calendar dates held as UTC midnight. All are in the future,
+            // so each is "waiting" on the Korean calendar of both instants.
+            const waitingStartingOn = (id: number, startDate: string) => ({
+                id,
+                serviceStatus: "waiting",
+                startDate: new Date(`${startDate}T00:00:00.000Z`),
+                endDate: new Date("2027-03-01T00:00:00.000Z"),
+            });
+            prismaService.client.findMany.mockResolvedValue([
+                waitingStartingOn(1, "2026-10-02"),
+                waitingStartingOn(2, "2026-10-31"),
+                waitingStartingOn(3, "2026-11-01"),
+                waitingStartingOn(4, "2026-11-30"),
+                waitingStartingOn(5, "2026-12-01"),
+            ]);
+
+            const stats = await service.getStats(branchId);
+
+            expect(stats.upcomingThisMonth).toBe(2);
+            expect(stats.upcomingNextMonth).toBe(2);
+        });
+    });
+
+    // The dashboard counts the DERIVED status the client list shows, never the stored column.
+    describe("getStats derived service status", () => {
+        beforeEach(() => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-10-15T03:00:00.000Z"));
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        const stored = (id: number, serviceStatus: string | null, startDate: string, endDate: string) => ({
+            id,
+            serviceStatus,
+            startDate: new Date(`${startDate}T00:00:00.000Z`),
+            endDate: new Date(`${endDate}T00:00:00.000Z`),
+        });
+
+        it("counts activeClients by the effective status, not the stored one", async () => {
+            prismaService.client.findMany.mockResolvedValue([
+                stored(1, "waiting", "2026-10-01", "2026-11-20"), // stored lag: running today
+                stored(2, "active", "2026-10-01", "2026-11-20"), // running
+                stored(3, "active", "2026-09-01", "2026-10-10"), // stored lag: already ended
+                stored(4, "active", "2026-10-20", "2026-11-20"), // stored lag: not started yet
+                stored(5, "terminated", "2026-10-01", "2026-11-20"), // manual status wins
+                stored(6, "replacement_requested", "2026-10-01", "2026-11-20"), // manual status wins
+            ]);
+
+            const stats = await service.getStats(branchId);
+
+            expect(stats.activeClients).toBe(2);
+        });
+
+        it("counts upcomingThisMonth / upcomingNextMonth by the effective waiting status", async () => {
+            prismaService.client.findMany.mockResolvedValue([
+                stored(1, "active", "2026-10-20", "2026-11-20"), // stored lag: waiting, starts this month
+                stored(2, "waiting", "2026-10-20", "2026-11-20"), // waiting, this month
+                stored(3, "waiting", "2026-10-01", "2026-11-20"), // stored lag: already running, not upcoming
+                stored(4, "waiting", "2026-11-05", "2026-12-20"), // next month
+                stored(5, "pre_booking", "2026-10-20", "2026-11-20"), // manual, not waiting
+                stored(6, "terminated", "2026-11-05", "2026-12-20"), // manual, not waiting
+            ]);
+
+            const stats = await service.getStats(branchId);
+
+            expect(stats.upcomingThisMonth).toBe(2);
+            expect(stats.upcomingNextMonth).toBe(1);
+        });
+
+        it("no longer asks the database for stored-status counts", async () => {
             prismaService.client.findMany.mockResolvedValue([]);
 
             await service.getStats(branchId);
 
-            // Stored start dates are calendar dates held as UTC midnight, so judge each
-            // filter by which of those it admits rather than by one lte/lt form.
-            const rangeFilters = prismaService.client.count.mock.calls
-                .map(([args]: [{ where: { startDate?: DateRangeFilter } }]) => args.where.startDate)
-                .filter((filter: unknown): filter is DateRangeFilter => filter !== undefined);
-            expect(rangeFilters).toHaveLength(2);
-            const admitted = (filter: DateRangeFilter, calendarDate: string) => {
-                const t = new Date(`${calendarDate}T00:00:00.000Z`).getTime();
-                return (filter.gte === undefined || t >= filter.gte.getTime())
-                    && (filter.gt === undefined || t > filter.gt.getTime())
-                    && (filter.lte === undefined || t <= filter.lte.getTime())
-                    && (filter.lt === undefined || t < filter.lt.getTime());
+            expect(prismaService.client.count).not.toHaveBeenCalled();
+        });
+    });
+
+    // A client whose dates fall outside the holiday calendar's supported range must not fail
+    // the whole request: it is skipped from the business-day-based counts and logged by id.
+    describe("calendar range guard", () => {
+        const OUT_OF_RANGE = {
+            startDate: new Date("2030-03-04T00:00:00.000Z"),
+            endDate: new Date("2030-03-19T00:00:00.000Z"),
+        };
+        let warn: jest.SpyInstance;
+
+        beforeEach(() => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-03-17T09:00:00.000Z"));
+            warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        });
+
+        afterEach(() => {
+            warn.mockRestore();
+            jest.useRealTimers();
+        });
+
+        const loggedText = () => warn.mock.calls.map(([message]) => String(message)).join("\n");
+
+        it("getStats skips the out-of-range client from contractsNotSent and logs its id only", async () => {
+            prismaService.client.findMany.mockResolvedValue([
+                { id: 1, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z"), name: "Kim Minji" },
+                { id: 77, serviceStatus: "waiting", ...OUT_OF_RANGE, name: "Park Soyoung" },
+            ]);
+
+            const stats = await service.getStats(branchId);
+
+            expect(stats.contractsNotSent).toBe(1);
+            expect(loggedText()).toContain("client 77");
+            expect(loggedText()).not.toContain("Park");
+        });
+
+        it("getStats skips a client whose contract end date is out of range from the review count", async () => {
+            prismaService.client.findMany.mockResolvedValue([{ id: 5 }]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([{
+                clientId: 5,
+                documentId: "doc-5",
+                statusType: "070",
+                stepType: "06",
+                stepName: "제공기관 확인",
+                detailPayload: { fields: [{ id: "contract_end_date", value: "2030-03-19" }] },
+                permanentPurgeRequestedAt: null,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: null,
+            }]);
+
+            await expect(service.getStats(branchId)).resolves.toEqual(expect.objectContaining({
+                contractsPendingSignature: expect.any(Number),
+            }));
+        });
+
+        it("getActionRequiredAlerts keeps serving the other clients", async () => {
+            prismaService.client.findMany.mockResolvedValue([
+                { id: 1, name: "A", createdAt: null, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z") },
+                { id: 77, name: "B", createdAt: null, serviceStatus: "waiting", ...OUT_OF_RANGE },
+            ]);
+
+            const alerts = await service.getActionRequiredAlerts(branchId);
+
+            expect(alerts.map((alert) => alert.id)).toEqual([1]);
+            expect(loggedText()).toContain("client 77");
+        });
+
+        it("the client list still renders when one client's dates are out of range", async () => {
+            const outOfRange = createClientEntity();
+            outOfRange.startDate = OUT_OF_RANGE.startDate;
+            outOfRange.endDate = OUT_OF_RANGE.endDate;
+            outOfRange.serviceStatus = "waiting";
+            listClientsUsecase.execute.mockResolvedValue([outOfRange]);
+
+            const [client] = await service.findAll(branchId);
+
+            expect(client?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            expect(client?.actionRequired).toBeNull();
+        });
+    });
+
+    // /clients/filtered, the AI chat and the PWA digest all read the repository's lists, so the
+    // filters must hand the repository the branch calendar and stop passing the old eDocId pin.
+    describe("findByFilter", () => {
+        it("no-contract delegates to the dashboard rule with the branch calendar", async () => {
+            const result = await service.findByFilter(branchId, "no-contract");
+
+            expect(result).toEqual([]);
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId);
+            expect(clientRepository.findWithoutContractSentStartingWithinDays).toHaveBeenCalledWith(
+                branchId,
+                await (holidayCalendar.forBranch as jest.Mock).mock.results[0]!.value,
+            );
+        });
+
+        it("incomplete-contracts reads the 7-day window through the repository", async () => {
+            await service.findByFilter(branchId, "incomplete-contracts");
+
+            expect(clientRepository.findWithIncompleteContractsStartingWithinDays).toHaveBeenCalledWith(branchId, 7);
+        });
+    });
+
+    // The list the filter returns must be exactly the clients the dashboard counts in
+    // contractsNotSent. Both read the same rows through the same rule.
+    describe("no-contract list equals getStats().contractsNotSent", () => {
+        const NOW = new Date("2026-03-17T09:00:00.000Z");
+        const contractDoc = (clientId: number, statusType: string) => ({
+            clientId,
+            documentId: `doc-${clientId}`,
+            statusType,
+            stepType: "02",
+            stepName: "이용자 서명",
+            detailPayload: null,
+            permanentPurgeRequestedAt: null,
+            documentKind: "contract",
+            serviceRecordCaseId: null,
+            templateId: null,
+        });
+        const row = (id: number, overrides: Record<string, unknown> = {}) => ({
+            id,
+            name: `Client ${id}`,
+            branchId,
+            address: null,
+            phone: null,
+            type: null,
+            duration: null,
+            fullPrice: null,
+            grant: null,
+            actualPrice: null,
+            careCenter: false,
+            voucherClient: false,
+            birthday: null,
+            dueDate: null,
+            birthDate: null,
+            breastPump: false,
+            areaId: null,
+            createdAt: null,
+            eDocId: null,
+            serviceStatus: "waiting",
+            startDate: new Date("2026-03-20T00:00:00.000Z"),
+            endDate: new Date("2026-04-04T00:00:00.000Z"),
+            ...overrides,
+        });
+
+        beforeEach(() => {
+            jest.useFakeTimers().setSystemTime(NOW);
+            clearSchemaCapabilityCache();
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        it("agrees on a fixture covering 040/045/041, stale pins, dead contracts and status drift", async () => {
+            const fixtureClients = [
+                row(1, { eDocId: "doc-1" }), // 080 expired but still pinned: needs a contract
+                row(2, { eDocId: null }), // 060 live, linked only by clientId: not counted
+                row(3), // nothing at all: counted
+                row(4), // 040 revoke requested, eDocId null: NOT counted
+                row(5), // 045: NOT counted
+                row(6), // 041 refused revoke: NOT counted
+                row(7), // 042 revoked: counted
+                row(8, { startDate: new Date("2026-03-30T00:00:00.000Z") }), // outside the send window
+                row(9, { serviceStatus: "active" }), // stored active, effectively waiting: counted
+                row(10, { startDate: new Date("2026-02-01T00:00:00.000Z"), endDate: new Date("2026-03-01T00:00:00.000Z") }), // ended
+                row(11, { serviceStatus: "terminated" }),
+                row(12, { startDate: new Date("2030-03-04T00:00:00.000Z"), endDate: new Date("2030-03-19T00:00:00.000Z") }), // out of calendar range
+            ];
+            const docs = [
+                contractDoc(1, "080"),
+                contractDoc(2, "060"),
+                contractDoc(4, "040"),
+                contractDoc(5, "045"),
+                contractDoc(6, "041"),
+                contractDoc(7, "042"),
+            ];
+            seedFixture(fixtureClients, docs);
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+
+            try {
+                const stats = await service.getStats(branchId);
+                const listed = await service.findByFilter(branchId, "no-contract");
+
+                expect(stats.contractsNotSent).toBe(4);
+                expect(listed.map((client) => client.id).sort((a, b) => a - b)).toEqual([1, 3, 7, 9]);
+                expect(listed).toHaveLength(stats.contractsNotSent);
+            } finally {
+                warn.mockRestore();
+            }
+        });
+
+        // Backs `service` with a real repository over the same fake database the stats read.
+        // The fake EVALUATES the complete where clause of every query, so the repository's
+        // database predicate is part of what the parity test exercises.
+        function seedFixture(clients: ReturnType<typeof row>[], docs: ReturnType<typeof contractDoc>[]) {
+            prismaService.client.findMany.mockImplementation(findManyFrom(clients));
+            prismaService.eformsign_doc.findMany.mockImplementation(findManyFrom(docs));
+            const repositoryPrisma = {
+                client: { findMany: jest.fn(findManyFrom(clients)) },
+                eformsign_doc: { findMany: jest.fn(findManyFrom(docs)) },
+                $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
             };
-            const probes = ["2026-09-30", "2026-10-01", "2026-10-31", "2026-11-01", "2026-11-30", "2026-12-01"];
-            const [thisMonth, nextMonth] = rangeFilters as [DateRangeFilter, DateRangeFilter];
-            expect(probes.filter((d) => admitted(thisMonth, d))).toEqual(["2026-10-01", "2026-10-31"]);
-            expect(probes.filter((d) => admitted(nextMonth, d))).toEqual(["2026-11-01", "2026-11-30"]);
+            const realRepository = new SbClientRepository(repositoryPrisma as unknown as PrismaService);
+            clientRepository.findWithoutContractSentStartingWithinDays.mockImplementation(
+                (...args) => realRepository.findWithoutContractSentStartingWithinDays(...args),
+            );
+        }
+
+        // At year end the repository's 7-business-day lookahead runs past the supported
+        // holiday years. The dashboard still counts the client, so the filter must too.
+        describe("at year end, when the lookahead is outside the supported holiday years", () => {
+            beforeEach(() => {
+                jest.setSystemTime(new Date("2027-12-30T03:00:00.000Z"));
+            });
+
+            it("lists the client the dashboard counts", async () => {
+                const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                try {
+                    seedFixture(
+                        [
+                            row(1, { serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") }),
+                            row(2, { serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") }),
+                            row(3, { startDate: new Date("2028-01-05T00:00:00.000Z"), endDate: new Date("2028-02-05T00:00:00.000Z") }),
+                        ],
+                        [contractDoc(2, "060")],
+                    );
+
+                    const stats = await service.getStats(branchId);
+                    const listed = await service.findByFilter(branchId, "no-contract");
+
+                    expect(stats.contractsNotSent).toBe(1);
+                    expect(listed.map((client) => client.id)).toEqual([1]);
+                } finally {
+                    warn.mockRestore();
+                }
+            });
+
+            it("still serves the action-required feed instead of failing on the lookahead", async () => {
+                const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+                try {
+                    prismaService.client.findMany.mockResolvedValue([
+                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
+                    ]);
+
+                    const alerts = await service.getActionRequiredAlerts(branchId);
+
+                    expect(alerts.map((alert) => alert.id)).toEqual([1]);
+                    expect(prismaService.client.findMany.mock.calls.at(-1)![0].where.OR[1].startDate).toEqual({ not: null });
+                } finally {
+                    warn.mockRestore();
+                }
+            });
+        });
+    });
+
+    // The contract_status badge is the backend twin of the shared fallback's
+    // `legacyClientBadges`: both apps must show the same badges with or without `badges`.
+    describe("contract_status badge (철회 요청됨)", () => {
+        beforeEach(() => {
+            jest.useFakeTimers().setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+        });
+
+        afterEach(() => {
+            jest.useRealTimers();
+        });
+
+        const activeClient = () => {
+            const client = createClientEntity();
+            client.serviceStatus = "active";
+            client.startDate = new Date("2026-07-01T00:00:00.000Z");
+            client.endDate = new Date("2026-08-31T00:00:00.000Z");
+            return client;
+        };
+        const keys = (client: { badges: Array<{ key: string }> } | undefined) =>
+            client?.badges.map((badge) => badge.key);
+
+        it.each(["040", "045"])("emits the warning badge from the backend list for a current %s contract", async (statusType) => {
+            listClientsUsecase.execute.mockResolvedValue([activeClient()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([
+                { clientId: 1, documentId: "d", statusType, stepType: "02", stepName: "x" },
+            ]);
+
+            const [client] = await service.findAll(branchId);
+
+            expect(client?.badges).toEqual([
+                { key: "contract_status", status: "review", label: "철회 요청됨", tone: "warning", priority: 15 },
+                expect.objectContaining({ key: "service_status", label: "진행중" }),
+            ]);
+        });
+
+        it.each(["060", "050", "041"])("does not emit it for a current %s contract", async (statusType) => {
+            listClientsUsecase.execute.mockResolvedValue([activeClient()]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([
+                { clientId: 1, documentId: "d", statusType, stepType: "02", stepName: "x" },
+            ]);
+
+            const [client] = await service.findAll(branchId);
+
+            expect(keys(client)).not.toContain("contract_status");
+        });
+
+        it("matches the shared fallback badge for badge, order and content", async () => {
+            const clientEntity = activeClient();
+            clientEntity.breastPump = true;
+            listClientsUsecase.execute.mockResolvedValue([clientEntity]);
+            prismaService.eformsign_doc.findMany.mockResolvedValue([
+                { clientId: 1, documentId: "d", statusType: "040", stepType: "02", stepName: "x" },
+            ]);
+
+            const [client] = await service.findAll(branchId);
+            const fallback = legacyClientBadges({
+                serviceStatus: client?.serviceStatus,
+                documentStatus: client?.documentStatus,
+                breastPump: true,
+            });
+
+            const fallbackStatus = fallback.find((badge) => badge.key === "contract_status");
+            const backendStatus = client?.badges.find((badge) => badge.key === "contract_status");
+            expect(backendStatus).toEqual(fallbackStatus);
+            // contract_status sits right after contract_required and before everything else.
+            expect(fallback.map((badge) => badge.key).indexOf("contract_status")).toBe(0);
+            expect(client?.badges[0]?.key).toBe("contract_status");
+            // Still never "계약서 필요" for a live 040/045 contract.
+            expect(keys(client)).not.toContain("contract_required");
+        });
+    });
+
+    // The digest, filters and badge share `isActiveContractSignal`; the list/documentStatus path
+    // keeps its own mapping. They must agree for every status code.
+    describe("active-contract rule parity", () => {
+        it("isActiveContractSignal matches ACTIVE_DOCUMENT_STATUSES over every 3-digit status code", () => {
+            const mapStatus = (code: string) =>
+                (service as unknown as { mapStatusTypeToDocumentStatus(code: string): string | null })
+                    .mapStatusTypeToDocumentStatus(code);
+            const activeStatuses = new Set(["created", "requested", "revoke_requested", "opened", "completed"]);
+
+            for (let n = 0; n < 1000; n++) {
+                const code = String(n).padStart(3, "0");
+                expect({ code, active: isActiveContractSignal({ statusType: code, permanentPurgeRequestedAt: null }) })
+                    .toEqual({ code, active: activeStatuses.has(mapStatus(code) ?? "") });
+            }
         });
     });
 
