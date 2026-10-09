@@ -30,7 +30,7 @@ describe("SignaturePad layout outside the package's .srec styles", () => {
         expect(hint).not.toHaveClass("opacity-0");
         rerender(<SignaturePad {...props} value="data:image/png;base64,AAAA" />);
         expect(screen.getByText("여기에 손가락으로 서명해 주세요")).toHaveClass("opacity-0");
-        expect(screen.getByLabelText("산모 서명 입력")).toHaveClass("border-solid", "border-v3-primary");
+        expect(screen.getByLabelText("산모 서명 입력")).toHaveClass("border-solid", "border-v3-primary!");
     });
 
     it("locks the pad: no pointer events, dim background, no clear button, signed chip", () => {

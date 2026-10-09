@@ -145,10 +145,10 @@ export function SignaturePad({
                     ref={canvasRef}
                     className={`pad block h-[150px] w-full touch-none rounded-[12px] border-[1.5px] ${
                         locked
-                            ? "pointer-events-none border-solid border-v3-border bg-v3-dim-white"
+                            ? "pointer-events-none border-solid border-v3-border! bg-v3-dim-white"
                             : hasInk
-                                ? "border-solid border-v3-primary bg-white"
-                                : "border-dashed border-v3-text-muted/60 bg-white"
+                                ? "border-solid border-v3-primary! bg-white"
+                                : "border-dashed border-v3-text-muted/60! bg-white"
                     }`}
                     aria-label="산모 서명 입력"
                     onPointerDown={handlePointerDown}
