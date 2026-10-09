@@ -306,24 +306,11 @@ export class ServiceRecordLinkService {
     }
 
     /**
-     * Cancel the schedule's pending/processing link jobs in one atomic
-     * repository statement. Returns the ids of jobs the dispatcher already
+     * Cancel the schedule's pending/processing link jobs under the schedule
+     * fence (revoke / reset). Returns the ids of jobs the dispatcher already
      * moved to `dispatching`: those are left untouched (the SMS may be on its
-     * way) and each caller decides what that means. Never throws on them.
-     */
-    private async cancelPendingServiceRecordJobs(scheduleId: number, reason: string): Promise<string[]> {
-        const { inFlightJobIds } = await this.jobRepository.cancelPendingByRuleAndEmployeeSchedule(
-            SERVICE_RECORD_LINK_RULE_ID,
-            scheduleId,
-            reason,
-        );
-        this.logInFlightLinkJobs(scheduleId, reason, inFlightJobIds);
-        return inFlightJobIds;
-    }
-
-    /**
-     * Same cancel under the schedule fence (revoke / reset). `afterCancel`
-     * runs in the fence's transaction, after the jobs are locked and cancelled.
+     * way) and each caller decides what that means. `afterCancel` runs in the
+     * fence's transaction, after the jobs are locked and cancelled.
      */
     private async cancelPendingServiceRecordJobsUnderFence(
         scheduleId: number,
@@ -347,11 +334,15 @@ export class ServiceRecordLinkService {
         );
     }
 
-    private async supersedeRetryableServiceRecordSmsLogs(scheduleId: number, reason: string): Promise<void> {
-        const logs = await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId);
+    private async supersedeRetryableServiceRecordSmsLogs(
+        scheduleId: number,
+        reason: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        const logs = await this.logRepository.findRetryableServiceRecordSmsByScheduleId(scheduleId, transaction);
         for (const log of logs) {
             log.markRetrySuperseded(reason);
-            await this.logRepository.update(log);
+            await this.logRepository.update(log, transaction);
         }
     }
 
@@ -447,31 +438,15 @@ export class ServiceRecordLinkService {
                 }
             }
 
-            // A manual send cancels the old pending job and enqueues its
-            // replacement in ONE repository transaction below, so it can refuse
-            // when the dispatcher already claimed a job. Only the automatic
-            // path (guarded by its own scheduling claim) cancels up front.
-            if (!options.isManualSend) {
-                const inFlightJobIds = await this.cancelPendingServiceRecordJobs(
-                    scheduleId,
-                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-                );
-                if (inFlightJobIds.length > 0) {
-                    // A send is already on its way: promoting a replacement would
-                    // queue a second one. The claim is released by the finally.
-                    return {
-                        scheduledFor,
-                        employeeId: employee.id,
-                        jobEnqueued: false,
-                        jobId: null,
-                    };
-                }
-                await this.supersedeRetryableServiceRecordSmsLogs(
-                    scheduleId,
-                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-                );
-            }
-
+            // Neither path cancels anything up front. A manual send cancels the
+            // old pending job and enqueues its replacement (and supersedes the
+            // retryable logs) in ONE repository transaction below, so it can
+            // refuse when the dispatcher already claimed a job. The automatic
+            // path's claim only starts when the schedule has no pending,
+            // processing, dispatching or sent job (nor a failed delivery), so
+            // any such row seen afterwards is a newer send, most likely a
+            // manual one, which the fenced promotion refuses to join.
+            // Cancelling it here would silently lose that accepted send.
             if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
                 if (!options.recordMissingPhoneFailure) {
                     throw new BadRequestException(problemBody("INVALID_PROVIDER_PHONE", {
@@ -583,10 +558,19 @@ export class ServiceRecordLinkService {
                     (transaction) => promote(transaction),
                 );
             } else if (options.isManualSend) {
+                // The retry-log supersession runs inside the replacement's
+                // transaction: if it fails, the replacement rolls back with it
+                // instead of throwing after a committed (and still dispatchable)
+                // send, which an operator retry would then duplicate.
                 const replaced = await this.jobRepository.replacePendingJobsUnlessInFlight(
                     pendingJob,
                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                     { requireActiveLinkToken: linkToken },
+                    (transaction) => this.supersedeRetryableServiceRecordSmsLogs(
+                        scheduleId,
+                        SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                        transaction,
+                    ),
                 );
                 if (
                     replaced.kind === "in_flight"
@@ -602,10 +586,6 @@ export class ServiceRecordLinkService {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
                 persistedJob = replaced.job;
-                await this.supersedeRetryableServiceRecordSmsLogs(
-                    scheduleId,
-                    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
-                );
             } else {
                 persistedJob = await this.jobRepository.upsertPending(pendingJob);
             }

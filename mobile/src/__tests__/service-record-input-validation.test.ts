@@ -37,8 +37,8 @@ describe("service record input policy", () => {
         "900101", "19990101", "1999 01 01", "99-01-01", "1999-1-01", "1999-01-1",
         "1999", "1999-01-", "1999-01-01 ", "1999-01-01\n", "１９９９-０１-０１",
     ])("requires an exact YYYY-MM-DD value at the validation boundary: %p", (value) => {
-        expect(getServiceRecordHeaderFieldError("momBirth", value, NOW)).toContain("YYYY-MM-DD");
-        expect(getServiceRecordHeaderFieldError("babyBirth", value, NOW)).toContain("YYYY-MM-DD");
+        expect(getServiceRecordHeaderFieldError("momBirth", value, NOW)).toContain("8자리");
+        expect(getServiceRecordHeaderFieldError("babyBirth", value, NOW)).toContain("8자리");
     });
     it.each(["1990-02-30", "1999-02-29", "2026-10-01", "2026-13-01", "1899-12-31"])("rejects nonexistent, out-of-range or future dates: %p", (value) => {
         expect(getServiceRecordHeaderFieldError("momBirth", value, NOW)).toContain("날짜");
@@ -88,7 +88,7 @@ describe("service record input policy", () => {
             expect(message).not.toBeNull();
             expect(message!.length).toBeLessThanOrEqual(23);
         }
-        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("YYYY-MM-DD로 입력해 주세요");
+        expect(getServiceRecordHeaderFieldError("momBirth", "1999", NOW)).toBe("8자리로 입력해 주세요");
         expect(getServiceRecordHeaderFieldError("momBirth", "2026-10-01", NOW)).toBe("미래 날짜는 입력할 수 없어요");
         expect(getServiceRecordHeaderFieldError("momBirth", "1990-02-30", NOW)).toBe("존재하지 않는 날짜예요");
         expect(getServiceRecordHeaderFieldError("babyBirth", "", NOW, { required: true })).toBe("신생아 출생일자를 입력해 주세요");

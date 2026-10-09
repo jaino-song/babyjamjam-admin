@@ -26,6 +26,8 @@ import { createAgentAutomationTaskCommitReference } from "application/agent/agen
 describe("ServiceRecordLinkService", () => {
     /** Stands in for the interactive transaction the repository's schedule fence hands to its callback. */
     const FENCE_TRANSACTION = { fence: "transaction" };
+    /** Stand-in for the interactive transaction the repository hands its in-transaction hook. */
+    const REPLACEMENT_TRANSACTION = { name: "replacement-transaction" };
     const createPrisma = () => {
         const prisma = {
             $executeRaw: jest.fn().mockResolvedValue(1),
@@ -102,8 +104,14 @@ describe("ServiceRecordLinkService", () => {
             Object.defineProperty(job, "id", { value: "job-1" });
             return job;
         }),
-        replacePendingJobsUnlessInFlight: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
+        replacePendingJobsUnlessInFlight: jest.fn().mockImplementation(async (
+            job: MessageTriggerJobEntity,
+            _reason: string,
+            _options?: unknown,
+            afterReplace?: (transaction: unknown) => Promise<void>,
+        ) => {
             Object.defineProperty(job, "id", { value: "job-1" });
+            await afterReplace?.(REPLACEMENT_TRANSACTION);
             return { kind: "replaced", job, canceledJobIds: [] };
         }),
     });
@@ -390,7 +398,7 @@ describe("ServiceRecordLinkService", () => {
         expect(jobRepository.cancelPendingUnderScheduleFence.mock.invocationCallOrder[0]).toBeLessThan(
             tokenService.issueLink.mock.invocationCallOrder[0]!,
         );
-        expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10);
+        expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10, undefined);
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
 
@@ -734,35 +742,48 @@ describe("ServiceRecordLinkService", () => {
             expect(jobRepository.update).not.toHaveBeenCalled();
         });
 
-        it("the automatic path promotes nothing, releases its claim and reports no job enqueued", async () => {
+        it("the automatic path never cancels or supersedes anything before its fenced promotion", async () => {
             const jobRepository = createJobRepository();
-            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            const logRepository = createLogRepository();
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
+            );
+
+            await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
+
+            // A pending/processing job seen here appeared after the claim, so it is
+            // a newer (manual) send: cancelling it would lose it (F2).
+            expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+            expect(logRepository.update).not.toHaveBeenCalled();
+            expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
+        });
+
+        it("the automatic path promotes nothing and releases its claim when the fenced promotion refuses behind a newer send", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.promoteAutomaticSchedulingClaim.mockResolvedValue(null);
             const { service, prisma } = build(jobRepository, true);
 
             await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
 
-            expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+            expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
             expect(jobRepository.upsertPending).not.toHaveBeenCalled();
             expect(jobRepository.update).not.toHaveBeenCalled();
             const releaseSql = prisma.$executeRaw.mock.calls
                 .map((call: unknown[]) => call[0] as { strings?: readonly string[] })
                 .find((sql) => sql.strings?.join("?").includes("next_attempt_at"));
             expect(releaseSql).toBeDefined();
-        });
-
-        it("the automatic path still promotes when nothing is in flight", async () => {
-            const jobRepository = createJobRepository();
-            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue({ canceledJobIds: ["old"], inFlightJobIds: [] });
-            const { service } = build(jobRepository, true);
-
-            await expect(service.scheduleForServiceStart(10)).resolves.toBe(true);
-
-            expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
-                SERVICE_RECORD_LINK_RULE_ID,
-                10,
-                "Service record link rescheduled",
-            );
-            expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
         });
 
         it("a manual send whose replacement hit the lock timeout answers the same 409 as an in-flight job", async () => {
@@ -809,6 +830,7 @@ describe("ServiceRecordLinkService", () => {
                 expect.anything(),
                 expect.any(String),
                 { requireActiveLinkToken: "efl_token" },
+                expect.any(Function),
             );
             expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
         });
@@ -879,15 +901,88 @@ describe("ServiceRecordLinkService", () => {
 
         await service.sendNow(10);
 
-        expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10);
+        expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10, REPLACEMENT_TRANSACTION);
         expect(staleLog.nextRetryAt).toBeNull();
         expect(staleLog.errorMessage).toBe("Service record link rescheduled");
-        expect(logRepository.update).toHaveBeenCalledWith(staleLog);
-        // Superseding happens only once the replacement job is durably enqueued,
-        // so a refused (in-flight) manual send leaves retryable logs untouched.
+        expect(logRepository.update).toHaveBeenCalledWith(staleLog, REPLACEMENT_TRANSACTION);
+        // Superseding happens inside the replacement's transaction, after the job
+        // is inserted, so a refused (in-flight) manual send leaves retryable logs
+        // untouched and a failed supersession rolls the replacement back.
         expect(logRepository.update.mock.invocationCallOrder[0]).toBeGreaterThan(
             jobRepository.replacePendingJobsUnlessInFlight.mock.invocationCallOrder[0]!,
         );
+    });
+
+    describe("manual send: retry-log supersession shares the replacement transaction (F3)", () => {
+        const buildSend = (jobRepository: ReturnType<typeof createJobRepository>, logRepository: ReturnType<typeof createLogRepository>) => {
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            return new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            );
+        };
+        const staleLog = () => ({ markRetrySuperseded: jest.fn() });
+
+        it("looks up and supersedes the logs through the transaction the replacement runs in", async () => {
+            const jobRepository = createJobRepository();
+            const logRepository = createLogRepository();
+            const log = staleLog();
+            logRepository.findRetryableServiceRecordSmsByScheduleId.mockResolvedValue([log]);
+
+            await buildSend(jobRepository, logRepository).sendNow(10);
+
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10, REPLACEMENT_TRANSACTION);
+            expect(log.markRetrySuperseded).toHaveBeenCalledWith("Service record link rescheduled");
+            expect(logRepository.update).toHaveBeenCalledWith(log, REPLACEMENT_TRANSACTION);
+        });
+
+        it("a supersession failure fails the whole send inside the replacement, never after it", async () => {
+            const jobRepository = createJobRepository();
+            const logRepository = createLogRepository();
+            logRepository.findRetryableServiceRecordSmsByScheduleId.mockResolvedValue([staleLog()]);
+            logRepository.update.mockRejectedValue(new Error("log update failed"));
+            // A repository that really runs the hook inside its transaction: the
+            // hook's failure rolls the replacement back, so no job is committed.
+            let committed = false;
+            jobRepository.replacePendingJobsUnlessInFlight.mockImplementation(async (
+                job: MessageTriggerJobEntity,
+                _reason: string,
+                _options?: unknown,
+                afterReplace?: (transaction: unknown) => Promise<void>,
+            ) => {
+                await afterReplace?.(REPLACEMENT_TRANSACTION);
+                committed = true;
+                return { kind: "replaced", job, canceledJobIds: [] };
+            });
+
+            await expect(buildSend(jobRepository, logRepository).sendNow(10)).rejects.toThrow("log update failed");
+
+            expect(committed).toBe(false);
+            expect(jobRepository.replacePendingJobsUnlessInFlight).toHaveBeenCalledTimes(1);
+            expect(logRepository.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("makes no log write of its own after the replacement returns", async () => {
+            const jobRepository = createJobRepository();
+            const logRepository = createLogRepository();
+            logRepository.findRetryableServiceRecordSmsByScheduleId.mockResolvedValue([staleLog()]);
+            // Replacement that does not run the hook (e.g. nothing to supersede is
+            // the repository's concern); the service must not repeat the work outside.
+            jobRepository.replacePendingJobsUnlessInFlight.mockImplementation(async (job: MessageTriggerJobEntity) => {
+                Object.defineProperty(job, "id", { value: "job-1" });
+                return { kind: "replaced", job, canceledJobIds: [] };
+            });
+
+            await expect(buildSend(jobRepository, logRepository).sendNow(10)).resolves.toMatchObject({ jobId: "job-1" });
+
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+            expect(logRepository.update).not.toHaveBeenCalled();
+        });
     });
 
     describe("manual send in-flight fence", () => {

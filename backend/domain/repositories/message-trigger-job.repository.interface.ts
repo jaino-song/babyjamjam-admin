@@ -253,11 +253,16 @@ export interface IMessageTriggerJobRepository {
      * With `options.requireActiveLinkToken`, the link token the replacement
      * carries is re-checked under the fence; a revoked one yields
      * `link_revoked` with nothing written.
+     * `afterReplace` runs inside that same transaction once the replacement is
+     * inserted, after every schedule/rule/job lock was taken (so any row it
+     * locks, e.g. message_log, comes last). If it throws, the cancel and the
+     * insert roll back with it: a failure never escapes after a commit.
      */
     replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
         options?: ScheduleFenceLinkOptions,
+        afterReplace?: (transaction: Prisma.TransactionClient) => Promise<void>,
     ): Promise<ReplacePendingJobsResult>;
     /**
      * Upsert a pending job only while its rule is at the inspected generation
