@@ -172,9 +172,9 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.getByRole("button", { name: "기록 시작" }).click();
   // 다음 stays pressable; pressing it with unanswered items shows the messages in their
   // label-row slots instead of advancing.
-  await expect(page.locator('[data-slot="lab-msg"].error')).toHaveCount(0);
+  await expect(page.locator('[data-slot="lab-msg"][data-tone="error"]')).toHaveCount(0);
   await page.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(page.locator('[data-slot="lab-msg"].error').first()).toBeVisible();
+  await expect(page.locator('[data-slot="lab-msg"][data-tone="error"]').first()).toBeVisible();
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toHaveText("신생아 기록");
   await page.getByLabel("식사").fill("3");
   await page.getByLabel("간식").fill("2");
@@ -189,7 +189,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await page.getByRole("button", { name: "다음", exact: true }).click();
-  await expect(page.locator('[data-slot="lab-msg"].error').filter({ hasText: "결제 확인을 눌러 주세요" })).toBeVisible();
+  await expect(page.locator('[data-slot="lab-msg"][data-tone="error"]').filter({ hasText: "결제 확인을 눌러 주세요" })).toBeVisible();
   await page.getByRole("button", { name: "결제 확인 완료" }).click();
   await page.getByRole("button", { name: "다음", exact: true }).click();
 

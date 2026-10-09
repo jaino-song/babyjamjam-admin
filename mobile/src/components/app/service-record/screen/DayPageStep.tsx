@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import {
     DAILY_ITEMS,
@@ -13,7 +13,6 @@ import {
     getServiceRecordNumericErrors,
     hintMessage,
     resolvePlannedDates,
-    useHadValue,
     type ServiceRecordWizardProps,
 } from "@babyjamjam/service-record-ui";
 
@@ -42,6 +41,7 @@ import {
     dailyFieldComponent,
     getDailyItemProblemId,
 } from "./ids";
+import type { ServiceDateFieldState } from "./serviceDateFieldState";
 
 const HEAD_SOURCE_COMPONENT = "DayPageHead";
 const STEP_SOURCE_COMPONENT = "DayPageStep";
@@ -136,14 +136,17 @@ export type DayPageStepProps = Pick<
     | "onFieldChange"
     | "onToggleMulti"
     | "onNextPage"
->;
+> & {
+    /** The service-date field's state, owned by the screen root so it outlives this step (SRW:529-536). */
+    dateState: ServiceDateFieldState;
+};
 
 /**
  * A non-confirmation day page of the public flow (SRW:879-1037 with `readOnly` and
  * `adminMode` false). It renders its own body and its sticky action bar as
- * siblings, so the parent must be the screen's min-h-dvh column. It keeps the
- * service-date field's local state (edit text, focus, touched, had-value,
- * submitted); keep it mounted while the page index changes within a day.
+ * siblings, so the parent must be the screen's min-h-dvh column. The service-date
+ * field's state (edit text, focus, touched, had-value, submitted) is the root's
+ * `dateState`, so it survives a switch to the review page and back.
  */
 export function DayPageStep({
     "data-component": root,
@@ -162,14 +165,20 @@ export function DayPageStep({
     onFieldChange,
     onToggleMulti,
     onNextPage,
+    dateState,
 }: DayPageStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
-    const [serviceDateFocused, setServiceDateFocused] = useState(false);
-    const [serviceDateTouched, setServiceDateTouched] = useState(false);
-    const [serviceDateEdit, setServiceDateEdit] = useState<{ text: string; base: string; day: number } | null>(null);
-    const [submittedPageKey, setSubmittedPageKey] = useState<string | null>(null);
-    // "Held a value before", so a prefilled value that is later cleared shows "required" (SRW:589).
-    const trackHadValue = useHadValue();
+    const {
+        focused: serviceDateFocused,
+        setFocused: setServiceDateFocused,
+        touched: serviceDateTouched,
+        setTouched: setServiceDateTouched,
+        edit: serviceDateEdit,
+        setEdit: setServiceDateEdit,
+        submittedPageKey,
+        setSubmittedPageKey,
+        hadValue: hadServiceDateValue,
+    } = dateState;
 
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const { providerDateLocked, currentServiceDate } = resolvePlannedDates({
@@ -183,7 +192,6 @@ export function DayPageStep({
     const serviceDateText = serviceDateEdit && serviceDateEdit.base === currentServiceDate && serviceDateEdit.day === day
         ? serviceDateEdit.text : null;
     const serviceDateValue = serviceDateText ?? currentServiceDate;
-    const hadServiceDateValue = trackHadValue("serviceDate", serviceDateValue);
     const serviceDateFieldVisible = !editing && pageIdx === 0;
     const {
         reportable: serviceDateIsReportable,

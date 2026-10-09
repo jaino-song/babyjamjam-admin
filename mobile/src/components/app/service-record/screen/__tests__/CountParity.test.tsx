@@ -8,6 +8,7 @@ import {
 } from "@babyjamjam/service-record-ui";
 
 import { DayPageStep } from "../DayPageStep";
+import { useServiceDateFieldState } from "../serviceDateFieldState";
 
 const ROOT = "mobile_service-record_wizard";
 
@@ -41,6 +42,7 @@ function SharedHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
 function ScreenHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
     const [draft, setDraft] = useState<Record<string, unknown>>({ ...DEFAULT_DAILY_ANSWERS });
     const { onBack, onServiceDateChange, onOpenScheduleChangePreview, onToggleMulti, onNextPage } = sharedProps(pageIdx, draft, jest.fn());
+    const dateState = useServiceDateFieldState({ currentServiceDate: "2026-09-21", day: 1 });
     return (
         <DayPageStep
             data-component={ROOT}
@@ -58,6 +60,7 @@ function ScreenHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
             onOpenScheduleChangePreview={onOpenScheduleChangePreview}
             onToggleMulti={onToggleMulti}
             onNextPage={onNextPage}
+            dateState={dateState}
             onFieldChange={(key, value) => {
                 calls.push([key, value]);
                 setDraft((current) => ({ ...current, [key]: value }));

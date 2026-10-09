@@ -2,6 +2,19 @@ import { render, screen, within } from "@testing-library/react";
 import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/ServiceRecordWizard";
 import { DEFAULT_DAILY_ANSWERS } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
+import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
+
+// jsdom has no canvas: a stand-in for the mobile screen's signature pad (the shared wizard renders none without a slot).
+jest.mock("@/components/app/service-record/SignaturePad", () => ({
+    SignaturePad: ({ onChange }: { onChange: (dataUri: string | null) => void }) => (
+        <button type="button" onClick={() => onChange("data:image/png;base64,AAAA")}>서명 입력</button>
+    ),
+}));
+
+const ROWS = [
+    { name: "shared wizard", Component: ServiceRecordWizard },
+    { name: "mobile screen", Component: MobileServiceRecordScreen },
+];
 
 const validHeader = {
     momName: "이예지", momBirth: "1999-01-01", babyName: "이아기", babyBirth: "2026-06-15",
@@ -20,28 +33,28 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
 
-describe("service record accessible names", () => {
+describe.each(ROWS)("service record accessible names ($name)", ({ Component }) => {
     it("names the option groups after their item", () => {
-        render(<ServiceRecordWizard {...makeProps({ pageIdx: 0 })} />);
+        render(<Component {...makeProps({ pageIdx: 0 })} />);
         const group = screen.getByRole("group", { name: /회음절개부위/ });
         expect(within(group).getByRole("button", { name: /이상없음/ })).toBeInTheDocument();
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
     });
 
     it("names the delivery type group on the header step", () => {
-        render(<ServiceRecordWizard {...makeProps({ screen: "service" })} />);
+        render(<Component {...makeProps({ screen: "service" })} />);
         const group = screen.getByRole("radiogroup", { name: "분만형태" });
         expect(within(group).getByRole("button", { name: /자연분만/ })).toBeInTheDocument();
     });
 
     it("keeps meal inputs unique on the first page", () => {
-        render(<ServiceRecordWizard {...makeProps({ pageIdx: 0 })} />);
+        render(<Component {...makeProps({ pageIdx: 0 })} />);
         expect(screen.getAllByLabelText(/식사/)).toHaveLength(1);
         expect(screen.getByLabelText("간식")).toBeInTheDocument();
     });
 
     it("prefixes ambiguous count inputs with their item and leaves unambiguous ones alone", () => {
-        render(<ServiceRecordWizard {...makeProps({ pageIdx: 1 })} />);
+        render(<Component {...makeProps({ pageIdx: 1 })} />);
         expect(screen.getByLabelText("체온")).toBeInTheDocument();
         expect(screen.getByLabelText("모유수유 횟수")).toBeInTheDocument();
         expect(screen.getByLabelText("분유수유 횟수")).toBeInTheDocument();
@@ -49,7 +62,7 @@ describe("service record accessible names", () => {
     });
 
     it("names the review sections, their edit buttons and their rows", () => {
-        render(<ServiceRecordWizard {...makeProps({ pageIdx: 3, editing: true })} />);
+        render(<Component {...makeProps({ pageIdx: 3, editing: true })} />);
         const mom = screen.getByRole("region", { name: "산모" });
         expect(within(mom).getByRole("group", { name: /회음절개부위/ })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "산모 수정" })).toHaveTextContent("수정");

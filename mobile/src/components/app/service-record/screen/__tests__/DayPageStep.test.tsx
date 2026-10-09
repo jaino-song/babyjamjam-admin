@@ -1,10 +1,22 @@
 import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { DAILY_ITEMS, DEFAULT_DAILY_ANSWERS, getDailyItemProblem } from "@babyjamjam/service-record-ui";
+import { DAILY_ITEMS, DEFAULT_DAILY_ANSWERS, getDailyItemProblem, resolvePlannedDates } from "@babyjamjam/service-record-ui";
 
-import { DayPageStep, type DayPageStepProps } from "../DayPageStep";
+import { DayPageStep as DayPageStepBase, type DayPageStepProps as BaseProps } from "../DayPageStep";
 import { dailyFieldComponent, getDailyItemProblemId } from "../ids";
+import { useServiceDateFieldState } from "../serviceDateFieldState";
+
+type DayPageStepProps = Omit<BaseProps, "dateState">;
+
+/** The step with the date-field state the screen root normally owns. */
+function DayPageStep(props: DayPageStepProps) {
+    const { currentServiceDate } = resolvePlannedDates({
+        context: props.context, day: props.day, adminMode: false, draft: props.draft, defaultDate: props.defaultDate,
+    });
+    const dateState = useServiceDateFieldState({ currentServiceDate, day: props.day });
+    return <DayPageStepBase {...props} dateState={dateState} />;
+}
 
 const ROOT = "mobile_service-record_wizard";
 
