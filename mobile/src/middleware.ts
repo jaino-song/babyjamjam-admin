@@ -8,7 +8,11 @@ import {
   decodeAccessBranchId,
   getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
-import { tryLocalAutoLogin } from "@/lib/auth/local-auto-login";
+import {
+  isLocalAutoLoginEligible,
+  probeLocalAuthSession,
+  tryLocalAutoLogin,
+} from "@/lib/auth/local-auto-login";
 
 interface TokenPayload {
   sub: string;
@@ -32,6 +36,7 @@ type RefreshAttempt =
     refreshToken: string;
     role: string;
   }
+  | { kind: "rejected" | "unavailable" }
   | { kind: "concurrent" }
   | null;
 
@@ -42,6 +47,12 @@ const {
 
 function isAutoLoginEnabled(value: string | undefined): boolean {
   return value !== "0" && value !== "false";
+}
+
+function getLocalAutoLoginTarget(request: NextRequest): URL {
+  return isRouteMatch(request.nextUrl.pathname, LOGIN_ROUTE)
+    ? new URL("/", request.url)
+    : request.nextUrl;
 }
 
 function decodeRole(token: string): string {
@@ -174,13 +185,14 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<RefreshAttem
         if (error?.code === "AUTH_REFRESH_REPLAY_CONCURRENT") {
           return { kind: "concurrent" };
         }
+        return { kind: "rejected" };
       }
-      return null;
+      return { kind: "unavailable" };
     }
 
     const data = await refreshResponse.json() as RefreshResponse;
     if (!data.accessToken || isTokenExpired(data.accessToken)) {
-      return null;
+      return { kind: "unavailable" };
     }
 
     return {
@@ -190,7 +202,7 @@ async function tryRefreshAuthSession(refreshToken: string): Promise<RefreshAttem
       role: decodeRole(data.accessToken),
     };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -280,13 +292,20 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const localRecoveryEligible = isLocalAutoLoginEligible(request, API_URL, {
+    allowExistingCookies: true,
+  });
   const isLocalLoginNavigation = !isApiRoute(pathname)
     && (
       pathname === "/"
       || isRouteMatch(pathname, LOGIN_ROUTE)
       || !PUBLIC_ROUTES.some((route) => isRouteMatch(pathname, route))
     );
+  const hasExistingAuthCookies = request.cookies.has("auth_token")
+    || request.cookies.has("refresh_token");
+  let localLoginAttempted = false;
   if (isLocalLoginNavigation) {
+    localLoginAttempted = !hasExistingAuthCookies;
     const session = await tryLocalAutoLogin(request, API_URL);
     if (session && !isTokenExpired(session.accessToken)) {
       const branchId = session.requiresBranchSelection
@@ -294,9 +313,7 @@ export async function middleware(request: NextRequest) {
         : decodeAccessBranchId(session.accessToken);
       const target = !branchId
         ? new URL("/select-branch", request.url)
-        : isRouteMatch(pathname, LOGIN_ROUTE)
-          ? new URL("/", request.url)
-          : request.nextUrl;
+        : getLocalAutoLoginTarget(request);
       const response = NextResponse.redirect(target);
       setSessionCookies(response, {
         accessToken: session.accessToken,
@@ -312,6 +329,23 @@ export async function middleware(request: NextRequest) {
 
   // Prevent authenticated users from seeing the login screen.
   let authToken = request.cookies.get("auth_token")?.value;
+  let staleLocalSession = Boolean(authToken && isTokenExpired(authToken));
+  if (
+    localRecoveryEligible
+    && pathname === LOGIN_ROUTE
+    && request.method === "GET"
+    && authToken
+    && !staleLocalSession
+  ) {
+    const probe = await probeLocalAuthSession(request, API_URL, authToken);
+    if (probe === "unknown") {
+      return NextResponse.next();
+    }
+    if (probe === "invalid") {
+      authToken = undefined;
+      staleLocalSession = true;
+    }
+  }
   const isLoginNavigation = request.method === "GET" || request.method === "HEAD";
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
@@ -324,10 +358,11 @@ export async function middleware(request: NextRequest) {
   if (
     isRouteMatch(pathname, LOGIN_ROUTE)
     && isLoginNavigation
-    && authToken
-    && isTokenExpired(authToken)
+    && (staleLocalSession || (localRecoveryEligible && !authToken))
   ) {
     const loginRefreshToken = request.cookies.get("refresh_token")?.value;
+    let refreshRejected = !loginRefreshToken;
+    let refreshUnavailable = false;
     if (loginRefreshToken) {
       const refreshAttempt = await tryRefreshAuthSession(loginRefreshToken);
       if (refreshAttempt?.kind === "success") {
@@ -348,9 +383,46 @@ export async function middleware(request: NextRequest) {
         response.headers.set("Retry-After", "1");
         return response;
       }
+      refreshRejected = refreshAttempt?.kind === "rejected";
+      refreshUnavailable = refreshAttempt?.kind === "unavailable";
+    }
+
+    if (localRecoveryEligible && refreshUnavailable) {
+      return NextResponse.next();
+    }
+
+    if (
+      localRecoveryEligible
+      && refreshRejected
+      && !localLoginAttempted
+      && request.method === "GET"
+    ) {
+      localLoginAttempted = true;
+      const session = await tryLocalAutoLogin(request, API_URL, {
+        allowExistingCookies: true,
+      });
+      if (session && !isTokenExpired(session.accessToken)) {
+        const branchId = session.requiresBranchSelection
+          ? null
+          : decodeAccessBranchId(session.accessToken);
+        const response = NextResponse.redirect(
+          !branchId ? new URL("/select-branch", request.url) : getLocalAutoLoginTarget(request),
+        );
+        setSessionCookies(response, {
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          role: decodeRole(session.accessToken),
+          autoLogin: true,
+        });
+        setSelectedBranchCookie(response, branchId);
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
     }
     const response = NextResponse.next();
-    clearAuthCookies(response);
+    if (staleLocalSession || (localRecoveryEligible && loginRefreshToken)) {
+      clearAuthCookies(response);
+    }
     return response;
   }
 
@@ -367,6 +439,8 @@ export async function middleware(request: NextRequest) {
     refreshToken: string;
     role: string;
   } | null = null;
+  let refreshRejected = !refreshToken;
+  let refreshUnavailable = false;
 
   const needsRefresh = !authToken || isTokenExpired(authToken);
 
@@ -404,17 +478,55 @@ export async function middleware(request: NextRequest) {
       }
 
     }
+    refreshRejected = refreshAttempt?.kind === "rejected";
+    refreshUnavailable = refreshAttempt?.kind === "unavailable";
   }
 
   // No auth token - redirect to login
   if (!authToken || isTokenExpired(authToken)) {
+    if (localRecoveryEligible && isLocalLoginNavigation && refreshUnavailable) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
+
     if (isApiRoute(pathname)) {
       return apiCodeResponse("AUTH_REQUIRED", "Authentication required", 401);
     }
 
+    if (
+      localRecoveryEligible
+      && refreshRejected
+      && isLocalLoginNavigation
+      && request.method === "GET"
+      && !localLoginAttempted
+    ) {
+      localLoginAttempted = true;
+      const session = await tryLocalAutoLogin(request, API_URL, {
+        allowExistingCookies: true,
+      });
+      if (session && !isTokenExpired(session.accessToken)) {
+        const branchId = session.requiresBranchSelection
+          ? null
+          : decodeAccessBranchId(session.accessToken);
+        const response = NextResponse.redirect(
+          !branchId ? new URL("/select-branch", request.url) : getLocalAutoLoginTarget(request),
+        );
+        setSessionCookies(response, {
+          accessToken: session.accessToken,
+          refreshToken: session.refreshToken,
+          role: decodeRole(session.accessToken),
+          autoLogin: true,
+        });
+        setSelectedBranchCookie(response, branchId);
+        response.headers.set("Cache-Control", "no-store");
+        return response;
+      }
+    }
+
     const loginUrl = new URL("/login", request.url);
     const response = NextResponse.redirect(loginUrl);
-    clearAuthCookies(response);
+    if (!localRecoveryEligible || staleLocalSession || refreshToken) {
+      clearAuthCookies(response);
+    }
     return response;
   }
 

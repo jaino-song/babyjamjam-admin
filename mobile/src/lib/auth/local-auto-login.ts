@@ -1,6 +1,14 @@
 import type { NextRequest } from "next/server";
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOCAL_LOGIN_PATH = "/login";
+
+export interface LocalAutoLoginOptions {
+    /** Existing cookies are allowed only after the caller proves they are stale. */
+    allowExistingCookies?: boolean;
+}
+
+export type LocalAuthProbeResult = "valid" | "invalid" | "unknown" | null;
 
 interface LocalAutoLoginSession {
     accessToken: string;
@@ -8,11 +16,15 @@ interface LocalAutoLoginSession {
     requiresBranchSelection: boolean;
 }
 
-// Credentials stay in the server environment; this module is only used by middleware.ts.
-export async function tryLocalAutoLogin(
+interface LocalRequestContext {
+    backend: URL;
+}
+
+function getLocalRequestContext(
     request: NextRequest,
     backendBaseUrl: string,
-): Promise<LocalAutoLoginSession | null> {
+    options: LocalAutoLoginOptions = {},
+): LocalRequestContext | null {
     if (
         process.env.NODE_ENV !== "development"
         || process.env.VERCEL
@@ -21,15 +33,9 @@ export async function tryLocalAutoLogin(
         || process.env.RAILWAY_ENVIRONMENT_NAME
         || request.method !== "GET"
         || request.headers.get("sec-fetch-site") === "cross-site"
-        || request.cookies.has("auth_token")
-        || request.cookies.has("refresh_token")
+        || (!options.allowExistingCookies
+            && (request.cookies.has("auth_token") || request.cookies.has("refresh_token")))
     ) {
-        return null;
-    }
-
-    const email = process.env.LOCAL_AUTO_LOGIN_EMAIL;
-    const password = process.env.LOCAL_AUTO_LOGIN_PASSWORD;
-    if (!email || !password) {
         return null;
     }
 
@@ -61,7 +67,42 @@ export async function tryLocalAutoLogin(
             return null;
         }
 
-        const response = await fetch(new URL("/auth/login", backend), {
+        return { backend };
+    } catch {
+        return null;
+    }
+}
+
+function hasValidAuthProbeBody(value: unknown): boolean {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isLocalAutoLoginEligible(
+    request: NextRequest,
+    backendBaseUrl: string,
+    options: LocalAutoLoginOptions = {},
+): boolean {
+    if (!process.env.LOCAL_AUTO_LOGIN_EMAIL || !process.env.LOCAL_AUTO_LOGIN_PASSWORD) {
+        return false;
+    }
+    return getLocalRequestContext(request, backendBaseUrl, options) !== null;
+}
+
+// Credentials stay in the server environment; this module is only used by middleware.ts.
+export async function tryLocalAutoLogin(
+    request: NextRequest,
+    backendBaseUrl: string,
+    options: LocalAutoLoginOptions = {},
+): Promise<LocalAutoLoginSession | null> {
+    const email = process.env.LOCAL_AUTO_LOGIN_EMAIL;
+    const password = process.env.LOCAL_AUTO_LOGIN_PASSWORD;
+    if (!email || !password) return null;
+
+    const context = getLocalRequestContext(request, backendBaseUrl, options);
+    if (!context) return null;
+
+    try {
+        const response = await fetch(new URL("/auth/login", context.backend), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email, password }),
@@ -69,9 +110,7 @@ export async function tryLocalAutoLogin(
             redirect: "error",
             signal: AbortSignal.timeout(10_000),
         });
-        if (!response.ok) {
-            return null;
-        }
+        if (!response.ok) return null;
 
         const session = await response.json() as {
             success?: boolean;
@@ -97,5 +136,41 @@ export async function tryLocalAutoLogin(
     } catch {
         // Do not log fetch errors: they can contain the credential-bearing request.
         return null;
+    }
+}
+
+/** Probe only a guarded local login GET; uncertain responses never switch accounts. */
+export async function probeLocalAuthSession(
+    request: NextRequest,
+    backendBaseUrl: string,
+    accessToken: string,
+): Promise<LocalAuthProbeResult> {
+    if (request.nextUrl.pathname !== LOCAL_LOGIN_PATH || !accessToken) return null;
+    if (!process.env.LOCAL_AUTO_LOGIN_EMAIL || !process.env.LOCAL_AUTO_LOGIN_PASSWORD) return null;
+
+    const context = getLocalRequestContext(
+        request,
+        backendBaseUrl,
+        { allowExistingCookies: true },
+    );
+    if (!context) return null;
+
+    try {
+        const response = await fetch(new URL("/auth/me", context.backend), {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+            },
+            cache: "no-store",
+            redirect: "error",
+            signal: AbortSignal.timeout(10_000),
+        });
+        if (response.status === 401) return "invalid";
+        if (!response.ok) return "unknown";
+        const body = await response.json().catch(() => null) as unknown;
+        return hasValidAuthProbeBody(body) ? "valid" : "unknown";
+    } catch {
+        return "unknown";
     }
 }

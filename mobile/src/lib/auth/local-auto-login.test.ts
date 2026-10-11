@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
 
-import { tryLocalAutoLogin } from "./local-auto-login";
+import { probeLocalAuthSession, tryLocalAutoLogin } from "./local-auto-login";
 
 const originalEnv = process.env;
 const originalFetch = global.fetch;
@@ -132,6 +132,92 @@ it("does not submit missing credentials or POST navigation", async () => {
         tryLocalAutoLogin(
             new NextRequest("http://localhost:3002", { method: "POST" }),
             "http://localhost:3001",
+        ),
+    ).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("allows an explicit stale-cookie recovery attempt", async () => {
+    await expect(
+        tryLocalAutoLogin(
+            request(undefined, { cookie: "auth_token=stale" }),
+            "http://localhost:3001",
+            { allowExistingCookies: true },
+        ),
+    ).resolves.toEqual({
+        accessToken: "access",
+        refreshToken: "refresh",
+        requiresBranchSelection: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("probes a local login session only after the request guard passes", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: "user-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+    }));
+
+    await expect(
+        probeLocalAuthSession(
+            request("http://localhost:3002/login", { cookie: "auth_token=access" }),
+            "http://localhost:3001",
+            "access",
+        ),
+    ).resolves.toBe("valid");
+    expect(fetchMock).toHaveBeenCalledWith(
+        new URL("http://localhost:3001/auth/me"),
+        expect.objectContaining({
+            method: "GET",
+            redirect: "error",
+            cache: "no-store",
+            headers: expect.objectContaining({ Authorization: "Bearer access" }),
+        }),
+    );
+});
+
+it.each([
+    { status: 401, body: JSON.stringify({ code: "AUTH_INVALID_TOKEN" }), expected: "invalid" },
+    { status: 403, body: JSON.stringify({ code: "FORBIDDEN" }), expected: "unknown" },
+    { status: 200, body: "not-json", expected: "unknown" },
+] as const)("classifies auth probe response $status conservatively", async ({ status, body, expected }) => {
+    fetchMock.mockResolvedValue(new Response(body, { status }));
+
+    await expect(
+        probeLocalAuthSession(
+            request("http://localhost:3002/login", { cookie: "auth_token=access" }),
+            "http://localhost:3001",
+            "access",
+        ),
+    ).resolves.toBe(expected);
+});
+
+it("does not probe a non-login or unsafe navigation", async () => {
+    await expect(
+        probeLocalAuthSession(
+            request("http://localhost:3002/dashboard", { cookie: "auth_token=access" }),
+            "http://localhost:3001",
+            "access",
+        ),
+    ).resolves.toBeNull();
+    await expect(
+        probeLocalAuthSession(
+            request("https://localhost:3002/login", { cookie: "auth_token=access" }),
+            "http://localhost:3001",
+            "access",
+        ),
+    ).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it("does not probe when local credentials are not configured", async () => {
+    delete process.env.LOCAL_AUTO_LOGIN_EMAIL;
+
+    await expect(
+        probeLocalAuthSession(
+            request("http://localhost:3002/login", { cookie: "auth_token=access" }),
+            "http://localhost:3001",
+            "access",
         ),
     ).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
