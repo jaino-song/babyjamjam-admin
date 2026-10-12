@@ -168,7 +168,7 @@ export function VoucherPriceTable() {
     refetch: refetchPrices,
   } = useAllVoucherPriceInfos(selectedYear);
   const years = yearsData ?? [];
-  const prices = pricesData ?? [];
+  const prices = useMemo(() => pricesData ?? [], [pricesData]);
 
   // A paused first load (device offline) has no data yet: it reads as loading, not as "none".
   const isYearsLoading = isYearsQueryLoading || (isYearsPaused && yearsData === undefined);
@@ -178,6 +178,9 @@ export function VoucherPriceTable() {
   // A failed refetch behind data that did load: keep the data, flag it as possibly out of date.
   const isYearsStale = isYearsError && yearsData !== undefined;
   const isPricesStale = isPricesError && pricesData !== undefined;
+  // One outage, one alert: the stale notice already retries every query that is in error.
+  const showStaleNotice = !isPricesFailed && (isPricesStale || isYearsStale);
+  const showYearsAlert = isYearsFailed && !isPricesFailed && !showStaleNotice;
   const retryLoads = () => {
     if (isPricesError) void refetchPrices();
     if (isYearsError) void refetchYears();
@@ -341,7 +344,7 @@ export function VoucherPriceTable() {
 
       <Separator className="shrink-0 mb-4" />
 
-      {isYearsFailed && !isPricesFailed ? (
+      {showYearsAlert ? (
         <QueryErrorState
           dataComponent="desktop_settings_voucher-price-table_years-load-error"
           size="inline"
@@ -351,7 +354,7 @@ export function VoucherPriceTable() {
           isRetrying={isYearsFetching}
         />
       ) : null}
-      {!isPricesFailed && (isPricesStale || isYearsStale) ? (
+      {showStaleNotice ? (
         <QueryErrorState
           dataComponent="desktop_settings_voucher-price-table_stale-load-error"
           size="inline"

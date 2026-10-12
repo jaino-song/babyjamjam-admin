@@ -163,6 +163,21 @@ describe("VoucherPriceTable load states", () => {
       expect(refetchPrices).toHaveBeenCalledTimes(1);
     });
 
+    it("shows one stale notice, not also the years alert, when the years failed and cached prices failed to refresh", () => {
+      const refetchYears = jest.fn();
+      const refetchPrices = jest.fn();
+      setup(failed({ refetch: refetchYears }), failedWithData([ROW], { refetch: refetchPrices }));
+
+      expect(screen.getByText("100,000원")).toBeInTheDocument();
+      expect(screen.getAllByRole("alert")).toHaveLength(1);
+      expect(screen.getByRole("alert")).toHaveTextContent(STALE_TITLE);
+      expect(screen.queryByText(YEARS_TITLE)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(refetchYears).toHaveBeenCalledTimes(1);
+      expect(refetchPrices).toHaveBeenCalledTimes(1);
+    });
+
     it("disables the year selector while the years are paused, with no alert", () => {
       setup(paused(), loaded([ROW]));
 
