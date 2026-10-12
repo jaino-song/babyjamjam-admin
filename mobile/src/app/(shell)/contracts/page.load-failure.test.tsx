@@ -385,6 +385,113 @@ describe("ContractsPage list load failures (S5)", () => {
 });
 
 describe("ContractsPage service-record template lookup failure (S5)", () => {
+  async function openServiceRecordsWithCachedTemplate(list: Record<string, unknown>) {
+    queryClient.setQueryData(TEMPLATE_KEY, { templateId: "svc-template", templateIds: ["svc-template"] });
+    mockUseInfiniteContracts.mockReturnValue(list);
+    mountPage();
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await settle();
+  }
+
+  async function failCachedTemplateRefresh() {
+    mockServiceRecordTemplateId.mockRejectedValue(new Error("network down"));
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: TEMPLATE_KEY });
+    });
+    await flushQueryNotifications();
+    expect(queryClient.getQueryState(TEMPLATE_KEY)).toMatchObject({ status: "error", fetchStatus: "idle" });
+    expect(queryClient.getQueryData(TEMPLATE_KEY)).toBeDefined();
+  }
+
+  it("cached template ids + healthy cached rows + failed refresh: one inline notice retries only the template and stays disabled in flight", async () => {
+    const list = listState(SUCCESS_ROWS());
+    await openServiceRecordsWithCachedTemplate(list);
+    await failCachedTemplateRefresh();
+
+    expect(listRows()).toHaveLength(2);
+    for (const row of listRows()) expect(row).toHaveTextContent("제공기록지");
+    expect(listCardPanel()).toBeNull();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    const notice = staleNotice() as HTMLElement;
+    expect(notice).toHaveAttribute("role", "alert");
+    expect(notice).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(notice.compareDocumentPosition(listRows()[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    mockServiceRecordTemplateId.mockClear();
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    fireEvent.click(within(notice).getByRole("button", { name: "다시 시도" }));
+    await flushQueryNotifications();
+
+    expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
+    expect(list.refetch).not.toHaveBeenCalled();
+    expect(list.fetchNextPage).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(TEMPLATE_KEY)).toMatchObject({ status: "error", fetchStatus: "fetching" });
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(listRows()).toHaveLength(2);
+  });
+
+  it("cached template refresh notice clears after a successful retry and stays absent on a later background refresh", async () => {
+    await openServiceRecordsWithCachedTemplate(listState(SUCCESS_ROWS()));
+    await failCachedTemplateRefresh();
+    expect(staleNotice()).not.toBeNull();
+
+    mockServiceRecordTemplateId.mockResolvedValue({ templateId: "svc-template", templateIds: ["svc-template"] });
+    fireEvent.click(within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    await waitFor(() => expect(queryClient.getQueryState(TEMPLATE_KEY)?.status).toBe("success"));
+    await flushQueryNotifications();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(listRows()).toHaveLength(2);
+
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    await act(async () => {
+      void queryClient.refetchQueries({ queryKey: TEMPLATE_KEY });
+    });
+    await flushQueryNotifications();
+    expect(queryClient.getQueryState(TEMPLATE_KEY)).toMatchObject({ status: "success", fetchStatus: "fetching" });
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("successful cached template ids with an ordinary background refresh do not show an alert", async () => {
+    await openServiceRecordsWithCachedTemplate(listState(SUCCESS_ROWS()));
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    await act(async () => {
+      void queryClient.refetchQueries({ queryKey: TEMPLATE_KEY });
+    });
+    await flushQueryNotifications();
+
+    expect(queryClient.getQueryState(TEMPLATE_KEY)).toMatchObject({ status: "success", fetchStatus: "fetching" });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(listRows()).toHaveLength(2);
+  });
+
+  it("maternal contracts do not show an alert for a failed cached template refresh", async () => {
+    queryClient.setQueryData(TEMPLATE_KEY, { templateId: "svc-template", templateIds: ["svc-template"] });
+    mockUseInfiniteContracts.mockReturnValue(listState(SUCCESS_ROWS()));
+    mountPage();
+    await settle();
+    await failCachedTemplateRefresh();
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(listRows()).toHaveLength(2);
+  });
+
+  it("cached template ids + failed template and document refreshes share one notice that retries both", async () => {
+    const list = listState({ ...SUCCESS_ROWS(), isSuccess: false, isError: true });
+    await openServiceRecordsWithCachedTemplate(list);
+    await failCachedTemplateRefresh();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(listRows()).toHaveLength(2);
+
+    mockServiceRecordTemplateId.mockClear();
+    fireEvent.click(within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    await flushQueryNotifications();
+    expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
+    expect(list.refetch).toHaveBeenCalledTimes(1);
+    expect(list.fetchNextPage).not.toHaveBeenCalled();
+  });
+
   it("failed template lookup without cached ids or counts shows unknown pills, not zero", async () => {
     mockUseInfiniteContracts.mockImplementation((options: { enabled?: boolean }) =>
       options.enabled ? listState(SUCCESS_EMPTY()) : listState(),

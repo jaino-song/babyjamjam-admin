@@ -2570,6 +2570,10 @@ export default function ContractsPage() {
     activeSection === "service-records"
     && isServiceRecordTemplateError
     && serviceRecordTemplateData === undefined;
+  const isTemplateIdRefreshFailed =
+    activeSection === "service-records"
+    && isServiceRecordTemplateQueryError
+    && serviceRecordTemplateData !== undefined;
   const isListLoadFailed =
     activeSection !== "automations"
     && !hasListData
@@ -2577,12 +2581,12 @@ export default function ContractsPage() {
   const isListStale =
     activeSection !== "automations"
     && hasListData
-    && (isTemplateIdLoadFailed || isDocumentsError);
+    && (isTemplateIdLoadFailed || isTemplateIdRefreshFailed || isDocumentsError);
   const isListStaleRetrying =
-    (isTemplateIdLoadFailed && isServiceRecordTemplateFetching)
+    ((isTemplateIdLoadFailed || isTemplateIdRefreshFailed) && isServiceRecordTemplateFetching)
     || (isDocumentsError && (isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching));
   const retryStaleList = () => {
-    if (isTemplateIdLoadFailed) void refetchServiceRecordTemplate();
+    if (isTemplateIdLoadFailed || isTemplateIdRefreshFailed) void refetchServiceRecordTemplate();
     if (isDocumentsError) void (isLoadMoreError ? fetchNextPage() : refetchDocuments());
   };
   const isStatusCountsUnavailable = (isStatusCountsError || isTemplateIdLoadFailed) && statusCountsData === undefined;
