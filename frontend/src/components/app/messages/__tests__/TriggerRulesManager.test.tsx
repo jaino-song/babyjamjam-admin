@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
@@ -107,6 +107,18 @@ const mockCancelQueries = jest.fn();
 const mockGetQueryData = jest.fn();
 const mockRefetchClientRegistrationPolicy = jest.fn();
 
+// A query that is paused before its first load (device offline): not loading, not failed, no data.
+const PAUSED_QUERY_RESULT = {
+  data: undefined,
+  isPending: true,
+  isLoading: false,
+  isError: false,
+  isFetching: false,
+  isPaused: true,
+  status: "pending",
+  fetchStatus: "paused",
+};
+
 type QueryOptions = {
   queryKey?: readonly unknown[];
 };
@@ -114,13 +126,16 @@ type QueryOptions = {
 interface SettingsQueryState {
   providerEnabled?: boolean;
   senderApproved?: boolean;
+  senderApprovalState?: "failed" | "paused";
   clientRegistrationPolicy?: {
     clientAutoRegistration: boolean;
     greetingOnAutoRegistration: boolean;
   };
   clientRegistrationPolicyLoading?: boolean;
   clientRegistrationPolicyError?: boolean;
+  clientRegistrationPolicyPaused?: boolean;
   messageAutomationPolicies?: MessageAutomationPoliciesResponse;
+  messageAutomationPoliciesPaused?: boolean;
   messageAutomationPoliciesLoading?: boolean;
   messageAutomationPoliciesError?: boolean;
   messageAutomationPoliciesRefetch?: jest.Mock;
@@ -244,12 +259,14 @@ function useQueryResult<TData>(data: TData, isLoading = false): ReturnType<typeo
 function mockSettingsQueries({
   providerEnabled = false,
   senderApproved = false,
+  senderApprovalState,
   clientRegistrationPolicy = {
     clientAutoRegistration: true,
     greetingOnAutoRegistration: false,
   },
   clientRegistrationPolicyLoading = false,
   clientRegistrationPolicyError = false,
+  clientRegistrationPolicyPaused = false,
   messageAutomationPolicies = {
     canManageActivation: true,
     pastTriggerConfig: { sendIntervalMinutes: 1, ruleOrder: [] },
@@ -265,6 +282,7 @@ function mockSettingsQueries({
   },
   messageAutomationPoliciesLoading = false,
   messageAutomationPoliciesError = false,
+  messageAutomationPoliciesPaused = false,
   messageAutomationPoliciesRefetch = jest.fn(),
   systemTemplate,
 }: SettingsQueryState = {}) {
@@ -272,6 +290,21 @@ function mockSettingsQueries({
     const queryKey = options.queryKey ?? [];
 
     if (queryKey.includes("message-sender-approval")) {
+      if (senderApprovalState === "paused") {
+        return { ...PAUSED_QUERY_RESULT, refetch: jest.fn() } as unknown as ReturnType<typeof useQuery>;
+      }
+
+      if (senderApprovalState === "failed") {
+        return {
+          data: undefined,
+          isLoading: false,
+          isError: true,
+          isFetching: false,
+          isPaused: false,
+          refetch: jest.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return useQueryResult({
         approvalStatus: senderApproved ? "approved" : "not_requested",
         isApproved: senderApproved,
@@ -282,6 +315,10 @@ function mockSettingsQueries({
     }
 
     if (queryKey.includes("client-registration-policy")) {
+      if (clientRegistrationPolicyPaused) {
+        return { ...PAUSED_QUERY_RESULT, refetch: mockRefetchClientRegistrationPolicy } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return {
         data: clientRegistrationPolicyLoading || clientRegistrationPolicyError
           ? undefined
@@ -293,6 +330,10 @@ function mockSettingsQueries({
     }
 
     if (queryKey.includes("message-automation-policies")) {
+      if (messageAutomationPoliciesPaused) {
+        return { ...PAUSED_QUERY_RESULT, refetch: messageAutomationPoliciesRefetch } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return {
         data: messageAutomationPoliciesLoading || messageAutomationPoliciesError
           ? undefined
@@ -1754,5 +1795,314 @@ describe("TriggerRulesManager", () => {
     expect(childSwitch).toBeEnabled();
     fireEvent.click(childSwitch);
     expect(ordinaryMutation).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
+  const DC = "desktop_messages_sections_section-content_triggers-section_trigger-rules";
+  const RULE_NAME = "서비스 시작 안내";
+  const APPROVAL_MESSAGE =
+    "메시지 발송 승인 후에 설정 가능합니다. 설정에서 메시지 발송 기능을 신청해 주세요.";
+  const ACTIVE_EMPTY_TEXT = "활성화된 발송 규칙이 없습니다.";
+  const INACTIVE_EMPTY_TEXT = "비활성화된 발송 규칙이 없습니다.";
+  const RULE = {
+    id: "rule-1",
+    branchId: "org-1",
+    name: RULE_NAME,
+    isActive: true,
+    eventType: "SERVICE_START",
+    offsetType: "BEFORE_DAYS",
+    offsetDays: 3,
+    sendTime: "09:00",
+    recipientType: "CLIENT",
+    templateKey: "SERVICE_INFO",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  };
+
+  function mockRules(result: Record<string, unknown>) {
+    mockedUseMessageTriggerRules.mockReturnValue(result as unknown as ReturnType<typeof useMessageTriggerRules>);
+  }
+
+  describe("unknown sender approval", () => {
+    it("failed approval with no data fails closed: no alert, no approval notice, editing stays closed", () => {
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "failed" });
+      const updateMutation = jest.fn().mockResolvedValue(undefined);
+      const deleteMutation = jest.fn().mockResolvedValue(undefined);
+      mockedUseUpdateMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: updateMutation,
+      } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+      mockedUseDeleteMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: deleteMutation,
+      } as unknown as ReturnType<typeof useDeleteMessageTriggerRule>);
+
+      const { container } = render(<TriggerRulesManager dataComponent={DC} />);
+
+      // The gate owns the failure panel; this component adds none and does not claim "not approved".
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(APPROVAL_MESSAGE)).not.toBeInTheDocument();
+      expect(container.querySelector('[data-slot="list-panel-disabled-overlay"]')).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "새 규칙" })).not.toBeInTheDocument();
+
+      const ruleSwitch = screen.getByRole("switch", { name: `${RULE_NAME} 활성화` });
+      expect(ruleSwitch).toBeDisabled();
+      fireEvent.click(ruleSwitch);
+      expect(updateMutation).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "바뀐 이름" } });
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "삭제" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+      expect(updateMutation).not.toHaveBeenCalled();
+      expect(deleteMutation).not.toHaveBeenCalled();
+    });
+
+    it("an approved answer still lets the same screen edit and delete", async () => {
+      mockSettingsQueries({ senderApproved: true });
+      const updateMutation = jest.fn().mockResolvedValue(undefined);
+      const deleteMutation = jest.fn().mockResolvedValue(undefined);
+      mockedUseUpdateMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: updateMutation,
+      } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+      mockedUseDeleteMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: deleteMutation,
+      } as unknown as ReturnType<typeof useDeleteMessageTriggerRule>);
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByRole("button", { name: "새 규칙" })).toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: `${RULE_NAME} 활성화` })).toBeEnabled();
+
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "바뀐 이름" } });
+      expect(screen.getByRole("button", { name: "삭제" })).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(updateMutation).toHaveBeenCalledTimes(1));
+    });
+
+    it("paused approval with no data is rendered like loading: not locked", () => {
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "paused" });
+
+      const { container } = render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByRole("button", { name: "새 규칙" })).toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: `${RULE_NAME} 활성화` })).toBeEnabled();
+      expect(screen.queryByText(APPROVAL_MESSAGE)).not.toBeInTheDocument();
+      expect(container.querySelector('[data-slot="list-panel-disabled-overlay"]')).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("rules list", () => {
+    beforeEach(() => {
+      mockSettingsQueries({ senderApproved: true });
+    });
+
+    it("failed with no data: failure panel with retry, neither empty text", () => {
+      const refetch = jest.fn();
+      mockRules({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        refetch,
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      const alert = screen.getByRole("alert");
+      expect(within(alert).getByText("불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.queryByText(ACTIVE_EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText(INACTIVE_EMPTY_TEXT)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.queryByText(INACTIVE_EMPTY_TEXT)).not.toBeInTheDocument();
+
+      fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("paused with no data: reads as loading, neither empty text nor an alert", () => {
+      mockRules({ ...PAUSED_QUERY_RESULT, refetch: jest.fn() });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.queryByText(ACTIVE_EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText(INACTIVE_EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      // The loading state hides the new-rule action, exactly as a loading query does.
+      expect(screen.queryByRole("button", { name: "새 규칙" })).not.toBeInTheDocument();
+    });
+
+    it("successful empty load: the empty text for each tab and no alert", () => {
+      mockRules({
+        data: [],
+        isLoading: false,
+        isError: false,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText(ACTIVE_EMPTY_TEXT)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "비활성화" }));
+      expect(screen.getByText(INACTIVE_EMPTY_TEXT)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("cached rules and a failed refetch: rows stay with exactly one inline notice that retries", () => {
+      const refetch = jest.fn();
+      mockRules({
+        data: [RULE],
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        refetch,
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText(RULE_NAME)).toBeInTheDocument();
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+
+      fireEvent.click(within(alerts[0]).getByRole("button", { name: "다시 시도" }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("cached rules and a refetch in flight: the notice's retry is disabled", () => {
+      mockRules({
+        data: [RULE],
+        isLoading: false,
+        isError: true,
+        isFetching: true,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("an earlier successful empty load and a failed refetch: the empty text plus the inline notice, not the failure panel", () => {
+      mockRules({
+        data: [],
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText(ACTIVE_EMPTY_TEXT)).toBeInTheDocument();
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+    });
+
+    it("cached rules with a paused refetch change nothing", () => {
+      mockRules({
+        data: [RULE],
+        isLoading: false,
+        isError: false,
+        isFetching: false,
+        isPaused: true,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText(RULE_NAME)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "새 규칙" })).toBeInTheDocument();
+    });
+
+    it("the unapproved screen keeps its overlay and shows no list failure of its own", () => {
+      mockSettingsQueries({ senderApproved: false });
+      mockRules({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getAllByText(APPROVAL_MESSAGE)).toHaveLength(2);
+    });
+  });
+
+  describe("automation policy and client-registration policy queries", () => {
+    it("paused automation policies with no data show the loading card, not the failure card", () => {
+      mockSettingsQueries({ senderApproved: true, messageAutomationPoliciesPaused: true });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText("이 지점의 메시지 자동 발송 설정을 불러오는 중이에요.")).toBeInTheDocument();
+      expect(screen.queryByText("설정 정보를 불러오지 못했어요.")).not.toBeInTheDocument();
+      expect(screen.queryByText("이 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).not.toBeInTheDocument();
+    });
+
+    it("a failed automation policies load keeps the existing failure card with its retry", () => {
+      const messageAutomationPoliciesRefetch = jest.fn();
+      mockSettingsQueries({
+        senderApproved: true,
+        messageAutomationPoliciesError: true,
+        messageAutomationPoliciesRefetch,
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+
+      expect(screen.getByText("설정 정보를 불러오지 못했어요.")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(messageAutomationPoliciesRefetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("paused client-registration policy with no data shows the loading state, not a default toggle", () => {
+      mockSettingsQueries({ senderApproved: true, clientRegistrationPolicyPaused: true });
+      mockRules({
+        data: [{ ...RULE, id: "client-greeting-rule", name: "인사 메시지", eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, templateKey: "CLIENT_GREETING" }],
+        isLoading: false,
+        isError: false,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+      mockedUseMessageTriggerTemplates.mockReturnValue({
+        data: [{
+          key: "CLIENT_GREETING",
+          name: "인사 메시지",
+          description: "고객 등록 인사 메시지입니다.",
+          allowedEventTypes: ["CLIENT_CREATED"],
+          allowedRecipientTypes: ["CLIENT"],
+          requiredVariables: [],
+          providers: { sms: { templateKey: "CLIENT_GREETING" } },
+        }],
+      } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      fireEvent.click(screen.getAllByText("인사 메시지")[0]);
+
+      expect(screen.getAllByText("고객 자동 등록 설정을 불러오는 중이에요.").length).toBeGreaterThan(0);
+      expect(screen.queryByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" })).not.toBeInTheDocument();
+    });
   });
 });

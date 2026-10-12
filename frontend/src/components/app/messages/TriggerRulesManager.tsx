@@ -66,6 +66,7 @@ import {
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import { MessageApprovalRequiredNotice } from "@/components/app/messages/MessageApprovalRequiredNotice";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { MessagePhonePreview } from "./MessagePhonePreview";
 import type {
   MessageTriggerRule,
@@ -411,40 +412,62 @@ export function TriggerRulesManager({
   const copy = CHANNEL_COPY[channel];
 
   const {
-    data: rulesData = [],
-    isLoading,
+    data: rulesQueryData,
+    isLoading: isRulesQueryLoading,
+    isPaused: isRulesQueryPaused,
+    isError: isRulesQueryError,
+    isFetching: isRulesQueryFetching,
     refetch: refetchMessageTriggerRules,
   } = useMessageTriggerRules();
+  // A paused load with no data has not started: it reads as loading, never as "no rules".
+  const isLoading = isRulesQueryLoading || (isRulesQueryPaused && rulesQueryData === undefined);
+  const isRulesLoadFailed = isRulesQueryError && rulesQueryData === undefined;
+  const isRulesRefreshFailed = isRulesQueryError && rulesQueryData !== undefined;
   const createMutation = useCreateMessageTriggerRule();
   const updateMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
   const parentActivationMutation = useActivateMessageTriggerRuleWithParent();
   const deleteMutation = useDeleteMessageTriggerRule();
 
-  const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
+  const rules = useMemo(
+    () => (Array.isArray(rulesQueryData) ? rulesQueryData : []),
+    [rulesQueryData],
+  );
 
-  const { data: senderApproval, isLoading: isSenderApprovalLoading } = useQuery({
+  const {
+    data: senderApproval,
+    isLoading: isSenderApprovalLoading,
+    isError: isSenderApprovalError,
+  } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
   });
   const {
     data: messageAutomationPolicies,
-    isLoading: isMessageAutomationPoliciesLoading,
+    isLoading: isMessageAutomationPoliciesQueryLoading,
+    isPaused: isMessageAutomationPoliciesPaused,
     isError: isMessageAutomationPoliciesError,
     refetch: refetchMessageAutomationPolicies,
   } = useQuery<MessageAutomationPoliciesResponse>({
     queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
+  const isMessageAutomationPoliciesLoading =
+    isMessageAutomationPoliciesQueryLoading ||
+    (isMessageAutomationPoliciesPaused && messageAutomationPolicies === undefined);
   const {
     data: clientRegistrationPolicy,
-    isLoading: isClientRegistrationPolicyLoading,
+    isLoading: isClientRegistrationPolicyQueryLoading,
+    isPaused: isClientRegistrationPolicyPaused,
     isError: isClientRegistrationPolicyError,
     refetch: refetchClientRegistrationPolicy,
   } = useQuery<ClientRegistrationPolicy>({
     queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY,
     queryFn: settingsApi.getClientRegistrationPolicy,
   });
+  const isClientRegistrationPolicyLoading =
+    isClientRegistrationPolicyQueryLoading ||
+    (isClientRegistrationPolicyPaused && clientRegistrationPolicy === undefined);
   const updateClientRegistrationPolicyMutation = useMutation({
     mutationFn: settingsApi.updateClientRegistrationPolicy,
     onMutate: async (patch: ClientRegistrationPolicyPatch) => {
@@ -474,6 +497,10 @@ export function TriggerRulesManager({
     },
   });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
+  // A failed approval load with no earlier answer is neither "approved" nor "not approved":
+  // keep editing closed until it is known. (MessageApprovalGate shows the failure itself.)
+  const isSenderApprovalUnknown = senderApproval === undefined && isSenderApprovalError;
+  const isRuleEditingBlocked = isTriggerRulesLocked || isSenderApprovalUnknown;
   const isAdminOrOwner = messageAutomationPolicies?.canManageActivation === true;
   const triggerDispatchPolicy = messageAutomationPolicies?.policies?.find(
     (policy) => policy.id === "trigger-dispatch",
@@ -803,7 +830,7 @@ export function TriggerRulesManager({
   };
 
   const handleCreateNew = () => {
-    if (isTriggerRulesLocked) return;
+    if (isRuleEditingBlocked) return;
     if (!isTriggerDispatchAvailable) {
       void refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -823,7 +850,7 @@ export function TriggerRulesManager({
   };
 
   const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
-    if (isTriggerRulesLocked || rule.isLockedByGlobal) return;
+    if (isRuleEditingBlocked || rule.isLockedByGlobal) return;
 
     if (checked && !isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
@@ -937,7 +964,7 @@ export function TriggerRulesManager({
   };
 
   const handleSave = async () => {
-    if (isTriggerRulesLocked || isSelectedSystemRule) return;
+    if (isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -999,7 +1026,7 @@ export function TriggerRulesManager({
   };
 
   const handleDelete = async () => {
-    if (isTriggerRulesLocked || isSelectedSystemRule) return;
+    if (isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!selectedRule) return;
     try {
       await deleteMutation.mutateAsync(selectedRule.id);
@@ -1063,7 +1090,7 @@ export function TriggerRulesManager({
             disabledOverlay={isTriggerRulesLocked ? (
               <MessageApprovalRequiredNotice dataComponent={component("trigger-rules-disabled-copy")} />
             ) : undefined}
-            headerActions={isLoading || isTriggerRulesLocked ? undefined : (
+            headerActions={isLoading || isRuleEditingBlocked ? undefined : (
               <HeaderActionButton
                 icon={Plus}
                 label="새 규칙"
@@ -1073,6 +1100,15 @@ export function TriggerRulesManager({
             )}
           >
             <>
+              {isRulesRefreshFailed && !isTriggerRulesLocked ? (
+                <QueryErrorState
+                  dataComponent={component("trigger-rules-refresh-error")}
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetchMessageTriggerRules()}
+                  isRetrying={isRulesQueryFetching}
+                />
+              ) : null}
               {(isLoading || listItems.length > 0) ? (
                 <div data-component={component("trigger-rules-list")} className="space-y-2 pb-2">
                   <AnimatedSlotList<RuleListItem>
@@ -1116,7 +1152,7 @@ export function TriggerRulesManager({
                               aria-label={`${item.title} 활성화`}
                               checked={item.active}
                               disabled={
-                                isTriggerRulesLocked ||
+                                isRuleEditingBlocked ||
                                 item.rule.isLockedByGlobal === true ||
                                 updateMutation.isPending ||
                                 branchActivationMutation.isPending ||
@@ -1137,11 +1173,18 @@ export function TriggerRulesManager({
                     }}
                   />
                 </div>
-              ) : !isTriggerRulesLocked ? (
+              ) : isTriggerRulesLocked ? null : isRulesLoadFailed ? (
+                <QueryErrorState
+                  dataComponent={component("trigger-rules-load-error")}
+                  size="panel"
+                  onRetry={() => void refetchMessageTriggerRules()}
+                  isRetrying={isRulesQueryFetching}
+                />
+              ) : (
                 <ListEmptyState
                   message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
                 />
-              ) : null}
+              )}
             </>
           </ListPanel>
 
@@ -1196,7 +1239,7 @@ export function TriggerRulesManager({
                       size="sm"
                       width="sm"
                       onClick={handleDelete}
-                      disabled={isDetailLoading || deleteMutation.isPending}
+                      disabled={isDetailLoading || isRuleEditingBlocked || deleteMutation.isPending}
                       data-component={component("trigger-rules-delete")}
                     >
                       삭제
@@ -1210,7 +1253,7 @@ export function TriggerRulesManager({
                     size="sm"
                     width="sm"
                     onClick={handleSave}
-                    disabled={!hasChanges || isSaving || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
+                    disabled={!hasChanges || isSaving || isRuleEditingBlocked || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
                     data-component={component("trigger-rules-save")}
                   >
                     {isSaving ? "저장 중..." : "저장"}
