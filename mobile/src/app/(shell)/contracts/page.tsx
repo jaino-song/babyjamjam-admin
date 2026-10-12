@@ -85,6 +85,7 @@ import {
   type HeadlessProgressState,
 } from "@/lib/eformsign/headless-progress";
 import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgressModal";
+import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/contract-link-confirmations-notice";
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
@@ -2872,6 +2873,9 @@ export default function ContractsPage() {
               setSelectedDoc(null);
             }}
           />
+          {activeSection === "maternal-contracts" && (
+            <ContractLinkConfirmationsNotice data-component="mobile_contracts_detail-sheet_stack_list-page_content_link-confirmations" branchId={branchId} />
+          )}
           <ListCard
             data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card"
             title={activeSectionLabel}

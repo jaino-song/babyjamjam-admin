@@ -328,8 +328,8 @@ export const authApi = {
 // eformsign APIs
 // Note: axios client baseURL is '/api', so paths here should NOT include '/api/' prefix
 export const eformsignApi = {
-    getLinkConfirmations: async (clientId: number): Promise<EformsignLinkConfirmation[]> => {
-        const { data } = await api.get('/eformsign-docs/link-confirmations', { params: { clientId } });
+    getLinkConfirmations: async (clientId?: number): Promise<EformsignLinkConfirmation[]> => {
+        const { data } = await api.get('/eformsign-docs/link-confirmations', { params: clientId === undefined ? undefined : { clientId } });
         return data;
     },
     generateSignature: async (executionTime: number) => {

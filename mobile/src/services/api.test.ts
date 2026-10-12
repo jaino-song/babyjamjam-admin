@@ -10,6 +10,14 @@ it("loads link confirmations with the numeric clientId", async () => {
     expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", { params: { clientId: 7 } });
 });
 
+it("loads the branch-wide link confirmations without any clientId param", async () => {
+    const { apiModule, mockGet } = await loadApiModule();
+    const entries = [{ documentId: "doc-2" }];
+    mockGet.mockResolvedValue({ data: entries });
+    expect(await apiModule.eformsignApi.getLinkConfirmations()).toEqual(entries);
+    expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", { params: undefined });
+});
+
 function createAxiosServerError(status: number): AxiosError {
     return new AxiosError(
         `Request failed with status code ${status}`,
