@@ -715,7 +715,7 @@ export function MessagesHistoryPage() {
   // 각 필터가 집계하는 조회의 값이 없으면 숫자 대신 로딩을 표시한다.
   const filterItems: MessageFilterItem[] = STATUS_FILTER_ORDER.map((filter) => {
     const isCountLoading = filter === "all"
-      ? isPanelLoading
+      ? isUpcomingZoneLoading || isHistoryZoneLoading
       : filter === "upcoming" ? isUpcomingZoneLoading : isHistoryZoneLoading;
     const count = !filterCountAvailability[filter]
       ? <UnavailableCount />
