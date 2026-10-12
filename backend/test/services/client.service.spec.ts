@@ -223,6 +223,7 @@ describe("ClientService", () => {
         findWithIncompleteContractsStartingWithinDays: jest.fn().mockResolvedValue([]),
         findWithoutContractSentStartingWithinDays: jest.fn().mockResolvedValue([]),
         findByPhone: jest.fn().mockResolvedValue(null),
+        findPhoneMatches: jest.fn().mockResolvedValue([]),
         findNamesByIds: jest.fn().mockResolvedValue([]),
     });
 

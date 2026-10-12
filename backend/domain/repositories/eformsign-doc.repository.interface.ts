@@ -1,4 +1,23 @@
 import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import type { Prisma } from "@prisma/client";
+
+export interface EformsignLinkConfirmationCandidate {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: Date;
+    branchId: string | null;
+    clientId: number | null;
+    permanentPurgeRequestedAt: Date | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    templateId: string | null;
+    customerName: string | null;
+    customerPhone: string | null;
+    stepRecipientSms: string;
+    detailPayload: Prisma.JsonValue | null;
+}
 
 export interface EformsignDocClientSummary {
     documentId: string;
@@ -216,6 +235,8 @@ export interface ReviewStageContract {
 }
 
 export interface IEformsignDocRepository {
+    /** Unlinked contract-or-unclassified documents owned by the branch or unassigned. */
+    findLinkConfirmationCandidates(branchId: string, normalizedPhone?: string): Promise<EformsignLinkConfirmationCandidate[]>;
     findById(branchid: string, id: number): Promise<EformsignDocEntity | null>;
     findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null>;
     /** Ownership-only lookup used to retry an already pending permanent purge. */

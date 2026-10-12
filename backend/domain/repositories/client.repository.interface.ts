@@ -276,6 +276,8 @@ export interface ClientWithInitialSchedule {
 }
 
 export interface IClientRepository {
+    /** Company-wide suffix prefilter; callers must compare normalized phones exactly. */
+    findPhoneMatches(phoneSuffixes: string[]): Promise<ClientPhoneMatch[]>;
     findById(branchid: string, id: number): Promise<ClientEntity | null>;
     /**
      * Lock one branch-owned client row for an approval-bound mutation or
@@ -427,3 +429,11 @@ export interface IClientRepository {
 }
 
 export const CLIENT_REPOSITORY = "CLIENT_REPOSITORY";
+
+export interface ClientPhoneMatch {
+    id: number;
+    branchId: string | null;
+    name: string;
+    phone: string | null;
+    birthday: string | null;
+}

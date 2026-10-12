@@ -9,6 +9,7 @@ import {
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import {
     EformsignDocCompletionClaimParams,
+    EformsignLinkConfirmationCandidate,
     EformsignDocCompletionClaimResult,
     EformsignDocClientSummary,
     EformsignDocDisplayFields,
@@ -37,6 +38,7 @@ import { EformsignDocMapper } from "infrastructure/database/mapper/eformsign-doc
 import { extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
 import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.service";
 import type { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
+import { EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES } from "domain/constants/eformsign-auto-link-status";
 
 const isUniqueConstraintError = (error: unknown): boolean =>
     typeof error === "object"
@@ -121,6 +123,34 @@ const toUnscopedResult = (
 @Injectable()
 export class SbEformsignDocRepository implements IEformsignDocRepository {
     constructor(private readonly prismaService: PrismaService) {}
+
+    async findLinkConfirmationCandidates(
+        branchId: string,
+        normalizedPhone?: string,
+    ): Promise<EformsignLinkConfirmationCandidate[]> {
+        return this.prismaService.eformsign_doc.findMany({
+            where: {
+                clientId: null,
+                permanentPurgeRequestedAt: null,
+                statusType: { in: [...EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES] },
+                AND: [
+                    { OR: [{ branchId }, { branchId: null }] },
+                    { OR: [{ documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT }, { documentKind: null }] },
+                    ...(normalizedPhone === undefined ? [] : [{ OR: [
+                        { customerPhone: normalizedPhone },
+                        { customerPhone: null, stepRecipientSms: { contains: normalizedPhone.slice(-4) } },
+                    ] }]),
+                ],
+            },
+            orderBy: [{ createdDate: "desc" }, { id: "desc" }],
+            select: {
+                documentId: true, documentName: true, statusType: true, statusDetail: true,
+                createdDate: true, branchId: true, clientId: true, permanentPurgeRequestedAt: true,
+                documentKind: true, serviceRecordCaseId: true, templateId: true,
+                customerName: true, customerPhone: true, stepRecipientSms: true, detailPayload: true,
+            },
+        });
+    }
 
     async findById(branchid: string, id: number): Promise<EformsignDocEntity | null> {
         return this.findFirstDomain({
