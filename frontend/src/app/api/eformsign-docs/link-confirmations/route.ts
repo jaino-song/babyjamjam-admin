@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
         }
 
         const clientId = request.nextUrl.searchParams.get("clientId");
-        if (!clientId) {
+        if (clientId === "") {
             return localValidationProblemResponse([
                 {
                     pointer: "/clientId",
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
                 },
             ]);
         }
-        if (!POSITIVE_INTEGER_PATTERN.test(clientId)) {
+        if (clientId !== null && !POSITIVE_INTEGER_PATTERN.test(clientId)) {
             return localValidationProblemResponse([
                 {
                     pointer: "/clientId",
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
         }
 
         const response = await serverAPIClient.get("/eformsign-docs/link-confirmations", {
-            params: { clientId },
+            ...(clientId === null ? {} : { params: { clientId } }),
             headers: getAuthHeaders(authToken),
         });
 

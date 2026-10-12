@@ -53,8 +53,20 @@ describe("GET /api/eformsign-docs/link-confirmations", () => {
         expect(mockGet).not.toHaveBeenCalled();
     });
 
-    it("answers a missing clientId with a structured VALIDATION_FAILED problem", async () => {
+    it("forwards a missing clientId without a query", async () => {
+        mockGet.mockResolvedValue({ data: [] });
         const response = await GET(createRequest(""));
+
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toEqual([]);
+        expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", {
+            headers: expect.any(Object),
+        });
+        expect(mockGet.mock.calls[0][1]).not.toHaveProperty("params");
+    });
+
+    it("answers an empty clientId with a structured VALIDATION_FAILED problem", async () => {
+        const response = await GET(createRequest("?clientId="));
 
         expect(response.status).toBe(400);
         const body = await response.json();

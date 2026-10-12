@@ -369,12 +369,13 @@ export const eformsignApi = {
         return data;
     },
     /**
-     * Contracts whose signer phone matches this client but whose name or birthday differs.
+     * Contracts whose signer phone matches a client but whose name or birthday differs.
+     * Omitting clientId lists all pending entries in the caller's branch.
      * They are not linked automatically; a person confirms them (S3 / 계약-05).
      */
-    getLinkConfirmations: async (clientId: number): Promise<EformsignLinkConfirmation[]> => {
+    getLinkConfirmations: async (clientId?: number): Promise<EformsignLinkConfirmation[]> => {
         const { data } = await api.get('/eformsign-docs/link-confirmations', {
-            params: { clientId },
+            ...(clientId === undefined ? {} : { params: { clientId } }),
         });
         return data;
     },

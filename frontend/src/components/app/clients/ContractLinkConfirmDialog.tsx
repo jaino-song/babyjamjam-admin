@@ -25,6 +25,7 @@ import {
     clientContractDocsQueryKey,
     isLinkConfirmReady,
     linkConfirmationsQueryKey,
+    linkConfirmationsPrefixQueryKey,
     type LinkConfirmChoices,
     type LinkConfirmRow,
     type LinkConfirmSide,
@@ -114,9 +115,12 @@ export function ContractLinkConfirmDialog({
             }
 
             void queryClient.invalidateQueries({ queryKey: clientContractDocsQueryKey(clientId) });
-            void queryClient.invalidateQueries({ queryKey: linkConfirmationsQueryKey(clientId) });
+            void queryClient.invalidateQueries({ queryKey: linkConfirmationsPrefixQueryKey });
             void queryClient.invalidateQueries({ queryKey: clientKeys.all });
             void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
+            void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+            void queryClient.invalidateQueries({ queryKey: ["eformsign-status-counts"] });
+            void queryClient.invalidateQueries({ queryKey: ["eformsign-client-names"] });
             onClose();
         } finally {
             runningRef.current = false;
