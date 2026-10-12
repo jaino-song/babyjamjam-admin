@@ -106,7 +106,7 @@ export function DayPageHead({
                     <div
                         data-component={child("body_service-date-readonly_value")}
                         data-slot="ro"
-                        className="flex h-11 items-center rounded-[12px] border-[1.5px] border-v3-border bg-v3-dim-white px-3.5 text-base text-v3-dark"
+                        className="flex h-11 items-center rounded-[12px] border-[1.5px] border-v3-border! bg-v3-dim-white px-3.5 text-base text-v3-dark"
                     >
                         <b>{currentServiceDate}</b>
                     </div>
@@ -256,7 +256,7 @@ export function DayPageStep({
             <Input
                 id={SERVICE_DATE_INPUT_ID}
                 data-component={child("body_service-date-field_date-input")}
-                className="text-base aria-[invalid=true]:border-v3-burgundy"
+                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                 aria-describedby={SERVICE_DATE_HELPER_ID}
                 aria-invalid={serviceDateMessage?.tone === "error" ? "true" : undefined}
                 type="text"

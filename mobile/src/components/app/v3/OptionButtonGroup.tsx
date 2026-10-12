@@ -81,8 +81,8 @@ export function OptionButtonGroup({
             className={cn(
               OPTION_BASE,
               isSelected
-                ? "border-v3-primary bg-v3-primary-light font-semibold text-v3-primary"
-                : cn("bg-white text-v3-text", invalid ? "border-v3-burgundy" : "border-v3-border"),
+                ? "border-v3-primary! bg-v3-primary-light font-semibold text-v3-primary"
+                : cn("bg-white text-v3-text", invalid ? "border-v3-burgundy!" : "border-v3-border!"),
             )}
           >
             <span
@@ -92,8 +92,8 @@ export function OptionButtonGroup({
                 "grid size-4 shrink-0 place-items-center border-2 text-[10px] leading-none",
                 single ? "rounded-full" : "rounded-[5px]",
                 isSelected
-                  ? "border-v3-primary bg-v3-primary text-white"
-                  : "border-v3-text-muted/60 text-transparent",
+                  ? "border-v3-primary! bg-v3-primary text-white"
+                  : "border-v3-text-muted/60! text-transparent",
               )}
             >
               {isSelected ? (single ? "●" : "✓") : null}

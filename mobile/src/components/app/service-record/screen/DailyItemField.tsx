@@ -137,7 +137,7 @@ export function DailyItemField({
                             <Input
                                 id={stoolColorInputId(dataComponent)}
                                 data-component={`${dataComponent}_stool-color-input`}
-                                className="text-base aria-[invalid=true]:border-v3-burgundy"
+                                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={STOOL_COLOR_PLACEHOLDER}
                                 value={(draft[`${item.key}_color`] as string | undefined) ?? ""}
                                 aria-required
@@ -181,7 +181,7 @@ export function DailyItemField({
                 <Textarea
                     id={textareaInputId(dataComponent, item.key)}
                     data-component={`${dataComponent}_${item.key === "etcService" ? "etc-service" : "notes"}`}
-                    className="rounded-[12px] border-[1.5px] bg-white text-base aria-[invalid=true]:border-v3-burgundy"
+                    className="rounded-[12px] border-[1.5px] bg-white text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                     aria-label={item.label}
                     aria-describedby={slotId}
                     aria-invalid={hasError ? "true" : undefined}

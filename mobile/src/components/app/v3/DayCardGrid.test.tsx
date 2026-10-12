@@ -71,23 +71,23 @@ describe("DayCard", () => {
 
   it("maps each state to its look", () => {
     const { rerender } = render(card({ state: "changed" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary", "bg-v3-primary-light", "ring-[3px]");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "bg-v3-primary-light", "ring-[3px]");
     expect(screen.getByRole("button")).toHaveAttribute("data-state", "changed");
 
     rerender(card({ state: "locked" }));
     expect(screen.getByRole("button")).toHaveClass("opacity-50");
 
     rerender(card({ state: "done" }));
-    expect(screen.getByRole("button")).toHaveClass("bg-v3-primary-light", "border-v3-primary-medium");
+    expect(screen.getByRole("button")).toHaveClass("bg-v3-primary-light", "border-v3-primary-medium!");
 
     rerender(card({ state: "readonly" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary-medium");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary-medium!");
 
     rerender(card({ state: "current" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary", "ring-[3px]");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "ring-[3px]");
 
     rerender(card({ state: "todo" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-border");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-border!");
   });
 
   it("names its children from the root data-component", () => {

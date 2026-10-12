@@ -117,7 +117,21 @@ describe("OptionButtonGroup", () => {
     for (const button of screen.getAllByRole("button")) {
       expect(button).not.toHaveAttribute("aria-invalid");
     }
-    expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-burgundy");
+    expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-burgundy!");
+  });
+
+  it("uses important border colours per state so the global border reset cannot override them", () => {
+    setup({ selected: ["none"], invalid: true });
+
+    // a selected option stays primary even while the group is invalid
+    expect(screen.getByRole("button", { name: "이상없음" })).toHaveClass("border-v3-primary!");
+    expect(screen.getByRole("button", { name: "이상없음" })).not.toHaveClass("border-v3-burgundy!");
+    expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-burgundy!");
+  });
+
+  it("default (unselected, valid) option carries the important neutral border", () => {
+    setup({ selected: ["none"] });
+    expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-border!");
   });
 
   it("names its children from the root data-component, one unique base per option", () => {

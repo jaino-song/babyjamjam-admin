@@ -87,6 +87,21 @@ describe("CountUnitField", () => {
     expect(screen.getByLabelText("모유수유 횟수")).not.toHaveAttribute("aria-invalid");
   });
 
+  it("uses important border colours so the global border reset cannot override them", () => {
+    const { container, rerender } = render(<Harness />);
+    expect(container.firstElementChild).toHaveClass("border-v3-border!", "focus-within:border-v3-primary!");
+    expect(container.firstElementChild).not.toHaveClass("border-v3-burgundy!");
+
+    rerender(<Harness invalid />);
+    expect(container.firstElementChild).toHaveClass("border-v3-burgundy!");
+  });
+
+  it("drops the focus border when invalid so focus can never beat the error border", () => {
+    const { container } = render(<Harness invalid />);
+    expect(container.firstElementChild).not.toHaveClass("focus-within:border-v3-primary!");
+    expect(container.firstElementChild).not.toHaveClass("border-v3-border!");
+  });
+
   it("disables the input", () => {
     render(<Harness disabled />);
     expect(screen.getByLabelText("모유수유 횟수")).toBeDisabled();

@@ -111,7 +111,7 @@ export function ReviewRow({
       data-component={dataComponent}
       data-source-component={ROW_SOURCE_COMPONENT}
       className={cn(
-        "min-w-0 rounded-[10px] border border-v3-border bg-v3-dim-white px-2.5 py-2 text-[13px]",
+        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-2.5 py-2 text-[13px]",
         note ? "block" : "flex justify-between gap-3",
         className,
       )}

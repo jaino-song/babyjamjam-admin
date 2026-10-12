@@ -45,12 +45,12 @@ export interface DayCardProps {
 }
 
 const CARD_STATE_CLASS: Record<DayCardState, string> = {
-  todo: "border-v3-border bg-white",
-  done: "border-v3-primary-medium bg-v3-primary-light",
-  readonly: "border-v3-primary-medium bg-white",
-  changed: "border-v3-primary bg-v3-primary-light ring-[3px] ring-v3-primary-light",
-  current: "border-v3-primary bg-white ring-[3px] ring-v3-primary-light",
-  locked: "border-v3-border bg-white opacity-50",
+  todo: "border-v3-border! bg-white",
+  done: "border-v3-primary-medium! bg-v3-primary-light",
+  readonly: "border-v3-primary-medium! bg-white",
+  changed: "border-v3-primary! bg-v3-primary-light ring-[3px] ring-v3-primary-light",
+  current: "border-v3-primary! bg-white ring-[3px] ring-v3-primary-light",
+  locked: "border-v3-border! bg-white opacity-50",
 };
 
 const STATUS_EMPHASIS: Record<DayCardState, boolean> = {
