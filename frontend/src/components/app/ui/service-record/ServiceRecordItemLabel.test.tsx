@@ -82,6 +82,23 @@ describe("ServiceRecordItemLabel", () => {
     expect(slot).toBeEmptyDOMElement();
   });
 
+  it("lets a long title wrap instead of overflowing the row", () => {
+    const { container } = render(
+      <ServiceRecordItemLabel
+        data-component={BASE}
+        labelId="l"
+        label="① 회음절개부위 (또는 수술부위)"
+        messageId="m"
+        message={{ tone: "hint", text: "예" }}
+      />,
+    );
+    const title = screen.getByText("① 회음절개부위 (또는 수술부위)");
+    expect(title).not.toHaveClass("shrink-0");
+    expect(title).toHaveClass("min-w-0");
+    expect(container.firstElementChild).toHaveClass("grid");
+    expect(container.querySelector("#m")).not.toHaveClass("ml-auto");
+  });
+
   it("names its children from the root data-component", () => {
     const { container } = render(
       <ServiceRecordItemLabel data-component={BASE} labelId="l" label="체온" messageId="m" message={null} />,
