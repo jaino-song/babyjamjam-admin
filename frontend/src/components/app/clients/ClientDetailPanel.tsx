@@ -1427,7 +1427,7 @@ function ClientDetailPanelBody({
                                                     ? clientUpcomingMessageQuery.fetchNextPage()
                                                     : clientUpcomingMessageQuery.refetch()
                                             )}
-                                            isRetrying={Boolean(clientUpcomingMessageQuery.isRefetching)}
+                                            isRetrying={Boolean(clientUpcomingMessageQuery.isRefetching || clientUpcomingMessageQuery.isFetchingNextPage)}
                                             dataComponentPrefix={dataComponentPrefix}
                                         />
                                     </div>
@@ -1456,7 +1456,7 @@ function ClientDetailPanelBody({
                                                     ? clientMessageHistoryQuery.fetchNextPage()
                                                     : clientMessageHistoryQuery.refetch()
                                             )}
-                                            isRetrying={Boolean(clientMessageHistoryQuery.isRefetching)}
+                                            isRetrying={Boolean(clientMessageHistoryQuery.isRefetching || clientMessageHistoryQuery.isFetchingNextPage)}
                                             clientName={client.name}
                                             selectedRecordId={selectedMessageHistoryId}
                                             onSelectRecord={handleSelectClientMessageHistoryRecord}

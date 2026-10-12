@@ -476,7 +476,7 @@ describe("ClientServiceRecordsTab", () => {
     it.each([
         ["500", 500],
         ["network", undefined],
-    ] as const)("keeps the overview error when the overview request failed (%s)", (_label, status) => {
+    ] as const)("keeps the cached overview and flags the stale data when the overview request failed (%s)", (_label, status) => {
         render(
             <ClientServiceRecordsTab
                 data-component={TEST_COMPONENT}
@@ -489,8 +489,12 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
-        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+        // The overview (its schedule projection) is cached, so it stays on screen with
+        // the inline notice rather than being replaced by the panel error.
+        expect(screen.getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+        expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+        // A failed overview never turns the revision 404 into a "no history" claim.
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
@@ -606,6 +610,83 @@ describe("ClientServiceRecordsTab", () => {
 
             fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
             expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the cached schedule projection and revision history when the overview refresh fails", () => {
+            const onRefresh = jest.fn();
+            const props = {
+                "data-component": TEST_COMPONENT,
+                overview: createSourceUnavailableOverview("OTHER_SOURCE_BLOCKER"),
+                clientId: 100,
+                isLoading: false,
+                revisionHistory,
+                onRefresh,
+            };
+            const { rerender } = render(<ClientServiceRecordsTab {...props} isError={false} />);
+
+            expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+
+            rerender(<ClientServiceRecordsTab {...props} isError />);
+
+            expect(screen.getByText("서비스 예정 회차 근거를 확인할 수 없습니다.")).toBeInTheDocument();
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+            const notice = screen.getByText("최신 정보를 불러오지 못했습니다").closest('[role="alert"]');
+            expect(notice).not.toBeNull();
+
+            fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps cached revision rows on desktop when the overview failed and there is nothing else cached", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    revisionHistory={revisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            expect(screen.getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+        });
+
+        it("shows the panel error on mobile, which renders no revision history, even with revision rows cached", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    revisionHistory={revisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("수정본 #1")).not.toBeInTheDocument();
+        });
+
+        it("shows the panel error, not an empty shell, when only a revision-history flag is set", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
+            expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
         });
 
         it("shows the empty text and no alert for a successful load with no assignments", () => {

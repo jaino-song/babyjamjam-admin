@@ -277,7 +277,15 @@ function historyQuery(
 
 function upcomingQuery(
     items: ClientUpcomingMessageTriggerJob[],
-    overrides: Partial<{ isError: boolean; refetch: jest.Mock }> = {},
+    overrides: Partial<{
+        isError: boolean;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        hasNextPage: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
 ) {
     return {
         items,
@@ -527,6 +535,53 @@ describe("ClientDetailPanel messages tab", () => {
 
             fireEvent.click(within(upcomingZone()).getByRole("button", { name: "다시 시도" }));
             expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        describe("retry button reflects the in-flight retry", () => {
+            const retryButton = (zone: HTMLElement) =>
+                within(within(zone).getByRole("alert")).getByRole("button", { name: "다시 시도" });
+
+            const sections = [
+                {
+                    name: "message history",
+                    zone: historyZone,
+                    mockFor: (overrides: Parameters<typeof historyQuery>[1]) =>
+                        mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+                {
+                    name: "upcoming jobs",
+                    zone: upcomingZone,
+                    mockFor: (overrides: Parameters<typeof upcomingQuery>[1]) =>
+                        mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([upcomingJob], {
+                            isError: true,
+                            ...overrides,
+                        })),
+                },
+            ];
+
+            it.each(sections)("$name: disables retry while a failed next page is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isFetchNextPageError: true, hasNextPage: true, isFetchingNextPage: true, isRefetching: false });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: disables retry while the list is being refetched", ({ zone, mockFor }) => {
+                mockFor({ isRefetching: true });
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeDisabled();
+            });
+
+            it.each(sections)("$name: keeps retry enabled when nothing is in flight", ({ zone, mockFor }) => {
+                mockFor({});
+                openMessagesTab();
+
+                expect(retryButton(zone())).toBeEnabled();
+            });
         });
     });
 });
