@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { settingsApi } from "@/services/api";
 
 import SettingsPage from "./page";
 
@@ -49,6 +51,71 @@ describe("SettingsPage account profile", () => {
     expect(source).toContain("const authUserQuery = useGetAuthUser()");
     expect(source).toContain("canManageBranchFromAuthQuery(authUserQuery)");
     expect(source).not.toContain("useGetAuthUser({ initialData:");
+  });
+});
+
+describe("SettingsPage profile query states", () => {
+  const refetch = jest.fn();
+  function renderProfile(overrides: Record<string, unknown>) {
+    mockedUseGetAuthUser.mockReturnValue({
+      data: undefined, isLoading: false, isPending: false, isPaused: false,
+      isError: false, isFetching: false, status: "success", fetchStatus: "idle", refetch,
+      ...overrides,
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return { ...render(<QueryClientProvider client={client}><SettingsPage /></QueryClientProvider>), client };
+  }
+  beforeEach(() => refetch.mockClear());
+
+  it.each([
+    { isLoading: true, isPending: true, status: "pending", isFetching: true, fetchStatus: "fetching" },
+    { isLoading: false, isPending: true, isPaused: true, isError: false, isFetching: false, status: "pending", fetchStatus: "paused" },
+  ])("shows the profile skeleton without placeholders: %j", (state) => {
+    const { container } = renderProfile(state);
+    expect(container.querySelector('[data-component$="_profile-summary-loading"]')).toBeInTheDocument();
+    expect(screen.queryByText("사용자")).not.toBeInTheDocument();
+    expect(screen.queryByText("-")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("replaces failed unknown profile placeholders with an inline retry", () => {
+    renderProfile({ isError: true, status: "error" });
+    expect(screen.getByRole("alert")).toHaveTextContent("내 정보를 불러오지 못했습니다");
+    expect(screen.queryByText("사용자")).not.toBeInTheDocument();
+    expect(screen.queryByText("-")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([{}, { isError: true, status: "error" }, { isPaused: true, fetchStatus: "paused" }])("keeps loaded profile without a notice: %j", (state) => {
+    renderProfile({ data: { name: "직원", email: "staff@example.test", phone: "010-0000-0000", branchName: "지점", role: "user" }, ...state });
+    expect(screen.getByText("직원", { selector: "p" })).toBeInTheDocument();
+    expect(screen.getByText("staff@example.test")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { data: null },
+    { data: null, isError: true, status: "error" },
+    { data: null, isPaused: true, fetchStatus: "paused" },
+    { data: undefined, isPending: true, status: "pending", fetchStatus: "idle" },
+  ])("keeps successful null and disabled placeholders unchanged: %j", (state) => {
+    renderProfile(state);
+    expect(screen.getByText("사용자")).toBeInTheDocument();
+    expect(screen.getAllByText("-")).toHaveLength(3);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps flag-off email disabled without a load-failure alert", async () => {
+    jest.mocked(settingsApi.getNotificationPreferences).mockRejectedValueOnce(new Error("load failed"));
+    const { client } = renderProfile({ data: { name: "직원", role: "user" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "알림" })[0]);
+    await waitFor(() => expect(screen.getByRole("switch", { name: "이메일 알림" })).toBeDisabled());
+    // Wait for the query to settle, not merely the build-time disabled switch.
+    await waitFor(() => expect(client.getQueryState(["settings", "notification-preferences"])?.status).toBe("error"));
+    expect(screen.getByRole("switch", { name: "이메일 알림" })).not.toBeChecked();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("이메일 알림은 현재 비활성화되어 있습니다.")).toBeInTheDocument();
   });
 });
 
