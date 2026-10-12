@@ -18,13 +18,13 @@ export function buildSystemTemplateSendHref(templateKey: string, content: string
 export default function EditSystemTemplatePage({ params }: { params: Promise<{ templateKey: string }> }) {
   const { templateKey } = use(params);
   const router = useRouter();
-  const { data: template, branchId, isLoading, isError, error, refetch, isFetching } = useSystemTemplate(templateKey);
+  const { data: template, branchId, isLoading, isPaused, isError, error, refetch, isFetching } = useSystemTemplate(templateKey);
   const isNotFound = !branchId || (isError && normalizeApiError(error, { operation: 'read', locale: 'ko-KR' }).status === 404);
   const isLoadError = isError && !isNotFound;
 
   const handleClose = () => router.back();
 
-  if (isLoading) {
+  if (isLoading || (isPaused && template === undefined)) {
     return (
       <MobileDetailSlideUp
         name="messages-system-template-detail"

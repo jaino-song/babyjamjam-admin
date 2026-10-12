@@ -78,4 +78,20 @@ describe("system template failed loads", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("템플릿을 찾을 수 없습니다.")).not.toBeInTheDocument();
   });
+
+  it("shows loading, not not-found, for a paused first load with a branch", () => {
+    mockUseSystemTemplate.mockReturnValue({ data: undefined, branchId: "branch-1", isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" });
+    const { container } = render(<EditSystemTemplatePage params={params} />);
+    expect(container.querySelector('[data-component$="_loading"]')).toBeInTheDocument();
+    expect(screen.queryByText("템플릿을 찾을 수 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached content during a paused refetch", () => {
+    mockUseSystemTemplate.mockReturnValue({ data: template, branchId: "branch-1", isLoading: false, isError: false, isFetching: false, isPaused: true });
+    const { container } = render(<EditSystemTemplatePage params={params} />);
+    expect(screen.getByText("저장된 메시지 내용")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_loading"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

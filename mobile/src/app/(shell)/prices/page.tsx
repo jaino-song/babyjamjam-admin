@@ -85,6 +85,7 @@ export default function PricesPage() {
   const {
     data: yearsData,
     isLoading: isYearsLoading,
+    isPaused: isYearsPaused,
     isError: isYearsError,
     isFetching: isYearsFetching,
     refetch: refetchYears,
@@ -109,6 +110,7 @@ export default function PricesPage() {
   const {
     data: rawRows,
     isLoading: isPricesLoading,
+    isPaused: isPricesPaused,
     isFetching: isPricesFetching,
     isError,
     isDataComplete: isPricesComplete = false,
@@ -118,7 +120,7 @@ export default function PricesPage() {
   // Rows on screen win: loaded rows, or a completely known (possibly empty) list, are never replaced
   // by skeletons or a failure panel while some voucher type loads or fails.
   const isPricesKnown = rawRows.length > 0 || isPricesComplete;
-  const isLoading = isYearsLoading || (activeYear !== undefined && isPricesLoading && !isPricesKnown);
+  const isLoading = isYearsLoading || (isYearsPaused && yearsData === undefined) || (activeYear !== undefined && (isPricesLoading || isPricesPaused) && !isPricesKnown);
   // A failed load is judged against the data itself: cached years / rows stay on screen.
   const isYearsFailedWithoutData = isYearsError && yearsData === undefined;
   const isPricesFailedWithoutData = isError && !isPricesKnown;
