@@ -2392,6 +2392,83 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         },
     );
 
+    // 계약-05: 040 / 045 / 071 may be linked to an EXISTING client (see the
+    // describe block below) but must never register a NEW one. The two gates
+    // that enforce this are the status check before the transaction (decides
+    // whether creation is permitted at all) and the status check on the row
+    // read inside the transaction (decides whether to create).
+    describe("계약-05: 040 / 045 / 071 never auto-register a new client", () => {
+        const linkOnlyStatuses = ["040", "045", "071"];
+
+        it.each(linkOnlyStatuses)(
+            "does not create a client or touch the document at status %s",
+            async (statusType) => {
+                const document = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType,
+                });
+                const { transaction, settings, usecase } = setup(document);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                // Creation was never permitted, so the greeting setting that is
+                // read only for a creatable document is not consulted either.
+                expect(settings.getGreetingOnAutoRegistrationEnabled).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(linkOnlyStatuses)(
+            "refuses at status %s even when the status read before the transaction was a creating one",
+            async (statusType) => {
+                // Before the transaction the document looked creatable (060), so creation
+                // was permitted; the row read inside the transaction has moved to
+                // the link-only status and must still not create.
+                const before = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType: "060",
+                });
+                const inside = { ...before, statusType };
+                const { prisma, transaction, usecase } = setup(inside);
+                prisma.eformsign_doc.findUnique.mockResolvedValue(before);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(linkOnlyStatuses)(
+            "does not create when the status read before the transaction is %s even if the row inside it is a creating status",
+            async (statusType) => {
+                // The pre-transaction status alone must withhold creation permission.
+                const before = mirroredDocument({
+                    branchId: "branch-1",
+                    customerPhone: "01012345678",
+                    detailPayload: contractDetail(),
+                    statusType,
+                });
+                const inside = { ...before, statusType: "060" };
+                const { prisma, transaction, usecase } = setup(inside);
+                prisma.eformsign_doc.findUnique.mockResolvedValue(before);
+                transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(usecase.execute("doc-1")).resolves.toBe("disabled");
+
+                expect(transaction.client.create).not.toHaveBeenCalled();
+                expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            },
+        );
+    });
+
     it("never links service-record documents as customer contracts", async () => {
         const { prisma, usecase } = setup();
         prisma.eformsign_doc.findUnique.mockResolvedValue(
