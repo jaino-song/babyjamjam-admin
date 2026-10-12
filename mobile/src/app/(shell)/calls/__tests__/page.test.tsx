@@ -244,6 +244,39 @@ describe("CallsPage", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
     });
+
+    // react-query state for a query started offline: pending but paused, so isLoading is false.
+    const PAUSED_NO_DATA = {
+      data: undefined,
+      isPending: true,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPaused: true,
+      status: "pending",
+      fetchStatus: "paused",
+    };
+
+    it("uses the loading state, not the empty text, while the load is paused offline with nothing cached", () => {
+      setResult([], PAUSED_NO_DATA);
+      const { container } = open();
+      expect(container.querySelector(`[data-component$="${tab}-skeleton"]`)).toBeInTheDocument();
+      expect(container.querySelector(`[data-component$="${tab}-empty"]`)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
+      if (tab === "log") {
+        // Blank, exactly as during an ordinary load: neither a zero nor the failure dash.
+        const pill = screen.getByText("통화 기록", { selector: "button", exact: false });
+        expect(pill).toHaveTextContent(/^통화 기록$/);
+      }
+    });
+
+    it("keeps cached rows when a refetch is paused offline", () => {
+      setResult([tab === "queue" ? draft : record], { isPaused: true, fetchStatus: "paused" });
+      const { container } = open();
+      expect(screen.getByText(tab === "queue" ? /김서연/ : /박지훈/)).toBeInTheDocument();
+      expect(container.querySelector(`[data-component$="${tab}-skeleton"]`)).not.toBeInTheDocument();
+    });
   });
 
   describe("server-page glue", () => {
