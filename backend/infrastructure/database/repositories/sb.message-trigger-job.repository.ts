@@ -36,6 +36,7 @@ import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+    SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
@@ -1022,6 +1023,26 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 canceledByUser: true,
                 nextAttemptAt: null,
                 claimToken: null,
+            },
+        });
+        return result.count === 1;
+    }
+
+    async cancelFailedServiceRecordLinkJobForPreBooking(id: string, branchId: string): Promise<boolean> {
+        const result = await this.prisma.message_trigger_job.updateMany({
+            where: {
+                id,
+                branchId,
+                status: "failed",
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                NOT: { cancelReason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON },
+            },
+            data: {
+                status: "canceled",
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                canceledByUser: false,
+                canceledAt: new Date(),
+                nextAttemptAt: null,
             },
         });
         return result.count === 1;

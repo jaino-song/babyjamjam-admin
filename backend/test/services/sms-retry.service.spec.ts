@@ -107,7 +107,10 @@ describe("SmsRetryService", () => {
             { serviceStatus: "pre_booking", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") },
             { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: null },
         ];
-        const createActivationHarness = (sourceLog: MessageLogEntity) => {
+        const createJobRepository = (result = true) => ({
+            cancelFailedServiceRecordLinkJobForPreBooking: jest.fn().mockResolvedValue(result),
+        });
+        const createActivationHarness = (sourceLog: MessageLogEntity, jobRepository?: unknown) => {
             sourceLog.triggerJobId = "job-link";
             // No seal: legacy authority permits retry; activation really runs the callback.
             const findUnique = jest.fn().mockResolvedValue({
@@ -125,6 +128,9 @@ describe("SmsRetryService", () => {
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
                 undefined,
                 activation as never,
+                undefined,
+                undefined,
+                jobRepository as never,
             );
             return { activation, findUnique };
         };
@@ -144,6 +150,106 @@ describe("SmsRetryService", () => {
             expect(logRepository.update).toHaveBeenCalledWith(source);
             expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
             expect(source.nextRetryAt).toBeNull();
+        });
+        describe("failed link job when the automatic retry is superseded for pre_booking", () => {
+            const preBooking = states[0];
+            it("cancels the failed link job in the log's branch before superseding the log, and sends nothing", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository();
+                const { activation } = createActivationHarness(source, jobRepository);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retry(source, "automatic")).resolves.toBe(source);
+
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).toHaveBeenCalledTimes(1);
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).toHaveBeenCalledWith("job-link", source.branchId);
+                const [cancelOrder] = jobRepository.cancelFailedServiceRecordLinkJobForPreBooking.mock.invocationCallOrder;
+                const [updateOrder] = logRepository.update.mock.invocationCallOrder;
+                expect(cancelOrder).toBeLessThan(updateOrder!);
+                expect(logRepository.update).toHaveBeenCalledWith(source);
+                expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+                expect(activation.runAutomaticRetryIfEnabled).not.toHaveBeenCalled();
+                expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+                expect(aligoService.sendSms).not.toHaveBeenCalled();
+            });
+            it("stays log-only when the log has no trigger job", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository();
+                createActivationHarness(source, jobRepository);
+                source.triggerJobId = null;
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retry(source, "automatic")).resolves.toBe(source);
+
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).not.toHaveBeenCalled();
+                expect(logRepository.update).toHaveBeenCalledTimes(1);
+                expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            });
+            it("stays log-only when the service has no job repository", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                createActivationHarness(source);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retry(source, "automatic")).resolves.toBe(source);
+
+                expect(logRepository.update).toHaveBeenCalledTimes(1);
+                expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            });
+            it("still supersedes the log when the job is no longer failed (repository returns false)", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository(false);
+                createActivationHarness(source, jobRepository);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retry(source, "automatic")).resolves.toBe(source);
+
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).toHaveBeenCalledTimes(1);
+                expect(logRepository.update).toHaveBeenCalledWith(source);
+                expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            });
+            it("propagates a job write failure without superseding the log or sending", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository();
+                jobRepository.cancelFailedServiceRecordLinkJobForPreBooking.mockRejectedValue(new Error("db down"));
+                createActivationHarness(source, jobRepository);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retry(source, "automatic")).rejects.toThrow("db down");
+
+                expect(logRepository.update).not.toHaveBeenCalled();
+                expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+                expect(aligoService.sendSms).not.toHaveBeenCalled();
+                expect(source.errorMessage).not.toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            });
+            it("does not touch the job on a manual retry refused for pre_booking", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository();
+                createActivationHarness(source, jobRepository);
+                logRepository.findByIdInBranch.mockResolvedValue(source);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(preBooking);
+
+                await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({ status: 400 });
+
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).not.toHaveBeenCalled();
+                expect(logRepository.update).not.toHaveBeenCalled();
+            });
+            it("does not touch the job and retries as before for a waiting client", async () => {
+                const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const jobRepository = createJobRepository();
+                const { activation } = createActivationHarness(source, jobRepository);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue({ serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") });
+                aligoService.sendSms.mockResolvedValue({
+                    request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                    response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+                });
+
+                const result = await service.retry(source, "automatic");
+
+                expect(result?.status).toBe("sent");
+                expect(jobRepository.cancelFailedServiceRecordLinkJobForPreBooking).not.toHaveBeenCalled();
+                expect(activation.runAutomaticRetryIfEnabled).toHaveBeenCalledTimes(1);
+                expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            });
         });
         it.each(states)("refuses manual retryById without writes for effective pre_booking: %j", async (state) => {
             const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);

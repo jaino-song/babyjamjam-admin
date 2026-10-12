@@ -15,6 +15,7 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+    SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerJobEntity,
@@ -1524,6 +1525,33 @@ describe("SbMessageTriggerJobRepository", () => {
                 canceledByUser: true,
                 nextAttemptAt: null,
                 claimToken: null,
+            },
+        });
+    });
+
+    it("cancelFailedServiceRecordLinkJobForPreBooking moves only a failed link job in the branch to a system pre-booking cancel", async () => {
+        messageTriggerJobModel.updateMany
+            .mockResolvedValueOnce({ count: 1 })
+            .mockResolvedValueOnce({ count: 0 });
+
+        await expect(repository.cancelFailedServiceRecordLinkJobForPreBooking("job-1", "branch-1")).resolves.toBe(true);
+        // No row matched: not failed, another branch, another rule, or a live scheduling lease.
+        await expect(repository.cancelFailedServiceRecordLinkJobForPreBooking("job-1", "branch-1")).resolves.toBe(false);
+
+        expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "job-1",
+                branchId: "branch-1",
+                status: "failed",
+                ruleId: SERVICE_RECORD_LINK_RULE_ID,
+                NOT: { cancelReason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON },
+            },
+            data: {
+                status: "canceled",
+                cancelReason: SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                canceledByUser: false,
+                canceledAt: now,
+                nextAttemptAt: null,
             },
         });
     });
