@@ -15,6 +15,7 @@ import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
     useApproveScheduleChange,
     useRejectScheduleChange,
@@ -611,12 +612,16 @@ function ClientContractsList({
     docs,
     isError,
     isLoading,
+    onRetry,
+    isRetrying,
     dataComponentPrefix,
     onCreateContract,
 }: {
     docs: LocalEformsignDocRecord[];
     isError: boolean;
     isLoading: boolean;
+    onRetry: () => void;
+    isRetrying: boolean;
     dataComponentPrefix: string;
     onCreateContract?: () => void;
 }) {
@@ -647,9 +652,12 @@ function ClientContractsList({
 
     if (isError && docs.length === 0) {
         return (
-            <div data-component={`${dataComponentPrefix}-contracts-error`} className="py-12 text-center text-[0.85rem] text-v3-text-muted">
-                계약서 정보를 불러오지 못했습니다
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponentPrefix}-contracts-error`}
+                title="계약서 정보를 불러오지 못했습니다"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
         );
     }
 
@@ -944,6 +952,8 @@ function ClientDetailPanelBody({
         isError: isClientContractsError,
         isSuccess: isClientContractsSuccess,
         dataUpdatedAt: clientContractsUpdatedAt,
+        refetch: refetchClientContracts,
+        isRefetching: isClientContractsRefetching,
     } = useQuery({
         queryKey: ["eformsign-docs", "client", clientId],
         // Show each document exactly as eformsign reports it. client.documentStatus is a
@@ -1344,6 +1354,8 @@ function ClientDetailPanelBody({
                                     docs={clientContractDocs}
                                     isLoading={isClientContractsLoading}
                                     isError={isClientContractsError}
+                                    onRetry={() => void refetchClientContracts()}
+                                    isRetrying={isClientContractsRefetching}
                                     dataComponentPrefix={dataComponentPrefix}
                                     onCreateContract={onCreateContract}
                                 />

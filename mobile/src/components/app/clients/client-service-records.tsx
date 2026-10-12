@@ -33,6 +33,7 @@ import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/serv
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
@@ -149,15 +150,16 @@ function ClientServiceRecordsContent({
         return <ServiceRecordsSkeleton />;
     }
 
-    if (isError) {
+    // A failed load is not an empty result: show the error with a retry, but only when
+    // there is nothing cached to show (cached data stays visible through a failed refetch).
+    if (isError && !overview) {
         return (
-            <div
-                data-component={`${dataComponent}_error`}
-                data-slot="client-service-records"
-                className="detail-empty-state"
-            >
-                제공기록지 정보를 불러오지 못했습니다.
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponent}_error`}
+                title="제공기록지 정보를 불러오지 못했습니다"
+                onRetry={() => onRefresh?.()}
+                isRetrying={isRefreshing}
+            />
         );
     }
 
