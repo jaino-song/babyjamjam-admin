@@ -31,6 +31,7 @@ import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   formatMessageDateTimeCompact,
   formatMessageFailureReason,
   getMessageChannelLabel,
@@ -1388,7 +1389,7 @@ export function ClientDetailContent({
               title: notificationTitle(selectedLog),
               templateLabel: notificationTitle(selectedLog),
               channelLabel: notificationChannelLabel(selectedLog),
-              statusLabel: notificationStatusLabel(selectedLog.status),
+              statusLabel: getMessageHistoryDetailStatusLabel(selectedLog),
               statusTone: notificationStatusTone(selectedLog.status),
               sentAtLabel: formatNotificationTime(selectedLog),
               recipientName: selectedLog.recipientName?.trim() || client.name,

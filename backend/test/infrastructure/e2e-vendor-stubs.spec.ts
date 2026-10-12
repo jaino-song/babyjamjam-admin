@@ -43,6 +43,11 @@ function createConfigService(overrides: Record<string, string | undefined> = {})
 }
 
 describe("vendor stub factory selection", () => {
+    it("defaults both Aligo history endpoints to negative answers, never empty success", async () => {
+        const stub = new E2eAligoApiStub();
+        expect(await stub.listHistory()).toMatchObject({ result_code: -1 });
+        expect(await stub.listSmsHistory()).toMatchObject({ result_code: -1 });
+    });
     it("keeps real vendor clients when E2E_VENDOR_STUBS is off", () => {
         const configService = createConfigService();
 

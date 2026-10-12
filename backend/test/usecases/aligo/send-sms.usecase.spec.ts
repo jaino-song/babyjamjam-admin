@@ -4,6 +4,8 @@ import { IAligoSmsApiPort } from "domain/ports/aligo-sms-api.port";
 describe("SendAligoSmsUsecase", () => {
     const createMockSmsApi = (): jest.Mocked<IAligoSmsApiPort> => ({
         sendSms: jest.fn(),
+        listHistory: jest.fn(),
+        listSmsHistory: jest.fn(),
     });
 
     let usecase: SendAligoSmsUsecase;

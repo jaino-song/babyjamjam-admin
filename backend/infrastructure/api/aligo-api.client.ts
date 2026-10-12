@@ -11,6 +11,7 @@ import {
 
 export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
 const ALIGO_SEND_TIMEOUT_MS = 30_000;
+export const ALIGO_HISTORY_CALL_TIMEOUT_MS = 10_000;
 
 @Injectable()
 export class AligoApiClient implements IAligoSmsApiPort {
@@ -93,6 +94,49 @@ export class AligoApiClient implements IAligoSmsApiPort {
         }
 
         return this.normalizeSmsResponse(await response.json());
+    }
+
+    listHistory(params: { page: number; page_size: number; start_date: string; limit_day: number }): Promise<unknown> {
+        return this.historyRequest("list", params);
+    }
+
+    listSmsHistory(params: { mid: string; page: number; page_size: number }): Promise<unknown> {
+        return this.historyRequest("sms_list", params);
+    }
+
+    private async historyRequest(endpoint: "list" | "sms_list", params: Record<string, string | number>): Promise<unknown> {
+        this.assertConfigured();
+        const form = new FormData();
+        form.append("key", this.ALIGO_API_KEY);
+        form.append("user_id", this.ALIGO_USER_ID);
+        for (const [key, value] of Object.entries(params)) form.append(key, String(value));
+        const response = await fetch(`${this.ALIGO_SMS_API_URL}/${endpoint}/`, {
+            method: "POST", body: form, signal: AbortSignal.timeout(ALIGO_HISTORY_CALL_TIMEOUT_MS),
+        });
+        if (!response.ok) throw new Error("Aligo history HTTP failure");
+        const data: unknown = await response.json();
+        if (!data || typeof data !== "object" || Array.isArray(data)) {
+            throw new Error("Aligo history malformed response");
+        }
+        const body = data as Record<string, unknown>;
+        const code = this.toOptionalNumber(body["result_code"]);
+        if (code === undefined || code <= 0 || typeof body["message"] !== "string"
+            || !Array.isArray(body["list"]) || (body["next_yn"] !== "Y" && body["next_yn"] !== "N")) {
+            throw new Error("Aligo history unsuccessful or malformed response");
+        }
+        for (const row of body["list"]) {
+            if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("Aligo history malformed row");
+            const fields = row as Record<string, unknown>;
+            if (endpoint === "list") {
+                if ((typeof fields["mid"] !== "string" && typeof fields["mid"] !== "number")
+                    || !String(fields["mid"]).trim() || typeof fields["msg"] !== "string" || typeof fields["reg_date"] !== "string") {
+                    throw new Error("Aligo history malformed send row");
+                }
+            } else if (typeof fields["receiver"] !== "string" || typeof fields["sms_state"] !== "string") {
+                throw new Error("Aligo history malformed receiver row");
+            }
+        }
+        return data;
     }
 
     private normalizeSmsResponse(data: unknown): AligoSmsResponse {

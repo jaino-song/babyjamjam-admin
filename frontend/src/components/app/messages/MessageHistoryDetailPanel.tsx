@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
   MESSAGE_RECIPIENT_LABELS,
   formatMessageDateTimeCompact,
@@ -49,6 +50,7 @@ export interface MessageHistoryRecord {
   channelLabel: string;
   sentAt: string;
   status: MessageHistoryStatus;
+  detailStatusLabel?: string;
   messagePreview: string;
   failureReason?: string;
   cancelReason?: string;
@@ -235,6 +237,7 @@ export function normalizeMessageHistoryRecord(
 
   return {
     ...normalized,
+    detailStatusLabel: getMessageHistoryDetailStatusLabel(record),
     cancelReason,
     recipientType: record.recipientType,
     icon: record.eventType ? HISTORY_EVENT_ICON_BY_TYPE[record.eventType] : MessageCircle,
@@ -313,7 +316,7 @@ export function MessageHistoryDetailPanel({
             variant={MESSAGE_LOG_STATUS_BADGE_VARIANT[selectedRecord.status]}
             size="sm"
           >
-            {MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
+            {selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label}
           </StatusBadge>
         ) : null
       }

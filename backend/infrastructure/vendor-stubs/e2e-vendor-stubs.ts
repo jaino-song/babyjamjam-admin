@@ -686,6 +686,13 @@ export class E2eEformsignClientStub implements IEformsignClientRepository {
 }
 
 export class E2eAligoApiStub implements IAligoSmsApiPort {
+    listHistory(): Promise<unknown> {
+        return Promise.resolve({ result_code: -1, message: "history not confirmed by stub" });
+    }
+
+    listSmsHistory(): Promise<unknown> {
+        return Promise.resolve({ result_code: -1, message: "history not confirmed by stub" });
+    }
     getDefaultSenderPolicy(): AligoDefaultSenderPolicy {
         // Synthetic positive controls use a separate namespace. A stored stub
         // descriptor can never match the live provider's default-sender digest.

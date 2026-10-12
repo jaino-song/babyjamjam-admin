@@ -3,6 +3,12 @@ import fs from "node:fs";
 const source = fs.readFileSync(require.resolve("./MessageHistoryDetailPanel"), "utf8");
 
 describe("MessageHistoryDetailPanel delivery status labels", () => {
+  it("carries the shared lookup label through normalization into the detail badge only", () => {
+    expect(source).toContain("detailStatusLabel: getMessageHistoryDetailStatusLabel(record)");
+    expect(source).toContain("selectedRecord.detailStatusLabel ?? MESSAGE_HISTORY_STATUS_META[selectedRecord.status].label");
+    const matcher = source.slice(source.indexOf("export function matchesMessageHistoryQuery"), source.indexOf("export function MessageHistoryDetailPanel"));
+    expect(matcher).not.toContain("detailStatusLabel");
+  });
   it("should use the shared sent label instead of a standalone completion label", () => {
     const badges = source.slice(
       source.indexOf("badges={"),

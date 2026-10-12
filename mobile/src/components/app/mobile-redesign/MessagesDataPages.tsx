@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
+  getMessageHistoryDetailStatusLabel,
   MESSAGE_JOB_CANCEL_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
@@ -1017,7 +1018,7 @@ export function MessagesHistoryPage() {
                         title: normalizedSelectedRecord.title,
                         templateLabel: normalizedSelectedRecord.templateLabel,
                         channelLabel: normalizedSelectedRecord.channelLabel,
-                        statusLabel: HISTORY_STATUS[normalizedSelectedRecord.status].label,
+                        statusLabel: getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables }),
                         statusTone: HISTORY_DETAIL_TONE[normalizedSelectedRecord.status],
                         sentAtLabel: formatMessageDateTimeCompact(normalizedSelectedRecord.sentAt),
                         recipientName: normalizedSelectedRecord.recipientName,
@@ -1048,7 +1049,7 @@ export function MessagesHistoryPage() {
                   variant={HISTORY_STATUS_PILL_VARIANT[normalizedSelectedRecord.status]}
                   size="sm"
                 >
-                  {HISTORY_STATUS[normalizedSelectedRecord.status].label}
+                  {getMessageHistoryDetailStatusLabel({ status: normalizedSelectedRecord.status, variables: selectedRecord?.variables })}
                 </StatusPill>
               ) : null}
             />
