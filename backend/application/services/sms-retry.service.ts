@@ -7,7 +7,6 @@ import { MessageAutomationActivationService } from "application/services/message
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
-import { maskPhone } from "application/utils/mask";
 import {
     MessageLogEntity,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
@@ -455,7 +454,7 @@ export class SmsRetryService {
             providerAttempt.providerAcceptanceState = "accepted";
             providerAttempt.providerAcceptedAt = new Date(Date.now());
             await this.logRepository.update(providerAttempt);
-            this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${maskPhone(providerAttempt.receiver)}`);
+            this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${providerAttempt.receiver}`);
             return providerAttempt;
         } catch (error) {
             this.markSmsRetryUncertain(providerAttempt, error instanceof Error ? error.message : String(error));
