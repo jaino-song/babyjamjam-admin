@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { extractPhoneCandidates } from "application/utils/normalize-phone";
 import {
     EFORMSIGN_DOCUMENT_KIND,
     EformsignDocEntity,
@@ -148,26 +147,8 @@ export class CreateEformsignDocUsecase {
         branchid: string,
         params: CreateEformsignDocParams,
     ): Promise<ClientEntity | null> {
-        const explicitClient = await this.clientRepository.findById(branchid, params.clientId);
-        if (explicitClient) {
-            return explicitClient;
-        }
-
-        const candidatePhones = extractPhoneCandidates(params.stepRecipientSms);
-
-        for (const phone of candidatePhones) {
-            const matchedClient = await this.clientRepository.findByPhone(branchid, phone);
-            if (!matchedClient) continue;
-
-            if (matchedClient.id !== params.clientId) {
-                this.logger.log(
-                    `Resolved document ${params.documentId} to client ${matchedClient.id} by recipient phone`,
-                );
-            }
-
-            return matchedClient;
-        }
-
-        return null;
+        // Only the client the caller named is linked. A recipient phone alone never
+        // selects a different client (business rule 계약-05).
+        return this.clientRepository.findById(branchid, params.clientId);
     }
 }

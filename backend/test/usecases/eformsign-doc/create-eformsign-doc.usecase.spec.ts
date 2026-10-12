@@ -121,21 +121,21 @@ describe("CreateEformsignDocUsecase", () => {
         expect(clientRepository.findByPhone).not.toHaveBeenCalled();
     });
 
-    it("links by normalized recipient phone when the supplied client does not exist", async () => {
+    it.each([true, false])("never falls back to a recipient-phone client when the supplied one does not exist (linkToClient=%s)", async (linkToClient) => {
         const phoneMatchedClient = createClient(12, "01012345678");
         clientRepository.findById.mockResolvedValue(null);
         clientRepository.findByPhone.mockResolvedValue(phoneMatchedClient);
 
-        const result = await usecase.execute(branchId, createParams());
+        await expect(usecase.execute(branchId, createParams({ linkToClient })))
+            .rejects.toMatchObject({
+                status: 404,
+                response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND", outcome: "NOT_APPLIED" }),
+            });
 
-        expect(clientRepository.findByPhone).toHaveBeenCalledWith(branchId, "01012345678");
-        expect(result.clientId).toBe(12);
-        expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledWith(
-            branchId,
-            expect.objectContaining({ clientId: 12, documentId }),
-        );
-        expect(phoneMatchedClient.eDocId).toBe(documentId);
-        expect(clientRepository.update).toHaveBeenCalledWith(branchId, phoneMatchedClient);
+        expect(clientRepository.findByPhone).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.upsertByDocumentId).not.toHaveBeenCalled();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(phoneMatchedClient.eDocId).toBeNull();
     });
 
     describe("branch calendar", () => {
