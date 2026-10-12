@@ -1,6 +1,6 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
@@ -34,6 +34,8 @@ import { readAutomationRetrySeal, type AutomationRetrySealState } from "./automa
 import { MessageTriggerJobEntity, type MessageTriggerJobPayload, type MessageTriggerJobStatus } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 
 const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
@@ -126,6 +128,22 @@ export class SmsRetryService {
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
+        if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
+            const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
+            if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking") {
+                if (invocation === "automatic") {
+                    sourceLog.markRetrySuperseded(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+                    await this.logRepository.update(sourceLog);
+                    return sourceLog;
+                }
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/id",
+                    code: "INVALID_VALUE",
+                    detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                    location: "path",
+                }));
+            }
+        }
         if (
             invocation === "automatic"
             && sourceLog.branchId

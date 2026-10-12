@@ -70,6 +70,11 @@ export interface IMessageLogRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageRetryStartResult>;
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
+    findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
+        serviceStatus: string | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    } | null>;
     findSentTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findUncertainTriggerJobIdsSystemScope(jobIds: string[]): Promise<Set<string>>;
     findPendingRetriesSystemScope(): Promise<MessageLogEntity[]>;

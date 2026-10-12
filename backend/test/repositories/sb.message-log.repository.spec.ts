@@ -15,6 +15,7 @@ describe("SbMessageLogRepository", () => {
     });
     const createMockPrismaClient = () => ({
         updateMany: jest.fn(),
+        findFirst: jest.fn(),
     });
 
     let messageLogModel: ReturnType<typeof createMockPrismaMessageLog>;
@@ -22,14 +23,17 @@ describe("SbMessageLogRepository", () => {
     let queryRaw: jest.Mock;
     let prisma: PrismaService;
     let repository: SbMessageLogRepository;
+    let triggerJobModel: { findFirst: jest.Mock };
 
     beforeEach(() => {
         messageLogModel = createMockPrismaMessageLog();
         clientModel = createMockPrismaClient();
         queryRaw = jest.fn();
+        triggerJobModel = { findFirst: jest.fn() };
         prisma = {
             message_log: messageLogModel,
             client: clientModel,
+            message_trigger_job: triggerJobModel,
             $queryRaw: queryRaw,
             $transaction: jest.fn(async (callback) => callback({
                 message_log: messageLogModel,
@@ -42,6 +46,63 @@ describe("SbMessageLogRepository", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    describe("findServiceRecordLinkClientState", () => {
+        const state = { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") };
+        const select = { serviceStatus: true, startDate: true, endDate: true };
+        const linkLog = () => MessageLogEntity.create({
+            provider: "aligo_sms", templateKey: "service_record_link_sms", receiver: "01012345678",
+            messageBody: "link", variables: {}, branchId: "branch-1", clientId: 7, triggerJobId: "job-1",
+        });
+        it("reads the schedule's client through the branch-pinned job before the log client", async () => {
+            const log = linkLog();
+            triggerJobModel.findFirst.mockResolvedValue({ employeeSchedule: { client: { ...state, branchId: log.branchId } } });
+            expect(await repository.findServiceRecordLinkClientState(log)).toEqual(state);
+            expect(triggerJobModel.findFirst).toHaveBeenCalledWith({
+                where: { id: log.triggerJobId, branchId: log.branchId },
+                select: { employeeSchedule: { select: { client: { select: { ...select, branchId: true } } } } },
+            });
+            expect(clientModel.findFirst).not.toHaveBeenCalled();
+        });
+        it("falls back to the branch-pinned log client when the job has no schedule", async () => {
+            const log = linkLog();
+            triggerJobModel.findFirst.mockResolvedValue({ employeeSchedule: null });
+            clientModel.findFirst.mockResolvedValue(state);
+            expect(await repository.findServiceRecordLinkClientState(log)).toEqual(state);
+            expect(clientModel.findFirst).toHaveBeenCalledWith({ where: { id: 7, branchId: "branch-1" }, select });
+        });
+        it.each([null, { employeeSchedule: { client: null } }])("returns null when neither client resolves: %j", async (job) => {
+            triggerJobModel.findFirst.mockResolvedValue(job);
+            clientModel.findFirst.mockResolvedValue(null);
+            expect(await repository.findServiceRecordLinkClientState(linkLog())).toBeNull();
+        });
+        it("excludes a job in another branch and returns null without a fallback client", async () => {
+            const log = linkLog();
+            log.clientId = null;
+            triggerJobModel.findFirst.mockImplementation(async ({ where }) => where.branchId === "other-branch"
+                ? { employeeSchedule: { client: { ...state, branchId: "other-branch" } } }
+                : null);
+            expect(await repository.findServiceRecordLinkClientState(log)).toBeNull();
+            expect(triggerJobModel.findFirst.mock.calls[0][0].where).toEqual({ id: "job-1", branchId: "branch-1" });
+            expect(clientModel.findFirst).not.toHaveBeenCalled();
+        });
+        it("does not use a cross-branch schedule client and falls back to the log client", async () => {
+            triggerJobModel.findFirst.mockResolvedValue({ employeeSchedule: { client: { ...state, branchId: "other-branch" } } });
+            clientModel.findFirst.mockResolvedValue(null);
+            expect(await repository.findServiceRecordLinkClientState(linkLog())).toBeNull();
+            expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
+        });
+        it("uses the log client without a job and avoids unscoped reads for a null branch", async () => {
+            const log = linkLog();
+            log.triggerJobId = null;
+            clientModel.findFirst.mockResolvedValue(state);
+            expect(await repository.findServiceRecordLinkClientState(log)).toEqual(state);
+            log.branchId = null;
+            expect(await repository.findServiceRecordLinkClientState(log)).toBeNull();
+            expect(clientModel.findFirst).toHaveBeenCalledTimes(1);
+            expect(triggerJobModel.findFirst).not.toHaveBeenCalled();
+        });
     });
 
     describe("Aligo history conditional claims", () => {
