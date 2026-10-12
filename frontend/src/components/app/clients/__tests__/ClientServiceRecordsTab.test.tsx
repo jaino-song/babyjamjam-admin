@@ -439,7 +439,8 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
         expect(screen.getByText("기록 완료 대기")).toBeInTheDocument();
         expect(screen.getByText("실패")).toBeInTheDocument();
         expect(screen.getByText("문서 처리 응답을 확인하지 못했습니다.")).toBeInTheDocument();
@@ -468,8 +469,8 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("아직 제공기록지 이력이 없습니다.")).toBeInTheDocument();
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
-        expect(screen.queryByText("잠시 후 다시 조회해 주세요.")).not.toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
     });
 
     it.each([
@@ -489,7 +490,7 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("제공기록지 정보를 불러오지 못했습니다")).toBeInTheDocument();
-        expect(screen.queryByText("문서 이력을 확인할 수 없습니다")).not.toBeInTheDocument();
+        expect(screen.queryByText("문서 이력을 불러오지 못했습니다")).not.toBeInTheDocument();
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
@@ -511,7 +512,7 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.getByText("문서 이력을 불러오지 못했습니다")).toBeInTheDocument();
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
     });
 
@@ -528,8 +529,146 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("문서 이력을 확인할 수 없습니다")).toBeInTheDocument();
+        expect(screen.getByText("문서 이력을 불러오지 못했습니다")).toBeInTheDocument();
         expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+    });
+
+    describe("failed loads", () => {
+        const revisionHistory = {
+            caseId: "case-1",
+            caseVersion: 4,
+            currentRevisionId: "revision-1",
+            currentUsableRevisionId: null,
+            revisions: [{
+                id: "revision-1",
+                revisionNumber: 1,
+                confirmedAt: "2026-09-08T01:02:03.000Z",
+                isCurrent: true,
+                documents: [],
+            }],
+        };
+
+        it("shows the failed-load state with a retry that refreshes when the overview failed and nothing is cached", () => {
+            const onRefresh = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    onRefresh={onRefresh}
+                />,
+            );
+
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("제공기록지 정보를 불러오지 못했습니다");
+            expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("disables the retry while the refresh is in flight", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    isRefreshing
+                    onRefresh={jest.fn()}
+                />,
+            );
+
+            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+        });
+
+        it("keeps the cached overview and adds a notice whose retry refreshes when a refresh failed", () => {
+            const onRefresh = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    onRefresh={onRefresh}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+            expect(screen.queryByText("제공기록지 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefresh).toHaveBeenCalledTimes(1);
+        });
+
+        it("shows the empty text and no alert for a successful load with no assignments", () => {
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    layout="mobile"
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                />,
+            );
+
+            expect(screen.getByText("제공기록지 배정 정보가 없습니다")).toBeInTheDocument();
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("offers a retry on the revision history when it failed and nothing is cached", () => {
+            const onRefreshRevisionHistory = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                    onRefreshRevisionHistory={onRefreshRevisionHistory}
+                />,
+            );
+
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("문서 이력을 불러오지 못했습니다");
+            expect(screen.queryByText("아직 제공기록지 이력이 없습니다.")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefreshRevisionHistory).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the cached revision history and adds a notice whose retry refreshes when a refresh failed", () => {
+            const onRefreshRevisionHistory = jest.fn();
+            render(
+                <ClientServiceRecordsTab
+                    data-component={TEST_COMPONENT}
+                    overview={{ assignments: [createAssignment(1, "none")] }}
+                    clientId={100}
+                    isLoading={false}
+                    isError={false}
+                    revisionHistory={revisionHistory}
+                    isRevisionHistoryError
+                    revisionHistoryErrorStatus={500}
+                    onRefreshRevisionHistory={onRefreshRevisionHistory}
+                />,
+            );
+
+            expect(screen.getByText("수정본 #1")).toBeInTheDocument();
+            const alert = screen.getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(onRefreshRevisionHistory).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe("manual send result", () => {

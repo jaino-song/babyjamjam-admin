@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
@@ -250,13 +250,42 @@ const upcomingJob: ClientUpcomingMessageTriggerJob = {
 
 function historyQuery(
     items: MessageLogRecord[],
-    overrides: Partial<{ isError: boolean; isLoading: boolean; hasNextPage: boolean; isFetchingNextPage: boolean; fetchNextPage: jest.Mock }> = {},
+    overrides: Partial<{
+        isError: boolean;
+        isLoading: boolean;
+        hasNextPage: boolean;
+        isFetchingNextPage: boolean;
+        isFetchNextPageError: boolean;
+        isRefetching: boolean;
+        fetchNextPage: jest.Mock;
+        refetch: jest.Mock;
+    }> = {},
 ) {
     return {
         items,
         isError: false,
         isLoading: false,
         isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
+        hasNextPage: false,
+        fetchNextPage: jest.fn(),
+        refetch: jest.fn(),
+        ...overrides,
+    };
+}
+
+function upcomingQuery(
+    items: ClientUpcomingMessageTriggerJob[],
+    overrides: Partial<{ isError: boolean; refetch: jest.Mock }> = {},
+) {
+    return {
+        items,
+        isError: false,
+        isLoading: false,
+        isFetchingNextPage: false,
+        isFetchNextPageError: false,
+        isRefetching: false,
         hasNextPage: false,
         fetchNextPage: jest.fn(),
         refetch: jest.fn(),
@@ -409,5 +438,95 @@ describe("ClientDetailPanel messages tab", () => {
         openMessagesTab("mobile");
         const mobilePresentation = document.querySelector('[data-slot="client-detail-presentation"]');
         expect(mobilePresentation).toHaveClass("min-w-0", "w-full", "max-w-full");
+    });
+
+    describe("failed loads", () => {
+        const historyZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[1];
+        const upcomingZone = () => document.querySelectorAll<HTMLElement>('[data-slot="message-zone"]')[0];
+
+        it("shows the failed-load state with a retry, not the empty text, when the history failed and nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("메시지 발송 내역을 불러오지 못했습니다");
+            expect(within(historyZone()).queryByText("메시지 발송 내역이 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the loaded history and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(
+                historyQuery([historyRecord], { isError: true, refetch, fetchNextPage }),
+            );
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            const alert = within(historyZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+            expect(fetchNextPage).not.toHaveBeenCalled();
+        });
+
+        it("retries the older page when that is what failed", () => {
+            const refetch = jest.fn();
+            const fetchNextPage = jest.fn();
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([historyRecord], {
+                isError: true,
+                isFetchNextPageError: true,
+                hasNextPage: true,
+                refetch,
+                fetchNextPage,
+            }));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("모니터링 설문")).toBeInTheDocument();
+            fireEvent.click(within(within(historyZone()).getByRole("alert")).getByRole("button", { name: "다시 시도" }));
+            expect(fetchNextPage).toHaveBeenCalledTimes(1);
+            expect(refetch).not.toHaveBeenCalled();
+        });
+
+        it("shows no alert for a healthy history, and the empty text only after a successful empty load", () => {
+            mockUseClientMessageHistory.mockReturnValue(historyQuery([]));
+            openMessagesTab();
+
+            expect(within(historyZone()).getByText("메시지 발송 내역이 없습니다")).toBeInTheDocument();
+            expect(within(historyZone()).queryByRole("alert")).not.toBeInTheDocument();
+        });
+
+        it("keeps the cached upcoming jobs and adds a notice whose retry refetches when a refresh failed", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(
+                upcomingQuery([upcomingJob], { isError: true, refetch }),
+            );
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByRole("heading", { name: "서비스 종료 안내" })).toBeInTheDocument();
+            const alert = within(upcomingZone()).getByRole("alert");
+            expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지를 불러오지 못했어요")).not.toBeInTheDocument();
+
+            fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
+
+        it("keeps the screen's own failure UI and its retry for upcoming jobs when nothing is loaded", () => {
+            const refetch = jest.fn();
+            mockUseClientUpcomingMessageTriggerJobs.mockReturnValue(upcomingQuery([], { isError: true, refetch }));
+            openMessagesTab();
+
+            expect(within(upcomingZone()).getByText("예정된 자동 메시지를 불러오지 못했어요")).toBeInTheDocument();
+            expect(within(upcomingZone()).queryByRole("alert")).not.toBeInTheDocument();
+            expect(within(upcomingZone()).queryByText("예정된 자동 메시지가 없습니다")).not.toBeInTheDocument();
+
+            fireEvent.click(within(upcomingZone()).getByRole("button", { name: "다시 시도" }));
+            expect(refetch).toHaveBeenCalledTimes(1);
+        });
     });
 });

@@ -198,6 +198,8 @@ function ClientMessageHistoryList({
     isFetchingNextPage,
     hasNextPage,
     onLoadMore,
+    onRetry,
+    isRetrying,
     clientName,
     selectedRecordId,
     onSelectRecord,
@@ -212,6 +214,9 @@ function ClientMessageHistoryList({
     /** The server still holds older records than the ones loaded; the list shows only recent ones. */
     hasNextPage: boolean;
     onLoadMore: () => void;
+    /** Retries the failed read: the older page when that is what failed, otherwise the whole history. */
+    onRetry: () => void;
+    isRetrying: boolean;
     clientName: string;
     selectedRecordId: number | string | null;
     onSelectRecord: (record: MessageLogRecord) => void;
@@ -279,14 +284,14 @@ function ClientMessageHistoryList({
         );
     }
 
-    if (isError) {
+    if (isError && records.length === 0) {
         return (
-            <div
-                data-component={`${dataComponentPrefix}_history-list_error`}
-                className="w-full min-w-0 max-w-full py-12 text-center text-[0.85rem] text-v3-text-muted"
-            >
-                메시지 발송 내역을 불러오지 못했습니다
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponentPrefix}_history-list_error`}
+                title="메시지 발송 내역을 불러오지 못했습니다"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
         );
     }
 
@@ -303,6 +308,15 @@ function ClientMessageHistoryList({
             data-component={`${dataComponentPrefix}_history-list`}
             className="w-full min-w-0 max-w-full"
         >
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${dataComponentPrefix}_history-list_refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             <AnimatedSlotList<MessageLogRecord>
                 items={records}
                 isLoading={false}
@@ -481,6 +495,7 @@ function ClientUpcomingMessageList({
     hasNextPage,
     onLoadMore,
     onRetry,
+    isRetrying,
     dataComponentPrefix,
 }: {
     jobs: ClientUpcomingMessageTriggerJob[];
@@ -490,11 +505,12 @@ function ClientUpcomingMessageList({
     hasNextPage: boolean;
     onLoadMore: () => void;
     onRetry: () => void;
+    isRetrying: boolean;
     dataComponentPrefix: string;
 }) {
     const sectionPrefix = `${dataComponentPrefix}_upcoming`;
 
-    if (isError) {
+    if (isError && jobs.length === 0) {
         return (
             <div
                 data-component={`${sectionPrefix}_error`}
@@ -536,6 +552,15 @@ function ClientUpcomingMessageList({
             data-slot="upcoming-messages"
             className="w-full min-w-0 max-w-full"
         >
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${sectionPrefix}_refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             <AnimatedSlotList<ClientUpcomingMessageTriggerJob>
                 data-component={`${sectionPrefix}_list`}
                 items={jobs}
@@ -681,6 +706,15 @@ function ClientContractsList({
 
     return (
         <div data-component={`${dataComponentPrefix}-contracts-list`} className="space-y-3">
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${dataComponentPrefix}-contracts-refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
             {docs.map((doc) => {
                 // The backend stamps displayStatus at serve time; the local derivation
                 // only backstops payloads that predate the field.
@@ -1388,7 +1422,12 @@ function ClientDetailPanelBody({
                                             isFetchingNextPage={clientUpcomingMessageQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientUpcomingMessageQuery.hasNextPage)}
                                             onLoadMore={() => void clientUpcomingMessageQuery.fetchNextPage()}
-                                            onRetry={() => void clientUpcomingMessageQuery.refetch()}
+                                            onRetry={() => void (
+                                                clientUpcomingMessageQuery.isFetchNextPageError
+                                                    ? clientUpcomingMessageQuery.fetchNextPage()
+                                                    : clientUpcomingMessageQuery.refetch()
+                                            )}
+                                            isRetrying={Boolean(clientUpcomingMessageQuery.isRefetching)}
                                             dataComponentPrefix={dataComponentPrefix}
                                         />
                                     </div>
@@ -1412,6 +1451,12 @@ function ClientDetailPanelBody({
                                             isFetchingNextPage={clientMessageHistoryQuery.isFetchingNextPage}
                                             hasNextPage={Boolean(clientMessageHistoryQuery.hasNextPage)}
                                             onLoadMore={() => void clientMessageHistoryQuery.fetchNextPage()}
+                                            onRetry={() => void (
+                                                clientMessageHistoryQuery.isFetchNextPageError
+                                                    ? clientMessageHistoryQuery.fetchNextPage()
+                                                    : clientMessageHistoryQuery.refetch()
+                                            )}
+                                            isRetrying={Boolean(clientMessageHistoryQuery.isRefetching)}
                                             clientName={client.name}
                                             selectedRecordId={selectedMessageHistoryId}
                                             onSelectRecord={handleSelectClientMessageHistoryRecord}
