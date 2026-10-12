@@ -62,6 +62,7 @@ import {
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
   isContractDocDisplayStatus,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
@@ -195,11 +196,11 @@ const ContractPdfViewer = dynamic(
 // document was revoked): terminal, shown 철회됨 in the danger tone, and filed the same way.
 // "rejected-by-reviewer" is eformsign 071 (the provider's reviewer rejected the document, 계약-04): NOT
 // terminal and not expired. The customer's signature stays valid; a later 070 or 072 moves it on. It has
-// no pill of its own — the server's displayStatus filter only accepts signed|review — so it lists under
-// 전체 and is left out of the per-pill counts.
+// its own 반려됨 pill: the server's displayStatus filter accepts rejected_by_reviewer, so the pill count
+// and the filtered list both come from the same resolved display status.
 type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
-type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "기간 만료" | "알 수 없음";
+type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "반려됨" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
 type NotificationStatus = "pending" | "sent" | "failed";
 type NotificationLogRecord = {
@@ -233,7 +234,10 @@ const CONTRACT_MUTATION_OPERATION_LABELS: Record<ContractMutationOperation, stri
   finalize: "최종 확인",
   receipt: "영수증 문자",
 };
-const FILTER_LABELS: FilterKey[] = ["전체", "서명 대기", "서명 완료", "검토 필요", "계약 완료", "기간 만료", "알 수 없음"];
+const FILTER_LABELS: FilterKey[] = ["전체", "서명 대기", "서명 완료", "검토 필요", "반려됨", "계약 완료", "기간 만료", "알 수 없음"];
+// 071 on a 제공기록지 keeps its danger "거부·만료" reading (계약-04 scopes 반려됨 to contracts). The list
+// row and the detail header read this one constant so the two never drift.
+const SERVICE_RECORD_REVIEWER_REJECTED_LABEL = "거부·만료";
 const CONTRACT_SECTIONS = [
   { id: "maternal-contracts", label: "산모 계약서", icon: FileSignature },
   { id: "service-records", label: "제공기록지", icon: ClipboardList },
@@ -355,6 +359,9 @@ const FILTER_TO_STATUS_CATEGORY: Record<FilterKey, EformsignStatusCategoryParam 
   "서명 대기": "drafting",
   "서명 완료": "in-progress",
   "검토 필요": "in-progress",
+  // 071 is selected by displayStatus alone: the status-code sets list it under both in-progress and
+  // rejected, so a statusCategory would only narrow what the resolved display status already decides.
+  반려됨: null,
   "계약 완료": "completed",
   "기간 만료": "expired",
   "알 수 없음": "unknown",
@@ -363,6 +370,7 @@ const FILTER_TO_STATUS_CATEGORY: Record<FilterKey, EformsignStatusCategoryParam 
 const FILTER_TO_DISPLAY_STATUS = {
   "서명 완료": "signed",
   "검토 필요": "review",
+  반려됨: "rejected_by_reviewer",
 } as const;
 
 const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey | null> = {
@@ -373,9 +381,8 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey | null> = {
   // Filed under the server's expired filter, so the pill counts match it.
   "revoke-requested": "기간 만료",
   revoked: "기간 만료",
-  // 반려됨 (071) has no pill: the server's displayStatus filter cannot select it, so counting it under
-  // a pill would make the pill count disagree with the filtered list. It lists under 전체 only.
-  "rejected-by-reviewer": null,
+  // 반려됨 (071) has its own pill, selected server-side by displayStatus=rejected_by_reviewer.
+  "rejected-by-reviewer": "반려됨",
   expired: "기간 만료",
   unknown: "알 수 없음",
 };
@@ -392,6 +399,28 @@ function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDay
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
   return isReviewWindowOpen(signal.contract_end_date, calendar) ? "in-progress" : "signed";
+}
+
+/** pill 카운터: 상태 신호를 문서와 같은 규칙(categorizeSignal → FILTER_BY_CATEGORY)으로 접는다. */
+function countSignalsByFilter(
+  signals: readonly EformsignStatusSignal[],
+  calendar: KrBusinessDayCalendar,
+): Record<FilterKey, number> {
+  const counts: Record<FilterKey, number> = {
+    전체: signals.length,
+    "서명 대기": 0,
+    "서명 완료": 0,
+    "검토 필요": 0,
+    반려됨: 0,
+    "계약 완료": 0,
+    "기간 만료": 0,
+    "알 수 없음": 0,
+  };
+  for (const signal of signals) {
+    const pill = FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)];
+    if (pill) counts[pill] += 1;
+  }
+  return counts;
 }
 
 /** 서버 검색 요청을 타이핑당 1회로 묶기 위한 로컬 디바운스. */
@@ -427,7 +456,7 @@ function yymmddPrefillToIso(value: string | undefined): string | undefined {
 function categoryTones(category: ContractCategory): {
   badge: string;
   badgeTone: "primary" | "green" | "muted" | "orange" | "burgundy";
-  badgeMini: "primary" | "green" | "muted" | "orange" | "burgundy";
+  badgeMini: BadgeTone;
   infoTone: "primary" | "green" | "muted" | "orange" | "burgundy";
 } {
   switch (category) {
@@ -453,12 +482,12 @@ function categoryTones(category: ContractCategory): {
         infoTone: "burgundy",
       };
     case "rejected-by-reviewer":
-      // The list row renders this one as the solid StatusPill; the detail header and info row can only
-      // take the closed soft tones, so they fall back to burgundy.
+      // The list row renders this one as the solid StatusPill and the detail header as the solid
+      // badge-mini; the avatar, service-record Badge and info row only take the soft tones.
       return {
-        badge: "반려됨",
+        badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer,
         badgeTone: "burgundy",
-        badgeMini: "burgundy",
+        badgeMini: "burgundy-solid",
         infoTone: "burgundy",
       };
     case "expired":
@@ -603,6 +632,21 @@ function hasOpenedDocument(doc: EformsignDocument): boolean {
     if (collectRecords(source).some(hasOpenEventRecord)) return true;
   }
   return CONTRACT_OPEN_CODES.has(normalizeStatusCode(doc.current_status?.status_type));
+}
+
+/**
+ * The detail header's status chip. A contract at 071 reads 반려됨 in the solid burgundy tone; a
+ * 제공기록지 at 071 reads exactly what its list row reads (거부·만료, same soft tone), never 반려됨.
+ */
+function detailHeaderStatusBadge(
+  category: ContractCategory,
+  isServiceRecord: boolean,
+): { label: string; tone: BadgeTone } {
+  const tones = categoryTones(category);
+  if (category === "rejected-by-reviewer" && isServiceRecord) {
+    return { label: SERVICE_RECORD_REVIEWER_REJECTED_LABEL, tone: tones.badgeTone };
+  }
+  return { label: tones.badge, tone: tones.badgeMini };
 }
 
 /**
@@ -1563,7 +1607,7 @@ function ContractDetailContent({
         avatarTone="primary"
         title={isServiceRecord ? "제공기록지" : name}
         badges={[
-          { label: tones.badge, tone: tones.badgeMini as BadgeTone },
+          detailHeaderStatusBadge(category, isServiceRecord),
           metadata?.clientId
             ? { label: "고객 등록 완료", tone: "green" }
             : { label: "고객 등록 필요", tone: "burgundy" },
@@ -2665,19 +2709,7 @@ export default function ContractsPage() {
     }
 
     // 목록과 동일한 선(先)필터가 적용된 신호를 문서와 같은 규칙으로 접는다.
-    const counts: Record<FilterKey, number> = {
-      전체: statusCountsData?.documents.length ?? 0,
-      "서명 대기": 0,
-      "서명 완료": 0,
-      "검토 필요": 0,
-      "계약 완료": 0,
-      "기간 만료": 0,
-      "알 수 없음": 0,
-    };
-    for (const signal of statusCountsData?.documents ?? []) {
-      const pill = FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)];
-      if (pill) counts[pill] += 1;
-    }
+    const counts = countSignalsByFilter(statusCountsData?.documents ?? [], calendar);
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
   }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
 
@@ -2706,6 +2738,7 @@ export default function ContractsPage() {
     const SECTION_META: Record<Exclude<FilterKey, "전체">, { key: string; title: string; category: ContractCategory }> = {
       "서명 완료": { key: "signed", title: "서명 완료", category: "signed" },
       "검토 필요": { key: "in-progress", title: "검토 필요", category: "in-progress" },
+      반려됨: { key: "rejected-by-reviewer", title: "반려됨", category: "rejected-by-reviewer" },
       "서명 대기": { key: "drafting", title: "서명 대기", category: "drafting" },
       "계약 완료": { key: "completed", title: "계약 완료 · 최근", category: "completed" },
       "기간 만료": { key: "expired", title: "기간 만료/반려", category: "expired" },
@@ -2848,12 +2881,12 @@ export default function ContractsPage() {
                     const name = isServiceRecordRow
                       ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
                       : contractDisplayName(doc);
-                    // 071 on a 제공기록지 keeps today's danger "거부·만료" reading (계약-04 scopes 반려됨 to
+                    // 071 on a 제공기록지 keeps today's danger reading (계약-04 scopes 반려됨 to
                     // contracts); on a contract it is the solid 반려됨 pill.
                     const isRejectedByReviewer = cat === "rejected-by-reviewer";
                     const badgeLabel = isServiceRecordRow
                       ? isRejectedByReviewer
-                        ? "거부·만료"
+                        ? SERVICE_RECORD_REVIEWER_REJECTED_LABEL
                         : mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
                       : tones.badge;
 

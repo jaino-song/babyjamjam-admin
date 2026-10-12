@@ -149,11 +149,11 @@ function parseTemplateMatch(value: string | undefined): TemplateMatch {
 
 function parseDisplayStatus(value: string | undefined): EformsignDocDisplayStatus | undefined {
     if (value === undefined || value === "") return undefined;
-    if (value === "signed" || value === "review") return value;
+    if (value === "signed" || value === "review" || value === "rejected_by_reviewer") return value;
     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
         pointer: "/displayStatus",
         code: "INVALID_VALUE",
-        detail: "표시 상태는 서명 완료 또는 검토로 선택해 주세요.",
+        detail: "표시 상태는 서명 완료, 검토 또는 반려됨으로 선택해 주세요.",
         location: "query",
     }));
 }
