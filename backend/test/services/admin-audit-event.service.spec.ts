@@ -256,7 +256,7 @@ function createMembershipPrisma(options: {
 }) {
     const prisma: any = {
         branch: {
-            findUnique: jest.fn().mockResolvedValue({ ownerId: options.ownerId }),
+            findUnique: jest.fn().mockResolvedValue({ ownerId: options.ownerId, isActive: true }),
         },
         user: {
             findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
