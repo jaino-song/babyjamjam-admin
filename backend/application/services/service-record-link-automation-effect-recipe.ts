@@ -7,6 +7,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
+    atKstHour,
     getServiceRecordLinkScheduledFor,
     SERVICE_RECORD_LINK_RULE_ID,
 } from "domain/constants/service-record-link-message";
@@ -223,7 +224,9 @@ export function describeServiceRecordLinkEffect(input: {
     if (canonicalScheduleIdentity !== scheduleIdentity) return null;
 
     const expectedScheduledFor = getServiceRecordLinkScheduledFor(schedule.startDate);
-    if (scheduledFor.getTime() !== expectedScheduledFor.getTime()
+    const legacyScheduledFor = getLegacyServiceRecordLinkScheduledFor(schedule.startDate);
+    if ((scheduledFor.getTime() !== expectedScheduledFor.getTime()
+        && scheduledFor.getTime() !== legacyScheduledFor.getTime())
         || dedupeKey !== `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${schedule.id}:primary`) return null;
 
     if (!serviceRecordUrl || !sameServiceRecordUrl(serviceRecordUrl, token.linkTokenHash)) return null;
@@ -339,7 +342,7 @@ export function describeServiceRecordLinkEffect(input: {
         recipeDigest: agentBindingHash({
             version: RECIPE_VERSION,
             operation: "service-record-link",
-            scheduling: { kind: "service-start-15-kst", scheduledFor: expectedScheduledFor.toISOString() },
+            scheduling: { kind: "service-start-15-kst", scheduledFor: scheduledFor.toISOString() },
             eventType: rule.eventType,
             offsetType: rule.offsetType,
             offsetDays: rule.offsetDays,
@@ -349,6 +352,11 @@ export function describeServiceRecordLinkEffect(input: {
             serviceRecordCaseId: serviceRecordCase?.id ?? null,
         }),
     };
+}
+
+// 기록-08 발송 시각 변경 전에 예약된 작업을 위한 호환 처리이며, 해당 pending 작업이 없으면 삭제할 수 있다.
+function getLegacyServiceRecordLinkScheduledFor(startDate: Date): Date {
+    return atKstHour(startDate, 15);
 }
 
 function sameServiceRecordUrl(value: string, token: string): boolean {
