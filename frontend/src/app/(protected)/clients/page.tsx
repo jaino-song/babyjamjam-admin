@@ -62,6 +62,7 @@ import { canCreateNewContractDocument } from "@/components/app/contracts/Contrac
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { AutomationStatusNotice } from "@/components/app/ui/automation-status-notice";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -327,6 +328,9 @@ export default function ClientsPage() {
     const {
         data: clientFromParam,
         isBranchContextReady: isClientDetailBranchContextReady,
+        isError: isClientFromParamError,
+        isFetching: isClientFromParamFetching,
+        refetch: refetchClientFromParam,
     } = useClient(
         effectiveClientIdParam ? Number(effectiveClientIdParam) : 0
     );
@@ -363,6 +367,14 @@ export default function ClientsPage() {
         && isBranchScopeStable
         ? selectedClientFromList ?? (effectiveClientIdParam ? clientFromParamList ?? clientFromParam ?? null : null)
         : null;
+    // A deep-linked client whose own query failed with nothing cached: the detail slot must say
+    // the load failed instead of the "select a client" placeholder (which reads as "nothing here").
+    // Loading and paused (offline) keep the placeholder; there is no loading state for this slot.
+    const isDeepLinkedClientLoadFailed = Boolean(effectiveClientIdParam)
+        && isClientDetailBranchContextReady
+        && isClientFromParamError
+        && clientFromParam === undefined
+        && activeSelectedClient === null;
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
 
@@ -877,7 +889,7 @@ export default function ClientsPage() {
                             className="flex min-h-0 flex-1 flex-col"
                         >
                             <SplitLayout data-component="desktop_clients_sections_section-content_list-section_split-layout"
-                                hasSelection={shouldShowClientFormPanel || !!activeSelectedClient}
+                                hasSelection={shouldShowClientFormPanel || !!activeSelectedClient || isDeepLinkedClientLoadFailed}
                                 onBack={handleCompactBack}
                             >
                 <ListPanel data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"
@@ -1181,6 +1193,14 @@ export default function ClientsPage() {
                             }
                         />
                     </div>
+                ) : isDeepLinkedClientLoadFailed ? (
+                    <QueryErrorState
+                        dataComponent="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_load-error"
+                        size="panel"
+                        title="고객 정보를 불러오지 못했습니다"
+                        onRetry={() => void refetchClientFromParam()}
+                        isRetrying={isClientFromParamFetching}
+                    />
                 ) : (
                     <EmptyState
                         icon={Users}
