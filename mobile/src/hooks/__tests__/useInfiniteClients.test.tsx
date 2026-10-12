@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
@@ -262,5 +262,52 @@ describe("useInfiniteClients", () => {
     });
     const queryOptions = query?.options as { staleTime?: number } | undefined;
     expect(queryOptions?.staleTime).toBe(60_000);
+  });
+
+  it("reports hasData only after a load has succeeded, including an empty one, and keeps it after a failed refetch", async () => {
+    mockedApiGet.mockResolvedValue({ data: createResponse(0) });
+    const { result } = renderHook(() => useInfiniteClients(), {
+      wrapper: createWrapper(),
+    });
+
+    expect(result.current.hasData).toBe(false);
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.hasData).toBe(true);
+    expect(result.current.allClients).toHaveLength(0);
+
+    mockedApiGet.mockRejectedValue(new Error("network"));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.hasData).toBe(true);
+    expect(result.current.allClients).toHaveLength(0);
+  });
+
+  it("does not report hasData when the first load fails", async () => {
+    mockedApiGet.mockRejectedValue(new Error("network"));
+    const { result } = renderHook(() => useInfiniteClients(), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.hasData).toBe(false);
+  });
+
+  it("mirrors the query's paused state while offline with no data", async () => {
+    onlineManager.setOnline(false);
+    try {
+      mockedApiGet.mockResolvedValue({ data: createResponse(1) });
+      const { result } = renderHook(() => useInfiniteClients(), {
+        wrapper: createWrapper(),
+      });
+
+      await waitFor(() => expect(result.current.isPaused).toBe(true));
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.hasData).toBe(false);
+      expect(mockedApiGet).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 });
