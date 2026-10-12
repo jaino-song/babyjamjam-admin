@@ -958,9 +958,10 @@ export class EformsignWebhookService {
             await this.linkDocumentUsecase.execute(branchid, documentId);
             this.logger.log(`Document ${documentId} successfully linked to client`);
 
-            // The legacy linker resolves a client by recipient phone before it
-            // enters the repository transaction. Re-read the complete
-            // document/client/revision tuple after that transaction so a
+            // The linker only refreshes the pointer of the client the document
+            // is already linked to (it never infers a client from the
+            // recipient phone) inside a repository transaction. Re-read the
+            // complete document/client/revision tuple after that transaction so a
             // delayed completion cannot continue into reconciler/end-date
             // writes after a newer contract or admin revision has won.
             const currentContractCheck = this.eformsignDocRepository
