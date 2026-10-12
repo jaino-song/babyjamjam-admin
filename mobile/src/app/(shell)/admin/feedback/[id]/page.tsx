@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from '@/components/app/chat/agent-markdown-link-components';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 
 const FEEDBACK_DETAIL_BASE = 'mobile_admin_feedback-detail';
 
@@ -14,7 +15,7 @@ export default function FeedbackDetailPage() {
   const params = useParams();
   const feedbackId = params.id as string;
 
-  const { data: feedback, isLoading, error } = useQuery({
+  const { data: feedback, isLoading, error, isError, isPaused, isFetching, refetch } = useQuery({
     queryKey: ['feedbackDetail', feedbackId],
     queryFn: () => getFeedbackDetail(feedbackId),
   });
@@ -30,7 +31,7 @@ export default function FeedbackDetailPage() {
     });
   };
 
-  if (isLoading) {
+  if (isLoading || (isPaused && feedback === undefined)) {
     return (
       <div className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
         <div className="max-w-4xl mx-auto">
@@ -50,7 +51,9 @@ export default function FeedbackDetailPage() {
     );
   }
 
-  if (error || !feedback) {
+  const isNotFound = (error as { response?: { status?: number } } | null)?.response?.status === 404;
+
+  if (!feedback) {
     return (
       <div className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
         <div className="max-w-4xl mx-auto">
@@ -60,10 +63,19 @@ export default function FeedbackDetailPage() {
           >
             ←
           </button>
-          <div className="bg-card rounded-2xl p-6 text-center shadow sm:p-8">
-            <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
-            <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
-          </div>
+          {isError && !isNotFound ? (
+            <QueryErrorState
+              dataComponent={`${FEEDBACK_DETAIL_BASE}_error`}
+              title="피드백을 불러오지 못했습니다"
+              onRetry={() => void refetch()}
+              isRetrying={isFetching}
+            />
+          ) : (
+            <div className="bg-card rounded-2xl p-6 text-center shadow sm:p-8">
+              <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
+              <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -72,6 +84,15 @@ export default function FeedbackDetailPage() {
   return (
     <div data-component={FEEDBACK_DETAIL_BASE} className="min-h-[100dvh] bg-muted/50 p-4 sm:p-6">
       <div data-component={`${FEEDBACK_DETAIL_BASE}_content`} className="max-w-4xl mx-auto">
+        {isError && feedback !== undefined && (
+          <QueryErrorState
+            dataComponent={`${FEEDBACK_DETAIL_BASE}_content_cached-error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => void refetch()}
+            isRetrying={isFetching}
+          />
+        )}
         <button
           onClick={() => router.push('/admin/feedback')}
           data-component={`${FEEDBACK_DETAIL_BASE}_content_back`}
