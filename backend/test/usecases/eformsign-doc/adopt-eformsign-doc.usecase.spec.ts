@@ -53,14 +53,16 @@ describe("AdoptEformsignDocUsecase", () => {
     describe("without an explicit client (inferred from the recipient phone)", () => {
         const CLIENT_PHONE = "01012345678";
 
-        const remoteFor = (overrides: { name?: string | null; birthday?: string | null } = {}) => ({
+        const remoteFor = (
+            overrides: { name?: string | null; birthday?: string | null; customerSms?: string } = {},
+        ) => ({
             id: "doc-phone",
             document_name: "계약서",
             current_status: {
                 status_type: "060", expired_date: 0,
                 step_recipients: [{ id: CLIENT_PHONE, name: "고객", recipient_type: "02" }],
             },
-            recipients: [{ recipient_type: "02", name: "김고객", sms: "010-1234-5678" }],
+            recipients: [{ recipient_type: "02", name: "김고객", sms: overrides.customerSms ?? "010-1234-5678" }],
             fields: [
                 ...(overrides.name === null ? [] : [{ id: "이용자 성명", value: overrides.name ?? "김고객", type: "text" }]),
                 ...(overrides.birthday === null
@@ -71,7 +73,7 @@ describe("AdoptEformsignDocUsecase", () => {
 
         const setup = (options: {
             remote?: unknown;
-            client?: { id: number; name: string; birthday: string | null } | null;
+            client?: { id: number; name: string; birthday: string | null; phoneNormalized?: string | null } | null;
             localRow?: { clientId: number | null } | null;
         } = {}) => {
             const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-phone" }) };
@@ -80,7 +82,7 @@ describe("AdoptEformsignDocUsecase", () => {
                 findById: jest.fn(),
                 findByPhone: jest.fn().mockResolvedValue(
                     options.client === undefined
-                        ? { id: 7, name: "김고객", birthday: "1992-03-04" }
+                        ? { id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE }
                         : options.client,
                 ),
             };
@@ -113,10 +115,18 @@ describe("AdoptEformsignDocUsecase", () => {
             expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
         });
 
+        it("accepts a document customer phone written without hyphens when it equals the client's", async () => {
+            const { usecase, create } = setup({ remote: remoteFor({ customerSms: CLIENT_PHONE }) });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        });
+
         it("accepts the same name and birthday in a different written form", async () => {
             const { usecase, create } = setup({
                 remote: remoteFor({ birthday: "1992. 3. 4." }),
-                client: { id: 7, name: " 김 고객 ", birthday: "920304" },
+                client: { id: 7, name: " 김 고객 ", birthday: "920304", phoneNormalized: CLIENT_PHONE },
             });
 
             await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
@@ -133,12 +143,16 @@ describe("AdoptEformsignDocUsecase", () => {
             expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
         });
 
+        const matched = { id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE };
+
         it.each([
-            ["a different name", { name: "박고객" }, { id: 7, name: "김고객", birthday: "1992-03-04" }],
-            ["a different birthday", { birthday: "1992-03-05" }, { id: 7, name: "김고객", birthday: "1992-03-04" }],
-            ["a client without a stored birthday", {}, { id: 7, name: "김고객", birthday: null }],
-            ["a document without a customer name", { name: null }, { id: 7, name: "김고객", birthday: "1992-03-04" }],
-            ["a document without a birthday", { birthday: null }, { id: 7, name: "김고객", birthday: "1992-03-04" }],
+            ["a different name", { name: "박고객" }, matched],
+            ["a different birthday", { birthday: "1992-03-05" }, matched],
+            ["a client without a stored birthday", {}, { ...matched, birthday: null }],
+            ["a document without a customer name", { name: null }, matched],
+            ["a document without a birthday", { birthday: null }, matched],
+            ["a document customer phone different from the client's", { customerSms: "010-9999-8888" }, matched],
+            ["a client without a normalized phone", {}, { ...matched, phoneNormalized: null }],
         ])("refuses a phone match with %s", async (_label, remoteOverrides, client) => {
             const { usecase, create, mirror, docs } = setup({
                 remote: remoteFor(remoteOverrides),

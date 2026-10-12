@@ -126,8 +126,8 @@ export class AdoptEformsignDocUsecase {
 
     /**
      * Picks a client for an adoption nobody chose a client for. A phone match is only a
-     * candidate: the contract's name and birthday must agree too, and a document already
-     * linked to another client is never moved (business rule 계약-05). Any rejection
+     * candidate: the document's own customer phone, name and birthday must all agree with
+     * the client, and a document already linked to another client is never moved (business rule 계약-05). Any rejection
      * returns undefined, so the caller reports the usual "clientId required" error.
      */
     private async inferClientId(
@@ -140,7 +140,10 @@ export class AdoptEformsignDocUsecase {
         const client = await this.clientRepository.findByPhone(branchId, recipientPhone);
         if (!client) return undefined;
 
+        // The lookup used the first recipient's id, which need not be the customer. The
+        // candidate's phone is already normalized the same way as client.phoneNormalized.
         const candidate = extractEformsignContractClientCandidate(remote);
+        if (!candidate?.phone || candidate.phone !== client.phoneNormalized) return undefined;
         if (compareEformsignClientIdentity(candidate, client, new Date()).length > 0) {
             return undefined;
         }
