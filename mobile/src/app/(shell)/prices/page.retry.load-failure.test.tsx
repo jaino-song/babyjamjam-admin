@@ -1,8 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
-import { VOUCHER_TYPES } from "@/hooks/useVoucherData";
+import { voucherQueryKeys, VOUCHER_TYPES } from "@/hooks/useVoucherData";
 
 import PricesPage from "./page";
 
@@ -75,6 +75,48 @@ function renderPage() {
 describe("mobile prices page retry with the real hooks", () => {
   beforeEach(() => {
     mockedGet.mockReset();
+  });
+
+  it("shows skeletons, not zero or empty text, on an offline first load", async () => {
+    mockedGet.mockImplementation(async (url) => ({ data: url === "/voucher-price-infos/years" ? [2026] : [] }));
+    onlineManager.setOnline(false);
+    try {
+      renderPage();
+      expect(screen.getByTestId("rows-skeleton")).toBeInTheDocument();
+      expect(screen.getByTestId("count-skeleton")).toBeInTheDocument();
+      expect(screen.queryByText("0개")).not.toBeInTheDocument();
+      expect(screen.queryByText("조건에 맞는 가격표가 없습니다.")).not.toBeInTheDocument();
+      expect(screen.queryByText("등록된 가격표 연도가 없습니다.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(mockedGet).not.toHaveBeenCalled();
+      act(() => onlineManager.setOnline(true));
+      expect(await screen.findByText("조건에 맞는 가격표가 없습니다.")).toBeInTheDocument();
+      expect(screen.getByTestId("list-count")).toHaveTextContent("0개");
+    } finally {
+      onlineManager.setOnline(true);
+    }
+  });
+
+  it("shows skeletons for paused prices with cached years, then loads when online", async () => {
+    mockedGet.mockResolvedValue({ data: [] });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(voucherQueryKeys.voucherYears, [2026]);
+    onlineManager.setOnline(false);
+    try {
+      render(<QueryClientProvider client={queryClient}><PricesPage /></QueryClientProvider>);
+      expect(screen.getByTestId("rows-skeleton")).toBeInTheDocument();
+      expect(screen.getByTestId("count-skeleton")).toBeInTheDocument();
+      expect(screen.queryByText("0개")).not.toBeInTheDocument();
+      expect(screen.queryByText("조건에 맞는 가격표가 없습니다.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(mockedGet).not.toHaveBeenCalled();
+      act(() => onlineManager.setOnline(true));
+      expect(await screen.findByText("조건에 맞는 가격표가 없습니다.")).toBeInTheDocument();
+      expect(screen.getByTestId("list-count")).toHaveTextContent("0개");
+    } finally {
+      onlineManager.setOnline(true);
+      queryClient.clear();
+    }
   });
 
   it("retries only the failed voucher types and clears the notice once they load", async () => {

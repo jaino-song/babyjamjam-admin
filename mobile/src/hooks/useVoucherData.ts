@@ -144,6 +144,7 @@ export function useAllVoucherPrices(year?: number) {
   return {
     data: queries.flatMap((q) => q.data ?? []),
     isLoading: queries.some((q) => q.isLoading),
+    isPaused: queries.some((q) => q.isPaused && q.data === undefined),
     isFetching: queries.some((q) => q.isFetching),
     isError: queries.some((q) => q.isError),
     // True when every voucher type holds data, also when all of them are empty: the list is completely known.
