@@ -55,6 +55,7 @@ import {
   type MessageHistoryDetailTone,
 } from "@/components/app/clients/client-message-history-detail";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatusBadge, StatusPill } from "@/components/app/ui/status-badge";
 import {
   InfoCard,
@@ -424,11 +425,11 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-function getMessageHistoryErrorMessage(error: unknown): string {
+function getMessageHistoryErrorMessage(error: unknown): string | undefined {
   if (error instanceof Error && /[가-힣]/.test(error.message)) {
     return error.message;
   }
-  return "발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.";
+  return undefined;
 }
 
 function UnavailableCount({ dataComponent }: { dataComponent?: string }) {
@@ -610,12 +611,16 @@ export function MessagesHistoryPage() {
     data: upcomingData = [],
     isLoading: isUpcomingLoading,
     isError: isUpcomingError,
+    refetch: refetchUpcoming,
+    isFetching: isUpcomingFetching,
   } = useUpcomingMessageTriggerJobs();
   const {
     data: historyData = [],
     isLoading: isHistoryLoading,
     isError: isHistoryError,
     error: historyError,
+    refetch: refetchHistory,
+    isFetching: isHistoryFetching,
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
   const retryMutation = useRetryMessageHistory();
@@ -944,8 +949,15 @@ export function MessagesHistoryPage() {
                           )}
                         </div>
                         {isUpcomingError ? (
-                          <EmptyState message="발송 예정 내역을 불러오지 못했습니다." />
-                        ) : isPanelLoading ? (
+                          <QueryErrorState
+                            dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_load-error`}
+                            size={upcomingJobs.length > 0 ? "inline" : "panel"}
+                            title={upcomingJobs.length > 0 ? "최신 정보를 불러오지 못했습니다" : "발송 예정 내역을 불러오지 못했습니다."}
+                            onRetry={() => void refetchUpcoming()}
+                            isRetrying={isUpcomingFetching}
+                          />
+                        ) : null}
+                        {isUpcomingError && upcomingJobs.length === 0 ? null : isPanelLoading && !isUpcomingError ? (
                           Array.from({ length: 3 }, (_, index) => (
                             <RowSkeleton
                               key={index}
@@ -986,8 +998,16 @@ export function MessagesHistoryPage() {
                           )}
                         </div>
                         {isHistoryError ? (
-                          <EmptyState message={historyErrorMessage} />
-                        ) : isPanelLoading ? (
+                          <QueryErrorState
+                            dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_load-error`}
+                            size={historyRecords.length > 0 ? "inline" : "panel"}
+                            title={historyRecords.length > 0 ? "최신 정보를 불러오지 못했습니다" : "발송 기록을 불러오지 못했습니다."}
+                            description={historyErrorMessage}
+                            onRetry={() => void refetchHistory()}
+                            isRetrying={isHistoryFetching}
+                          />
+                        ) : null}
+                        {isHistoryError && historyRecords.length === 0 ? null : isPanelLoading && !isHistoryError ? (
                           Array.from({ length: 4 }, (_, index) => (
                             <RowSkeleton
                               key={index}

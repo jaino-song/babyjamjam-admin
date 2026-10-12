@@ -306,6 +306,8 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     const { container } = render(<MessagesHistoryPage />);
 
     expect(screen.getByText("메시지 발송 기록이 100페이지(최대 50,000건)를 초과하여 전체 기록을 확인할 수 없습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("alert").querySelector('[data-slot="title"]')).toHaveTextContent("발송 기록을 불러오지 못했습니다.");
+    expect(screen.getByRole("alert").querySelector('[data-slot="description"]')).toHaveTextContent("메시지 발송 기록이 100페이지");
     expect(container.querySelector('[data-component$="_zone-past_header_count"]')).not.toBeInTheDocument();
     expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(0);
     expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
@@ -322,7 +324,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
     render(<MessagesHistoryPage />);
 
-    expect(screen.getByText("발송 기록을 불러오지 못했습니다. 잠시 후 자동으로 다시 시도합니다.")).toBeInTheDocument();
+    expect(screen.getByText("발송 기록을 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.queryByText(/provider token=secret/)).not.toBeInTheDocument();
   });
 
@@ -335,6 +337,57 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_zone-upcoming"]')).not.toBeInTheDocument();
     expect(container.querySelector('[data-component$="_zone-past"]')).not.toBeInTheDocument();
     expect(screen.getByText("표시할 메시지가 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("0건")).toBeInTheDocument();
+  });
+
+  it.each(["upcoming", "past"] as const)("retries the failed %s zone without showing empty data", async (zone) => {
+    const refetch = jest.fn();
+    const otherRefetch = jest.fn();
+    const failedHook = zone === "upcoming" ? mockUseUpcomingMessageTriggerJobs : mockUseMessageHistory;
+    const otherHook = zone === "upcoming" ? mockUseMessageHistory : mockUseUpcomingMessageTriggerJobs;
+    failedHook.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch });
+    otherHook.mockReturnValue({ data: [], isLoading: false, isError: false, refetch: otherRefetch });
+    const { container } = render(<MessagesHistoryPage />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("data-size", "panel");
+    expect(alert).toHaveTextContent(zone === "upcoming" ? "발송 예정 내역을 불러오지 못했습니다." : "발송 기록을 불러오지 못했습니다.");
+    expect(screen.queryByText("표시할 메시지가 없습니다.")).not.toBeInTheDocument();
+    expect(container.querySelector(`[data-component$="_zone-${zone}_header_count"]`)).not.toBeInTheDocument();
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(otherRefetch).not.toHaveBeenCalled();
+  });
+
+  it.each(["upcoming", "past"] as const)("keeps cached %s rows below one inline notice and disables its in-flight retry", async (zone) => {
+    const refetch = jest.fn();
+    const failedHook = zone === "upcoming" ? mockUseUpcomingMessageTriggerJobs : mockUseMessageHistory;
+    const data = zone === "upcoming" ? [cancelableJob] : [sentRecord];
+    failedHook.mockReturnValue({ data, isLoading: false, isError: true, isFetching: false, refetch });
+    const { container, rerender } = render(<MessagesHistoryPage />);
+    const alert = screen.getByRole("alert");
+    const row = screen.getByText(zone === "upcoming" ? "김고객" : "김문자");
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector('[data-count-state="unavailable"]')).toBeInTheDocument();
+    await userEvent.setup().click(within(alert).getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    failedHook.mockReturnValue({ data, isLoading: false, isError: true, isFetching: true, refetch });
+    rerender(<MessagesHistoryPage />);
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(row).toBeInTheDocument();
+  });
+
+  it.each(["upcoming", "past"] as const)("keeps failed cached %s data visible while its sibling loads", (zone) => {
+    const failedHook = zone === "upcoming" ? mockUseUpcomingMessageTriggerJobs : mockUseMessageHistory;
+    const otherHook = zone === "upcoming" ? mockUseMessageHistory : mockUseUpcomingMessageTriggerJobs;
+    failedHook.mockReturnValue({ data: zone === "upcoming" ? [cancelableJob] : [sentRecord], isLoading: false, isError: true, isFetching: false, refetch: jest.fn() });
+    otherHook.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+    render(<MessagesHistoryPage />);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+    expect(screen.getByText(zone === "upcoming" ? "김고객" : "김문자")).toBeInTheDocument();
   });
 
   it("skeletons both zones and every count while the upcoming query loads, even with cached history", () => {
