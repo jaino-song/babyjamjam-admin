@@ -4,9 +4,11 @@ import { useDashboardOverview, type DashboardOverview } from "@/hooks/useDashboa
 import type { Client } from "@/lib/client/types";
 import DashboardPage from "./page";
 
+const mockReplace = jest.fn();
+let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: mockReplace }),
+  useSearchParams: () => mockSearchParams,
   redirect: jest.fn(),
 }));
 jest.mock("@/hooks/useDashboardStats", () => ({ useDashboardOverview: jest.fn() }));
@@ -35,13 +37,15 @@ function overview(rows: Client[]): DashboardOverview {
 }
 
 const refetch = jest.fn();
-let state: { data: DashboardOverview | undefined; isError: boolean; isLoading: boolean; isFetching: boolean; refetch: typeof refetch };
+let state: { data: DashboardOverview | undefined; isError: boolean; isLoading: boolean; isFetching: boolean; isPaused?: boolean; status?: string; fetchStatus?: string; refetch: typeof refetch };
 
 function statValues(container: HTMLElement) {
   return Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]'), (node) => node.textContent);
 }
 
 beforeEach(() => {
+  mockReplace.mockReset();
+  mockSearchParams = new URLSearchParams();
   refetch.mockReset();
   state = { data: undefined, isError: true, isLoading: false, isFetching: false, refetch };
   // Only the query fields consumed by this page are mocked; components render unchanged.
@@ -49,6 +53,36 @@ beforeEach(() => {
 });
 
 describe("DashboardPage load failure", () => {
+  it("keeps paused unknown data loading without stripping a client deep link", () => {
+    state = { ...state, isError: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+    mockSearchParams = new URLSearchParams("clientId=1");
+    const { container } = render(<DashboardPage />);
+    expect(statValues(container)).not.toContain("0");
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    expect(screen.queryByText("종료 1영업일 전인 계약이 없습니다")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("keeps cached data visible during a paused refetch", () => {
+    state = { ...state, data: overview([client]), isError: false, isPaused: true };
+    const { container } = render(<DashboardPage />);
+    expect(statValues(container)).toEqual(["1", "0", "0"]);
+    expect(screen.getByText("캐시 고객")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument();
+  });
+
+  it("does not strip a paused deep link until a successful empty overview arrives", () => {
+    state = { ...state, isError: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+    mockSearchParams = new URLSearchParams("clientId=1");
+    const { rerender } = render(<DashboardPage />);
+    expect(mockReplace).not.toHaveBeenCalled();
+    state = { ...state, data: overview([]), isPaused: false, status: "success", fetchStatus: "idle" };
+    rerender(<DashboardPage />);
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard", { scroll: false });
+  });
+
   it("keeps the existing retry UI and shows unknown stats without cached data", () => {
     const { container } = render(<DashboardPage />);
     expect(screen.getByText("데이터를 불러올 수 없습니다")).toBeVisible();

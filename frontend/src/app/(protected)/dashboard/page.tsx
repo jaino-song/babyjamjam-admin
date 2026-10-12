@@ -56,11 +56,13 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const {
     data: overview,
-    isLoading: overviewLoading,
+    isLoading: isOverviewLoading,
+    isPaused: overviewPaused,
     isError: overviewError,
     isFetching: overviewFetching,
     refetch: refetchOverview,
   } = useDashboardOverview(50);
+  const overviewLoading = isOverviewLoading || (overviewPaused && overview === undefined);
   const user = useInitialUser();
   // Display-only: the built-in calendar stands in until the branch calendar loads.
   const { calendar } = useBusinessDayCalendar();

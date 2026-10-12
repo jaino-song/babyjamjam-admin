@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
@@ -74,6 +74,52 @@ beforeEach(() => {
   jest.resetAllMocks();
   getDetail.mockResolvedValue(doc);
   getOverview.mockResolvedValue({ data: emptyOverview } as Awaited<ReturnType<typeof serviceRecordsApi.getClientOverview>>);
+});
+
+it("keeps a paused uncached linked service-record header loading", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  client.setQueryData(detailKey, doc);
+  let unmount: (() => void) | undefined;
+  try {
+    onlineManager.setOnline(false);
+    const view = setup(true, true, client);
+    unmount = view.unmount;
+    const { container } = view;
+    await waitFor(() => expect(client.getQueryState(serviceRecordKeys.clientOverview(1))).toMatchObject({
+      status: "pending", fetchStatus: "paused", data: undefined,
+    }));
+    const header = container.querySelector('[data-component="desktop_contracts_detail_content_document_header-card"]');
+    expect(header?.querySelector('[data-slot="skeleton"]')).toBeInTheDocument();
+    expect(screen.queryByText(emptyText, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(getOverview).not.toHaveBeenCalled();
+  } finally {
+    unmount?.();
+    onlineManager.setOnline(true);
+    client.clear();
+  }
+});
+
+it("keeps cached service-record header visible during a paused refetch", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  client.setQueryData(detailKey, doc);
+  client.setQueryData(serviceRecordKeys.clientOverview(1), cachedOverview);
+  let unmount: (() => void) | undefined;
+  try {
+    onlineManager.setOnline(false);
+    const view = setup(true, true, client);
+    unmount = view.unmount;
+    const { container } = view;
+    await waitFor(() => expect(client.getQueryState(serviceRecordKeys.clientOverview(1))?.fetchStatus).toBe("paused"));
+    expect(screen.getByText("캐시 산모")).toBeInTheDocument();
+    const header = container.querySelector('[data-component="desktop_contracts_detail_content_document_header-card"]');
+    expect(header?.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    unmount?.();
+    onlineManager.setOnline(true);
+    client.clear();
+  }
 });
 
 it("retains the list document on detail failure and retries that request", async () => {

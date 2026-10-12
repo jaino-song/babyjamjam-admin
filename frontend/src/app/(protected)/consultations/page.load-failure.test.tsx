@@ -25,7 +25,7 @@ function response(rows: ConsultationInquiry[]): ConsultationInquiryListResponse 
 const listRefetch = jest.fn();
 const searchRefetch = jest.fn();
 const statsRefetch = jest.fn();
-type QueryState = { data: ConsultationInquiryListResponse | undefined; isError: boolean; isLoading: boolean; isFetching: boolean; refetch: typeof listRefetch };
+type QueryState = { data: ConsultationInquiryListResponse | undefined; isError: boolean; isLoading: boolean; isFetching: boolean; isPaused?: boolean; status?: string; fetchStatus?: string; refetch: typeof listRefetch };
 let list: QueryState;
 let search: QueryState;
 let stats: QueryState;
@@ -51,6 +51,53 @@ beforeEach(() => {
 });
 
 describe("ConsultationsPage load failure", () => {
+  it.each([false, true])("keeps paused unknown search=%s and stats loading", (searching) => {
+    list = { ...list, isError: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+    search = { ...list, refetch: searchRefetch };
+    stats = { ...list, refetch: statsRefetch };
+    const { container } = render(<ConsultationsPage />);
+    if (searching) enterSearch();
+    expect(statValues(container)).not.toContain("0");
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    expect(screen.queryByText("상담 문의가 없습니다")).not.toBeInTheDocument();
+    expect(screen.queryByText("검색 결과가 없습니다")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("ignores the disabled no-term search while the list and stats succeeded", () => {
+    list = { ...list, data: response([]), isError: false };
+    stats = { ...stats, data: response([]), isError: false };
+    search = { ...search, isError: false, status: "pending", fetchStatus: "idle", isPaused: false };
+    const { container } = render(<ConsultationsPage />);
+    expect(jest.mocked(useAllConsultationInquiries)).toHaveBeenLastCalledWith(expect.anything(), false);
+    expect(statValues(container)).toEqual(["0", "0", "0", "0"]);
+    expect(screen.getByText("상담 문의가 없습니다")).toBeVisible();
+    expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps paused unknown stats loading independently of a successful empty list", () => {
+    list = { ...list, data: response([]), isError: false };
+    stats = { ...stats, isError: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+    const { container } = render(<ConsultationsPage />);
+    expect(statValues(container)).not.toContain("0");
+    expect(container.querySelector('[data-slot="skeleton"]')).toBeInTheDocument();
+    expect(screen.getByText("상담 문의가 없습니다")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps cached search=%s and stats visible while paused", (searching) => {
+    list = { ...list, data: response([inquiry]), isError: false, isPaused: true };
+    search = { ...list, refetch: searchRefetch };
+    stats = { ...list, refetch: statsRefetch };
+    const { container } = render(<ConsultationsPage />);
+    if (searching) enterSearch();
+    expect(statValues(container)).toEqual(["1", "1", "1", "0"]);
+    expect(screen.getByText("캐시 상담")).toBeVisible();
+    expect(container.querySelector('[data-slot="skeleton"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it.each([false, true])("shows an actionable panel, not empty or zero, for failed search=%s", (searching) => {
     const { container } = render(<ConsultationsPage />);
     if (searching) enterSearch();

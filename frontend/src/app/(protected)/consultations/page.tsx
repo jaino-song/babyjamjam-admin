@@ -130,7 +130,8 @@ export default function ConsultationsPage() {
     const searchQuery = useAllConsultationInquiries(searchQueryParams, hasSearchQuery);
     const { data, isLoading } = listQuery;
     const { data: searchData, isLoading: isSearchLoading } = searchQuery;
-    const { data: statsData, isLoading: isStatsLoading, isError: isStatsError } = useConsultationInquiries(statsQueryParams);
+    const { data: statsData, isLoading: statsLoading, isPaused: statsPaused, isError: isStatsError } = useConsultationInquiries(statsQueryParams);
+    const isStatsLoading = statsLoading || (statsPaused && statsData === undefined);
     const activeListQuery = hasSearchQuery ? searchQuery : listQuery;
     const statsUnavailable = isStatsError && statsData === undefined;
     const markRead = useMarkConsultationInquiryRead();
@@ -138,7 +139,8 @@ export default function ConsultationsPage() {
         () => (hasSearchQuery ? searchData?.data ?? [] : data?.data ?? []),
         [data?.data, hasSearchQuery, searchData?.data],
     );
-    const isListLoading = hasSearchQuery ? isSearchLoading : isLoading;
+    const isListLoading = (hasSearchQuery ? isSearchLoading : isLoading)
+        || (activeListQuery.isPaused && activeListQuery.data === undefined);
     const statsInquiries = useMemo(() => statsData?.data ?? [], [statsData?.data]);
     const visibleInquiries = useMemo(
         () => getDisplayedConsultationInquiries({
