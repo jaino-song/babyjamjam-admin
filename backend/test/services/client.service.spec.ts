@@ -2979,6 +2979,180 @@ describe("ClientService", () => {
             });
         });
 
+        describe("given a client that leaves 예약 전 (service-record link SMS for already-assigned schedules)", () => {
+            const futureStart = new Date("2026-11-02T00:00:00.000Z");
+            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+
+            type StatusInputs = {
+                serviceStatus: string | null;
+                startDate: Date | null;
+                endDate: Date | null;
+            };
+
+            // The preflight read (and the locked row, absent from this mock) sees
+            // the client before the write; the re-read after commit sees it after.
+            const arrange = (before: StatusInputs, after: StatusInputs) => {
+                const beforeClient = Object.assign(createClientEntity(), before);
+                const afterClient = Object.assign(createClientEntity(), after);
+                findClientByIdUsecase.execute.mockImplementation(async () =>
+                    prismaService.client.updateMany.mock.calls.length > 0 ? afterClient : beforeClient);
+                const events: string[] = [];
+                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+                    const result = await callback(prismaService);
+                    events.push("committed");
+                    return result;
+                });
+                serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async (scheduleId: number) => {
+                    events.push(`schedule:${scheduleId}`);
+                });
+                return { events, afterClient };
+            };
+
+            const activeSchedulesAfterCommit = (ids: number[]) => {
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                    where["terminatedAt"] === null ? ids.map((id) => ({ id })) : []);
+            };
+
+            const preBooking: StatusInputs = { serviceStatus: "pre_booking", startDate: futureStart, endDate: futureEnd };
+            const waiting: StatusInputs = { serviceStatus: "waiting", startDate: futureStart, endDate: futureEnd };
+
+            it("schedules the link for the one active schedule after the transaction commits", async () => {
+                const { events } = arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+                expect(events).toEqual(["committed", "schedule:7"]);
+                expect(prismaService.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({
+                        branchId,
+                        clientId: 1,
+                        replaced: false,
+                        terminatedAt: null,
+                    }),
+                    orderBy: { id: "asc" },
+                }));
+            });
+
+            it("schedules the link for every active schedule, in id order", async () => {
+                arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7, 9]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+            });
+
+            it("does not schedule while the end date is still missing (effective status stays 예약 전)", async () => {
+                arrange(
+                    preBooking,
+                    { serviceStatus: "waiting", startDate: futureStart, endDate: null },
+                );
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("schedules the link when the save fills in the missing end date of a client with no stored status", async () => {
+                arrange(
+                    { serviceStatus: null, startDate: futureStart, endDate: null },
+                    { serviceStatus: null, startDate: futureStart, endDate: futureEnd },
+                );
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+                expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            });
+
+            it("does not schedule when the save keeps the client in 예약 전", async () => {
+                arrange(preBooking, preBooking);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { name: "새 고객 이름" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("does not schedule when the client was not 예약 전 before the save", async () => {
+                arrange(waiting, waiting);
+                activeSchedulesAfterCommit([7]);
+
+                await service.update(branchId, 1, { name: "새 고객 이름" });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("schedules a schedule created by the same save exactly once", async () => {
+                arrange(preBooking, waiting);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                activeSchedulesAfterCommit([20]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting", primaryEmployeeId: 7 });
+
+                expect(prismaService.employee_schedule.create).toHaveBeenCalled();
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20]]);
+            });
+
+            it("still schedules the other active schedules when the save also creates one", async () => {
+                arrange(preBooking, waiting);
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 10,
+                    clientId: 1,
+                    primaryEmployeeId: 5,
+                    secondaryEmployeeId: null,
+                });
+                prismaService.employee_schedule.update.mockResolvedValue({});
+                prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
+                activeSchedulesAfterCommit([20, 21]);
+
+                await service.update(branchId, 1, { serviceStatus: "waiting", primaryEmployeeId: 7 });
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20], [21]]);
+            });
+
+            it("keeps the save successful and logs when scheduling a link rejects", async () => {
+                const { afterClient } = arrange(preBooking, waiting);
+                activeSchedulesAfterCommit([7, 9]);
+                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.update(branchId, 1, { serviceStatus: "waiting" })).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
+                // The failure of one schedule does not stop the next one.
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+            });
+
+            it("keeps the save successful and logs when reading the active schedules fails", async () => {
+                const { afterClient } = arrange(preBooking, waiting);
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
+                    if (where["terminatedAt"] === null) throw new Error("read unavailable");
+                    return [];
+                });
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.update(branchId, 1, { serviceStatus: "waiting" })).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("read unavailable"));
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+        });
+
         describe("given existing client and primary employee change", () => {
             it("discovers historical schedules before locking the case or writing a replacement", async () => {
                 const existingClient = createClientEntity();
@@ -5696,6 +5870,78 @@ describe("ClientService", () => {
                 // Assert
                 // Should still update status
                 expect(updateClientUsecase.execute).toHaveBeenCalled();
+            });
+        });
+
+        describe("given a stored 예약 전 client that completeReplacement takes out of 예약 전 (service-record link SMS)", () => {
+            const futureStart = new Date("2026-11-02T00:00:00.000Z");
+            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+
+            const arrange = (beforeStatus: string) => {
+                const beforeClient = Object.assign(createClientEntity(), {
+                    serviceStatus: beforeStatus,
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                const afterClient = Object.assign(createClientEntity(), {
+                    serviceStatus: "waiting",
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                findClientByIdUsecase.execute.mockResolvedValue(beforeClient);
+                clientRepository.findByIdForUpdate.mockResolvedValue(beforeClient);
+                updateClientUsecase.execute.mockResolvedValue(afterClient);
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                    where["terminatedAt"] === null ? [{ id: 7 }] : []);
+                return { afterClient };
+            };
+
+            it("schedules the link for the active schedule once, only after the transaction has resolved", async () => {
+                arrange("pre_booking");
+                let release!: () => void;
+                const held = new Promise<void>((resolve) => { release = resolve; });
+                let transactionBodyDone = false;
+                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+                    const result = await callback(prismaService);
+                    transactionBodyDone = true;
+                    await held;
+                    return result;
+                });
+
+                const running = service.completeReplacement(branchId, 1);
+                for (let turn = 0; turn < 50 && !transactionBodyDone; turn += 1) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                await new Promise((resolve) => setImmediate(resolve));
+                expect(transactionBodyDone).toBe(true);
+                expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalledWith(
+                    expect.objectContaining({ where: expect.objectContaining({ terminatedAt: null }) }),
+                );
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+                release();
+                await running;
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
+            });
+
+            it("does not schedule when the client was not stored as 예약 전 (replacement_requested)", async () => {
+                arrange("replacement_requested");
+
+                await service.completeReplacement(branchId, 1);
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("still resolves and logs when scheduling the link rejects", async () => {
+                const { afterClient } = arrange("pre_booking");
+                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.completeReplacement(branchId, 1)).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
             });
         });
 

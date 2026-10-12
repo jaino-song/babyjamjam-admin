@@ -29,11 +29,12 @@ import {
     assertClientPhoneInput,
     parseClientDate,
 } from "./client-write-validation";
-import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
+import { CLIENT_REPOSITORY, IClientRepository, getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
-import { SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
+import { SERVICE_STATUS, SERVICE_STATUS_VALUES, ServiceStatusType } from "domain/value-objects/service-status.vo";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import {
     isVoucherServiceLabel,
     ResolveVoucherServiceSelectionUsecase,
@@ -228,6 +229,13 @@ async function validateClientWrite(
     }
 }
 
+type ClientStatusInputs = {
+    id: number;
+    serviceStatus?: string | null;
+    startDate?: Date | null;
+    endDate?: Date | null;
+};
+
 @Injectable()
 @AgentCapabilityProvider()
 export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProviderContract {
@@ -247,6 +255,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
         @Optional() private readonly messageAutomationIntentService?: MessageAutomationIntentService,
         @Optional() @Inject(CLIENT_AUTOMATION_IMPACT) private readonly automationImpact?: ClientAutomationImpactPort,
         @Optional() private readonly automationRecords?: AgentAutomationRecordStoreService,
+        @Optional() private readonly serviceRecordLinkService?: ServiceRecordLinkService,
     ) {}
 
     getCapabilities(): CapabilityDefinition[] {
@@ -438,6 +447,11 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                             client.id,
                             input.name !== undefined,
                         );
+                        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                            context.principal.branchId,
+                            existing,
+                            client,
+                        );
                         return { id: client.id, name: client.name, status: "updated" };
                     } catch (error) {
                         if (isClientBranchPhoneUniqueViolation(error)) throw clientPhoneConflictError();
@@ -455,6 +469,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                     const parsedUpdates = normalizeAgentClientWrite(() => normalizeClientUpdateInput(existing, updates, calendar));
                     await validateClientWrite(this.prisma, this.clientRepository, context.principal.branchId, existing, parsedUpdates);
                     try {
+                        let updatedClient = null as ClientStatusInputs | null;
                         const result = context.taskAutomation
                             ? await this.executeTaskClientMutation(context, "clients.update", parsedUpdates, expectedTargetVersion, calendar)
                             : await this.prisma.$transaction(async (transaction) => {
@@ -473,6 +488,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                     calendar,
                                 );
                                 await this.serviceRecordLifecycleService.ensureForClient(client.id, transaction, calendar);
+                                updatedClient = client;
                                 const result = { id: client.id, name: client.name, status: "updated" };
                                 await recordAgentActionEffect(transaction, context, "clients.update", "client", client.id, result);
                                 return result;
@@ -487,6 +503,15 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                                 existing.id,
                                 input.name !== undefined,
                             );
+                            // The task-automation path stages its link intents
+                            // through the reviewed artifact and never schedules here.
+                            if (updatedClient) {
+                                await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+                                    context.principal.branchId,
+                                    existing,
+                                    updatedClient,
+                                );
+                            }
                         }
                         return result;
                     } catch (error) {
@@ -516,6 +541,53 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                 },
             },
         ];
+    }
+
+    /**
+     * A provider assigned while the client was 예약 전 never got the service-record
+     * link SMS (the gates skip a pre-booking client). When this write takes the
+     * client out of 예약 전, schedule the link for each active schedule.
+     * `scheduleForServiceStart` owns the timing, dedupe and refusals. A failure
+     * here never fails the write.
+     */
+    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
+        branchId: string,
+        before: ClientStatusInputs,
+        after: ClientStatusInputs,
+    ): Promise<void> {
+        if (!this.serviceRecordLinkService) return;
+        const wasPreBooking = getEffectiveClientServiceStatus(
+            before.serviceStatus ?? null,
+            before.startDate ?? null,
+            before.endDate ?? null,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (!wasPreBooking) return;
+        const isPreBooking = getEffectiveClientServiceStatus(
+            after.serviceStatus ?? null,
+            after.startDate ?? null,
+            after.endDate ?? null,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (isPreBooking) return;
+
+        try {
+            const activeSchedules = await this.prisma.employee_schedule.findMany({
+                where: { branchId, clientId: after.id, replaced: false, terminatedAt: null },
+                select: { id: true },
+                orderBy: { id: "asc" },
+            });
+            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
+                .sort((left, right) => left - right);
+            for (const scheduleId of scheduleIds) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
+                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+                });
+            }
+        } catch (error) {
+            this.logger.error(
+                `Failed to schedule service-record link SMS after client ${after.id} left pre-booking: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     private automationValues(values: ClientAutomationWriteValues): ClientAutomationWriteValues {

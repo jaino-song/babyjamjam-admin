@@ -55,6 +55,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             area: { findFirst: jest.fn().mockResolvedValue({ id: "global" }) },
             employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
         };
+        const serviceRecordLinkService = { scheduleForServiceStart: jest.fn().mockResolvedValue(true) };
         const provider = new ClientWriteAgentCapabilitiesProvider(
             createClient as never,
             updateClient as never,
@@ -65,6 +66,9 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             holidayCalendar, voucherServiceSelection as never,
             triggerService as never,
             messageAutomationIntentService as never,
+            undefined,
+            undefined,
+            serviceRecordLinkService as never,
         );
         return {
             holidayCalendar,
@@ -79,6 +83,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             voucherServiceSelection,
             triggerService,
             messageAutomationIntentService,
+            serviceRecordLinkService,
             capabilities: provider.getCapabilities(),
         };
     }
@@ -1317,6 +1322,156 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             expect.objectContaining({ branchId: "branch-a", clientId: 7, scheduleId: 18, replaceExisting: false }),
         );
         expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    describe("service-record link SMS for already-assigned schedules when a client leaves 예약 전", () => {
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+        const entryPoints = ["execute", "executeApprovedTarget"] as const;
+
+        function arrange(after: { serviceStatus: string }) {
+            const fixture = setup();
+            const before = { ...fixture.existingClient, serviceStatus: "pre_booking" };
+            fixture.findClient.execute.mockResolvedValue(before);
+            const updated = { ...fixture.existingClient, ...after };
+            fixture.updateClient.execute.mockResolvedValue(updated);
+            fixture.updateClient.executeApprovedTarget.mockResolvedValue(updated);
+            const capability = fixture.capabilities.find((entry) => entry.meta.name === "clients.update")!;
+            const run = (entry: (typeof entryPoints)[number]) => entry === "execute"
+                ? capability.execute!(context, { id: 1, serviceStatus: after.serviceStatus })
+                : capability.executeApprovedTarget!(context, { id: 1, serviceStatus: after.serviceStatus }, "approved-target");
+            return { ...fixture, capability, run };
+        }
+
+        it.each(entryPoints)("%s schedules the link for the active schedule once the update has resolved", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+
+            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(prisma.employee_schedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+                where: { branchId: "branch-a", clientId: 1, replaced: false, terminatedAt: null },
+                orderBy: { id: "asc" },
+            }));
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+        });
+
+        // The schedule read and the scheduling call must wait for the write to
+        // COMMIT: from outside the transaction the client still reads as 예약 전,
+        // so `scheduleForServiceStart` would refuse and the provider would get no
+        // link. The write is held unresolved after its work has run; nothing may
+        // be scheduled (or even read) until it is released.
+        it.each(entryPoints)("%s schedules only after the write has resolved, never inside it", async (entry) => {
+            const { run, prisma, updateClient, existingClient, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            let release!: () => void;
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            let writeBodyDone = false;
+            if (entry === "execute") {
+                // `execute` writes through the update use case, whose own transaction
+                // commits when its promise resolves.
+                updateClient.execute.mockImplementation(async () => {
+                    writeBodyDone = true;
+                    await held;
+                    return { ...existingClient, serviceStatus: "waiting" };
+                });
+            } else {
+                const callback = prisma.$transaction.getMockImplementation()!;
+                prisma.$transaction.mockImplementation(async (operation) => {
+                    const result = await callback(operation);
+                    writeBodyDone = true;
+                    await held;
+                    return result;
+                });
+            }
+
+            const running = run(entry);
+            for (let turn = 0; turn < 50 && !writeBodyDone; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(writeBodyDone).toBe(true);
+            expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+            release();
+            await expect(running).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
+        });
+
+        it.each(entryPoints)("%s schedules every active schedule", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }, { id: 9 }]);
+
+            await run(entry);
+
+            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
+        });
+
+        it.each(entryPoints)("%s does nothing when the client stays 예약 전", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "pre_booking" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+
+            await run(entry);
+
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it.each(entryPoints)("%s keeps the update successful and logs when scheduling a link rejects", async (entry) => {
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms unavailable"));
+
+            await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+        });
+
+        it("does not schedule from the task-automation path (its link intents are staged by the reviewed artifact)", async () => {
+            const fixture = setup();
+            fixture.findClient.execute.mockResolvedValue({ ...fixture.existingClient, serviceStatus: "pre_booking" });
+            fixture.prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            const automationRecords = {
+                runTaskMutation: jest.fn().mockResolvedValue({ result: { id: 1, name: "홍길동", status: "updated" } }),
+            };
+            const provider = new ClientWriteAgentCapabilitiesProvider(
+                fixture.createClient as never,
+                fixture.updateClient as never,
+                fixture.findClient as never,
+                fixture.clientRepository as never,
+                fixture.prisma as never,
+                fixture.serviceRecordLifecycle as never,
+                fixture.holidayCalendar,
+                undefined,
+                fixture.triggerService as never,
+                fixture.messageAutomationIntentService as never,
+                undefined,
+                automationRecords as never,
+                fixture.serviceRecordLinkService as never,
+            );
+            const capability = provider.getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+
+            await expect(capability.executeApprovedTarget!({
+                ...context,
+                taskAutomation: {
+                    actionId: "70000000-0000-4000-8000-000000000022",
+                    taskId: "70000000-0000-4000-8000-000000000023",
+                    taskRevision: 1,
+                    capability: "clients.update",
+                    branchId: "branch-a",
+                    targetClientId: 1,
+                    impact: { availability: "available", effects: [], complete: true },
+                    consent: { choice: "no" },
+                    noSend: true,
+                },
+            } as never, { id: 1, serviceStatus: "waiting" }, "approved-target")).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(automationRecords.runTaskMutation).toHaveBeenCalledTimes(1);
+            expect(fixture.serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            expect(fixture.prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+        });
     });
 
     it("replaces existing employee intents only for schedules the reviewed artifact actually re-staffed", async () => {
