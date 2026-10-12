@@ -6,7 +6,7 @@ const SOURCE_COMPONENT = "StickyActionBar";
 
 export interface StickyActionBarProps {
   "data-component": string;
-  /** Buttons; equal shares below `sm`, natural width and right-aligned from `sm` up. */
+  /** Buttons; equal-width slots below `sm`, natural width and right-aligned from `sm` up. */
   children: ReactNode;
   /**
    * Optional left-end slot: at the left end from `sm` up, the first equal-width
@@ -37,15 +37,17 @@ export function StickyActionBar({
       role={ariaLabel ? "group" : undefined}
       aria-label={ariaLabel}
       className={cn(
-        "sticky bottom-0 z-10 flex gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border! bg-white px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] sm:justify-end sm:px-[calc(24px*var(--glint-ui-scale,1))]",
-        "[&>*]:flex-1 sm:[&>*]:flex-none",
+        "sticky bottom-0 z-10 grid auto-cols-fr grid-flow-col gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border! bg-white px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] sm:flex sm:justify-end sm:px-[calc(24px*var(--glint-ui-scale,1))]",
+        // Below `sm`: every direct child is one equal border-box slot that may shrink.
+        // From `sm`: natural width, right-aligned.
+        "[&>*]:min-w-0 [&>*]:truncate sm:[&>*]:flex-none",
         className,
       )}
     >
       {leading ? (
         <div
           data-component={`${dataComponent}_leading`}
-          className="flex min-w-0 gap-[calc(8px*var(--glint-ui-scale,1))] sm:mr-auto [&>*]:flex-1 sm:[&>*]:flex-none"
+          className="min-w-0 sm:mr-auto sm:flex sm:gap-[calc(8px*var(--glint-ui-scale,1))] [&>*]:w-full [&>*]:min-w-0 sm:[&>*]:w-auto sm:[&>*]:flex-none"
         >
           {leading}
         </div>
