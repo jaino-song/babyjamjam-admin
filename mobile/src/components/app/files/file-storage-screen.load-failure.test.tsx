@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useDocuments, type Document } from "@/hooks/use-documents";
@@ -94,6 +94,16 @@ function success(data: Document[], overrides: DocumentsQueryState = {}): Documen
     fetchStatus: "idle",
     ...overrides,
   };
+}
+
+const DETAIL_PANE_SELECTOR = '[data-component="mobile_files_detail-sheet_stack_detail-page"]';
+const STALE_TEXT = "최신 정보를 불러오지 못했습니다";
+
+function openDetailPane(container: HTMLElement, name: string) {
+  fireEvent.click(screen.getByText(name));
+  const pane = container.querySelector<HTMLElement>(DETAIL_PANE_SELECTOR);
+  if (!pane) throw new Error("detail pane not rendered");
+  return pane;
 }
 
 describe("FileStorageScreen documents load states", () => {
@@ -229,5 +239,46 @@ describe("FileStorageScreen documents load states", () => {
     expect(screen.getByText("계약서 1.pdf")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "파일 로딩 중" })).not.toBeInTheDocument();
+  });
+
+  it("shows the cached file and an inline notice with retry in the open detail when a refetch fails", () => {
+    const refetch = mockDocuments(success([makeDocument("1")], { isError: true, status: "error" }));
+    const { container } = render(<FileStorageScreen />);
+    const pane = openDetailPane(container, "계약서 1.pdf");
+
+    expect(within(pane).getAllByText("계약서 1.pdf").length).toBeGreaterThan(0);
+    expect(within(pane).getByRole("alert")).toHaveTextContent(STALE_TEXT);
+    // The list behind the sheet keeps its own notice: two panes, two alerts.
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+
+    fireEvent.click(within(pane).getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the detail notice retry while the refetch is in flight", () => {
+    mockDocuments(success([makeDocument("1")], { isError: true, isFetching: true, status: "error" }));
+    const { container } = render(<FileStorageScreen />);
+    const pane = openDetailPane(container, "계약서 1.pdf");
+
+    expect(within(pane).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+  });
+
+  it("shows no notice in the open detail after a successful load", () => {
+    mockDocuments(success([makeDocument("1")]));
+    const { container } = render(<FileStorageScreen />);
+    const pane = openDetailPane(container, "계약서 1.pdf");
+
+    expect(within(pane).getAllByText("계약서 1.pdf").length).toBeGreaterThan(0);
+    expect(pane.querySelector('[role="alert"]')).toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the notice in the list only, and none in the detail pane, while no file is open", () => {
+    mockDocuments(success([makeDocument("1")], { isError: true, status: "error" }));
+    const { container } = render(<FileStorageScreen />);
+
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(STALE_TEXT);
+    expect(container.querySelector(`${DETAIL_PANE_SELECTOR} [role="alert"]`)).toBeNull();
   });
 });

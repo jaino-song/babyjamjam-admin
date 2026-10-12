@@ -189,12 +189,18 @@ function FileDetailContent({
   uploaderLabel,
   activeTab,
   onTabChange,
+  isDocumentsStale,
+  onRetryDocuments,
+  isRetryingDocuments,
 }: {
   doc: Document;
   categoryLabel: string;
   uploaderLabel: string;
   activeTab: DetailTabId;
   onTabChange: (id: DetailTabId) => void;
+  isDocumentsStale: boolean;
+  onRetryDocuments: () => void;
+  isRetryingDocuments: boolean;
 }) {
   const [actionStatus, setActionStatus] = useState("");
   const kind = fileKindFromMime(doc.mimeType);
@@ -242,6 +248,15 @@ function FileDetailContent({
 
   return (
     <MobileDetailPage data-component="mobile_files_detail-sheet_stack_detail-page_body" name="files">
+      {isDocumentsStale && (
+        <QueryErrorState
+          dataComponent="mobile_files_detail-sheet_stack_detail-page_body_error"
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={onRetryDocuments}
+          isRetrying={isRetryingDocuments}
+        />
+      )}
       <MobileDetailHeader data-component="mobile_files_detail-sheet_stack_detail-page_body_header"
         name="files"
         avatar={<FileKindIconLarge kind={kind} />}
@@ -620,6 +635,9 @@ export function FileStorageScreen() {
             uploaderLabel={selectedDoc.uploadedBy || "-"}
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            isDocumentsStale={isDocumentsStale}
+            onRetryDocuments={() => void refetchDocuments()}
+            isRetryingDocuments={isDocumentsFetching}
           />
         ) : (
           <div className="detail-body" data-component="mobile_files_detail-sheet_stack_detail-page_empty" />
