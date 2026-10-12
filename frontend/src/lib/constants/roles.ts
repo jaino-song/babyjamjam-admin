@@ -11,7 +11,7 @@ export const ROLE_LABELS: Record<Role, string> = {
     owner: "오너",
     admin: "지점장",
     manager: "매니저",
-    user: "직원",
+    user: "회원",
 };
 
 export const REGISTERABLE_ROLES = [

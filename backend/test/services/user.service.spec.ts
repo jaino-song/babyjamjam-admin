@@ -34,6 +34,8 @@ describe("UserService", () => {
                 upsert: jest.fn().mockResolvedValue({ id: "membership-1" }),
                 deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
                 findMany: jest.fn().mockResolvedValue([]),
+                findUnique: jest.fn().mockResolvedValue(null),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             auth_session: {
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -53,6 +55,10 @@ describe("UserService", () => {
     let deleteUserUsecase: ReturnType<typeof createMockUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
 
+    // 권한-04: owner-only global writes and branch-membership writes re-read the caller
+    // inside the transaction, so every such call needs an acting user.
+    const ownerActor: AdminAuditActor = { userId: "owner-1", globalRole: "owner" };
+
     beforeEach(() => {
         createUserUsecase = createMockUsecase();
         findUserByIdUsecase = createMockUsecase();
@@ -68,6 +74,7 @@ describe("UserService", () => {
             updateUserUsecase as unknown as UpdateUserUsecase,
             deleteUserUsecase as unknown as DeleteUserUsecase,
             prismaService as unknown as PrismaService,
+            { append: jest.fn().mockResolvedValue(undefined) } as unknown as AdminAuditEventWriter,
         );
     });
 
@@ -93,7 +100,8 @@ describe("UserService", () => {
         it("revokes active sessions after deleting a branch membership", async () => {
             prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "other" });
             prismaService.user_branch.deleteMany.mockResolvedValue({ count: 1 });
-            await service.delete("u1", "branch-1");
+            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+            await service.delete("u1", "branch-1", ownerActor);
             expect(prismaService.auth_session.updateMany).toHaveBeenCalledWith({
                 where: { userId: "u1", revokedAt: null },
                 data: { revokedAt: expect.any(Date), revokedReason: "membership_deleted" },
@@ -413,6 +421,7 @@ describe("UserService", () => {
             expectedRole: "admin",
             expectedBranchIds: [...branchIds],
             callerRole: "owner",
+            actor: ownerActor,
             ...overrides,
         });
 
@@ -426,6 +435,8 @@ describe("UserService", () => {
 
         beforeEach(() => {
             prismaService.user.findUnique.mockResolvedValue(approvedTarget());
+            // The first read inside the transaction is the caller's own row (권한-04).
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" });
             prismaService.branch.findMany.mockResolvedValue(
                 branchIds.map((id) => ({ id })),
             );
@@ -1320,6 +1331,10 @@ describe("UserService", () => {
     // approve
     // ============================================
     describe("approve", () => {
+        beforeEach(() => {
+            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+        });
+
         it("should approve a user in a single transaction, assigning role, approval metadata, and bumping tokenVersion", async () => {
             prismaService.user.update.mockResolvedValue({
                 id: "u1",
@@ -1336,6 +1351,7 @@ describe("UserService", () => {
             const result = await service.approve("u1", {
                 role: "admin",
                 approvedBy: "owner-1",
+                actor: ownerActor,
                 branchId: "branch-1",
                 ownerBranchId: "branch-1",
             });
@@ -1366,7 +1382,7 @@ describe("UserService", () => {
             });
             prismaService.branch.findUnique.mockResolvedValue({ id: "branch-9" });
 
-            await service.approve("u1", { role: "manager", approvedBy: "owner-1", branchId: "branch-9" });
+            await service.approve("u1", { role: "manager", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-9" });
 
             expect(prismaService.user_branch.upsert).toHaveBeenCalledWith({
                 where: {
@@ -1390,6 +1406,7 @@ describe("UserService", () => {
             await expect(service.approve("u1", {
                 role: "manager",
                 approvedBy: "owner-1",
+                actor: ownerActor,
                 branchId: "missing-branch",
             })).rejects.toMatchObject({
                 status: 400,
@@ -1423,6 +1440,7 @@ describe("UserService", () => {
             await service.approve("u1", {
                 role: "admin",
                 approvedBy: "owner-1",
+                actor: ownerActor,
                 branchId: "branch-1",
                 ownerBranchId: "owner-branch-1",
             });
@@ -1454,6 +1472,7 @@ describe("UserService", () => {
             await expect(service.approve("u1", {
                 role: "admin",
                 approvedBy: "owner-1",
+                actor: ownerActor,
                 branchId: "branch-1",
                 ownerBranchId: "owner-branch-1",
             })).rejects.toMatchObject({
@@ -1474,6 +1493,7 @@ describe("UserService", () => {
             await expect(service.approve("u1", {
                 role: "admin",
                 approvedBy: "owner-1",
+                actor: ownerActor,
                 branchId: "branch-1",
             })).rejects.toMatchObject({
                 status: 400,
@@ -1502,6 +1522,7 @@ describe("UserService", () => {
                 await service.approve("u1", {
                     role,
                     approvedBy: "owner-1",
+                    actor: ownerActor,
                     branchId: "branch-1",
                 });
 
@@ -1516,6 +1537,8 @@ describe("UserService", () => {
     describe("reject", () => {
         beforeEach(() => {
             prismaService.user.findUnique.mockResolvedValue({ id: "u1", role: "manager" });
+            // The first read inside the transaction is the caller's own row (권한-04).
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" });
         });
 
         it("should set approvalStatus to rejected and bump tokenVersion", async () => {
@@ -1525,7 +1548,7 @@ describe("UserService", () => {
                 tokenVersion: 1,
             });
 
-            const result = await service.reject("u1");
+            const result = await service.reject("u1", ownerActor);
 
             expect(prismaService.user.update).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -1546,7 +1569,7 @@ describe("UserService", () => {
                 { branchId: "branch-2" },
             ]);
 
-            await service.reject("u1");
+            await service.reject("u1", ownerActor);
 
             expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
         });
@@ -1555,7 +1578,7 @@ describe("UserService", () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
             prismaService.branch.findMany.mockResolvedValue([{ id: "owner-branch-1" }]);
 
-            await service.reject("u1");
+            await service.reject("u1", ownerActor);
 
             expect(prismaService.branch.updateMany).toHaveBeenCalledWith({
                 where: { ownerId: "u1" },
@@ -1567,7 +1590,7 @@ describe("UserService", () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
             prismaService.branch.findMany.mockResolvedValue([]);
 
-            await service.reject("u1");
+            await service.reject("u1", ownerActor);
 
             // Must run unconditionally: a concurrent approve() that grants ownership
             // between the pre-lock read and this call would otherwise be skipped by
@@ -1581,7 +1604,7 @@ describe("UserService", () => {
         it("locks the user row before reading role, approval status, memberships, and owned branches", async () => {
             prismaService.user.update.mockResolvedValue({ id: "u1", approvalStatus: "rejected", tokenVersion: 1 });
 
-            await service.reject("u1");
+            await service.reject("u1", ownerActor);
 
             expect(prismaService.$queryRaw).toHaveBeenCalledTimes(1);
             const [lockQuery] = prismaService.$queryRaw.mock.calls[0] ?? [];
@@ -1589,7 +1612,10 @@ describe("UserService", () => {
             expect(lockQuery.values).toEqual(["u1"]);
 
             const lockOrder = prismaService.$queryRaw.mock.invocationCallOrder[0]!;
-            expect(lockOrder).toBeLessThan(prismaService.user.findUnique.mock.invocationCallOrder[0]!);
+            const targetReadIndex = prismaService.user.findUnique.mock.calls
+                .findIndex(([args]: [{ where: { id: string } }]) => args.where.id === "u1");
+            expect(targetReadIndex).toBeGreaterThanOrEqual(0);
+            expect(lockOrder).toBeLessThan(prismaService.user.findUnique.mock.invocationCallOrder[targetReadIndex]!);
             expect(lockOrder).toBeLessThan(prismaService.user_branch.findMany.mock.invocationCallOrder[0]!);
             expect(lockOrder).toBeLessThan(prismaService.branch.findMany.mock.invocationCallOrder[0]!);
         });
@@ -1676,7 +1702,7 @@ describe("UserService", () => {
             prismaService.user_branch.findMany.mockResolvedValue([{ branchId: "branch-1" }]);
             prismaService.branch.findMany.mockResolvedValue([]);
 
-            await service.reject("u1");
+            await service.reject("u1", ownerActor);
             expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({ where: { userId: "u1" } });
 
             prismaService.user.update.mockResolvedValueOnce({
@@ -1686,8 +1712,9 @@ describe("UserService", () => {
                 tokenVersion: 2,
             });
             prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1" });
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "owner" });
 
-            await service.approve("u1", { role: "manager", approvedBy: "owner-1", branchId: "branch-1" });
+            await service.approve("u1", { role: "manager", approvedBy: "owner-1", actor: ownerActor, branchId: "branch-1" });
 
             expect(prismaService.user_branch.upsert).toHaveBeenCalledWith({
                 where: { userId_branchId: { userId: "u1", branchId: "branch-1" } },
@@ -1902,6 +1929,21 @@ describe("UserService", () => {
         const ownerTarget = { id: "owner-1", role: "owner", name: "대표" };
         let membershipUpdateMany: jest.Mock;
 
+        const callerActor: AdminAuditActor = { userId: "caller-1" };
+
+        // The caller's rows are re-read inside the transaction (권한-04): the user lookup is
+        // keyed by id so the target and the caller never share one canned answer.
+        const mockCaller = (globalRole: string, membershipRole: string | null) => {
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "caller-1" ? { role: globalRole } : ownerTarget);
+            Object.assign(prismaService.user_branch, {
+                findUnique: jest.fn().mockImplementation(async ({ where }: { where: { userId_branchId: { userId: string } } }) =>
+                    where.userId_branchId.userId === "caller-1"
+                        ? (membershipRole ? { role: membershipRole } : null)
+                        : { userId: "owner-1", branchId: "branch-1", role: "admin" }),
+            });
+        };
+
         beforeEach(() => {
             membershipUpdateMany = jest.fn();
             prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "someone-else" });
@@ -1909,20 +1951,24 @@ describe("UserService", () => {
             Object.assign(prismaService.user_branch, { updateMany: membershipUpdateMany });
         });
 
-        it.each(["admin", "manager", undefined])("answers not-found for an owner target when the caller is %s, and writes nothing", async (callerRole) => {
+        it.each(["admin", "manager"])("answers not-found for an owner target when the caller is %s, and writes nothing", async (membershipRole) => {
+            mockCaller("user", membershipRole);
+
             await expect(
-                service.update("owner-1", { branchId: "branch-1", branchRole: "admin", callerRole }),
+                service.update("owner-1", { branchId: "branch-1", branchRole: "admin", actor: callerActor }),
             ).rejects.toBeInstanceOf(NotFoundException);
 
             expect(membershipUpdateMany).not.toHaveBeenCalled();
         });
 
         it("lets an owner caller update an owner target's branch membership with the permitted admin role", async () => {
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "caller-1" ? { role: "owner" } : ownerTarget);
             const membershipFindUnique = jest.fn().mockResolvedValue({ userId: "owner-1", branchId: "branch-1", role: "admin" });
             Object.assign(prismaService.user_branch, { findUnique: membershipFindUnique });
             membershipUpdateMany.mockResolvedValue({ count: 1 });
 
-            const result = await service.update("owner-1", { branchId: "branch-1", branchRole: "admin", callerRole: "owner" });
+            const result = await service.update("owner-1", { branchId: "branch-1", branchRole: "admin", actor: callerActor });
 
             expect(membershipFindUnique).toHaveBeenCalledWith({
                 where: { userId_branchId: { userId: "owner-1", branchId: "branch-1" } },
@@ -1936,9 +1982,484 @@ describe("UserService", () => {
         });
 
         it("does not hide the owner target from an owner caller (reaches the owner-role guard instead)", async () => {
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "caller-1" ? { role: "owner" } : ownerTarget);
+
             await expect(
-                service.update("owner-1", { branchId: "branch-1", branchRole: "manager", callerRole: "owner" }),
+                service.update("owner-1", { branchId: "branch-1", branchRole: "manager", actor: callerActor }),
             ).rejects.toBeInstanceOf(ConflictException);
+        });
+    });
+
+    // ============================================
+    // branch role delegation -- 권한-04 / BJJ-435
+    // ============================================
+    describe("branch role delegation (권한-04, BJJ-435)", () => {
+        const BRANCH = "branch-1";
+
+        interface Scenario {
+            /** The caller's CURRENT global role, as read inside the transaction. */
+            callerGlobal?: string | null;
+            /** The caller's CURRENT membership role in the branch (null = no row). */
+            callerMembership?: string | null;
+            targetGlobal?: string | null;
+            targetMembership?: string | null;
+            targetApproval?: string;
+            branchOwnerId?: string | null;
+        }
+
+        let membershipUpdateMany: jest.Mock;
+
+        // The actor the controller built from the (possibly stale) token: it claims 지점장.
+        // The decision must ignore these fields and use the rows re-read below.
+        const callerActor: AdminAuditActor = { userId: "caller-1", globalRole: "owner", branchRole: "admin" };
+
+        const arrange = (scenario: Scenario) => {
+            const {
+                callerGlobal = "user",
+                callerMembership = "admin",
+                targetGlobal = "user",
+                targetMembership = "user",
+                targetApproval = "approved",
+                branchOwnerId = null,
+            } = scenario;
+            membershipUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+            prismaService.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: branchOwnerId });
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
+                if (where.id === "caller-1") return { id: "caller-1", role: callerGlobal };
+                if (where.id === "target-1") {
+                    return { id: "target-1", name: "대상", role: targetGlobal, approvalStatus: targetApproval };
+                }
+                return null;
+            });
+            Object.assign(prismaService.user_branch, {
+                updateMany: membershipUpdateMany,
+                findUnique: jest.fn().mockImplementation(
+                    async ({ where }: { where: { userId_branchId: { userId: string } } }) => {
+                        const role = where.userId_branchId.userId === "caller-1" ? callerMembership : targetMembership;
+                        return role === null ? null : { role };
+                    },
+                ),
+            });
+            prismaService.user_branch.deleteMany.mockResolvedValue({ count: 1 });
+        };
+
+        // `null` means "the request carried no actor at all".
+        const actorFor = (actor: AdminAuditActor | null | undefined): AdminAuditActor | undefined =>
+            actor === undefined ? callerActor : actor ?? undefined;
+        const change = (role: string, actor?: AdminAuditActor | null) =>
+            service.update("target-1", { branchId: BRANCH, branchRole: role, actor: actorFor(actor) });
+        const remove = (actor?: AdminAuditActor | null) =>
+            service.delete("target-1", BRANCH, actorFor(actor));
+
+        const expectNothingWritten = () => {
+            expect(membershipUpdateMany).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+        };
+
+        const expectForbidden = async (promise: Promise<unknown>) => {
+            await expect(promise).rejects.toBeInstanceOf(ForbiddenException);
+            await expect(promise).rejects.toMatchObject({
+                status: 403,
+                response: expect.objectContaining({ code: "ACCESS_DENIED", outcome: "NOT_APPLIED" }),
+            });
+            expectNothingWritten();
+        };
+
+        describe("changing a branch role", () => {
+            it("lets 지점장 make a 회원 a 매니저 in their own branch", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user", targetGlobal: "user" });
+
+                await change("manager");
+
+                expect(membershipUpdateMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "manager" },
+                });
+            });
+
+            it("lets 지점장 demote a 매니저 to 회원", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "manager", targetGlobal: "manager" });
+
+                await change("user");
+
+                expect(membershipUpdateMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "user" },
+                });
+            });
+
+            it("refuses 지점장 making anyone 지점장 (rank must be strictly below the caller's)", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(change("admin"));
+            });
+
+            it("refuses 지점장 changing another 지점장", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "admin", targetGlobal: "admin" });
+
+                await expectForbidden(change("user"));
+            });
+
+            it("refuses 지점장 changing a member whose GLOBAL role is 지점장 even if the branch row says 매니저", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "manager", targetGlobal: "admin" });
+
+                await expectForbidden(change("user"));
+            });
+
+            it("treats the branch's appointed 지점장 as 지점장 and answers 403 before the ownership 409", async () => {
+                arrange({
+                    callerMembership: "admin",
+                    targetMembership: "manager",
+                    targetGlobal: "manager",
+                    branchOwnerId: "target-1",
+                });
+
+                await expectForbidden(change("user"));
+            });
+
+            it("answers not-found for an owner target (BJJ-436 behaviour unchanged) and writes nothing", async () => {
+                arrange({ callerMembership: "admin", targetGlobal: "owner", targetMembership: "admin" });
+
+                await expect(change("user")).rejects.toBeInstanceOf(NotFoundException);
+                expectNothingWritten();
+            });
+
+            it("lets 매니저 set a 회원 to 회원 (the no-op the code already tolerates)", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "user", targetGlobal: "user" });
+
+                await change("user");
+
+                expect(membershipUpdateMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "user" },
+                });
+            });
+
+            it("refuses 매니저 making a 회원 a 매니저", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(change("manager"));
+            });
+
+            it("refuses 매니저 touching another 매니저", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "manager", targetGlobal: "manager" });
+
+                await expectForbidden(change("user"));
+            });
+
+            it.each(["admin", "manager"])("refuses 매니저 touching a %s target at or above their rank", async (targetRole) => {
+                arrange({ callerMembership: "manager", targetMembership: targetRole, targetGlobal: targetRole });
+
+                await expectForbidden(change("user"));
+            });
+
+            it.each(["admin", "manager", "user"])("refuses a 회원 caller changing anyone to %s", async (requested) => {
+                arrange({ callerMembership: "user", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(change(requested));
+            });
+
+            it("refuses a caller with no membership row in the branch", async () => {
+                arrange({ callerMembership: null, targetMembership: "user" });
+
+                await expectForbidden(change("user"));
+            });
+
+            it("answers not-found for a target who is not a member of the caller's branch, as before", async () => {
+                arrange({ callerMembership: "admin", targetMembership: null, targetGlobal: "user" });
+
+                await expect(change("manager")).rejects.toBeInstanceOf(NotFoundException);
+                expectNothingWritten();
+            });
+
+            it("refuses a non-owner caller changing themself", async () => {
+                arrange({ callerMembership: "admin" });
+                prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                    ({ id: where.id, name: "본인", role: "user", approvalStatus: "approved" }));
+
+                await expectForbidden(
+                    service.update("caller-1", { branchId: BRANCH, branchRole: "user", actor: callerActor }),
+                );
+            });
+
+            it("refuses a request that carries no caller id and writes nothing", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user" });
+
+                await expectForbidden(change("manager", {}));
+                await expectForbidden(change("manager", null));
+            });
+
+            it("refuses when the caller was demoted before the transaction ran, whatever the token still claims", async () => {
+                // The actor still says 지점장; the membership row re-read in the transaction says 회원.
+                arrange({ callerMembership: "user", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(change("manager"));
+            });
+
+            it("refuses when the caller was demoted from 지점장 to 매니저 and now aims above their rank", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "manager", targetGlobal: "manager" });
+
+                await expectForbidden(change("user"));
+            });
+
+            it("refuses an account that is not approved (non-owner caller) and writes nothing", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user", targetApproval: "pending" });
+
+                await expect(change("manager")).rejects.toMatchObject({
+                    status: 400,
+                    response: expect.objectContaining({ code: "VALIDATION_FAILED" }),
+                });
+                expectNothingWritten();
+            });
+
+            it("still lets an owner caller promote to 지점장, change a 지점장 and touch unapproved accounts", async () => {
+                arrange({ callerGlobal: "owner", callerMembership: null, targetMembership: "user", targetApproval: "pending" });
+                await change("admin");
+                expect(membershipUpdateMany).toHaveBeenLastCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "admin" },
+                });
+
+                arrange({ callerGlobal: "owner", callerMembership: null, targetMembership: "admin", targetGlobal: "admin" });
+                await change("manager");
+                expect(membershipUpdateMany).toHaveBeenLastCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "manager" },
+                });
+            });
+
+            it("keeps the ownership 409 for an owner caller", async () => {
+                arrange({
+                    callerGlobal: "owner",
+                    callerMembership: null,
+                    targetMembership: "admin",
+                    targetGlobal: "admin",
+                    branchOwnerId: "target-1",
+                });
+
+                await expect(change("manager")).rejects.toBeInstanceOf(ConflictException);
+            });
+        });
+
+        describe("removing a branch member", () => {
+            it("lets 지점장 remove a 매니저 and revokes that member's sessions", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "manager", targetGlobal: "manager" });
+
+                await remove();
+
+                expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                });
+                expect(prismaService.auth_session.updateMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", revokedAt: null },
+                    data: { revokedAt: expect.any(Date), revokedReason: "membership_deleted" },
+                });
+            });
+
+            it("lets 지점장 remove a 회원", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user", targetGlobal: "user" });
+
+                await remove();
+
+                expect(prismaService.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+            });
+
+            it("lets 매니저 remove a 회원", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "user", targetGlobal: "user" });
+
+                await remove();
+
+                expect(prismaService.user_branch.deleteMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                });
+            });
+
+            it("refuses 지점장 removing another 지점장", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "admin", targetGlobal: "admin" });
+
+                await expectForbidden(remove());
+            });
+
+            it("answers 403, not the ownership 409, when 지점장 removes the branch's appointed 지점장", async () => {
+                arrange({
+                    callerMembership: "admin",
+                    targetMembership: "admin",
+                    targetGlobal: "admin",
+                    branchOwnerId: "target-1",
+                });
+
+                await expectForbidden(remove());
+            });
+
+            it("refuses 매니저 removing a 매니저", async () => {
+                arrange({ callerMembership: "manager", targetMembership: "manager", targetGlobal: "manager" });
+
+                await expectForbidden(remove());
+            });
+
+            it("answers not-found for an owner target and writes nothing", async () => {
+                arrange({ callerMembership: "admin", targetGlobal: "owner", targetMembership: "admin" });
+
+                await expect(remove()).rejects.toBeInstanceOf(NotFoundException);
+                expectNothingWritten();
+            });
+
+            it("refuses a 회원 caller", async () => {
+                arrange({ callerMembership: "user", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(remove());
+            });
+
+            it("answers not-found for a target outside the caller's branch, as before", async () => {
+                arrange({ callerMembership: "admin", targetMembership: null, targetGlobal: "user" });
+
+                await expect(remove()).rejects.toBeInstanceOf(NotFoundException);
+                expectNothingWritten();
+            });
+
+            it("refuses a non-owner caller removing themself", async () => {
+                arrange({ callerMembership: "admin" });
+                prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                    ({ id: where.id, role: "user", approvalStatus: "approved" }));
+
+                await expectForbidden(service.delete("caller-1", BRANCH, callerActor));
+            });
+
+            it("refuses a request with no caller id", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user" });
+
+                await expectForbidden(remove({}));
+                await expectForbidden(remove(null));
+            });
+
+            it("refuses when the caller was demoted before the transaction ran", async () => {
+                arrange({ callerMembership: "user", targetMembership: "user", targetGlobal: "user" });
+
+                await expectForbidden(remove());
+            });
+
+            it("refuses removing an account that is not approved (non-owner caller)", async () => {
+                arrange({ callerMembership: "admin", targetMembership: "user", targetApproval: "pending" });
+
+                await expect(remove()).rejects.toMatchObject({
+                    status: 400,
+                    response: expect.objectContaining({ code: "VALIDATION_FAILED" }),
+                });
+                expectNothingWritten();
+            });
+
+            it("still lets an owner caller remove a 지점장 member", async () => {
+                arrange({ callerGlobal: "owner", callerMembership: null, targetMembership: "admin", targetGlobal: "admin" });
+
+                await remove();
+
+                expect(prismaService.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+            });
+
+            it("keeps the ownership 409 for an owner caller removing the appointed 지점장", async () => {
+                arrange({
+                    callerGlobal: "owner",
+                    callerMembership: null,
+                    targetMembership: "admin",
+                    targetGlobal: "admin",
+                    branchOwnerId: "target-1",
+                });
+
+                await expect(remove()).rejects.toBeInstanceOf(ConflictException);
+            });
+        });
+    });
+
+    // ============================================
+    // owner-only global writes re-read the caller -- 권한-04 / BJJ-435
+    // ============================================
+    describe("owner-only global writes re-read the caller inside the transaction (권한-04, BJJ-435)", () => {
+        const demotedCaller = () => {
+            // The token says owner; the row read inside the transaction says 지점장.
+            prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === "owner-1" ? { role: "admin" } : { id: where.id, role: "manager", approvalStatus: "approved" });
+        };
+        const forbidden = { status: 403, response: expect.objectContaining({ code: "ACCESS_DENIED" }) };
+
+        it("approve: refuses a caller who is no longer owner and writes nothing", async () => {
+            demotedCaller();
+
+            await expect(service.approve("u1", {
+                role: "manager",
+                approvedBy: "owner-1",
+                actor: ownerActor,
+                branchId: "branch-1",
+            })).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("approve: refuses a request with no caller id", async () => {
+            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+
+            await expect(service.approve("u1", {
+                role: "manager",
+                approvedBy: "",
+                branchId: "branch-1",
+            })).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+        });
+
+        it("reject: refuses a caller who is no longer owner and writes nothing", async () => {
+            demotedCaller();
+
+            await expect(service.reject("u1", ownerActor)).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(prismaService.branch.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("reject: refuses a request with no actor", async () => {
+            prismaService.user.findUnique.mockResolvedValue({ id: "u1", role: "owner" });
+
+            await expect(service.reject("u1")).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+        });
+
+        it("updateAccountAssignment: refuses a caller who is no longer owner even though callerRole says owner", async () => {
+            demotedCaller();
+
+            await expect(service.updateAccountAssignment("u1", {
+                role: "user",
+                branchIds: ["11111111-1111-4111-8111-111111111111"],
+                expectedRole: "manager",
+                expectedBranchIds: ["11111111-1111-4111-8111-111111111111"],
+                callerRole: "owner",
+                actor: ownerActor,
+            })).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(prismaService.user_branch.upsert).not.toHaveBeenCalled();
+            expect(prismaService.auth_session.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("updateAccountAssignment: refuses a request with no actor", async () => {
+            prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
+
+            await expect(service.updateAccountAssignment("u1", {
+                role: "user",
+                branchIds: ["11111111-1111-4111-8111-111111111111"],
+                expectedRole: "manager",
+                expectedBranchIds: ["11111111-1111-4111-8111-111111111111"],
+                callerRole: "owner",
+            })).rejects.toMatchObject(forbidden);
+
+            expect(prismaService.user.update).not.toHaveBeenCalled();
         });
     });
 });
