@@ -68,6 +68,15 @@ describe("ReviewStep", () => {
         expect(within(finish).getByRole("group", { name: /결제 확인/ })).not.toHaveClass("sm:col-span-2");
     });
 
+    it("lets an 80-character unbroken note wrap instead of widening the page", () => {
+        render(<ReviewStep {...makeProps({ draft: { notes: "W".repeat(80) } })} />);
+        const finish = screen.getByRole("region", { name: "서비스 기록" });
+        const note = within(finish).getByRole("group", { name: /특이사항/ });
+        const value = within(note).getByText("W".repeat(80));
+        expect(value).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+        expect(note).toHaveClass("min-w-0");
+    });
+
     it("shows the admin handover banner and never the resign notice, even when editing (SRW:972, :978)", () => {
         render(<ReviewStep {...makeProps({ editing: true })} />);
         expect(byComponent("body_handover-banner")).toHaveTextContent("관리자 수정 내용을 확인해 주세요.");
