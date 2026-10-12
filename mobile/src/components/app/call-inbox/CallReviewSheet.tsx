@@ -1,10 +1,12 @@
 "use client";
+
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 import { useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { Input } from "@/components/ui/input";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Switch } from "@/components/ui/switch";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import {
@@ -202,16 +204,32 @@ export function CallReviewSheet({
   listItem?: ClientDraftListItem | null;
   onClose: () => void;
 }) {
-  const { data: draft, isLoading } = useClientDraft(draftId);
+  const { data: draft, isLoading, isError, refetch, isFetching } = useClientDraft(draftId);
 
   if (draftId === null) return null;
 
   return (
     <MobileDetailPage name="call-inbox" data-component={REVIEW_BASE}>
-      {isLoading || !draft ? (
+      {isError && draft && (
+        <QueryErrorState
+          dataComponent={`${REVIEW_BASE}_error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
+      )}
+      {isLoading || (!draft && !isError) ? (
         <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${REVIEW_BASE}_loading`}>
           불러오는 중...
         </div>
+      ) : !draft ? (
+        <QueryErrorState
+          dataComponent={`${REVIEW_BASE}_error`}
+          size="inline"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
       ) : draft.type === "NEW_CLIENT" ? (
         <NewClientReview key={draft.id} draft={draft} listItem={listItem ?? null} onClose={onClose} />
       ) : (

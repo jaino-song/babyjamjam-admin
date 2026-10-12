@@ -5,6 +5,7 @@ import { CalendarDays, CircleCheck, CircleHelp, MessageCircle } from "lucide-rea
 
 import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { StatsBar } from "@/components/app/v3";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   DetailTabPills,
   InfoCard,
@@ -309,7 +310,8 @@ export default function ConsultationsPage() {
   const [activeTab, setActiveTab] = useState<DetailTabId>("info");
   const [statsReferenceTime] = useState(() => Date.now());
 
-  const { data, isLoading, isError } = useConsultationInquiries({ limit: 100 });
+  const { data, isLoading, isError, refetch, isFetching } = useConsultationInquiries({ limit: 100 });
+  const hasData = data !== undefined;
   const markRead = useMarkConsultationInquiryAsRead();
 
   const rows = useMemo<ConsultationRow[]>(
@@ -330,18 +332,18 @@ export default function ConsultationsPage() {
     }).length;
 
     return [
-      { label: "전체", value: rows.length, tone: "primary" as const, icon: MessageCircle },
-      { label: "지난 30일", value: recentCount, tone: "orange" as const, icon: CalendarDays },
+      { label: "전체", value: hasData ? rows.length : "—", tone: "primary" as const, icon: MessageCircle },
+      { label: "지난 30일", value: hasData ? recentCount : "—", tone: "orange" as const, icon: CalendarDays },
       {
         label: "미확인",
-        value: unreadRows.length,
+        value: hasData ? unreadRows.length : "—",
         tone: "burgundy" as const,
         icon: CircleHelp,
         urgent: unreadRows.length > 0,
       },
-      { label: "확인", value: confirmedRows.length, tone: "green" as const, icon: CircleCheck },
+      { label: "확인", value: hasData ? confirmedRows.length : "—", tone: "green" as const, icon: CircleCheck },
     ];
-  }, [confirmedRows.length, rows, statsReferenceTime, unreadRows.length]);
+  }, [confirmedRows.length, hasData, rows, statsReferenceTime, unreadRows.length]);
   const searchedRows = useMemo(() => {
     const query = normalizeSearchValue(search);
     if (!query) return rows;
@@ -351,9 +353,9 @@ export default function ConsultationsPage() {
   }, [rows, search]);
 
   const filterItems = [
-    { label: ALL_FILTER, count: String(rows.length) },
-    { label: "미확인", count: String(unreadRows.length) },
-    { label: "확인", count: String(confirmedRows.length) },
+    { label: ALL_FILTER, count: hasData ? String(rows.length) : "—" },
+    { label: "미확인", count: hasData ? String(unreadRows.length) : "—" },
+    { label: "확인", count: hasData ? String(confirmedRows.length) : "—" },
   ];
 
   const sectionsFull = useMemo(() => {
@@ -433,7 +435,7 @@ export default function ConsultationsPage() {
             <ListCard
               data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card"
               title="상담 조회"
-              count={`${rows.length}건`}
+              count={hasData ? `${rows.length}건` : "—"}
               filters={filterItems}
               activeFilter={activeFilter}
               onFilterChange={setActiveFilter}
@@ -450,6 +452,15 @@ export default function ConsultationsPage() {
               loadMore={isInitialLoad && hasMore}
               onLoadMore={loadMore}
             >
+              {isError && hasData && (
+                <QueryErrorState
+                  dataComponent="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
+                />
+              )}
               {isLoading ? (
                 <div
                   style={{
@@ -462,18 +473,13 @@ export default function ConsultationsPage() {
                 >
                   불러오는 중...
                 </div>
-              ) : isError ? (
-                <div
-                  style={{
-                    padding: "32px 16px",
-                    textAlign: "center",
-                    fontSize: "0.82rem",
-                    color: "hsl(var(--v3-burgundy))",
-                  }}
-                  data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
-                >
-                  상담 문의를 불러오지 못했습니다.
-                </div>
+              ) : isError && !hasData ? (
+                <QueryErrorState
+                  dataComponent="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"
+                  title="상담 문의를 불러오지 못했습니다"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
+                />
               ) : visibleSections.length === 0 ? (
                 <div
                   style={{
