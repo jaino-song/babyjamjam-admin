@@ -1213,7 +1213,8 @@ export function ContractDetail({
     refetchOnWindowFocus: false,
   });
   const detailedDocument = detailQuery.data ?? doc;
-  const isBaseDetailLoading = detailQuery.isFetching || detailQuery.isPlaceholderData;
+  const isBaseDetailLoading = detailQuery.isPlaceholderData
+    || (detailQuery.isFetching && detailQuery.data === undefined);
   const mappedCustomerName = documentClientSummary?.clientName.trim();
   const customerName = resolveDocumentCustomerName(detailedDocument, mappedCustomerName) || CUSTOMER_NAME_PLACEHOLDER;
   const isServiceRecordDocument = reviewAction === "preview";
@@ -1886,13 +1887,27 @@ export function ContractDetail({
 
   const documentTabCards = [
     isServiceRecordDocument ? (
-      <ServiceRecordHeaderCard
-        data-component={`${dataComponent}_content_document_header-card`}
-        key="document-profile"
-        header={serviceRecordHeader}
-        isLoading={isCustomerInfoLoading}
-        showStatusBadge={false}
-      />
+      <div data-component={`${dataComponent}_content_document_header-section`} key="document-profile" className="grid content-start gap-5">
+        {serviceRecordQuery.isError && (
+          <QueryErrorState
+            dataComponent={`${dataComponent}_content_document_header-error`}
+            size="inline"
+            title={serviceRecordQuery.data !== undefined
+              ? "최신 정보를 불러오지 못했습니다"
+              : "제공기록지 기본정보를 불러오지 못했습니다"}
+            onRetry={() => { void serviceRecordQuery.refetch(); }}
+            isRetrying={serviceRecordQuery.isFetching}
+          />
+        )}
+        {(!serviceRecordQuery.isError || serviceRecordQuery.data !== undefined) && (
+          <ServiceRecordHeaderCard
+            data-component={`${dataComponent}_content_document_header-card`}
+            header={serviceRecordHeader}
+            isLoading={serviceRecordQuery.data === undefined && isCustomerInfoLoading}
+            showStatusBadge={false}
+          />
+        )}
+      </div>
     ) : (
       <InfoRowsCard
         data-component={`${dataComponent}_content_document_client-card`}
@@ -2194,6 +2209,15 @@ export function ContractDetail({
         />
       }
     >
+      {detailQuery.isError && (
+        <QueryErrorState
+          dataComponent={`${dataComponent}_content_refresh-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => { void detailQuery.refetch(); }}
+          isRetrying={detailQuery.isRefetching || detailQuery.isFetching}
+        />
+      )}
       <DetailTabPanels
         activeTab={activeDetailTab}
         data-component={`${dataComponent}_content`}
