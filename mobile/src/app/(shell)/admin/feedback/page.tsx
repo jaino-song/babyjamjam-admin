@@ -38,7 +38,7 @@ export default function AdminFeedbackPage() {
     []
   );
 
-  const { data: stats, isLoading: statsLoading, isPaused: statsPaused } = useQuery({
+  const { data: stats, isLoading: statsLoading, isPaused: statsPaused, isError: statsError, isFetching: statsFetching, refetch: statsRefetch } = useQuery({
     queryKey: ['feedbackStats'],
     queryFn: getFeedbackStats,
   });
@@ -77,9 +77,33 @@ export default function AdminFeedbackPage() {
   };
 
   const isFeedbackLoading = feedbackLoading || (feedbackPaused && feedbackData === undefined);
+  const hasFeedbackAlert = feedbackError && (feedbackData !== undefined || !isFeedbackLoading);
+  const retryFeedback = () => {
+    void refetch();
+    if (statsError) void statsRefetch();
+  };
+  const isFeedbackRetrying = feedbackFetching || (statsError && statsFetching);
 
   return (
     <section data-component={FEEDBACK_BASE} className="space-y-6">
+      {!hasFeedbackAlert && statsError && stats === undefined && (
+        <QueryErrorState
+          dataComponent={`${FEEDBACK_BASE}_stats-error`}
+          size="inline"
+          title="피드백 통계를 불러오지 못했습니다"
+          onRetry={() => void statsRefetch()}
+          isRetrying={statsFetching}
+        />
+      )}
+      {!hasFeedbackAlert && statsError && stats !== undefined && (
+        <QueryErrorState
+          dataComponent={`${FEEDBACK_BASE}_stats-cached-error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void statsRefetch()}
+          isRetrying={statsFetching}
+        />
+      )}
       <StatsBar
         data-component={`${FEEDBACK_BASE}_stats`}
         isLoading={statsLoading || (statsPaused && stats === undefined)}
@@ -110,16 +134,16 @@ export default function AdminFeedbackPage() {
             dataComponent={`${FEEDBACK_LIST_PANEL}_content_cached-error`}
             size="inline"
             title="최신 정보를 불러오지 못했습니다"
-            onRetry={() => void refetch()}
-            isRetrying={feedbackFetching}
+            onRetry={retryFeedback}
+            isRetrying={isFeedbackRetrying}
           />
         )}
         {!isFeedbackLoading && feedbackError && feedbackData === undefined ? (
           <QueryErrorState
             dataComponent={`${FEEDBACK_LIST_PANEL}_content_error`}
             title="피드백을 불러오지 못했습니다"
-            onRetry={() => void refetch()}
-            isRetrying={feedbackFetching}
+            onRetry={retryFeedback}
+            isRetrying={isFeedbackRetrying}
           />
         ) : !isFeedbackLoading && filteredList.length === 0 ? (
           <ListEmptyState message={searchQuery ? '검색 결과가 없습니다' : '피드백이 없습니다'} />
