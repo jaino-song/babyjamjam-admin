@@ -248,6 +248,16 @@ describe("ClientService", () => {
 
     const branchId = "org-1";
 
+    const matchingContractDetail = (name = "Test Client", birthday = "1990-01-01") => ({
+        id: "DOC-IDENTITY",
+        recipients: [{ recipient_type: "05", name, sms: "01012345678" }],
+        fields: [
+            { id: "이용자 성명", value: name },
+            { id: "이용자 생년월일", value: birthday },
+            { id: "이용자 연락처", value: "01012345678" },
+        ],
+    });
+
     /** Public problem contract body carried by converted client pre-write throws. */
     const clientProblemResponse = (topCode: string, pointer: string, errorCode: string, detail: unknown) => ({
         code: topCode,
@@ -710,13 +720,15 @@ describe("ClientService", () => {
                     documentId: "DOC-LATEST",
                     clientId: null,
                     branchId: null,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
                 {
                     id: 10,
                     documentId: "DOC-OLDER",
-                    clientId: 99,
+                    clientId: null,
                     branchId,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "연락처 +82 10 1234 5678",
                 },
                 {
@@ -834,7 +846,7 @@ describe("ClientService", () => {
                 breastPump: false,
             };
 
-            /** Documents 11 (unowned) and 10 (owned by client 99); both match the phone. */
+            /** Both documents are unowned; other clients may retain stale pointers. */
             const arrangeCandidates = () => {
                 const mockClient = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(mockClient);
@@ -845,13 +857,15 @@ describe("ClientService", () => {
                         documentId: "DOC-LATEST",
                         clientId: null,
                         branchId: null,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
                     {
                         id: 10,
                         documentId: "DOC-OLDER",
-                        clientId: 99,
+                        clientId: null,
                         branchId,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "연락처 +82 10 1234 5678",
                     },
                 ]);
@@ -883,7 +897,7 @@ describe("ClientService", () => {
 
             it("locks the target, every owner and every pointer client in id order before the documents", async () => {
                 const mockClient = arrangeCandidates();
-                // 99 owns DOC-OLDER; 55 points at one of the documents; the target is client 1.
+                // 99 and 55 retain pointers to unowned documents; the target is client 1.
                 arrangeQueries([[99, 55]]);
 
                 await service.create(branchId, CREATE_DTO);
@@ -899,7 +913,7 @@ describe("ClientService", () => {
                 expect(documentLock.values).toEqual([10, 11, branchId]);
                 // Nothing is written before both lock groups are held.
                 expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                // The other locked clients (owner 99, pointer 55) are released from the documents
+                // The other locked pointer clients (99, 55) are released from the documents
                 // that move to the target first; only then does the target take the pointer.
                 expect(prismaService.client.updateMany.mock.calls).toEqual([
                     [{
@@ -920,8 +934,8 @@ describe("ClientService", () => {
 
             it("starts over, re-reading the owners, when a document moved to an unlocked client", async () => {
                 const mockClient = arrangeCandidates();
-                // Attempt 1 locked [1, 99]; once the documents are locked 77 turns out to own one of
-                // them. Attempt 2 reads the owners afresh, locks 77 too, and its re-read agrees.
+                // Attempt 1 locked [1, 99]; once the documents are locked 77 turns out to point at
+                // one of them. Attempt 2 reads the lock surface afresh, locks 77 too, and agrees.
                 arrangeQueries([[99], [99, 77], [99, 77], [99, 77]]);
 
                 await service.create(branchId, CREATE_DTO);
@@ -1127,6 +1141,7 @@ describe("ClientService", () => {
                     documentId: "DOC-PURGED",
                     clientId: null,
                     branchId: null,
+                    detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
             ]);
@@ -1170,7 +1185,7 @@ describe("ClientService", () => {
                     templateId: null,
                     customerPhone: "01012345678",
                     stepRecipientSms: "고객 010-1234-5678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: initialSourceUpdatedAt,
                     detailSyncedAt: initialSyncedAt,
                 }])
@@ -1224,7 +1239,7 @@ describe("ClientService", () => {
                     templateId: null,
                     customerPhone: "01012345678",
                     stepRecipientSms: "고객 010-1234-5678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: new Date("2026-07-30T00:00:00.000Z"),
                     detailSyncedAt: new Date("2026-07-30T00:01:00.000Z"),
                 }])
@@ -1279,7 +1294,7 @@ describe("ClientService", () => {
                     templateId: "service-record-template",
                     stepRecipientSms: "고객 010-1234-5678",
                     customerPhone: "01012345678",
-                    detailPayload: null,
+                    detailPayload: matchingContractDetail(),
                 },
             ]);
 
@@ -1581,6 +1596,7 @@ describe("ClientService", () => {
                         id: 9,
                         documentId: "DOC-0009",
                         clientId: null,
+                        detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
                 ]);
@@ -2641,6 +2657,109 @@ describe("ClientService", () => {
                 }
             });
 
+            describe("ready contract identity on client save", () => {
+                const arrangeDocument = (clientId: number | null, detailPayload: unknown) => {
+                    const doc = {
+                        id: 12,
+                        documentId: "DOC-IDENTITY",
+                        clientId,
+                        branchId,
+                        customerPhone: "01012345678",
+                        detailPayload,
+                        detailSourceUpdatedDate: new Date("2026-09-01T00:00:00Z"),
+                        detailSyncedAt: new Date("2026-09-01T00:01:00Z"),
+                    };
+                    prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                        where.syncStatus?.not ? [] : [doc]);
+                    prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                    prismaService.$queryRaw.mockImplementation(async (query: Prisma.Sql) =>
+                        query.sql.includes("UNION") ? []
+                            : query.sql.includes("eformsign_doc AS doc") ? [{ id: 12 }] : [{ id: 1 }]);
+                    return doc;
+                };
+
+                it.each([
+                    ["different name", matchingContractDetail("Other Client"), "900101", null],
+                    ["different birthday", matchingContractDetail("Test Client", "1990-01-02"), "900101", null],
+                    ["missing saved birthday", matchingContractDetail(), null, null],
+                    ["missing detail", null, "900101", null],
+                    ["another owner with matching identity", matchingContractDetail(), "900101", 99],
+                ])("silently leaves a ready document unchanged for %s", async (_label, detail, birthday, owner) => {
+                    const client = createClientEntity();
+                    client.birthday = birthday;
+                    findClientByIdUsecase.execute.mockResolvedValue(client);
+                    const doc = arrangeDocument(owner, detail);
+                    const before = { ...doc };
+
+                    await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                    expect(doc).toEqual(before);
+                    expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                    expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                    expect(prismaService.$transaction).not.toHaveBeenCalled();
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                    expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+                    expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+                    expect(client.eDocId).toBeNull();
+                });
+
+                it.each([null, 1])("keeps matching/unassigned or already-owned behavior (owner %s)", async (owner) => {
+                    const client = createClientEntity();
+                    findClientByIdUsecase.execute.mockResolvedValue(client);
+                    arrangeDocument(owner, owner === null ? matchingContractDetail() : null);
+
+                    await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(owner === null ? 1 : 0);
+                    expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: client.id, branchId },
+                        data: { eDocId: "DOC-IDENTITY" },
+                    });
+                    expect(client.eDocId).toBe("DOC-IDENTITY");
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it.each([
+                    ["Other Client", "Test Client", true],
+                    ["Test Client", "Other Client", false],
+                ])("compares the saved name (%s -> %s)", async (oldName, savedName, linked) => {
+                    const stale = createClientEntity();
+                    stale.name = oldName;
+                    const saved = createClientEntity();
+                    saved.name = savedName;
+                    findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
+                    arrangeDocument(null, matchingContractDetail());
+
+                    await expect(service.update(branchId, stale.id, { name: savedName })).resolves.toBe(saved);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(linked ? 1 : 0);
+                    const pointerWrites = prismaService.client.updateMany.mock.calls.filter(([args]) =>
+                        args.data.eDocId !== undefined);
+                    expect(pointerWrites).toHaveLength(linked ? 1 : 0);
+                    expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
+                    expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+                });
+
+                it.each([
+                    ["1990-01-02", "1990-01-01", true],
+                    ["1990-01-01", "1990-01-02", false],
+                ])("compares the saved birthday (%s -> %s)", async (oldBirthday, savedBirthday, linked) => {
+                    const stale = createClientEntity();
+                    stale.birthday = oldBirthday;
+                    const saved = createClientEntity();
+                    saved.birthday = savedBirthday;
+                    findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
+                    arrangeDocument(null, matchingContractDetail());
+
+                    await expect(service.update(branchId, stale.id, { birthday: savedBirthday })).resolves.toBe(saved);
+
+                    expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(linked ? 1 : 0);
+                    expect(prismaService.client.updateMany.mock.calls.filter(([args]) =>
+                        args.data.eDocId !== undefined)).toHaveLength(linked ? 1 : 0);
+                    expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
+                });
+            });
+
             it("links matching contracts by the effective phone after client information is updated", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
@@ -2653,7 +2772,7 @@ describe("ClientService", () => {
                         branchId: null,
                         stepRecipientSms: "제공기관 010 9999 9999",
                         customerPhone: "01012345678",
-                        detailPayload: null,
+                        detailPayload: matchingContractDetail(),
                     },
                 ]);
                 prismaService.client.findMany.mockResolvedValue([{
@@ -2744,7 +2863,7 @@ describe("ClientService", () => {
                         branchId: null,
                         stepRecipientSms: "고객 010-1234-5678",
                         customerPhone: "01012345678",
-                        detailPayload: null,
+                        detailPayload: matchingContractDetail(),
                     },
                 ]);
                 prismaService.client.findMany.mockResolvedValue([

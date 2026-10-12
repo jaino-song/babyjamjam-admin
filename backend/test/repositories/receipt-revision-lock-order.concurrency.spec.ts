@@ -591,12 +591,20 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
         const OTHER = 7; // old owner / pointer holder
         const TARGET = 8; // the phone-link target
 
+        const matchingDetail = JSON.stringify({
+            fields: [
+                { id: "이용자 성명", value: "Phone Client", type: "text" },
+                { id: "이용자 생년월일", value: "1990-01-01", type: "text" },
+            ],
+            recipients: [{ recipient_type: "05", name: "Phone Client", sms: PHONE }],
+        });
+
         const freshDocument = (id: number, documentId: string, clientId: number | null, created: string, updated: string) => db.$executeRaw(Prisma.sql`
             INSERT INTO eformsign_doc
                 (id, document_id, client_id, branch_id, document_kind, template_id, created_date, updated_date, status_type,
                  customer_phone, detail_payload, detail_source_updated_date, detail_synced_at, sync_status)
             VALUES (${id}, ${documentId}, ${clientId}, ${BRANCH}::uuid, 'contract', 'template-1', ${created}::timestamptz, ${updated}::timestamptz, '070',
-                    ${PHONE}, '{}'::jsonb, '2026-09-01T00:00:00Z'::timestamptz, '2026-09-01T00:00:10Z'::timestamptz, 'ready')`);
+                    ${PHONE}, ${matchingDetail}::jsonb, '2026-09-01T00:00:00Z'::timestamptz, '2026-09-01T00:00:10Z'::timestamptz, 'ready')`);
 
         const mirrorFiles = async (...docIds: number[]) => {
             for (const docId of docIds) {

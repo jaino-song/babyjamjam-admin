@@ -2,7 +2,13 @@ import { BadRequestException, ConflictException, Injectable, Inject, Logger, Not
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
-import { eformsignCustomerPhone, extractEformsignContractEndDate } from "application/utils/eformsign-contract-client-candidate";
+import {
+    eformsignCustomerPhone,
+    extractEformsignContractEndDate,
+    extractEformsignContractClientCandidate,
+    toEformsignDocumentDetail,
+} from "application/utils/eformsign-contract-client-candidate";
+import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
 import {
     CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD,
     findLatestContractSignalsByClientId,
@@ -429,6 +435,16 @@ export class ClientService {
                     matchingDocs = matchingDocs.filter((doc) => doc.branchId === branchid);
                 }
             }
+            matchingDocs = matchingDocs.filter((doc) => {
+                if (doc.clientId !== null && doc.clientId !== client.id) return false;
+                if (doc.clientId === client.id) return true;
+                const detail = toEformsignDocumentDetail(doc.detailPayload);
+                const candidate = detail
+                    ? extractEformsignContractClientCandidate(detail)
+                    : null;
+                return detail !== null
+                    && compareEformsignClientIdentity(candidate, client, new Date()).length === 0;
+            });
             const documentIdsToReassign = matchingDocs
                 .filter((doc) => doc.clientId !== client.id)
                 .map((doc) => doc.id);
