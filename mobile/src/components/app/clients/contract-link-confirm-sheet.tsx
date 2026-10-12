@@ -33,7 +33,10 @@ export function ContractLinkConfirmSheet({ "data-component": dataComponent, entr
     void queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
     void queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(clientId) });
     void queryClient.invalidateQueries({ queryKey: ["eformsign-docs", "document"] });
-    void queryClient.invalidateQueries({ queryKey: ["eformsign-docs", "link-confirmations", clientId] });
+    // Prefix: covers the per-client key and the branch-wide contracts-list key.
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-docs", "link-confirmations"] });
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-doc-client-names"] });
     onConfirmed?.();
     onClose();
   };

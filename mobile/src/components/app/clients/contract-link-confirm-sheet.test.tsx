@@ -50,7 +50,8 @@ it("updates exactly chosen fields before adopting and invalidates projections", 
   expect(mockAdopt).toHaveBeenCalledWith("doc-1", 7);
   expect(mockUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockAdopt.mock.invocationCallOrder[0]);
   expect(mockInvalidate.mock.calls.map(call => call[0].queryKey)).toEqual([
-    ["clients"], ["clients", "detail", 7], ["eformsign-docs", "document"], ["eformsign-docs", "link-confirmations", 7],
+    ["clients"], ["clients", "detail", 7], ["eformsign-docs", "document"], ["eformsign-docs", "link-confirmations"],
+    ["eformsign-documents"], ["eformsign-doc-client-names"],
   ]);
 });
 it("only client values adopts without a client update", async () => {

@@ -72,6 +72,7 @@ jest.mock("@/services/api", () => {
       getServiceRecordTemplateId: (...args: unknown[]) => mockServiceRecordTemplateId(...args),
       getStatusCounts: (...args: unknown[]) => mockStatusCounts(...args),
       getDocumentClientNames: () => Promise.resolve([]),
+      getLinkConfirmations: jest.fn().mockResolvedValue([]),
       getDocument: (...args: unknown[]) => mockGetDocument(...args),
     },
   };
