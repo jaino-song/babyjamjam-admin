@@ -832,22 +832,16 @@ describe("ClientsPage unknown data is never shown as a definite value (paused / 
       expect(mockClientRefetch).toHaveBeenCalledTimes(1);
     });
 
-    it("disables the retry while the client query refetches", () => {
-      mockClientQueryState = { ...FAILED_CLIENT_QUERY, isFetching: true };
-
-      render(<ClientsPage />);
-
-      const alert = screen.getAllByRole("alert").find((node) => node.textContent?.includes(DEEP_LINK_TITLE));
-      expect(within(alert as HTMLElement).getByRole("button", { name: /다시 시도/ })).toBeDisabled();
-    });
-
-    it("keeps the placeholder while the client query is loading", () => {
+    it("keeps the placeholder, not the failure, while the client query is loading or a failed one retries", () => {
+      // react-query v5 resets a failed no-data query to pending (isError false, isLoading true) while it refetches,
+      // so the failure panel disappears during a retry instead of staying up with a disabled button.
       mockClientQueryState = { ...IDLE_CLIENT_QUERY, isFetching: true, isLoading: true };
 
       render(<ClientsPage />);
 
       expect(screen.getByText(PLACEHOLDER)).toBeInTheDocument();
       expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("alert").filter((alert) => alert.textContent?.includes(DEEP_LINK_TITLE))).toHaveLength(0);
       expect(screen.getByTestId("clients-split-layout")).toHaveAttribute("data-has-selection", "false");
     });
 
