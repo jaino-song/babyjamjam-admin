@@ -8,7 +8,6 @@ import {
     ALIGO_DEFAULT_SENDER_POLICY_VERSION,
     AligoDefaultSenderPolicy,
 } from "domain/ports/aligo-sms-api.port";
-import { maskPhone } from "application/utils/mask";
 
 export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
 const ALIGO_SEND_TIMEOUT_MS = 30_000;
@@ -79,7 +78,7 @@ export class AligoApiClient implements IAligoSmsApiPort {
             formData.append("testmode_yn", params.testModeYn);
         }
 
-        this.logger.debug(`[Aligo] Sending sms to ${maskPhone(params.receiver)}`);
+        this.logger.debug(`[Aligo] Sending sms to ${params.receiver}`);
 
         const response = await fetch(url, {
             method: "POST",

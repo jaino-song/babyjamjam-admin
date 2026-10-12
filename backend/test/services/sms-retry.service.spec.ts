@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
@@ -159,6 +159,32 @@ describe("SmsRetryService", () => {
             attempts: 1,
             errorMessage: "등록되지 않은 IP 입니다.",
         }));
+    });
+
+    it("logs the plain receiver number when a retry resends the SMS", async () => {
+        const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: {
+                senderPhone: "0212345678",
+                receiver: "01012345678",
+                msgType: "LMS",
+                testModeYn: "N",
+            },
+            response: {
+                result_code: 1,
+                message: "성공적으로 전송요청 하였습니다.",
+                msg_id: 123,
+                success_cnt: 1,
+                error_cnt: 0,
+                msg_type: "LMS",
+            },
+        });
+
+        await service.retry(log);
+
+        expect(logSpy).toHaveBeenCalledWith("[Retry] Successfully resent SMS client_greeting_sms to 01012345678");
+        logSpy.mockRestore();
     });
 
     it("manually retries a branch-owned failure as a separate history item", async () => {

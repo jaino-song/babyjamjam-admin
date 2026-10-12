@@ -1,4 +1,5 @@
 import { ConfigService } from "@nestjs/config";
+import { Logger } from "@nestjs/common";
 
 import { AligoApiClient, DEFAULT_ALIGO_SENDER_PHONE } from "infrastructure/api/aligo-api.client";
 
@@ -49,6 +50,21 @@ describe("AligoApiClient SMS", () => {
             success_cnt: 1,
             error_cnt: 0,
         });
+    });
+
+    it("logs the plain receiver number when sending an SMS", async () => {
+        const debugSpy = jest.spyOn(Logger.prototype, "debug").mockImplementation(() => undefined);
+        const { client } = createClient({
+            ALIGO_API_KEY: "api-key",
+            ALIGO_USER_ID: "user-id",
+        });
+        jest.spyOn(global, "fetch").mockResolvedValue(
+            new Response(JSON.stringify({ result_code: 1, message: "success" }), { status: 200 }),
+        );
+
+        await client.sendSms({ receiver: "01033334444", message: "테스트" });
+
+        expect(debugSpy).toHaveBeenCalledWith("[Aligo] Sending sms to 01033334444");
     });
 
     it("uses the default sender phone when no override is configured", async () => {

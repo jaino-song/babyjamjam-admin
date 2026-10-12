@@ -7,7 +7,6 @@ import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { EMAIL_PORT, EmailPort } from "../../domain/ports/email.port";
 import { AUTH_TOKEN_REPOSITORY, IAuthTokenRepository } from "../../domain/repositories/auth-token.repository.interface";
-import { maskEmail } from "application/utils/mask";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 import { AuthSessionService } from "./auth-session.service";
@@ -1119,7 +1118,7 @@ export class AuthService {
             // User already has email account (with or without Kakao)
             // Don't reveal that the email exists - return generic success
             // But still send an email to notify the user
-            this.logger.log(`Registration attempt for existing email: ${maskEmail(email)}`);
+            this.logger.log(`Registration attempt for existing email: ${email}`);
             return {
                 success: true,
                 message: '인증 이메일이 발송되었습니다. 이메일을 확인해주세요.',
@@ -1215,7 +1214,7 @@ export class AuthService {
                 },
             });
         });
-        this.logger.log(`Verification email queued for ${maskEmail(email)}`);
+        this.logger.log(`Verification email queued for ${email}`);
     }
 
     /**
@@ -1363,10 +1362,10 @@ export class AuthService {
                     },
                 });
             });
-            this.logger.log(`Password reset email queued for ${maskEmail(email)}`);
+            this.logger.log(`Password reset email queued for ${email}`);
         } catch (error) {
             this.logger.error(
-                `Failed to send password reset email to ${maskEmail(email)}`,
+                `Failed to send password reset email to ${email}`,
                 error instanceof Error ? error.stack : String(error),
             );
         }
@@ -1486,7 +1485,7 @@ export class AuthService {
             await this.sendVerificationEmail(user.id, user.email!);
         } catch (error) {
             this.logger.error(
-                `Failed to resend verification email to ${maskEmail(email)}`,
+                `Failed to resend verification email to ${email}`,
                 error instanceof Error ? error.stack : String(error),
             );
         }
