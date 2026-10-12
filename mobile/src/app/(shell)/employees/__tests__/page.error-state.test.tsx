@@ -57,7 +57,7 @@ jest.mock("@/components/app/v3", () => ({
 
 jest.mock("@/components/app/mobile-redesign/primitives", () => ({
   Badge: ({ label }: { label: string }) => <span>{label}</span>,
-  ListCard: ({ children }: { children: ReactNode }) => <section>{children}</section>,
+  ListCard: ({ children, count }: { children: ReactNode; count?: ReactNode }) => <section><span data-testid="list-card-header-count">{count}</span>{children}</section>,
   ListCountSkeleton: () => <span>로딩 중</span>,
   ListItemRow: ({ name, onClick }: { name: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}>{name}</button>
@@ -267,5 +267,69 @@ describe("EmployeesPage work history query states", () => {
     expect(screen.getByText("근무 내역이 없습니다.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "제공인력 정보" }));
     expect(screen.getByText(/근무 지역:.*인천 남동구.*인천 연수구/)).toBeInTheDocument();
+  });
+});
+
+describe("EmployeesPage list load states", () => {
+  const refetch = jest.fn();
+  function setList(rows: Employee[], isError = false, isFetching = false, isLoading = false) {
+    mockedUseInfiniteEmployees.mockReturnValue({
+      allEmployees: rows, filteredEmployees: rows, isLoading, isError, isFetching, refetch,
+    } as unknown as ReturnType<typeof useInfiniteEmployees>);
+  }
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedUseDeleteEmployee.mockReturnValue({ mutateAsync: jest.fn(), isPending: false } as unknown as ReturnType<typeof useDeleteEmployee>);
+  });
+
+  it("retries a failed first load without claiming zero employees, then recovers", () => {
+    setList([], true);
+    const view = render(<EmployeesPage />);
+    expect(screen.getByRole("alert")).toHaveAttribute("data-size", "panel");
+    expect(screen.getByText("불러오지 못했습니다")).toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("list-card-header-count")).not.toHaveTextContent("0명");
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    setList([employee]);
+    view.rerender(<EmployeesPage />);
+    expect(screen.getByRole("button", { name: employee.name })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows empty text only for a successful empty load", () => {
+    setList([]);
+    render(<EmployeesPage />);
+    expect(screen.getByText("등록된 제공인력이 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("0명");
+  });
+
+  it("keeps cached rows with an inline retry notice above them", () => {
+    setList([employee], true);
+    render(<EmployeesPage />);
+    const alert = screen.getByRole("alert");
+    const row = screen.getByRole("button", { name: employee.name });
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("1명");
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables cached-data retry while fetching without hiding rows", () => {
+    setList([employee], true, true);
+    render(<EmployeesPage />);
+    expect(screen.getByRole("button", { name: employee.name })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+  });
+
+  it("keeps the existing loading state before the first result", () => {
+    setList([], false, true, true);
+    render(<EmployeesPage />);
+    expect(screen.getAllByText("로딩 중").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 제공인력이 없습니다.")).not.toBeInTheDocument();
   });
 });

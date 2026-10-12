@@ -4,6 +4,7 @@ import { User, Users, Workflow } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useClientDetailController } from "@/components/app/clients/client-detail-controller";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { Client } from "@/lib/client/types";
@@ -118,7 +119,7 @@ export default function ClientsPage() {
     };
   }, []);
 
-  const { allClients, allFilteredClients, total, isLoading, isFetching } = useInfiniteClients({
+  const { allClients, allFilteredClients, total, isLoading, isFetching, isError, refetch } = useInfiniteClients({
     filter: "all",
     search: searchQuery,
     filterFn: () => true,
@@ -304,7 +305,7 @@ export default function ClientsPage() {
                       data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_header_count-skeleton"
                     />
                   )
-                  : `${displayedClientCount}명`
+                  : isError && allClients.length === 0 ? null : `${displayedClientCount}명`
               }
               actionLabel="+ 추가"
               actionHref="/clients/new"
@@ -323,9 +324,25 @@ export default function ClientsPage() {
                 />
               }
             >
+              {isError && allClients.length > 0 && (
+                <QueryErrorState
+                  dataComponent="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_cached-error"
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
+                />
+              )}
               {isClientsFetching ? (
                 <ListRowsSkeleton
                   data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"
+                />
+              ) : isError && allClients.length === 0 ? (
+                <QueryErrorState
+                  dataComponent="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_error"
+                  size="panel"
+                  onRetry={() => void refetch()}
+                  isRetrying={isFetching}
                 />
               ) : visibleSections.length === 0 ? (
                 <div

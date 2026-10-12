@@ -380,7 +380,6 @@ export default function NewClientPage() {
     },
     enabled: Boolean(isEditMode && editingClient?.eDocId),
     staleTime: 1000 * 60,
-    retry: 1,
   });
 
   const phoneDigits = useMemo(() => store.phone.replace(/\D/g, ""), [store.phone]);
