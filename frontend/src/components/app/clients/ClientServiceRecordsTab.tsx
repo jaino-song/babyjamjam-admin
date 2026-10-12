@@ -1005,10 +1005,7 @@ function LinkStatusCard({
     const usesResendLayout = isResend || isSendingResend;
     // "scheduled" stays sendable on purpose: it is the manual "send now" path.
     // "sending" (an in-flight job) blocks the button so staff cannot double-send.
-    const expiryDate = new Date(`${assignment.endDate?.slice(0, 10)}T00:00:00.000Z`);
-    expiryDate.setUTCDate(expiryDate.getUTCDate() + 7);
-    const expiresAt = link.token?.expiresAt ?? (Number.isNaN(expiryDate.getTime())
-        ? null : `${expiryDate.toISOString().slice(0, 10)}T20:00:00+09:00`);
+    const expiresAt = link.token?.expiresAt ?? endDateExpiry(assignment.endDate);
 
     return (
         <InfoCard
@@ -1756,6 +1753,16 @@ function getExpectedSessionDate(
     calendar: KrBusinessDayCalendar,
 ): string | null {
     return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions, calendar);
+}
+
+// Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
+function endDateExpiry(endDate: string | null): string | null {
+    const datePart = datePartOf(endDate);
+    if (!datePart) return null;
+    const nextDate = new Date(`${datePart}T00:00:00.000Z`);
+    if (Number.isNaN(nextDate.getTime())) return null;
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    return `${nextDate.toISOString().slice(0, 10)}T00:00:00+09:00`;
 }
 
 function datePartOf(value: string | null): string | null {

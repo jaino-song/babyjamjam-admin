@@ -34,6 +34,7 @@ import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
@@ -167,6 +168,7 @@ export function serviceRecordScheduleBlockerSql(columns: {
                 OR ${columns.cancelReason} IS NULL
                 OR ${columns.cancelReason} NOT IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
                     ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
                 )

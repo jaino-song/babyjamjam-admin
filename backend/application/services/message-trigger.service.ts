@@ -64,7 +64,7 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
-import { SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
@@ -2869,9 +2869,13 @@ export class MessageTriggerService {
                     select: { endDate: true, replaced: true, terminatedAt: true },
                 })
                 : null;
-            if (!schedule || schedule.replaced || schedule.terminatedAt
-                || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()) {
+            if (!schedule || schedule.replaced || schedule.terminatedAt) {
                 job.cancel("Service record link schedule ended or replaced");
+                await this.persistTriggerJobStatus(job, "persist ended service record link job");
+                return;
+            }
+            if (getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()) {
+                job.cancel(SERVICE_RECORD_LINK_ENDED_REASON);
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
                 return;
             }

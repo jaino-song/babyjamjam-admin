@@ -8,6 +8,7 @@ import { serviceRecordScheduleBlockerSql } from "infrastructure/database/reposit
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -741,6 +742,7 @@ export class ServiceRecordLinkService {
                 AND "message_trigger_job"."canceled_by_user" = false
                 AND "message_trigger_job"."cancel_reason" IN (
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
+                    ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
                     ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
                 )
