@@ -82,6 +82,10 @@ import {
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import { isRevokeRequestedStatus } from "domain/constants/eformsign-doc-status.constants";
 import {
+    EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES,
+    isEformsignAutoLinkEligibleStatus,
+} from "domain/constants/eformsign-auto-link-status";
+import {
     COMPLETED_DOCUMENT_STATUS_TYPES,
     CREATED_DOCUMENT_STATUS_TYPES,
     hasCustomerSigned,
@@ -401,6 +405,7 @@ export class ClientService {
                     detailPayload: true,
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
+                    statusType: true,
                 },
             });
             const serviceRecordTemplateIds =
@@ -438,6 +443,9 @@ export class ClientService {
             matchingDocs = matchingDocs.filter((doc) => {
                 if (doc.clientId !== null && doc.clientId !== client.id) return false;
                 if (doc.clientId === client.id) return true;
+                // 계약-05: a document not yet linked to this client is linked only in an
+                // allowed status. Rows already linked to it are kept in any non-deleted one.
+                if (!isEformsignAutoLinkEligibleStatus(doc.statusType)) return false;
                 const detail = toEformsignDocumentDetail(doc.detailPayload);
                 const candidate = detail
                     ? extractEformsignContractClientCandidate(detail)
@@ -541,6 +549,7 @@ export class ClientService {
                         detailPayload: true,
                         detailSourceUpdatedDate: true,
                         detailSyncedAt: true,
+                        statusType: true,
                     },
                 });
                 const lockedCandidateById = new Map(
@@ -549,12 +558,19 @@ export class ClientService {
                 const initialCandidateById = new Map(
                     matchingDocs.map((candidate) => [candidate.id, candidate]),
                 );
+                const reassignIds = new Set(documentIdsToReassign);
                 const changedCandidate = documentIdsToLock.some((id) => {
                     const initial = initialCandidateById.get(id);
                     const locked = lockedCandidateById.get(id);
                     return !initial
                         || !locked
                         || (locked.clientId !== null && locked.clientId !== client.id)
+                        // Only a document about to be newly linked must be in an allowed
+                        // status; the pointer document may already be this client's.
+                        || (
+                            reassignIds.has(id)
+                            && !isEformsignAutoLinkEligibleStatus(locked.statusType)
+                        )
                         || !isMatchingContractPhoneCandidate(
                             locked,
                             normalizedPhone,
@@ -571,12 +587,41 @@ export class ClientService {
                     throw new Error("Contract document candidate changed while locking");
                 }
 
+                // The client row is locked, so its identity is stable now. The caller's
+                // entity was read before the lock: re-read the locked row and compare every
+                // document about to be newly linked against what is stored, not against the
+                // earlier snapshot.
+                if (documentIdsToReassign.length > 0) {
+                    const lockedClient = await transaction.client.findUnique({
+                        where: { id: client.id },
+                        select: { phone: true, name: true, birthday: true },
+                    });
+                    if (!lockedClient || normalizePhone(lockedClient.phone) !== normalizedPhone) {
+                        throw new Error("Contract document candidate changed while locking");
+                    }
+                    const now = new Date();
+                    for (const id of documentIdsToReassign) {
+                        const lockedDetail = toEformsignDocumentDetail(
+                            lockedCandidateById.get(id)?.detailPayload ?? null,
+                        );
+                        const lockedContract = lockedDetail
+                            ? extractEformsignContractClientCandidate(lockedDetail)
+                            : null;
+                        if (
+                            lockedDetail === null
+                            || compareEformsignClientIdentity(lockedContract, lockedClient, now).length > 0
+                        ) {
+                            throw new Error("Contract document candidate changed while locking");
+                        }
+                    }
+                }
+
                 if (documentIdsToReassign.length > 0) {
                     const reassigned = await transaction.eformsign_doc.updateMany({
                         where: {
                             id: { in: documentIdsToReassign },
                             permanentPurgeRequestedAt: null,
-                            statusType: { notIn: [...DELETED_DOCUMENT_STATUS_TYPES] },
+                            statusType: { in: [...EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES] },
                             syncStatus: "ready",
                             detailSourceUpdatedDate: { not: null },
                             detailSyncedAt: { not: null },

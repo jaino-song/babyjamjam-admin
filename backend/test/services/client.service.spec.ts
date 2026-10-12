@@ -258,6 +258,27 @@ describe("ClientService", () => {
         ],
     });
 
+    /** 계약-05: statuses a document may be in to be linked to a client automatically (spelled out on purpose). */
+    const ELIGIBLE_LINK_STATUSES = [
+        "002", "003", "010", "012", "020", "022", "030", "032", "041", "043",
+        "050", "060", "062", "063", "064", "070", "072", "092",
+        "040", "045", "071",
+    ];
+
+    /**
+     * The client row as the phone-link transaction re-reads it under the client lock
+     * (identity of the stored client, not of the caller's earlier snapshot).
+     */
+    const lockedClientRow = (
+        client: Pick<ClientEntity, "phone" | "name" | "birthday">,
+        overrides: Partial<{ phone: string | null; name: string | null; birthday: string | null }> = {},
+    ) => ({
+        phone: client.phone,
+        name: client.name,
+        birthday: client.birthday,
+        ...overrides,
+    });
+
     /** Public problem contract body carried by converted client pre-write throws. */
     const clientProblemResponse = (topCode: string, pointer: string, errorCode: string, detail: unknown) => ({
         code: topCode,
@@ -746,12 +767,14 @@ describe("ClientService", () => {
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
             prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 2 });
+            prismaService.client.findUnique.mockResolvedValue(lockedClientRow(mockClient));
             prismaService.eformsign_doc.findMany.mockResolvedValue([
                 {
                     id: 11,
                     documentId: "DOC-LATEST",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
@@ -760,6 +783,7 @@ describe("ClientService", () => {
                     documentId: "DOC-OLDER",
                     clientId: null,
                     branchId,
+                    statusType: "060",
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "연락처 +82 10 1234 5678",
                 },
@@ -832,13 +856,14 @@ describe("ClientService", () => {
                     detailPayload: true,
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
+                    statusType: true,
                 },
             });
             expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith({
                 where: {
                     id: { in: [11, 10] },
                     permanentPurgeRequestedAt: null,
-                    statusType: { notIn: ["047", "049", "099"] },
+                    statusType: { in: ELIGIBLE_LINK_STATUSES },
                     syncStatus: "ready",
                     detailSourceUpdatedDate: { not: null },
                     detailSyncedAt: { not: null },
@@ -883,12 +908,14 @@ describe("ClientService", () => {
                 const mockClient = createClientEntity();
                 createClientUsecase.execute.mockResolvedValue(mockClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 2 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(mockClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 11,
                         documentId: "DOC-LATEST",
                         clientId: null,
                         branchId: null,
+                        statusType: "060",
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
@@ -897,6 +924,7 @@ describe("ClientService", () => {
                         documentId: "DOC-OLDER",
                         clientId: null,
                         branchId,
+                        statusType: "060",
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "연락처 +82 10 1234 5678",
                     },
@@ -972,6 +1000,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId,
                     customerPhone: "01012345678",
+                    statusType: "060",
                     detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: new Date("2026-07-30T00:00:00Z"),
                     detailSyncedAt: new Date("2026-07-30T00:01:00Z"),
@@ -1181,6 +1210,7 @@ describe("ClientService", () => {
                     documentId: "DOC-PURGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
@@ -1220,6 +1250,7 @@ describe("ClientService", () => {
                     documentId: "DOC-RECIPIENT-CHANGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
@@ -1274,6 +1305,7 @@ describe("ClientService", () => {
                     documentId: "DOC-GENERATION-CHANGED",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
@@ -1329,6 +1361,7 @@ describe("ClientService", () => {
                     documentId: "SERVICE-RECORD-LEGACY",
                     clientId: null,
                     branchId: null,
+                    statusType: "060",
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: "service-record-template",
@@ -1631,11 +1664,13 @@ describe("ClientService", () => {
                 const existingClient = createClientEntity();
                 clientRepository.findByPhone.mockResolvedValue(existingClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(existingClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 9,
                         documentId: "DOC-0009",
                         clientId: null,
+                        statusType: "060",
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
@@ -1654,7 +1689,7 @@ describe("ClientService", () => {
                     where: {
                         id: { in: [9] },
                         permanentPurgeRequestedAt: null,
-                        statusType: { notIn: ["047", "049", "099"] },
+                        statusType: { in: ELIGIBLE_LINK_STATUSES },
                         syncStatus: "ready",
                         detailSourceUpdatedDate: { not: null },
                         detailSyncedAt: { not: null },
@@ -2698,13 +2733,20 @@ describe("ClientService", () => {
             });
 
             describe("ready contract identity on client save", () => {
-                const arrangeDocument = (clientId: number | null, detailPayload: unknown) => {
+                const arrangeDocument = (
+                    clientId: number | null,
+                    detailPayload: unknown,
+                    lockedClient: ReturnType<typeof lockedClientRow> = lockedClientRow(createClientEntity()),
+                    statusType = "060",
+                ) => {
+                    prismaService.client.findUnique.mockResolvedValue(lockedClient);
                     const doc = {
                         id: 12,
                         documentId: "DOC-IDENTITY",
                         clientId,
                         branchId,
                         customerPhone: "01012345678",
+                        statusType,
                         detailPayload,
                         detailSourceUpdatedDate: new Date("2026-09-01T00:00:00Z"),
                         detailSyncedAt: new Date("2026-09-01T00:01:00Z"),
@@ -2768,7 +2810,7 @@ describe("ClientService", () => {
                     const saved = createClientEntity();
                     saved.name = savedName;
                     findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
-                    arrangeDocument(null, matchingContractDetail());
+                    arrangeDocument(null, matchingContractDetail(), lockedClientRow(saved));
 
                     await expect(service.update(branchId, stale.id, { name: savedName })).resolves.toBe(saved);
 
@@ -2789,7 +2831,7 @@ describe("ClientService", () => {
                     const saved = createClientEntity();
                     saved.birthday = savedBirthday;
                     findClientByIdUsecase.execute.mockResolvedValueOnce(stale).mockResolvedValue(saved);
-                    arrangeDocument(null, matchingContractDetail());
+                    arrangeDocument(null, matchingContractDetail(), lockedClientRow(saved));
 
                     await expect(service.update(branchId, stale.id, { birthday: savedBirthday })).resolves.toBe(saved);
 
@@ -2798,18 +2840,145 @@ describe("ClientService", () => {
                         args.data.eDocId !== undefined)).toHaveLength(linked ? 1 : 0);
                     expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
                 });
+
+                describe("계약-05: only an allowed document status is linked", () => {
+                    it.each(["001", "011", "042", "080"])(
+                        "does not link an unlinked document in status %s even when the identity matches",
+                        async (statusType) => {
+                            const client = createClientEntity();
+                            findClientByIdUsecase.execute.mockResolvedValue(client);
+                            arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), statusType);
+
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.$transaction).not.toHaveBeenCalled();
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                        },
+                    );
+
+                    it.each(["060", "003", "040", "045", "071"])(
+                        "links an unlinked document in status %s",
+                        async (statusType) => {
+                            const client = createClientEntity();
+                            findClientByIdUsecase.execute.mockResolvedValue(client);
+                            arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), statusType);
+
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                            expect(client.eDocId).toBe("DOC-IDENTITY");
+                        },
+                    );
+
+                    it("keeps a document already linked to the client in status 080 as the pointer target", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(client.id, null, lockedClientRow(client), "080");
+
+                        await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                        // Nothing is reassigned (it is already this client's) and the locked
+                        // document SELECT carries no status condition that would make this throw.
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                            where: { id: client.id, branchId },
+                            data: { eDocId: "DOC-IDENTITY" },
+                        });
+                        const documentLock = prismaService.$queryRaw.mock.calls
+                            .map(([query]) => query as Prisma.Sql)
+                            .find((query) => query.sql.includes("eformsign_doc AS doc") && query.sql.includes("FOR UPDATE"))!;
+                        expect(documentLock).toBeDefined();
+                        expect(documentLock.sql).toContain("doc.status_type NOT IN ('047', '049', '099')");
+                        expect(documentLock.sql).not.toContain("'060'");
+                        expect(client.eDocId).toBe("DOC-IDENTITY");
+                    });
+
+                    it("writes nothing when the document is 080 in the locked re-read although eligible in the unlocked read", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const doc = arrangeDocument(null, matchingContractDetail(), lockedClientRow(client), "060");
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? []
+                                : where.id ? [{ ...doc, statusType: "080" }] : [doc]);
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                        try {
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(
+                                expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"),
+                            );
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+                });
+
+                describe("the locked client's identity is re-read under the lock", () => {
+                    it.each([
+                        ["birthday", { birthday: "1990-01-02" }],
+                        ["name", { name: "Other Client" }],
+                        ["phone", { phone: "010-9999-9999" }],
+                        ["missing row", null],
+                    ])("writes nothing when the locked client's %s differs from the caller's snapshot", async (_label, change) => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(
+                            null,
+                            matchingContractDetail(),
+                            change === null ? (null as never) : lockedClientRow(client, change),
+                        );
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+
+                        try {
+                            await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                            expect(prismaService.client.findUnique).toHaveBeenCalledWith({
+                                where: { id: client.id },
+                                select: { phone: true, name: true, birthday: true },
+                            });
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(
+                                expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"),
+                            );
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+
+                    it("links as before when the locked client still matches", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        arrangeDocument(null, matchingContractDetail(), lockedClientRow(client));
+
+                        await expect(service.update(branchId, client.id, {})).resolves.toBe(client);
+
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                        expect(client.eDocId).toBe("DOC-IDENTITY");
+                    });
+                });
             });
 
             it("links matching contracts by the effective phone after client information is updated", async () => {
                 const existingClient = createClientEntity();
                 findClientByIdUsecase.execute.mockResolvedValue(existingClient);
                 prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                prismaService.client.findUnique.mockResolvedValue(lockedClientRow(existingClient));
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
                     {
                         id: 12,
                         documentId: "DOC-AFTER-UPDATE",
                         clientId: null,
                         branchId: null,
+                        statusType: "060",
                         stepRecipientSms: "제공기관 010 9999 9999",
                         customerPhone: "01012345678",
                         detailPayload: matchingContractDetail(),
@@ -2854,7 +3023,7 @@ describe("ClientService", () => {
                     where: {
                         id: { in: [12] },
                         permanentPurgeRequestedAt: null,
-                        statusType: { notIn: ["047", "049", "099"] },
+                        statusType: { in: ELIGIBLE_LINK_STATUSES },
                         syncStatus: "ready",
                         detailSourceUpdatedDate: { not: null },
                         detailSyncedAt: { not: null },

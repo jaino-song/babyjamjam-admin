@@ -68,7 +68,9 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
         const statements = [
             `DROP TABLE IF EXISTS receipt_link_token, service_record_revision_document_state, service_record_revision,
                 service_record_case, eformsign_doc_file, eformsign_doc, client CASCADE`,
-            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, e_doc_id text UNIQUE, updated_at timestamptz)`,
+            // phone/name/birthday: the phone link re-reads the locked client's identity.
+            `CREATE TABLE client (id int PRIMARY KEY, branch_id uuid, e_doc_id text UNIQUE, updated_at timestamptz,
+                phone text, phone_normalized text, name text, birthday varchar(10))`,
             `CREATE TABLE eformsign_doc (
                 id int PRIMARY KEY, document_id text UNIQUE, client_id int REFERENCES client(id) ON DELETE SET NULL,
                 branch_id uuid, document_kind text, service_record_case_id uuid, revision_id uuid, template_id text,
@@ -617,8 +619,9 @@ describeWithDatabase("receipt revision lock order (real PostgreSQL)", () => {
             await db.$executeRawUnsafe(
                 "TRUNCATE receipt_link_token, service_record_revision_document_state, service_record_revision, service_record_case, eformsign_doc_file, eformsign_doc, client CASCADE",
             );
-            await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at)
-                VALUES (${OTHER}, ${BRANCH}::uuid, NULL, now()), (${TARGET}, ${BRANCH}::uuid, NULL, now())`);
+            await db.$executeRaw(Prisma.sql`INSERT INTO client (id, branch_id, e_doc_id, updated_at, phone, phone_normalized, name, birthday)
+                VALUES (${OTHER}, ${BRANCH}::uuid, NULL, now(), '010-9999-9999', '01099999999', 'Other Client', '1985-05-05'),
+                       (${TARGET}, ${BRANCH}::uuid, NULL, now(), '010-1234-5678', ${PHONE}, 'Phone Client', '1990-01-01')`);
         });
 
         const targetEntity = () => new ClientEntity(
