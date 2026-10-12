@@ -106,7 +106,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             formFields: NOTIFICATION_FIELDS,
             inspect: async (context, rawInput) => {
                 const input = TestSchema.parse(rawInput);
-                const target = await this.resolveNotificationTarget(context.principal.branchId, input.userId);
+                const target = await this.resolveNotificationTarget(context.principal.branchId, input.userId, context.principal.globalRole);
                 if (!target) throw new Error("Notification target is outside the current branch");
                 const targetVersion = this.targetVersionFromTarget(context.principal.branchId, input.userId, target);
                 const targetSnapshot = this.targetSnapshot(input.userId, target);
@@ -173,7 +173,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             },
             revalidate: async (context, rawInput, expectedTargetVersion) => {
                 const input = TestSchema.parse(rawInput);
-                const currentVersion = await this.notificationTargetVersion(context.principal.branchId, input.userId);
+                const currentVersion = await this.notificationTargetVersion(context.principal.branchId, input.userId, context.principal.globalRole);
                 return {
                     valid: currentVersion === expectedTargetVersion,
                     ...(currentVersion ? { currentVersion } : {}),
@@ -211,12 +211,16 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             : { status: "uncertain", notificationId, subscriptions: 0, delivered: 0, failed: 0 };
     }
 
-    private async notificationTargetVersion(branchId: string, userId: string): Promise<string | null> {
-        const target = await this.resolveNotificationTarget(branchId, userId);
+    private async notificationTargetVersion(branchId: string, userId: string, callerRole: string | undefined): Promise<string | null> {
+        const target = await this.resolveNotificationTarget(branchId, userId, callerRole);
         return target ? this.targetVersionFromTarget(branchId, userId, target) : null;
     }
 
-    private async resolveNotificationTarget(branchId: string, userId: string): Promise<NotificationTarget | null> {
+    private async resolveNotificationTarget(
+        branchId: string,
+        userId: string,
+        callerRole: string | undefined,
+    ): Promise<NotificationTarget | null> {
         const [membership, branch, approvedUser] = await Promise.all([
             this.prisma.user_branch.findFirst({
                 where: { userId, branchId },
@@ -240,6 +244,9 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             this.userRepository.findApprovedByIdInBranch(userId, branchId),
         ]);
         if (!approvedUser) return null;
+        // An owner account is invisible to anyone who is not an owner (business rule
+        // 권한-02a): it resolves to not-found, exactly like a non-member target.
+        if (approvedUser.role === "owner" && callerRole !== "owner") return null;
         if (membership?.user) {
             return {
                 membershipId: membership.id,
@@ -327,7 +334,10 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
             // rejected/pending non-owner exactly like a vanished target below
             // rather than as a separate failure path.
             const isApproved = approvalUser != null && (approvalUser.approvalStatus === "approved" || approvalUser.role === "owner");
-            const target = !isApproved
+            // Same owner-invisibility rule as resolveNotificationTarget, re-checked against the
+            // locked row so an account promoted to owner after inspect cannot slip through.
+            const hiddenOwner = approvalUser?.role === "owner" && context.principal.globalRole !== "owner";
+            const target = !isApproved || hiddenOwner
                 ? null
                 : membership?.user
                 ? {

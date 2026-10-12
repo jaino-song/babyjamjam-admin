@@ -467,7 +467,15 @@ export class UserService {
         );
     }
 
-    async findDirectory(params?: { branchId?: string, status?: string, includeUnassigned?: boolean }): Promise<UserDirectoryItem[]> {
+    async findDirectory(params?: {
+        branchId?: string,
+        status?: string,
+        includeUnassigned?: boolean,
+        // The authenticated caller's current global role. Owner accounts (global role
+        // "owner") are invisible to every caller who is not an owner; a missing role is
+        // treated as a non-owner so a forgotten argument fails closed.
+        callerRole?: string,
+    }): Promise<UserDirectoryItem[]> {
         const where: Prisma.userWhereInput = {};
 
         if (params?.branchId) {
@@ -485,6 +493,14 @@ export class UserService {
 
         if (params?.status) {
             where.approvalStatus = params.status;
+        }
+
+        if (params?.callerRole !== "owner") {
+            // `role` is nullable, and a bare `not: "owner"` would also drop role-less users
+            // (SQL NULL), so the null case is spelled out. This covers owners reached through
+            // ownedBranches and owners who are plain members alike: both are users whose
+            // global role is "owner".
+            where.AND = [{ OR: [{ role: null }, { role: { not: "owner" } }] }];
         }
 
         const users = await this.prismaService.user.findMany({

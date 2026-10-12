@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { UserService } from "../../application/services/user.service";
 import {
     CreateUserUsecase,
@@ -101,8 +101,8 @@ describe("UserService", () => {
             expect(prismaService.auth_session.updateMany.mock.invocationCallOrder[0])
                 .toBeGreaterThan(prismaService.user_branch.deleteMany.mock.invocationCallOrder[0] ?? Infinity);
         });
-        it("should query without a where clause when no filters are provided", async () => {
-            await service.findDirectory();
+        it("should query without a where clause when no filters are provided (owner caller)", async () => {
+            await service.findDirectory({ callerRole: "owner" });
 
             expect(prismaService.user.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({ where: undefined }),
@@ -110,7 +110,7 @@ describe("UserService", () => {
         });
 
         it("should filter by approvalStatus when status is provided", async () => {
-            await service.findDirectory({ status: "pending" });
+            await service.findDirectory({ status: "pending", callerRole: "owner" });
 
             expect(prismaService.user.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -133,7 +133,7 @@ describe("UserService", () => {
         });
 
         it("should widen the branch filter to also match branch-less users when includeUnassigned is set (owner path)", async () => {
-            await service.findDirectory({ branchId: "branch-1", includeUnassigned: true });
+            await service.findDirectory({ branchId: "branch-1", includeUnassigned: true, callerRole: "owner" });
 
             expect(prismaService.user.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -164,7 +164,7 @@ describe("UserService", () => {
         });
 
         it("should apply no branch filter at all when includeUnassigned is set without a branchId (owner with no branch selected)", async () => {
-            await service.findDirectory({ includeUnassigned: true });
+            await service.findDirectory({ includeUnassigned: true, callerRole: "owner" });
 
             expect(prismaService.user.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({ where: undefined }),
@@ -172,7 +172,7 @@ describe("UserService", () => {
         });
 
         it("should keep applying the status filter alongside the widened owner branch filter", async () => {
-            await service.findDirectory({ branchId: "branch-1", status: "pending", includeUnassigned: true });
+            await service.findDirectory({ branchId: "branch-1", status: "pending", includeUnassigned: true, callerRole: "owner" });
 
             expect(prismaService.user.findMany).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -186,6 +186,72 @@ describe("UserService", () => {
                     }),
                 }),
             );
+        });
+
+        describe("owner accounts are invisible to non-owner callers (권한-02a, BJJ-436)", () => {
+            const ownerWhereGuard = { OR: [{ role: null }, { role: { not: "owner" } }] };
+            const ownerRow = {
+                id: "owner-user-id", email: "owner@example.com", name: "대표", phone: null, birthDate: null,
+                profileImage: null, role: "owner", createdAt: new Date("2026-01-01"), emailVerified: true,
+                authProvider: "email", approvalStatus: "approved", requestedRole: null,
+                userBranches: [{ role: "admin", branch: { id: "branch-1", name: "본점" } }],
+            };
+
+            it.each(["admin", "manager", "user"])("excludes global-role owners from the query for a %s caller (branch-scoped)", async (callerRole) => {
+                await service.findDirectory({ branchId: "branch-1", callerRole });
+
+                const where = prismaService.user.findMany.mock.calls[0][0].where;
+                // Branch scope is untouched: owners attached via ownedBranches AND owners that
+                // are plain members are both removed by the same global-role predicate.
+                expect(where.OR).toEqual([
+                    { userBranches: { some: { branchId: "branch-1" } } },
+                    { ownedBranches: { some: { id: "branch-1" } } },
+                ]);
+                expect(where.AND).toEqual([ownerWhereGuard]);
+            });
+
+            it("keeps role-less (null) users in scope instead of dropping them with the SQL NULL trap", async () => {
+                await service.findDirectory({ branchId: "branch-1", callerRole: "admin" });
+
+                const guard = prismaService.user.findMany.mock.calls[0][0].where.AND[0];
+                expect(guard.OR).toContainEqual({ role: null });
+            });
+
+            it("applies the owner exclusion together with the status filter", async () => {
+                await service.findDirectory({ branchId: "branch-1", status: "approved", callerRole: "admin" });
+
+                expect(prismaService.user.findMany).toHaveBeenCalledWith(
+                    expect.objectContaining({
+                        where: expect.objectContaining({ approvalStatus: "approved", AND: [ownerWhereGuard] }),
+                    }),
+                );
+            });
+
+            it("fails closed: a missing caller role is treated as a non-owner", async () => {
+                await service.findDirectory({ branchId: "branch-1" });
+                await service.findDirectory();
+
+                for (const call of prismaService.user.findMany.mock.calls) {
+                    expect(call[0].where.AND).toEqual([ownerWhereGuard]);
+                }
+            });
+
+            it("leaves the owner caller's query unfiltered (owners still list owners)", async () => {
+                await service.findDirectory({ branchId: "branch-1", includeUnassigned: true, callerRole: "owner" });
+
+                const where = prismaService.user.findMany.mock.calls[0][0].where;
+                expect(where).not.toHaveProperty("AND");
+                expect(where.OR).toHaveLength(3);
+            });
+
+            it("returns owner rows to an owner caller unchanged", async () => {
+                prismaService.user.findMany.mockResolvedValue([ownerRow]);
+
+                const result = await service.findDirectory({ branchId: "branch-1", callerRole: "owner" });
+
+                expect(result).toHaveLength(1);
+                expect(result[0]).toMatchObject({ id: "owner-user-id", role: "owner" });
+            });
         });
 
         it("should include approvalStatus and requestedRole in the mapped result", async () => {
@@ -278,7 +344,7 @@ describe("UserService", () => {
                 },
             ]);
 
-            const result = await service.findDirectory();
+            const result = await service.findDirectory({ callerRole: "owner" });
 
             expect(result).toEqual([
                 expect.objectContaining({
@@ -1827,6 +1893,52 @@ describe("UserService", () => {
 
             expect(prismaService.user.findUnique).not.toHaveBeenCalled();
             expect(updateUserUsecase.execute).not.toHaveBeenCalled();
+        });
+    });
+    // ============================================
+    // update (branch membership) -- owner invisibility
+    // ============================================
+    describe("update (branch membership, owner target) -- 권한-02a / BJJ-436", () => {
+        const ownerTarget = { id: "owner-1", role: "owner", name: "대표" };
+        let membershipUpdateMany: jest.Mock;
+
+        beforeEach(() => {
+            membershipUpdateMany = jest.fn();
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "someone-else" });
+            prismaService.user.findUnique.mockResolvedValue(ownerTarget);
+            Object.assign(prismaService.user_branch, { updateMany: membershipUpdateMany });
+        });
+
+        it.each(["admin", "manager", undefined])("answers not-found for an owner target when the caller is %s, and writes nothing", async (callerRole) => {
+            await expect(
+                service.update("owner-1", { branchId: "branch-1", branchRole: "admin", callerRole }),
+            ).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(membershipUpdateMany).not.toHaveBeenCalled();
+        });
+
+        it("lets an owner caller update an owner target's branch membership with the permitted admin role", async () => {
+            const membershipFindUnique = jest.fn().mockResolvedValue({ userId: "owner-1", branchId: "branch-1", role: "admin" });
+            Object.assign(prismaService.user_branch, { findUnique: membershipFindUnique });
+            membershipUpdateMany.mockResolvedValue({ count: 1 });
+
+            const result = await service.update("owner-1", { branchId: "branch-1", branchRole: "admin", callerRole: "owner" });
+
+            expect(membershipFindUnique).toHaveBeenCalledWith({
+                where: { userId_branchId: { userId: "owner-1", branchId: "branch-1" } },
+            });
+            expect(membershipUpdateMany).toHaveBeenCalledTimes(1);
+            expect(membershipUpdateMany).toHaveBeenCalledWith({
+                where: { userId: "owner-1", branchId: "branch-1" },
+                data: { role: "admin" },
+            });
+            expect(result).toMatchObject({ id: "owner-1", role: "owner", name: "대표" });
+        });
+
+        it("does not hide the owner target from an owner caller (reaches the owner-role guard instead)", async () => {
+            await expect(
+                service.update("owner-1", { branchId: "branch-1", branchRole: "manager", callerRole: "owner" }),
+            ).rejects.toBeInstanceOf(ConflictException);
         });
     });
 });
