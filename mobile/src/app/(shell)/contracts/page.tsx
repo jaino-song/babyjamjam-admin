@@ -147,6 +147,7 @@ import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   beginContractOperation,
   cancelContractOperation,
@@ -2448,13 +2449,22 @@ export default function ContractsPage() {
 
   const {
     data: serviceRecordTemplateData,
-    isError: isServiceRecordTemplateError,
+    isError: isServiceRecordTemplateQueryError,
+    isFetching: isServiceRecordTemplateFetching,
+    errorUpdateCount: serviceRecordTemplateErrorCount,
+    refetch: refetchServiceRecordTemplate,
   } = useQuery({
     queryKey: ["eformsign-docs", "service-record-template-id"],
     queryFn: eformsignApi.getServiceRecordTemplateId,
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
+  // react-query는 데이터가 없는 쿼리를 재조회하면 isError를 즉시 false(pending)로 되돌린다.
+  // 재시도 중에도 실패 표시와 비활성 재시도 버튼이 유지되도록, 이미 실패한 적이 있는 조회가
+  // 다시 진행 중인 동안은 실패로 본다.
+  const isServiceRecordTemplateError =
+    isServiceRecordTemplateQueryError
+    || (isServiceRecordTemplateFetching && serviceRecordTemplateErrorCount > 0);
 
   // 제공기록지 template id는 문서 분류(제공기록지 배지·완료 플로우)와 미설정 설치에서의
   // 제공기록지 섹션 비활성 판단에 쓴다. 목록 필터 자체는 section 파라미터로 서버가
@@ -2485,12 +2495,15 @@ export default function ContractsPage() {
     : null;
 
   const {
+    data: documentsData,
     documents: paginatedDocuments,
     totalRows,
     branchId,
     isLoading: isDocumentsLoading,
     isSuccess: isDocumentsSuccess,
     isError: isDocumentsError,
+    isRefetching: isDocumentsRefetching,
+    refetch: refetchDocuments,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
@@ -2508,6 +2521,8 @@ export default function ContractsPage() {
     data: statusCountsData,
     isSuccess: isStatusCountsSuccess,
     isError: isStatusCountsError,
+    isRefetching: isStatusCountsRefetching,
+    refetch: refetchStatusCounts,
   } = useQuery({
     // "eformsign-documents" 아래에 중첩 — 문서 변이가 광역 prefix 무효화만 해도
     // (삭제 훅, 생성 플로우, 지점 전환 removeQueries) 카운터가 함께 갱신된다.
@@ -2528,22 +2543,54 @@ export default function ContractsPage() {
     staleTime: 1000 * 60 * 5,
   });
 
-  const isContractsLoading =
-    isAuthLoading ||
-    (isAuthenticated && !isServiceRecordTemplateResolved) ||
-    (
-      isAuthenticated
-      && sectionFilterReady
-      && (
-        isDocumentsLoading
-        || (!isDocumentsSuccess && !isDocumentsError)
-        || (
-          Boolean(branchId)
-          && !isStatusCountsSuccess
-          && !isStatusCountsError
-        )
+  // 이전에 성공한 목록 데이터가 남아 있으면 템플릿 조회가 끝나지 않았거나 실패해도 행을 지우지 않는다.
+  const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
+  const isSectionQueryPending =
+    isAuthenticated
+    && sectionFilterReady
+    && (
+      isDocumentsLoading
+      || (!isDocumentsSuccess && !isDocumentsError)
+      || (
+        Boolean(branchId)
+        && !isStatusCountsSuccess
+        && !isStatusCountsError
       )
     );
+  const isContractsLoading =
+    isAuthLoading ||
+    (isAuthenticated && !isServiceRecordTemplateResolved && !hasListData) ||
+    isSectionQueryPending;
+  // 건수 알약의 로딩 표시는 캐시된 행 유무와 무관하다. 행이 남아 있어도 건수는 아직 모르므로
+  // 템플릿 조회가 끝나기 전에는 "0"이 아니라 스켈레톤을 보여준다(규칙 S5).
+  const isStatusCountsPending =
+    isAuthLoading ||
+    (isAuthenticated && !isServiceRecordTemplateResolved) ||
+    isSectionQueryPending;
+  // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
+  // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지·템플릿 조회)는 행을
+  // 그대로 두고 목록 위에 안내만 얹는다.
+  const isTemplateIdLoadFailed =
+    activeSection === "service-records"
+    && isServiceRecordTemplateError
+    && serviceRecordTemplateData === undefined;
+  const isListLoadFailed =
+    activeSection !== "automations"
+    && !hasListData
+    && (isTemplateIdLoadFailed || isDocumentsError);
+  const isListStale =
+    activeSection !== "automations"
+    && hasListData
+    && (isTemplateIdLoadFailed || isDocumentsError);
+  const isListStaleRetrying =
+    (isTemplateIdLoadFailed && isServiceRecordTemplateFetching)
+    || (isDocumentsError && (isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching));
+  const retryStaleList = () => {
+    if (isTemplateIdLoadFailed) void refetchServiceRecordTemplate();
+    if (isDocumentsError) void (isLoadMoreError ? fetchNextPage() : refetchDocuments());
+  };
+  const isStatusCountsUnavailable = isStatusCountsError && statusCountsData === undefined;
+  const isStatusCountsStale = isStatusCountsError && statusCountsData !== undefined;
   const { data: documentClientSummaries = [] } = useQuery({
     queryKey: ["eformsign-doc-client-names"],
     queryFn: eformsignApi.getDocumentClientNames,
@@ -2704,14 +2751,26 @@ export default function ContractsPage() {
   const filteredDocuments = displayDocuments;
 
   const filterItems = useMemo(() => {
-    if (isContractsLoading && !isStatusCountsSuccess && !isStatusCountsError) {
+    if (isStatusCountsPending && !isStatusCountsSuccess && !isStatusCountsError) {
       return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
     }
 
     // 목록과 동일한 선(先)필터가 적용된 신호를 문서와 같은 규칙으로 접는다.
+    // 건수 조회가 실패했고 보여줄 이전 값이 없으면 "0"이 아니라 알 수 없는 값으로 표시한다.
+    if (isStatusCountsUnavailable) {
+      return FILTER_LABELS.map((label) => ({ label, count: "—" }));
+    }
+
     const counts = countSignalsByFilter(statusCountsData?.documents ?? [], calendar);
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
+  }, [
+    calendar,
+    isStatusCountsPending,
+    isStatusCountsError,
+    isStatusCountsSuccess,
+    isStatusCountsUnavailable,
+    statusCountsData,
+  ]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -2780,6 +2839,8 @@ export default function ContractsPage() {
   const activeSectionLabel = activeSection === "maternal-contracts" ? "산모 계약서" : activeSection === "service-records" ? "제공기록지" : "자동화";
   const listCount = activeSection === "automations" ? undefined : isContractsLoading ? (
     <span className="contracts-count-placeholder skeleton-base" aria-label="계약서 불러오는 중" />
+  ) : isListLoadFailed ? (
+    "—"
   ) : (
     `${totalDocs}건`
   );
@@ -2834,6 +2895,30 @@ export default function ContractsPage() {
             }
             onLoadMore={loadMore}
             isLoadingMore={isFetchingNextPage}
+            beforeScroll={activeSection === "automations" ? undefined : (
+              <>
+                {isStatusCountsUnavailable || isStatusCountsStale ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_counts-error"
+                    size="inline"
+                    title={isStatusCountsUnavailable
+                      ? "상태별 건수 정보를 불러오지 못했습니다"
+                      : "최신 건수 정보를 불러오지 못했습니다"}
+                    isRetrying={isStatusCountsRefetching}
+                    onRetry={() => void refetchStatusCounts()}
+                  />
+                ) : null}
+                {isListStale ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_stale-error"
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    isRetrying={isListStaleRetrying}
+                    onRetry={retryStaleList}
+                  />
+                ) : null}
+              </>
+            )}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"
@@ -2851,6 +2936,14 @@ export default function ContractsPage() {
               />
             ) : isContractsLoading ? (
               <ContractListLoadingRows />
+            ) : isListLoadFailed ? (
+              <QueryErrorState
+                dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error"
+                size="panel"
+                title={`${activeSectionLabel} 정보를 불러오지 못했습니다`}
+                isRetrying={isTemplateIdLoadFailed ? isServiceRecordTemplateFetching : isDocumentsRefetching}
+                onRetry={() => void (isTemplateIdLoadFailed ? refetchServiceRecordTemplate() : refetchDocuments())}
+              />
             ) : visibleSections.length === 0 ? (
               <div
                 style={{
