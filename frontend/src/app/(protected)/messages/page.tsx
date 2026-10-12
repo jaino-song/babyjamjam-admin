@@ -1826,24 +1826,36 @@ export default function MessagesPage() {
       ) : null}
     </>
   ) : undefined;
-  const systemTemplateDetailFailureState = (
-    <QueryErrorState
-      dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_detail-load-error"
-      size="panel"
-      title="선택한 템플릿 정보를 불러오지 못했습니다"
-      onRetry={() => void refetchSystemTemplateDetail()}
-      isRetrying={isFetchingSystemTemplateDetail}
-    />
-  );
-  const systemTemplateDetailStaleNotice = (
-    <QueryErrorState
-      dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_detail-load-error"
-      size="inline"
-      title="최신 정보를 불러오지 못했습니다"
-      onRetry={() => void refetchSystemTemplateDetail()}
-      isRetrying={isFetchingSystemTemplateDetail}
-    />
-  );
+  // One notice for a failed built-in template detail load, rendered above the
+  // tab panels (not inside either panel) so it is visible on 상세 and 미리보기
+  // alike, with or without a registered send form. It is a non-shrinking
+  // sibling of DetailTabPanels in the detail panel's flex column, so the panels
+  // keep their `flex-1 min-h-0` share of the remaining height.
+  //
+  // The title says whether the visible tab still has content to show. Every
+  // catalog row carries a list-item fallback, so that fallback alone can feed
+  // the read-only card and the preview; but the templates editor and a
+  // registered send form need the real detail, and without it the 상세정보 tab
+  // is empty — there the failure title (not "stale") is the truthful one.
+  const systemTemplateDetailTabNeedsDetail =
+    templateDetailTab === "details" && (activeSection === "templates" || Boolean(SelectedBuiltinForm));
+  const systemTemplateDetailLoadNotice =
+    isBuiltin && isSystemTemplateDetailError ? (
+      <QueryErrorState
+        dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_detail-load-error"
+        size="inline"
+        className="shrink-0"
+        title={
+          (systemTemplateDetailTabNeedsDetail
+            ? selectedSystemTemplateDetail
+            : selectedSystemTemplatePreview)
+            ? "최신 정보를 불러오지 못했습니다"
+            : "선택한 템플릿 정보를 불러오지 못했습니다"
+        }
+        onRetry={() => void refetchSystemTemplateDetail()}
+        isRetrying={isFetchingSystemTemplateDetail}
+      />
+    ) : null;
   const selectedTemplateFormContent = (
     <>
       {activeSection === "send" && SelectedBuiltinForm ? (
@@ -1870,46 +1882,32 @@ export default function MessagesPage() {
         />
       ) : null}
 
-      {isBuiltin && activeSection === "templates" ? (
-        selectedSystemTemplateDetail ? (
-          <>
-            {isSystemTemplateDetailError ? systemTemplateDetailStaleNotice : null}
-            <SystemTemplateEditor
-              ref={systemTemplateEditorRef}
-              key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
-              // Registry keys can be added server-side before the shared package
-              // union is updated; the editor consumes the same wire shape.
-              template={selectedSystemTemplateDetail as SystemTemplate}
-              scope="branch"
-              branchId={activeBranchId}
-              dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
-              showSaveButton={false}
-              onPendingChange={setIsSystemTemplateSaving}
-              onDraftChange={setSystemTemplateDraft}
-              onPreviewMessageChange={handleTemplatePreviewMessageChange}
-            />
-          </>
-        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-          systemTemplateDetailFailureState
-        ) : null
-        ) : null}
+      {isBuiltin && activeSection === "templates" && selectedSystemTemplateDetail ? (
+        <SystemTemplateEditor
+          ref={systemTemplateEditorRef}
+          key={`${activeBranchId ?? "unavailable"}:${selectedSystemTemplateDetail.templateKey}`}
+          // Registry keys can be added server-side before the shared package
+          // union is updated; the editor consumes the same wire shape.
+          template={selectedSystemTemplateDetail as SystemTemplate}
+          scope="branch"
+          branchId={activeBranchId}
+          dataComponent="desktop_messages_sections_templates_split-layout_detail-panel_editor"
+          showSaveButton={false}
+          onPendingChange={setIsSystemTemplateSaving}
+          onDraftChange={setSystemTemplateDraft}
+          onPreviewMessageChange={handleTemplatePreviewMessageChange}
+        />
+      ) : null}
 
-      {isBuiltin && activeSection === "send" && !SelectedBuiltinForm ? (
-        selectedSystemTemplatePreview ? (
-          <>
-            {isSystemTemplateDetailError ? systemTemplateDetailStaleNotice : null}
-            <AppContentCard
-              data-component="desktop_messages_sections_template-detail-readonly-content"
-              title="템플릿 내용"
-              description="선택한 템플릿의 내용을 확인하세요."
-              contentClassName="min-h-0"
-            >
-              <MsgField label="템플릿 내용" value={templatePreviewMessage} />
-            </AppContentCard>
-          </>
-        ) : isLoadingSystemTemplateDetail ? null : isSystemTemplateDetailError ? (
-          systemTemplateDetailFailureState
-        ) : null
+      {isBuiltin && activeSection === "send" && !SelectedBuiltinForm && selectedSystemTemplatePreview ? (
+        <AppContentCard
+          data-component="desktop_messages_sections_template-detail-readonly-content"
+          title="템플릿 내용"
+          description="선택한 템플릿의 내용을 확인하세요."
+          contentClassName="min-h-0"
+        >
+          <MsgField label="템플릿 내용" value={templatePreviewMessage} />
+        </AppContentCard>
       ) : null}
 
       {!isBuiltin && !selectedUserTemplate ? (
@@ -2155,6 +2153,8 @@ export default function MessagesPage() {
                       message="왼쪽 목록에서 템플릿을 선택해 주세요."
                     />
                   ) : (
+                    <>
+                    {systemTemplateDetailLoadNotice}
                     <DetailTabPanels
                       activeTab={templateDetailTab}
                       dataComponent="desktop_messages_sections_template-detail-tabpanes"
@@ -2230,6 +2230,7 @@ export default function MessagesPage() {
                         },
                       ]}
                     />
+                    </>
                   )}
                 </DetailPanel>
               </SplitLayout>

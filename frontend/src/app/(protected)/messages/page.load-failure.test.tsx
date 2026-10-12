@@ -259,10 +259,15 @@ function systemTemplatesState({ data, isError = false, isFetching = false }: Que
   });
 }
 
-function systemTemplateDetailState({ data, isError = false, isFetching = false }: QueryState = {}) {
+function systemTemplateDetailState({
+  data,
+  isLoading = false,
+  isError = false,
+  isFetching = false,
+}: QueryState = {}) {
   mockUseSystemTemplate.mockReturnValue({
     data,
-    isLoading: false,
+    isLoading,
     isError,
     isFetching,
     refetch: mockRefetchSystemTemplate,
@@ -521,6 +526,21 @@ describe("messages page 템플릿 — template list load failure", () => {
     expect(mockRefetchUserTemplates).toHaveBeenCalledTimes(1);
   });
 
+  it("disables the branch-template notice's retry while the refetch is in flight", () => {
+    userTemplatesState({
+      data: [{ id: "tpl-1", name: "내 지점 템플릿", variables: [] }],
+      isError: true,
+      isFetching: true,
+    });
+
+    render(<MessagesPage />);
+    openBranchTemplates();
+
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(getRetryButton(alerts[0])).toBeDisabled();
+  });
+
   it("does not show the branch-template failure on the built-in tab", () => {
     userTemplatesState({ isError: true });
     systemTemplatesState({ data: [buildSystemTemplate()] });
@@ -648,5 +668,237 @@ describe("messages page 템플릿 — selected built-in template detail load fai
     fireEvent.click(screen.getByText("새 서버 템플릿"));
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("messages page 템플릿 — built-in detail failure notice is visible on every tab", () => {
+  const DETAIL_FAILED = "선택한 템플릿 정보를 불러오지 못했습니다";
+  const STALE = "최신 정보를 불러오지 못했습니다";
+  // INFO has a registered send form (InfoMessageForm); FUTURE_TEMPLATE has none.
+  const infoTemplate = buildSystemTemplate({ templateKey: "INFO", name: "안내 템플릿" });
+  const futureTemplate = buildSystemTemplate();
+
+  // Every role="alert" in the document, including any inside the inactive,
+  // aria-hidden / inert tab panel that getAllByRole skips.
+  function allAlertsInDocument() {
+    return Array.from(document.querySelectorAll('[role="alert"]'));
+  }
+
+  function openSend(label: string) {
+    fireEvent.click(screen.getByText(label));
+  }
+
+  function openTemplates(label: string) {
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    fireEvent.click(screen.getByText(label));
+  }
+
+  function goToPreview() {
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+  }
+
+  // INFO does not ask for a recipient name, so its only recipient input is the
+  // phone autocomplete; the form root and that input must stay mounted.
+  function expectRecipientInputsRendered() {
+    expect(
+      document.querySelector('[data-component="desktop_messages_sections_template-send-form"]'),
+    ).toBeInTheDocument();
+    expect(
+      document.querySelector(
+        '[data-component="desktop_messages_sections_template-send-form_phone-autocomplete_input"]',
+      ),
+    ).toBeInTheDocument();
+  }
+
+  describe("send section with a registered form", () => {
+    it("shows one retryable failure and keeps the recipient inputs when the detail failed with no data", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+      expectRecipientInputsRendered();
+
+      fireEvent.click(getRetryButton(alerts[0]));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the content and shows one inline notice, retry disabled while fetching, with a cached detail", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ data: infoTemplate, isError: true, isFetching: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(within(alerts[0]).queryByText(DETAIL_FAILED)).not.toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+      expect(getRetryButton(alerts[0])).toBeDisabled();
+      expectRecipientInputsRendered();
+    });
+
+    it("retries the detail from the cached-detail notice once the refetch is idle", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ data: infoTemplate, isError: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+
+      fireEvent.click(getRetryButton(screen.getByRole("alert")));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it("still shows exactly one working alert after switching to 미리보기", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+
+      fireEvent.click(getRetryButton(alerts[0]));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows no alert on either tab when the detail loaded", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ data: infoTemplate });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+      expect(allAlertsInDocument()).toHaveLength(0);
+
+      goToPreview();
+      expect(allAlertsInDocument()).toHaveLength(0);
+    });
+
+    it("shows no alert on either tab while the detail is still loading for the first time", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ isLoading: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+      expect(allAlertsInDocument()).toHaveLength(0);
+
+      goToPreview();
+      expect(allAlertsInDocument()).toHaveLength(0);
+    });
+  });
+
+  describe("send section without a registered form", () => {
+    it("shows exactly one alert after switching to 미리보기 and retries from it", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openSend("새 서버 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+
+      fireEvent.click(getRetryButton(alerts[0]));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("templates section", () => {
+    it("shows exactly one alert after switching to 미리보기 and retries from it (no cached detail)", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openTemplates("새 서버 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+
+      fireEvent.click(getRetryButton(alerts[0]));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows exactly one alert after switching to 미리보기 with a cached detail", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ data: futureTemplate, isError: true });
+
+      render(<MessagesPage />);
+      openTemplates("새 서버 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+    });
+
+    it("disables the cached-detail notice's retry while the detail refetch is in flight", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ data: futureTemplate, isError: true, isFetching: true });
+
+      render(<MessagesPage />);
+      openTemplates("새 서버 템플릿");
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(getRetryButton(alerts[0])).toBeDisabled();
+    });
+
+    it("disables the retry while the detail refetch is in flight after switching to 미리보기", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ isError: true, isFetching: true });
+
+      render(<MessagesPage />);
+      openTemplates("새 서버 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(getRetryButton(alerts[0])).toBeDisabled();
+    });
+
+    it("shows no alert on either tab when the detail loaded", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ data: futureTemplate });
+
+      render(<MessagesPage />);
+      openTemplates("새 서버 템플릿");
+      expect(allAlertsInDocument()).toHaveLength(0);
+
+      goToPreview();
+      expect(allAlertsInDocument()).toHaveLength(0);
+    });
+  });
+
+  it("shows no detail alert for a selected branch template even when the built-in detail query errored", () => {
+    userTemplatesState({
+      data: [{ id: "tpl-1", name: "내 지점 템플릿", content: "지점 본문", variables: [] }],
+    });
+    systemTemplateDetailState({ isError: true });
+
+    render(<MessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+    fireEvent.click(screen.getByText("내 지점 템플릿"));
+
+    expect(allAlertsInDocument()).toHaveLength(0);
+    goToPreview();
+    expect(allAlertsInDocument()).toHaveLength(0);
   });
 });
