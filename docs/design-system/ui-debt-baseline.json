@@ -800,18 +800,18 @@
     },
     "mobile/src/app/(shell)/admin/feedback/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "144:91-144:170|visualTailwindInPage",
-        "145:43-145:76|visualTailwindInPage",
-        "148:43-148:76|visualTailwindInPage",
-        "149:43-149:69|visualTailwindInPage",
-        "151:41-151:76|visualTailwindInPage",
-        "160:80-163:21|visualTailwindInPage",
-        "165:45-165:71|visualTailwindInPage",
-        "166:47-166:69|visualTailwindInPage",
-        "170:34-170:85|visualTailwindInPage",
-        "173:34-173:77|visualTailwindInPage",
-        "177:35-177:88|visualTailwindInPage",
-        "96:19-96:55|visualTailwindInPage"
+        "120:19-120:55|visualTailwindInPage",
+        "168:91-168:170|visualTailwindInPage",
+        "169:43-169:76|visualTailwindInPage",
+        "172:43-172:76|visualTailwindInPage",
+        "173:43-173:69|visualTailwindInPage",
+        "175:41-175:76|visualTailwindInPage",
+        "184:80-187:21|visualTailwindInPage",
+        "189:45-189:71|visualTailwindInPage",
+        "190:47-190:69|visualTailwindInPage",
+        "194:34-194:85|visualTailwindInPage",
+        "197:34-197:77|visualTailwindInPage",
+        "201:35-201:88|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/clients/new/page.tsx": {
