@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye, X } from "lucide-react";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
@@ -50,10 +51,13 @@ export function FileStoragePage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadDropzoneState, setUploadDropzoneState] = useState(EMPTY_UPLOAD_STATE);
 
-  const { data: documents = [], isLoading, error } = useDocuments();
+  const { data: documentsData, isLoading, isPaused, isError, isFetching, refetch } = useDocuments();
+  const documents = documentsData ?? [];
+  const isDocumentsLoading = isLoading || (isPaused && documentsData === undefined);
   const uploadCapabilitiesQuery = useDocumentUploadCapabilities();
   const { data: uploadCapabilities } = uploadCapabilitiesQuery;
-  const { data: categories = [] } = useDocumentCategories();
+  const { data: categoriesData } = useDocumentCategories();
+  const categories = categoriesData ?? [];
   const uploadMutation = useUploadDocument();
   const updateMutation = useUpdateDocument();
   const deleteMutation = useDeleteDocument();
@@ -78,9 +82,9 @@ export function FileStoragePage() {
   }, [documents, activeFilter, searchQuery]);
 
   const stats = useMemo(() => {
-    const total = documents.length;
-    return { total, categoryCount: categories.length };
-  }, [documents, categories]);
+    const total = documentsData === undefined ? "—" : documentsData.length;
+    return { total, categoryCount: categoriesData === undefined ? "—" : categoriesData.length };
+  }, [documentsData, categoriesData]);
 
   const selectedDocument = useMemo(() => {
     if (!selectedDocId) return null;
@@ -151,21 +155,10 @@ export function FileStoragePage() {
     }
   };
 
-  if (error) {
-    return (
-      <div data-component="desktop_files_error_container" className="p-6">
-        <div data-component="desktop_files_error_container_message" className="bg-v3-burgundy-light text-v3-burgundy rounded-[18px] p-6 text-center">
-          문서를 불러오는데 실패했습니다.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <PageSection name="files">
       <StatsBar
         name="files"
-        isLoading={isLoading}
         items={[
           { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
           { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },
@@ -190,13 +183,31 @@ export function FileStoragePage() {
               data-component="desktop_files_split-layout_list-panel_files-upload-btn"
             />
           }
-          emptyState={!isLoading && filteredDocs.length === 0 ? (
-            <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
+          emptyState={!isDocumentsLoading && filteredDocs.length === 0 ? (
+            isError && documentsData === undefined ? (
+              <QueryErrorState
+                dataComponent="desktop_files_split-layout_list-panel_load-error"
+                title="문서를 불러오지 못했습니다"
+                size="panel"
+                className="pointer-events-auto"
+                onRetry={() => void refetch()}
+                isRetrying={isFetching}
+              />
+            ) : <ListEmptyState message={searchQuery ? "검색 결과가 없습니다" : "등록된 문서가 없습니다"} />
           ) : undefined}
         >
+          {isError && documentsData !== undefined ? (
+            <QueryErrorState
+              dataComponent="desktop_files_split-layout_list-panel_load-error"
+              title="최신 정보를 불러오지 못했습니다"
+              size="inline"
+              onRetry={() => void refetch()}
+              isRetrying={isFetching}
+            />
+          ) : null}
           <AnimatedSlotList<Document>
               items={filteredDocs}
-              isLoading={isLoading}
+              isLoading={isDocumentsLoading}
               loadingCount={4}
               className="space-y-2"
               itemVariant="card"
@@ -242,7 +253,7 @@ export function FileStoragePage() {
             />
         </ListPanel>
 
-        {isLoading ? (
+        {isDocumentsLoading ? (
           <DetailSkeleton
             name="files-detail-skeleton"
             headerActions={3}
