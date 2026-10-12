@@ -27,6 +27,7 @@ import { StatusPill } from "@/components/app/ui/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { cn } from "@/lib/utils";
 
 export type ScheduleKind = "start" | "end" | "replacement";
@@ -502,7 +503,7 @@ export function EmployeeScheduleManager({
     const [selectedDateKey, setSelectedDateKey] = useState(() => dateKey(today));
     const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
     const [isDetailOpen, setIsDetailOpen] = useState(false);
-    const { data, isLoading, isError, refetch } = useAllClients();
+    const { data, isLoading, isPaused, isError, isFetching, refetch } = useAllClients();
     const entries = useMemo(() => buildScheduleEntries(data ?? [], today), [data, today]);
     const entriesByDate = useMemo(() => {
         const grouped = new Map<string, ScheduleEntry[]>();
@@ -583,7 +584,16 @@ export function EmployeeScheduleManager({
                 />
             </div>
 
-            {isLoading ? (
+            {isError && data !== undefined ? (
+                <QueryErrorState
+                    dataComponent={component("load-error")}
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    onRetry={() => void refetch()}
+                    isRetrying={isFetching}
+                />
+            ) : null}
+            {isLoading || (isPaused && data === undefined) ? (
 
                 <div
                     data-component={component("loading")}
@@ -594,7 +604,7 @@ export function EmployeeScheduleManager({
                 >
                     일정 불러오는 중…
                 </div>
-            ) : isError ? (
+            ) : isError && data === undefined ? (
                 <Alert data-component={component("error")} data-slot="schedule-error" variant="destructive" className="shrink-0">
                     <AlertTitle>일정을 불러오지 못했습니다</AlertTitle>
                     <AlertDescription>
