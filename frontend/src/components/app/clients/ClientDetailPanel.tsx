@@ -69,7 +69,13 @@ import {
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
-import { eformsignApi, type LocalEformsignDocRecord } from "@/services/api";
+import { eformsignApi, type EformsignLinkConfirmation, type LocalEformsignDocRecord } from "@/services/api";
+import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
+import {
+    clientContractDocsQueryKey,
+    describeLinkConfirmDifferences,
+    linkConfirmationsQueryKey,
+} from "@/components/app/clients/contract-link-confirm";
 import { CalendarClock, Users } from "lucide-react";
 
 const SOURCE_COMPONENT = "ClientDetailPanel";
@@ -633,6 +639,107 @@ function ClientUpcomingMessageList({
     );
 }
 
+// Contracts that match this client's phone but differ in name or birthday are not linked on
+// their own (S3 / 계약-05); they wait here for a person to confirm them.
+function ClientContractLinkConfirmations({
+    entries,
+    hasData,
+    isError,
+    onRetry,
+    isRetrying,
+    onConfirm,
+    dataComponentPrefix,
+}: {
+    entries: EformsignLinkConfirmation[];
+    hasData: boolean;
+    isError: boolean;
+    onRetry: () => void;
+    isRetrying: boolean;
+    onConfirm: (entry: EformsignLinkConfirmation) => void;
+    dataComponentPrefix: string;
+}) {
+    const base = `${dataComponentPrefix}-contracts-link-confirmation`;
+
+    if (isError && !hasData) {
+        return (
+            <QueryErrorState
+                dataComponent={`${base}-error`}
+                title="연결 확인이 필요한 계약서를 불러오지 못했습니다"
+                size="inline"
+                onRetry={onRetry}
+                isRetrying={isRetrying}
+            />
+        );
+    }
+
+    if (entries.length === 0 && !isError) {
+        return null;
+    }
+
+    return (
+        <div data-component={`${base}-list`} className="mb-3 space-y-3">
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${base}-refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={onRetry}
+                    isRetrying={isRetrying}
+                />
+            ) : null}
+            {entries.length > 0 ? (
+                <p
+                    data-component={`${base}-count`}
+                    className="px-1 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted"
+                >
+                    확인 필요 계약서 {entries.length}건
+                </p>
+            ) : null}
+            {entries.map((entry) => (
+                <div
+                    key={entry.documentId}
+                    data-component={`${base}-entry`}
+                    data-slot="link-confirmation-entry"
+                    className="space-y-2 rounded-[18px] bg-v3-dim-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                >
+                    <div className="flex items-center justify-between gap-3">
+                        <span
+                            data-component={`${base}-entry_name`}
+                            className="min-w-0 break-words text-sm font-semibold text-v3-dark"
+                        >
+                            {entry.documentName || "계약서"}
+                        </span>
+                        <MessageStatusBadge
+                            data-component={`${base}-entry_badge`}
+                            variant="warning"
+                            size="sm"
+                        >
+                            연결 확인 필요
+                        </MessageStatusBadge>
+                    </div>
+                    <p data-component={`${base}-entry_differences`} className="text-sm text-v3-text-muted">
+                        {describeLinkConfirmDifferences(entry.differences)}
+                    </p>
+                    {entry.canConfirm ? (
+                        <Button
+                            type="button"
+                            size="sm"
+                            data-component={`${base}-entry_confirm`}
+                            onClick={() => onConfirm(entry)}
+                        >
+                            확인
+                        </Button>
+                    ) : (
+                        <p data-component={`${base}-entry_manager-only`} className="text-sm text-v3-text-muted">
+                            지점 관리자만 연결을 확정할 수 있습니다
+                        </p>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function ClientContractsList({
     docs,
     isError,
@@ -641,6 +748,7 @@ function ClientContractsList({
     isRetrying,
     dataComponentPrefix,
     onCreateContract,
+    hasPendingLinkConfirmations = false,
 }: {
     docs: LocalEformsignDocRecord[];
     isError: boolean;
@@ -649,6 +757,8 @@ function ClientContractsList({
     isRetrying: boolean;
     dataComponentPrefix: string;
     onCreateContract?: () => void;
+    /** A contract waits for link confirmation above this list, so "no contracts" would be untrue. */
+    hasPendingLinkConfirmations?: boolean;
 }) {
     // Display-only: the built-in calendar stands in until the branch calendar loads.
     const { calendar } = useBusinessDayCalendar();
@@ -687,6 +797,9 @@ function ClientContractsList({
     }
 
     if (docs.length === 0) {
+        if (hasPendingLinkConfirmations) {
+            return null;
+        }
         return (
             <DetailEmptyState
                 message="계약서 정보가 없습니다"
@@ -989,7 +1102,7 @@ function ClientDetailPanelBody({
         refetch: refetchClientContracts,
         isRefetching: isClientContractsRefetching,
     } = useQuery({
-        queryKey: ["eformsign-docs", "client", clientId],
+        queryKey: clientContractDocsQueryKey(clientId),
         // Show each document exactly as eformsign reports it. client.documentStatus is a
         // lossy summary of the same row and must never override it (it once turned an
         // unsigned, customer-opened contract into "검토 필요").
@@ -1004,6 +1117,22 @@ function ClientDetailPanelBody({
         () => (clientContracts ?? []).filter((doc) => doc.documentKind !== "service_record_snapshot"),
         [clientContracts],
     );
+
+    // Contracts waiting for a person to confirm the link (phone matches, name or birthday differs).
+    const {
+        data: linkConfirmations,
+        isError: isLinkConfirmationsError,
+        refetch: refetchLinkConfirmations,
+        isRefetching: isLinkConfirmationsRefetching,
+    } = useQuery({
+        queryKey: linkConfirmationsQueryKey(clientId),
+        queryFn: () => eformsignApi.getLinkConfirmations(clientId),
+        staleTime: 0,
+        refetchOnMount: "always",
+        refetchOnReconnect: true,
+        refetchOnWindowFocus: true,
+    });
+    const [linkConfirmEntry, setLinkConfirmEntry] = useState<EformsignLinkConfirmation | null>(null);
 
     useEffect(() => {
         if (!isClientContractsSuccess) {
@@ -1384,15 +1513,36 @@ function ClientDetailPanelBody({
                             key: "contracts",
                             className: "flex flex-col",
                             children: (
-                                <ClientContractsList
-                                    docs={clientContractDocs}
-                                    isLoading={isClientContractsLoading}
-                                    isError={isClientContractsError}
-                                    onRetry={() => void refetchClientContracts()}
-                                    isRetrying={isClientContractsRefetching}
-                                    dataComponentPrefix={dataComponentPrefix}
-                                    onCreateContract={onCreateContract}
-                                />
+                                <>
+                                    <ClientContractLinkConfirmations
+                                        entries={linkConfirmations ?? []}
+                                        hasData={linkConfirmations !== undefined}
+                                        isError={isLinkConfirmationsError}
+                                        onRetry={() => void refetchLinkConfirmations()}
+                                        isRetrying={isLinkConfirmationsRefetching}
+                                        onConfirm={setLinkConfirmEntry}
+                                        dataComponentPrefix={dataComponentPrefix}
+                                    />
+                                    <ClientContractsList
+                                        docs={clientContractDocs}
+                                        isLoading={isClientContractsLoading}
+                                        isError={isClientContractsError}
+                                        onRetry={() => void refetchClientContracts()}
+                                        isRetrying={isClientContractsRefetching}
+                                        dataComponentPrefix={dataComponentPrefix}
+                                        onCreateContract={onCreateContract}
+                                        hasPendingLinkConfirmations={(linkConfirmations?.length ?? 0) > 0}
+                                    />
+                                    {linkConfirmEntry && linkConfirmEntry.client.id === clientId ? (
+                                        <ContractLinkConfirmDialog
+                                            key={linkConfirmEntry.documentId}
+                                            entry={linkConfirmEntry}
+                                            clientId={clientId}
+                                            dataComponentPrefix={dataComponentPrefix}
+                                            onClose={() => setLinkConfirmEntry(null)}
+                                        />
+                                    ) : null}
+                                </>
                             ),
                         },
                         {

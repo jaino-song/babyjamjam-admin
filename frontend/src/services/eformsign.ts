@@ -93,6 +93,21 @@ export interface ReceiptLinkPreparation {
     expiresAt: string;
 }
 
+export interface EformsignLinkConfirmation {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: string;
+    /** `phone` is digits only; `birthday` is YYYY-MM-DD or null. */
+    document: { name: string | null; phone: string; birthday: string | null };
+    client: { id: number; name: string; phone: string | null; birthday: string | null };
+    /** Never empty. */
+    differences: Array<"name" | "birthday">;
+    /** False when the caller's role may not adopt a document (branch `user`). */
+    canConfirm: boolean;
+}
+
 export interface LocalEformsignDocRecord {
     id?: number;
     documentId: string;
@@ -349,6 +364,16 @@ export const eformsignApi = {
     },
     getDocumentsByClientId: async (clientId: number): Promise<LocalEformsignDocRecord[]> => {
         const { data } = await api.get('/eformsign-docs/client', {
+            params: { clientId },
+        });
+        return data;
+    },
+    /**
+     * Contracts whose signer phone matches this client but whose name or birthday differs.
+     * They are not linked automatically; a person confirms them (S3 / 계약-05).
+     */
+    getLinkConfirmations: async (clientId: number): Promise<EformsignLinkConfirmation[]> => {
+        const { data } = await api.get('/eformsign-docs/link-confirmations', {
             params: { clientId },
         });
         return data;

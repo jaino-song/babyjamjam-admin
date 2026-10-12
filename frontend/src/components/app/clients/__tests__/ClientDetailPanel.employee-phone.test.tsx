@@ -55,6 +55,7 @@ jest.mock("@/hooks/use-toast", () => ({
 jest.mock("@/services/api", () => ({
     eformsignApi: {
         getDocumentsByClientId: jest.fn().mockResolvedValue([]),
+        getLinkConfirmations: jest.fn().mockResolvedValue([]),
     },
 }));
 
