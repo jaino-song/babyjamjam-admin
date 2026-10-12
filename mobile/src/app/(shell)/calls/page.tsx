@@ -15,6 +15,7 @@ import {
 import { DraftRow, RecordRow } from "@/components/app/call-inbox/CallInboxRows";
 import { CallLogSheet } from "@/components/app/call-inbox/CallLogSheet";
 import { CallReviewSheet } from "@/components/app/call-inbox/CallReviewSheet";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   useCallRecords,
   useClientDrafts,
@@ -81,14 +82,17 @@ export default function CallsPage() {
   // loaded, or a shrinking total would strand rows the user can see.
   const serverTotal = isQueue ? draftsQuery.total : recordsQuery.total;
   const isLoadingActive = isQueue ? draftsQuery.isLoading : recordsQuery.isLoading;
-  // Only consulted when nothing is on screen, so a failed load-more — which
-  // also sets isError — never blanks a list that already has rows in it.
+  const activeQuery = isQueue ? draftsQuery : recordsQuery;
+  const hasData = activeQuery.data !== undefined || loadedCount > 0;
   const isErrorActive = isQueue ? draftsQuery.isError : recordsQuery.isError;
   const hasNextPage = isQueue ? draftsQuery.hasNextPage : recordsQuery.hasNextPage;
   const isFetchingNextPage = isQueue
     ? draftsQuery.isFetchingNextPage
     : recordsQuery.isFetchingNextPage;
   const isLoadMoreError = isQueue ? draftsQuery.isLoadMoreError : recordsQuery.isLoadMoreError;
+  const retryActiveQuery = () => {
+    void (isLoadMoreError ? activeQuery.fetchNextPage() : activeQuery.refetch());
+  };
   // Once the server says there is nothing further, what is loaded IS the total.
   // Dedup drops rows the offset repeated, so the server count can sit above the
   // loaded rows for good — the reveal would keep offering "더보기" for rows that
@@ -156,9 +160,12 @@ export default function CallsPage() {
 
   const tabFilters = [
     { label: TAB_QUEUE, count: pendingCount?.count ?? "" },
-    // Blank rather than 0 until the first page lands, so the pill does not
-    // flash a count the server never reported.
-    { label: TAB_LOG, count: isQueue || recordsQuery.isPending ? "" : activeTotal },
+    {
+      label: TAB_LOG,
+      count: recordsQuery.isError && recordsQuery.data === undefined && records.length === 0
+        ? "—"
+        : isQueue || recordsQuery.isPending ? "" : activeTotal,
+    },
   ];
 
   return (
@@ -207,6 +214,15 @@ export default function CallsPage() {
             onLoadMore={loadMore}
             isLoadingMore={isFetchingNextPage}
           >
+            {isErrorActive && hasData && (
+              <QueryErrorState
+                dataComponent={`${LIST_BODY_BASE}_${isQueue ? "queue" : "log"}-error`}
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={retryActiveQuery}
+                isRetrying={activeQuery.isFetching}
+              />
+            )}
             {isLoadingActive ? (
               <ListRowsSkeleton
                 data-component={`${LIST_BODY_BASE}_${isQueue ? "queue" : "log"}-skeleton`}
@@ -214,17 +230,13 @@ export default function CallsPage() {
                 // placeholder needs both or the rows grow when the data lands.
                 rightLines={2}
               />
-            ) : loadedCount === 0 && isErrorActive ? (
-              // "없습니다" would be a claim about the data, and a request that
-              // failed says nothing about it. Wording follows /prices, which
-              // already separates the two.
-              <div
-                className="detail-empty-state is-error"
-                data-component={`${LIST_BODY_BASE}_${isQueue ? "queue" : "log"}-error`}
-              >
-                {isQueue ? "검토 대기 목록을" : "통화 기록을"} 불러오지 못했습니다. 잠시 후 다시
-                시도해주세요.
-              </div>
+            ) : !hasData && isErrorActive ? (
+              <QueryErrorState
+                dataComponent={`${LIST_BODY_BASE}_${isQueue ? "queue" : "log"}-error`}
+                title={isQueue ? "검토 대기 목록을 불러오지 못했습니다" : "통화 기록을 불러오지 못했습니다"}
+                onRetry={retryActiveQuery}
+                isRetrying={activeQuery.isFetching}
+              />
             ) : loadedCount === 0 ? (
               <div
                 className="detail-empty-state"
