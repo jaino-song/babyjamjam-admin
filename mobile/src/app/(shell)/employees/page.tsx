@@ -150,14 +150,15 @@ export default function EmployeesPage() {
       ];
     }
 
+    const hideCounts = isError && allEmployees.length === 0;
     const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(filteredEmployees.length) },
+      { label: ALL_FILTER, count: hideCounts ? "" : String(filteredEmployees.length) },
     ];
     for (const g of GROUPS) {
-      items.push({ label: g.title, count: String(grouped.counts[g.key]) });
+      items.push({ label: g.title, count: hideCounts ? "" : String(grouped.counts[g.key]) });
     }
     return items;
-  }, [filteredEmployees.length, grouped.counts, isEmployeesFetching]);
+  }, [allEmployees.length, filteredEmployees.length, grouped.counts, isEmployeesFetching, isError]);
 
   const sectionsFull = useMemo(() => {
     type Section = {

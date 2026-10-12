@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -94,7 +94,7 @@ jest.mock("@/components/app/mobile-redesign/primitives", () => ({
     <div>
       {title ? <div data-testid="list-card-header-count">{title} {count}</div> : null}
       {beforeFilters}
-      <div>
+      <div data-testid="list-card-filters">
         {filters.map((filter) => (
           <button key={filter.label} type="button" onClick={() => onFilterChange?.(filter.label)}>
             {filter.label} {filter.count}
@@ -370,6 +370,12 @@ describe("ClientsPage list load states", () => {
     expect(screen.getByText("불러오지 못했습니다")).toBeInTheDocument();
     expect(screen.queryByText("등록된 고객이 없습니다.")).not.toBeInTheDocument();
     expect(screen.getByTestId("list-card-header-count")).not.toHaveTextContent("0명");
+    const pills = within(screen.getByTestId("list-card-filters")).getAllByRole("button");
+    expect(pills).toHaveLength(3);
+    for (const pill of pills) {
+      expect(pill).not.toHaveTextContent("0");
+      expect(pill).toBeEnabled();
+    }
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
     setList([makeClient(9)]);
@@ -384,6 +390,9 @@ describe("ClientsPage list load states", () => {
     expect(screen.getByText("등록된 고객이 없습니다.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("0명");
+    expect(screen.getByRole("button", { name: "전체 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 필요 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "진행 중 0" })).toBeInTheDocument();
   });
 
   it("keeps cached rows with an inline retry notice above them", () => {
@@ -395,6 +404,9 @@ describe("ClientsPage list load states", () => {
     expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
     expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("1명");
+    expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "계약서 필요 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "진행 중 1" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });

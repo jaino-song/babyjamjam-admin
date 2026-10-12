@@ -183,24 +183,25 @@ export default function ClientsPage() {
       ];
     }
 
+    const hideCounts = isError && allClients.length === 0;
     const items = [
       {
         label: ALL_FILTER,
-        count: String(displayedClientCount),
+        count: hideCounts ? "" : String(displayedClientCount),
       },
       {
         label: CONTRACT_REQUIRED_FILTER,
-        count: String(contractRequiredClients.length),
+        count: hideCounts ? "" : String(contractRequiredClients.length),
       },
     ];
     for (const g of GROUPS) {
       items.push({
         label: g.title,
-        count: String(grouped.counts[g.key] ?? 0),
+        count: hideCounts ? "" : String(grouped.counts[g.key] ?? 0),
       });
     }
     return items;
-  }, [contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching]);
+  }, [allClients.length, contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching, isError]);
 
   const sectionsFull = useMemo(() => {
     type Section = {

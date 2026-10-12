@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import EmployeesPage from "../page";
@@ -11,6 +11,7 @@ import {
   type EmployeeWorkHistoryEntry,
 } from "@/hooks/useEmployees";
 import { useInfiniteEmployees } from "@/hooks/useInfiniteEmployees";
+import { GROUPS } from "@/lib/employee/list-helpers";
 
 const mockRefetchWorkHistory = jest.fn();
 const mockFetchNextPage = jest.fn();
@@ -57,7 +58,24 @@ jest.mock("@/components/app/v3", () => ({
 
 jest.mock("@/components/app/mobile-redesign/primitives", () => ({
   Badge: ({ label }: { label: string }) => <span>{label}</span>,
-  ListCard: ({ children, count }: { children: ReactNode; count?: ReactNode }) => <section><span data-testid="list-card-header-count">{count}</span>{children}</section>,
+  ListCard: ({ children, count, filters, onFilterChange }: {
+    children: ReactNode;
+    count?: ReactNode;
+    filters: Array<{ label: string; count: ReactNode }>;
+    onFilterChange?: (label: string) => void;
+  }) => (
+    <section>
+      <span data-testid="list-card-header-count">{count}</span>
+      <div data-testid="list-card-filters">
+        {filters.map((filter) => (
+          <button key={filter.label} type="button" onClick={() => onFilterChange?.(filter.label)}>
+            {filter.label} {filter.count}
+          </button>
+        ))}
+      </div>
+      {children}
+    </section>
+  ),
   ListCountSkeleton: () => <span>로딩 중</span>,
   ListItemRow: ({ name, onClick }: { name: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}>{name}</button>
@@ -289,6 +307,12 @@ describe("EmployeesPage list load states", () => {
     expect(screen.getByText("불러오지 못했습니다")).toBeInTheDocument();
     expect(screen.queryByText("등록된 제공인력이 없습니다.")).not.toBeInTheDocument();
     expect(screen.getByTestId("list-card-header-count")).not.toHaveTextContent("0명");
+    const pills = within(screen.getByTestId("list-card-filters")).getAllByRole("button");
+    expect(pills).toHaveLength(4);
+    for (const pill of pills) {
+      expect(pill).not.toHaveTextContent("0");
+      expect(pill).toBeEnabled();
+    }
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
     setList([employee]);
@@ -303,6 +327,10 @@ describe("EmployeesPage list load states", () => {
     expect(screen.getByText("등록된 제공인력이 없습니다.")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("0명");
+    expect(screen.getByRole("button", { name: "전체 0" })).toBeInTheDocument();
+    for (const group of GROUPS) {
+      expect(screen.getByRole("button", { name: `${group.title} 0` })).toBeInTheDocument();
+    }
   });
 
   it("keeps cached rows with an inline retry notice above them", () => {
@@ -314,6 +342,11 @@ describe("EmployeesPage list load states", () => {
     expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
     expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("1명");
+    expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
+    for (const group of GROUPS) {
+      const count = group.key === employee.status ? 1 : 0;
+      expect(screen.getByRole("button", { name: `${group.title} ${count}` })).toBeInTheDocument();
+    }
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
