@@ -14,6 +14,7 @@ import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-auto
 import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerJobEntity,
@@ -33,6 +34,7 @@ describe("serviceRecordScheduleBlockerSql", () => {
             canceledByUser: Prisma.sql`blocker.canceled_by_user`,
         });
         expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
+        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_PRE_BOOKING_REASON)).toHaveLength(1);
         for (const reason of [
             "Service record access revoked",
             "Service record link reset without resend",

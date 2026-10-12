@@ -1950,6 +1950,13 @@ export class ClientService {
 
         let createdScheduleId: number | null = null;
         let replacedScheduleId: number | null = null;
+        // Status inputs of the locked row the write is based on, kept to tell
+        // after commit whether this save took the client out of 예약 전.
+        let priorStatusInputs: {
+            serviceStatus: string | null;
+            startDate: Date | null;
+            endDate: Date | null;
+        } | null = null;
         const ordinaryMutationId = randomUUID();
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
@@ -2013,6 +2020,11 @@ export class ClientService {
             // retaining the preflight entity here keeps those doubles focused
             // on the client repository seam.
             const currentClient = lockedClient ?? existingClient;
+            priorStatusInputs = {
+                serviceStatus: currentClient.serviceStatus ?? null,
+                startDate: currentClient.startDate ?? null,
+                endDate: currentClient.endDate ?? null,
+            };
             if (
                 params.expectedEndDate !== undefined
                 && (currentClient.endDate?.toISOString().slice(0, 10) ?? null) !== params.expectedEndDate
@@ -2309,7 +2321,66 @@ export class ClientService {
                     this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
                 });
         }
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            id,
+            priorStatusInputs,
+            updatedClient,
+            createdScheduleId,
+        );
         return updatedClient;
+    }
+
+    /**
+     * A provider assigned while the client was 예약 전 never got the service-record
+     * link SMS (the gates skip a pre-booking client). When a save takes the client
+     * out of 예약 전, schedule the link for every active schedule the save did not
+     * already schedule. `scheduleForServiceStart` owns the timing (the day before
+     * service start at 12:00 KST, or immediately when that has passed), the
+     * dedupe and the completed/terminated/expired refusals. A failure here never
+     * fails the save.
+     */
+    private async scheduleServiceRecordLinksAfterLeavingPreBooking(
+        branchId: string,
+        clientId: number,
+        before: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null } | null,
+        after: { serviceStatus?: string | null; startDate?: Date | null; endDate?: Date | null },
+        alreadyScheduledScheduleId: number | null,
+    ): Promise<void> {
+        if (!before || !this.serviceRecordLinkService) return;
+        const wasPreBooking = getEffectiveClientServiceStatus(
+            before.serviceStatus,
+            before.startDate,
+            before.endDate,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (!wasPreBooking) return;
+        const isPreBooking = getEffectiveClientServiceStatus(
+            after.serviceStatus ?? null,
+            after.startDate ?? null,
+            after.endDate ?? null,
+        ) === SERVICE_STATUS.PRE_BOOKING;
+        if (isPreBooking) return;
+
+        try {
+            const activeSchedules = await this.prismaService.employee_schedule.findMany({
+                where: { branchId, clientId, replaced: false, terminatedAt: null },
+                select: { id: true },
+                orderBy: { id: "asc" },
+            });
+            const scheduleIds = [...new Set(activeSchedules.map(({ id }) => id))]
+                .filter((scheduleId) => scheduleId !== alreadyScheduledScheduleId)
+                .sort((left, right) => left - right);
+            for (const scheduleId of scheduleIds) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(scheduleId).catch((error) => {
+                    this.logger.error(`Failed to schedule service-record link SMS: ${error}`);
+                });
+            }
+        } catch (error) {
+            this.logger.error(
+                `Failed to schedule service-record link SMS after client ${clientId} left pre-booking: ` +
+                `${error instanceof Error ? error.message : String(error)}`,
+            );
+        }
     }
 
     /**
