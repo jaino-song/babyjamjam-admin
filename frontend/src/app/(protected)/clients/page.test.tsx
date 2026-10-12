@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 
 const mockRouter = { replace: jest.fn(), push: jest.fn() };
@@ -8,6 +8,9 @@ const mockDirectory = jest.fn();
 const mockListSummary = jest.fn();
 let mockActiveBranchId = "branch-a";
 let mockClientFromParam: { id: number; name: string } | undefined;
+const mockClientRefetch = jest.fn();
+const IDLE_MOCK_CLIENT_QUERY = { isError: false, isFetching: false, isPaused: false, isLoading: false };
+let mockClientQueryState: { isError: boolean; isFetching: boolean; isPaused: boolean; isLoading: boolean } = IDLE_MOCK_CLIENT_QUERY;
 const mockQueryClient = {
   cancelQueries: jest.fn(),
   getQueryData: jest.fn(),
@@ -50,7 +53,12 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
   useClientDirectory: () => mockDirectory(),
   useClientListSummary: () => mockListSummary(),
   useDeleteClient: () => ({ mutateAsync: jest.fn(), isPending: false }),
-  useClient: () => ({ data: mockClientFromParam, isBranchContextReady: mockActiveBranchId !== null }),
+  useClient: () => ({
+    data: mockClientFromParam,
+    isBranchContextReady: mockActiveBranchId !== null,
+    refetch: mockClientRefetch,
+    ...mockClientQueryState,
+  }),
 }));
 
 jest.mock("@/features/clients/hooks/use-send-client-receipt", () => ({
@@ -232,7 +240,7 @@ jest.mock("@/components/app/v3", () => ({
     onSlotClick?: (item: { id: number }) => void;
     render: (props: { item: { id: number }; isLoading: boolean }) => ReactNode;
   }) => (
-    <div>
+    <div data-testid="clients-slot-list" data-loading={String(Boolean(isLoading))}>
       {isLoading ? null : items.map((item) => (
         <button key={item.id} type="button" onClick={() => onSlotClick?.(item)}>
           {renderItem({ item, isLoading: false })}
@@ -260,8 +268,16 @@ jest.mock("@/components/app/v3", () => ({
   SectionNav: ({ items, onSelect }: { items: Array<{ id: string; label: string }>; onSelect: (id: string) => void }) => (
     <nav>{items.map((item) => <button key={item.id} type="button" onClick={() => onSelect(item.id)}>{item.label}</button>)}</nav>
   ),
-  SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  StatsBar: () => null,
+  SplitLayout: ({ children, hasSelection }: { children: ReactNode; hasSelection?: boolean }) => (
+    <div data-testid="clients-split-layout" data-has-selection={String(Boolean(hasSelection))}>{children}</div>
+  ),
+  StatsBar: ({ items = [], isLoading }: { items?: Array<{ label: string; value: unknown }>; isLoading?: boolean }) => (
+    <div data-testid="clients-stats" data-loading={String(Boolean(isLoading))}>
+      {items.map((item) => (
+        <span key={item.label} data-testid={`clients-stat-${item.label}`}>{String(item.value)}</span>
+      ))}
+    </div>
+  ),
   StatusBadge: () => null,
   SteppedWizardStepper: () => null,
 }));
@@ -281,6 +297,8 @@ jest.mock("@/services/api", () => ({
 afterEach(() => {
   mockActiveBranchId = "branch-a";
   mockClientFromParam = undefined;
+  mockClientQueryState = IDLE_MOCK_CLIENT_QUERY;
+  mockClientRefetch.mockReset();
 });
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
@@ -681,5 +699,189 @@ describe("ClientsPage create selection behavior", () => {
     expect(screen.queryByTestId("client-form-panel")).not.toBeInTheDocument();
     expect(screen.queryByTestId("client-detail")).not.toBeInTheDocument();
     expect(screen.getByText("고객을 선택하면 상세 정보가 표시됩니다")).toBeInTheDocument();
+  });
+});
+
+describe("ClientsPage unknown data is never shown as a definite value (paused / failed deep link)", () => {
+  let ClientsPage: ComponentType;
+  const PLACEHOLDER = "고객을 선택하면 상세 정보가 표시됩니다";
+  const DEEP_LINK_TITLE = "고객 정보를 불러오지 못했습니다";
+  const STAT_LABELS = [
+    "이번 달 출산 예정",
+    "다음 달 출산 예정",
+    "서비스 진행중",
+    "서비스 대기중",
+    "서비스 종료 예정",
+  ];
+  const IDLE_CLIENT_QUERY = { isError: false, isFetching: false, isPaused: false, isLoading: false };
+  const FAILED_CLIENT_QUERY = { ...IDLE_CLIENT_QUERY, isError: true };
+
+  function successfulDirectory(clients: Array<{ id: number; name: string }>) {
+    return {
+      clients,
+      data: { pages: [{ data: clients, total: clients.length }] },
+      fetchNextPage: jest.fn(),
+      hasNextPage: false,
+      hasStaleData: false,
+      isBranchContextReady: true,
+      isEndOfList: true,
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+      isInitialError: false,
+      isInitialLoading: false,
+      isNextPageError: false,
+      isRefetchError: false,
+      isRefreshError: false,
+      isSuccessfulEmpty: clients.length === 0,
+      matchedTotal: clients.length,
+      refetch: jest.fn(),
+    };
+  }
+
+  beforeAll(async () => {
+    const pageModule = await import("./page");
+    ClientsPage = pageModule.default as ComponentType;
+  });
+
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    mockRouter.replace.mockReset();
+    mockDirectory.mockReset();
+    mockListSummary.mockReset();
+    mockListSummary.mockReturnValue({
+      data: undefined,
+      isBranchContextReady: true,
+      isInitialError: false,
+      isInitialLoading: false,
+      isRefreshError: false,
+    });
+    mockDirectory.mockReturnValue(successfulDirectory([]));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Characterisation: the hooks already report a paused first load (no data, device offline) as
+  // isInitialLoading (pinned in use-clients.directory.test.ts); these assert what the page does with it.
+  it("renders skeleton rows, no empty-list text and em-dash stats while the first load is paused", () => {
+    mockDirectory.mockReturnValue({
+      ...successfulDirectory([]),
+      data: undefined,
+      fetchStatus: "paused",
+      isEndOfList: false,
+      isError: false,
+      isFetching: false,
+      isInitialLoading: true,
+      isLoading: false,
+      isPaused: true,
+      isPending: true,
+      isSuccessfulEmpty: false,
+      status: "pending",
+    });
+    mockListSummary.mockReturnValue({
+      data: undefined,
+      fetchStatus: "paused",
+      isBranchContextReady: true,
+      isError: false,
+      isFetching: false,
+      isInitialError: false,
+      isInitialLoading: true,
+      isLoading: false,
+      isPaused: true,
+      isPending: true,
+      isRefreshError: false,
+      status: "pending",
+    });
+
+    render(<ClientsPage />);
+
+    expect(screen.getByTestId("clients-slot-list")).toHaveAttribute("data-loading", "true");
+    expect(screen.getByTestId("clients-stats")).toHaveAttribute("data-loading", "true");
+    expect(screen.queryByText("고객이 없습니다")).not.toBeInTheDocument();
+    for (const label of STAT_LABELS) {
+      expect(screen.getByTestId(`clients-stat-${label}`)).toHaveTextContent("—");
+    }
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows the real empty text and no skeleton after a successful empty load", () => {
+    render(<ClientsPage />);
+
+    expect(screen.getByText("고객이 없습니다")).toBeInTheDocument();
+    expect(screen.getByTestId("clients-slot-list")).toHaveAttribute("data-loading", "false");
+  });
+
+  describe("deep-linked client (?id=)", () => {
+    beforeEach(() => {
+      mockSearchParams = new URLSearchParams("id=123");
+    });
+
+    it("shows one failure alert with a retry that refetches the client query, instead of the placeholder", () => {
+      mockClientQueryState = FAILED_CLIENT_QUERY;
+
+      render(<ClientsPage />);
+
+      const alerts = screen.getAllByRole("alert").filter((alert) => alert.textContent?.includes(DEEP_LINK_TITLE));
+      expect(alerts).toHaveLength(1);
+      expect(screen.queryByText(PLACEHOLDER)).not.toBeInTheDocument();
+      expect(screen.queryByTestId("client-detail")).not.toBeInTheDocument();
+      expect(screen.getByTestId("clients-split-layout")).toHaveAttribute("data-has-selection", "true");
+
+      fireEvent.click(within(alerts[0]).getByRole("button", { name: /다시 시도/ }));
+      expect(mockClientRefetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the placeholder, not the failure, while the client query is loading or a failed one retries", () => {
+      // react-query v5 resets a failed no-data query to pending (isError false, isLoading true) while it refetches,
+      // so the failure panel disappears during a retry instead of staying up with a disabled button.
+      mockClientQueryState = { ...IDLE_CLIENT_QUERY, isFetching: true, isLoading: true };
+
+      render(<ClientsPage />);
+
+      expect(screen.getByText(PLACEHOLDER)).toBeInTheDocument();
+      expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryAllByRole("alert").filter((alert) => alert.textContent?.includes(DEEP_LINK_TITLE))).toHaveLength(0);
+      expect(screen.getByTestId("clients-split-layout")).toHaveAttribute("data-has-selection", "false");
+    });
+
+    it("keeps the placeholder while the client query is paused with no data", () => {
+      mockClientQueryState = { ...IDLE_CLIENT_QUERY, isPaused: true };
+
+      render(<ClientsPage />);
+
+      expect(screen.getByText(PLACEHOLDER)).toBeInTheDocument();
+      expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+    });
+
+    it("shows the detail, not the failure, when the client query failed but the client is cached", () => {
+      mockClientFromParam = { id: 123, name: "캐시된 고객" };
+      mockClientQueryState = FAILED_CLIENT_QUERY;
+
+      render(<ClientsPage />);
+
+      expect(screen.getByTestId("client-detail")).toHaveTextContent("캐시된 고객");
+      expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+    });
+
+    it("shows the detail, not the failure, when the client is in the loaded list", () => {
+      mockDirectory.mockReturnValue(successfulDirectory([{ id: 123, name: "목록 속 고객" }]));
+      mockClientQueryState = FAILED_CLIENT_QUERY;
+
+      render(<ClientsPage />);
+
+      expect(screen.getByTestId("client-detail")).toHaveTextContent("목록 속 고객");
+      expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+    });
+
+    it("keeps the placeholder without a deep link even if the client query reports an error", () => {
+      mockSearchParams = new URLSearchParams();
+      mockClientQueryState = FAILED_CLIENT_QUERY;
+
+      render(<ClientsPage />);
+
+      expect(screen.getByText(PLACEHOLDER)).toBeInTheDocument();
+      expect(screen.queryByText(DEEP_LINK_TITLE)).not.toBeInTheDocument();
+    });
   });
 });
