@@ -217,10 +217,28 @@ interface QueryState {
   isLoading?: boolean;
   isError?: boolean;
   isFetching?: boolean;
+  // react-query's `isPaused`: the fetch is waiting for the network to return.
+  isPaused?: boolean;
+  // A query with `enabled: false`: no data, not paused, never fetched.
+  disabled?: boolean;
 }
 
-function historyState({ data, isError = false, isFetching = false }: QueryState = {}) {
+// What react-query reports for a query with no data, per the state the test
+// feeds. Paused (offline): isLoading and isFetching are false.
+function stateFlags({ isPaused = false, disabled = false }: QueryState) {
+  if (isPaused) {
+    return { isPaused: true, status: "pending", fetchStatus: "paused" };
+  }
+  if (disabled) {
+    return { isPaused: false, status: "pending", fetchStatus: "idle" };
+  }
+  return { isPaused: false };
+}
+
+function historyState(state: QueryState = {}) {
+  const { data, isError = false, isFetching = false } = state;
   mockUseMessageHistory.mockReturnValue({
+    ...stateFlags(state),
     data,
     isLoading: false,
     isError,
@@ -229,8 +247,10 @@ function historyState({ data, isError = false, isFetching = false }: QueryState 
   });
 }
 
-function upcomingState({ data, isError = false, isFetching = false }: QueryState = {}) {
+function upcomingState(state: QueryState = {}) {
+  const { data, isError = false, isFetching = false } = state;
   mockUseUpcomingJobs.mockReturnValue({
+    ...stateFlags(state),
     data,
     isLoading: false,
     isError,
@@ -239,8 +259,10 @@ function upcomingState({ data, isError = false, isFetching = false }: QueryState
   });
 }
 
-function userTemplatesState({ data, isError = false, isFetching = false }: QueryState = {}) {
+function userTemplatesState(state: QueryState = {}) {
+  const { data, isError = false, isFetching = false } = state;
   mockUseMessageTemplates.mockReturnValue({
+    ...stateFlags(state),
     data,
     isLoading: false,
     isError,
@@ -249,8 +271,10 @@ function userTemplatesState({ data, isError = false, isFetching = false }: Query
   });
 }
 
-function systemTemplatesState({ data, isError = false, isFetching = false }: QueryState = {}) {
+function systemTemplatesState(state: QueryState = {}) {
+  const { data, isError = false, isFetching = false } = state;
   mockUseSystemTemplates.mockReturnValue({
+    ...stateFlags(state),
     data,
     isLoading: false,
     isError,
@@ -291,6 +315,14 @@ function getCount(dataComponent: string) {
 const PILL = "desktop_messages_sections_history-list-count";
 const UPCOMING_COUNT = "desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count";
 const PAST_COUNT = "desktop_messages_sections_split-layout_list-panel-3_zone-past_count";
+
+function getTemplateListSkeletons() {
+  return Array.from(
+    document.querySelectorAll(
+      '[data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list"] [data-slot="skeleton"]',
+    ),
+  );
+}
 
 function getRetryButton(scope: HTMLElement) {
   return within(scope).getByRole("button", { name: "다시 시도" });
@@ -593,6 +625,160 @@ describe("messages page 템플릿 — template list load failure", () => {
 
     expect(screen.getByText("새 서버 템플릿")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("messages page — a paused (offline) load with no data is loading, not empty", () => {
+  const EMPTY_HISTORY_TEXT = "표시할 메시지가 없습니다.";
+  const EMPTY_UPCOMING_TEXT = "예정된 발송이 없습니다.";
+  const EMPTY_BUILTIN_TEXT = "등록된 기본 템플릿이 없습니다.";
+  const EMPTY_BRANCH_TEXT = "등록된 지점 템플릿이 없습니다.";
+
+  it("shows the loading state, not 0건 or the empty text, when history is paused with no cached data", () => {
+    historyState({ isPaused: true });
+    upcomingState({ data: [] });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    // The pill and the past-zone count are skeletons: no number, no 건.
+    expect(getCount(PILL)).not.toBeNull();
+    expect(getCount(PILL)?.textContent).toBe("");
+    expect(getCount(PAST_COUNT)).not.toBeNull();
+    expect(getCount(PAST_COUNT)?.textContent).toBe("");
+    expect(screen.queryByText(EMPTY_HISTORY_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_UPCOMING_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    // The upcoming zone loaded fine and is empty: that stays a real 0.
+    expect(getCount(UPCOMING_COUNT)?.textContent).toBe("0");
+  });
+
+  it("keeps history rows and shows no 0 or empty text in the upcoming zone when upcoming is paused with no cache", () => {
+    historyState({ data: [buildHistoryRecord()] });
+    upcomingState({ isPaused: true });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    expect(within(getZone("past") as HTMLElement).getByText("이하은")).toBeInTheDocument();
+    expect(getCount(PAST_COUNT)?.textContent).toBe("1");
+    expect(getCount(UPCOMING_COUNT)).not.toBeNull();
+    expect(getCount(UPCOMING_COUNT)?.textContent).toBe("");
+    // The pill sums both queries, so it is not a number until both have data.
+    expect(getCount(PILL)?.textContent).toBe("");
+    expect(screen.queryByText(EMPTY_UPCOMING_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByText(EMPTY_HISTORY_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("never shows the 예정 tab empty text while upcoming is paused with no cache, even with history empty", () => {
+    upcomingState({ isPaused: true });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByRole("button", { name: "예정" }));
+
+    expect(screen.queryByText(EMPTY_UPCOMING_TEXT)).not.toBeInTheDocument();
+    expect(getCount(PILL)?.textContent).toBe("");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("ignores a paused history query on the 예정 tab, which only shows upcoming jobs", () => {
+    historyState({ isPaused: true });
+    upcomingState({ data: [buildUpcomingJob()] });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+    fireEvent.click(screen.getByRole("button", { name: "예정" }));
+
+    expect(within(getZone("upcoming") as HTMLElement).getByText("김서연")).toBeInTheDocument();
+    expect(getCount(PILL)?.textContent).toBe("1건");
+  });
+
+  it("shows cached rows unchanged when a refetch is paused but data is cached", () => {
+    historyState({ data: [buildHistoryRecord()], isPaused: true });
+    upcomingState({ data: [buildUpcomingJob()], isPaused: true });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    expect(within(getZone("past") as HTMLElement).getByText("이하은")).toBeInTheDocument();
+    expect(within(getZone("upcoming") as HTMLElement).getByText("김서연")).toBeInTheDocument();
+    expect(getCount(PILL)?.textContent).toBe("2건");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("still shows 0건 and the empty text when history and upcoming succeeded empty", () => {
+    historyState({ data: [] });
+    upcomingState({ data: [] });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    expect(screen.getByText(EMPTY_HISTORY_TEXT)).toBeInTheDocument();
+    expect(getCount(PILL)?.textContent).toBe("0건");
+  });
+
+  it("renders a disabled history query (no data, not paused) as it did before", () => {
+    historyState({ disabled: true });
+    upcomingState({ data: [] });
+
+    render(<MessagesPage />);
+    goToHistorySection();
+
+    expect(screen.getByText(EMPTY_HISTORY_TEXT)).toBeInTheDocument();
+    expect(getCount(PILL)?.textContent).toBe("0건");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows the list's loading state, not 등록된 기본 템플릿이 없습니다., when the built-in list is paused with no data", () => {
+    systemTemplatesState({ isPaused: true });
+
+    render(<MessagesPage />);
+
+    expect(screen.queryByText(EMPTY_BUILTIN_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(getTemplateListSkeletons().length).toBeGreaterThan(0);
+  });
+
+  it("shows the list's loading state, not 등록된 지점 템플릿이 없습니다., when the branch list is paused with no data", () => {
+    userTemplatesState({ isPaused: true });
+
+    render(<MessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+
+    expect(screen.queryByText(EMPTY_BRANCH_TEXT)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(getTemplateListSkeletons().length).toBeGreaterThan(0);
+  });
+
+  it("does not let a paused branch list change the built-in tab", () => {
+    userTemplatesState({ isPaused: true });
+    systemTemplatesState({ data: [buildSystemTemplate()] });
+
+    render(<MessagesPage />);
+
+    expect(screen.getByText("새 서버 템플릿")).toBeInTheDocument();
+    expect(getTemplateListSkeletons()).toHaveLength(0);
+  });
+
+  it("keeps the empty text when a built-in or branch list succeeded empty", () => {
+    render(<MessagesPage />);
+    expect(screen.getByText(EMPTY_BUILTIN_TEXT)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+    expect(screen.getByText(EMPTY_BRANCH_TEXT)).toBeInTheDocument();
+  });
+
+  it("renders disabled template lists (no data, not paused) as they did before", () => {
+    systemTemplatesState({ disabled: true });
+    userTemplatesState({ disabled: true });
+
+    render(<MessagesPage />);
+    expect(screen.getByText(EMPTY_BUILTIN_TEXT)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "지점 템플릿" }));
+    expect(screen.getByText(EMPTY_BRANCH_TEXT)).toBeInTheDocument();
   });
 });
 

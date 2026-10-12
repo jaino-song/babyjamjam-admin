@@ -745,6 +745,7 @@ function MessageHistorySection() {
     isLoading,
     isError: isHistoryError,
     isFetching: isFetchingHistory,
+    isPaused: isHistoryPaused,
     refetch: refetchHistory,
   } = useMessageHistory();
   const {
@@ -752,6 +753,7 @@ function MessageHistorySection() {
     isLoading: isLoadingUpcoming,
     isError: isUpcomingError,
     isFetching: isFetchingUpcoming,
+    isPaused: isUpcomingPaused,
     refetch: refetchUpcoming,
   } = useUpcomingMessageTriggerJobs();
   // A failed query only counts as "no data" when no earlier successful load is
@@ -888,8 +890,22 @@ function MessageHistorySection() {
   const isStaleUpcoming = showUpcomingZone && isUpcomingError && upcomingJobsLoaded !== undefined;
   const isStaleHistory = showPastZone && isHistoryError && historyDataLoaded !== undefined;
   const isVisibleCountUnknown = isUpcomingZoneFailed || isPastZoneFailed;
+  // A query paused while offline has no data and is neither loading nor failed
+  // (`isLoading` is false while paused). With no cached data it is still
+  // unknown, so it reads as loading, never as an empty/0 result. Judged from
+  // the data and `isPaused`, never from !isError: a disabled query also has no
+  // data and must keep rendering as it does.
+  const isUpcomingZonePaused = showUpcomingZone && isUpcomingPaused && upcomingJobsLoaded === undefined;
+  const isPastZonePaused = showPastZone && isHistoryPaused && historyDataLoaded === undefined;
+  const isUpcomingZoneLoading = isPanelLoading || isUpcomingZonePaused;
+  const isPastZoneLoading = isPanelLoading || isPastZonePaused;
   const isOverallEmpty =
-    !isVisibleCountUnknown && !isLoading && !isLoadingUpcoming && totalVisibleCount === 0;
+    !isVisibleCountUnknown
+    && !isLoading
+    && !isLoadingUpcoming
+    && !isUpcomingZonePaused
+    && !isPastZonePaused
+    && totalVisibleCount === 0;
   const retryStaleQueries = useCallback(() => {
     if (isStaleHistory) void refetchHistory();
     if (isStaleUpcoming) void refetchUpcoming();
@@ -996,7 +1012,7 @@ function MessageHistorySection() {
         onSearchChange={setSearchValue}
         searchPlaceholder="고객명, 연락처, 템플릿, 내용 검색…"
         headerActions={
-          isPanelLoading ? (
+          isPanelLoading || isUpcomingZonePaused || isPastZonePaused ? (
             <Skeleton
               data-component="desktop_messages_sections_history-list-count"
               className="h-[22px] w-12 rounded-full bg-v3-dim-white"
@@ -1104,7 +1120,7 @@ function MessageHistorySection() {
               className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
             >
               <span>{MESSAGE_RECORD_ZONE_LABELS.upcoming}</span>
-              {isPanelLoading ? (
+              {isUpcomingZoneLoading ? (
                 <Skeleton
                   data-component="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_count"
                   className="h-[18px] w-7 rounded-full bg-v3-dim-white"
@@ -1118,7 +1134,7 @@ function MessageHistorySection() {
                 </span>
               )}
             </div>
-            {!isPanelLoading && isUpcomingZoneFailed ? (
+            {!isUpcomingZoneLoading && isUpcomingZoneFailed ? (
               <QueryErrorState
                 dataComponent="desktop_messages_sections_split-layout_list-panel-3_zone-upcoming_load-error"
                 size="inline"
@@ -1129,7 +1145,7 @@ function MessageHistorySection() {
             ) : null}
             <AnimatedSlotList<UpcomingMessageTriggerJob>
               items={filteredUpcomingJobs}
-              isLoading={isPanelLoading}
+              isLoading={isUpcomingZoneLoading}
               loadingCount={3}
               className="space-y-2 pb-3"
               itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_upcoming-list_item"
@@ -1189,7 +1205,7 @@ function MessageHistorySection() {
               className="flex items-center gap-2 px-1 pb-2 pt-1 text-[0.72rem] font-semibold text-v3-text-muted"
             >
               <span>{MESSAGE_RECORD_ZONE_LABELS.past}</span>
-              {isPanelLoading ? (
+              {isPastZoneLoading ? (
                 <Skeleton
                   data-component="desktop_messages_sections_split-layout_list-panel-3_zone-past_count"
                   className="h-[18px] w-7 rounded-full bg-v3-dim-white"
@@ -1203,7 +1219,7 @@ function MessageHistorySection() {
                 </span>
               )}
             </div>
-            {!isPanelLoading && isPastZoneFailed ? (
+            {!isPastZoneLoading && isPastZoneFailed ? (
               <QueryErrorState
                 dataComponent="desktop_messages_sections_split-layout_list-panel-3_history-list-error"
                 size="panel"
@@ -1214,7 +1230,7 @@ function MessageHistorySection() {
             ) : null}
             <AnimatedSlotList<MessageHistoryRecord>
               items={filteredHistoryRecords}
-              isLoading={isPanelLoading}
+              isLoading={isPastZoneLoading}
               loadingCount={4}
               className="space-y-2"
               itemDataComponent="desktop_messages_sections_split-layout_list-panel-3_history-list_item"
@@ -1512,6 +1528,7 @@ export default function MessagesPage() {
     isLoading: isLoadingUserTemplates,
     isError: isUserTemplatesError,
     isFetching: isFetchingUserTemplates,
+    isPaused: isUserTemplatesPaused,
     refetch: refetchUserTemplates,
   } = useMessageTemplates(1, 100);
   const {
@@ -1519,6 +1536,7 @@ export default function MessagesPage() {
     isLoading: isLoadingSystemTemplates,
     isError: isSystemTemplatesError,
     isFetching: isFetchingSystemTemplates,
+    isPaused: isSystemTemplatesPaused,
     refetch: refetchSystemTemplates,
   } = useSystemTemplates({ scope: "branch", branchId: activeBranchId });
   const userTemplates = useMemo(() => userTemplatesData ?? [], [userTemplatesData]);
@@ -1554,9 +1572,10 @@ export default function MessagesPage() {
     setSelectedId: setSelectedValue,
     setSplitLayoutMode: setTemplateSplitLayoutMode,
   } = useSplitLayoutSelection(templateItemIds);
+  // Paused (offline) with nothing cached is still loading, not an empty list.
   const isTemplateListLoading = templateFilter === "builtin"
-    ? isLoadingSystemTemplates
-    : isLoadingUserTemplates;
+    ? isLoadingSystemTemplates || (isSystemTemplatesPaused && systemTemplatesData === undefined)
+    : isLoadingUserTemplates || (isUserTemplatesPaused && userTemplatesData === undefined);
   // A failed list with no earlier successful load is a failure state; one with
   // cached rows keeps them and gets an inline notice instead.
   const isTemplateListError = templateFilter === "builtin"
