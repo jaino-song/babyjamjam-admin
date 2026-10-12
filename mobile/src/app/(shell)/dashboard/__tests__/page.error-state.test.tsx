@@ -107,7 +107,7 @@ describe("cached data survives a failed refetch", () => {
   });
 
   it("keeps the cached rows and pill counts and shows one inline notice that retries only the clients", () => {
-    clientsQuery.mockReturnValue({ allClients: [cachedClient], isLoading: false, isError: true, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    clientsQuery.mockReturnValue({ allClients: [cachedClient], hasData: true, isLoading: false, isError: true, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
     render(<DashboardPage />);
     expect(screen.getByText("홍길동")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /전체/ })).toHaveTextContent("1");
@@ -122,7 +122,7 @@ describe("cached data survives a failed refetch", () => {
   });
 
   it("disables the clients notice's retry while the refetch is in flight", () => {
-    clientsQuery.mockReturnValue({ allClients: [cachedClient], isLoading: false, isError: true, isFetching: true, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    clientsQuery.mockReturnValue({ allClients: [cachedClient], hasData: true, isLoading: false, isError: true, isFetching: true, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
     render(<DashboardPage />);
     expect(screen.getByText("홍길동")).toBeInTheDocument();
     expect(within(screen.getByRole("alert")).getByRole("button", { name: /다시 시도/ })).toBeDisabled();
@@ -132,6 +132,67 @@ describe("cached data survives a failed refetch", () => {
     clientsQuery.mockReturnValue({ allClients: [cachedClient], isLoading: false, isError: false, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
     render(<DashboardPage />);
     expect(screen.getByText("홍길동")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("a paused load is loading, and a cached empty list is not a first-load failure", () => {
+  const pausedNoData = { data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+
+  it("shows loading placeholders, no zeros, no empty text and no alert while both queries are paused with no data", () => {
+    clientsQuery.mockReturnValue({ ...pausedNoData, allClients: [], hasData: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    analyticsQuery.mockReturnValue({ ...pausedNoData, refetch: retryAnalytics } as unknown as ReturnType<typeof useDashboardAnalytics>);
+    const { container } = render(<DashboardPage />);
+    expect(screen.queryByText("0")).not.toBeInTheDocument();
+    expect(screen.queryByText("최근 현황이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_loading-skeleton"]')).not.toBeNull();
+    expect(container.querySelector(".filter-pill-skeleton")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /전체/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the summary as loading, not as counts derived from the list, while only the summary query is paused with no data", () => {
+    clientsQuery.mockReturnValue({ allClients: [cachedClient], hasData: true, isLoading: false, isError: false, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    analyticsQuery.mockReturnValue({ ...pausedNoData, refetch: retryAnalytics } as unknown as ReturnType<typeof useDashboardAnalytics>);
+    render(<DashboardPage />);
+    expect(screen.queryByText("서비스 진행 중")).not.toBeInTheDocument();
+    expect(screen.getByText("홍길동")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps showing cached rows when a refetch is paused", () => {
+    clientsQuery.mockReturnValue({ allClients: [cachedClient], hasData: true, isPaused: true, isLoading: false, isError: false, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    analyticsQuery.mockReturnValue({ data: cachedAnalytics, isPaused: true, isLoading: false, isError: false, isFetching: false, refetch: retryAnalytics } as unknown as ReturnType<typeof useDashboardAnalytics>);
+    render(<DashboardPage />);
+    expect(screen.getByText("홍길동")).toBeInTheDocument();
+    expect(screen.getByText("7")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps a cached EMPTY client list as a real empty state with real zeros when its refetch fails", () => {
+    clientsQuery.mockReturnValue({ allClients: [], hasData: true, isLoading: false, isError: true, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    render(<DashboardPage />);
+    expect(screen.getByText("최근 현황이 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByText("최근 현황을 불러오지 못했습니다.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /전체/ })).toHaveTextContent("0");
+    expect(screen.getByRole("button", { name: /전체/ })).not.toHaveTextContent("—");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+  });
+
+  it("still treats a first-load failure as the failure panel with unknown counts", () => {
+    clientsQuery.mockReturnValue({ allClients: [], hasData: false, isLoading: false, isError: true, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    render(<DashboardPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent("최근 현황을 불러오지 못했습니다.");
+    expect(screen.getByRole("button", { name: /전체/ })).toHaveTextContent("—");
+    expect(screen.queryByText("최근 현황이 없습니다.")).not.toBeInTheDocument();
+  });
+
+  it("shows a successful empty list as an empty state with zeros and no alert", () => {
+    clientsQuery.mockReturnValue({ allClients: [], hasData: true, isLoading: false, isError: false, isFetching: false, refetch: retryClients } as unknown as ReturnType<typeof useInfiniteClients>);
+    render(<DashboardPage />);
+    expect(screen.getByText("최근 현황이 없습니다.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /전체/ })).toHaveTextContent("0");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
