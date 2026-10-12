@@ -43,15 +43,73 @@ describe("DashboardAnalyticsPage load failures", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("shows a retryable failure instead of stats when the stats failed with nothing cached", () => {
+  it("shows a retryable inline failure above the stats when the stats failed with nothing cached", () => {
     mockAnalytics({ data: undefined, isError: true });
     render(<DashboardAnalyticsPage />);
-    const alert = screen.getByRole("alert");
+    const alert = screen.getByText("통계를 불러오지 못했습니다").closest('[role="alert"]') as HTMLElement;
     expect(alert).toHaveTextContent("통계를 불러오지 못했습니다");
-    expect(screen.queryByText("전체 고객")).not.toBeInTheDocument();
+    expect(screen.getByText("전체 고객")).toBeInTheDocument();
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert.nextElementSibling).toHaveAttribute("data-component", "mobile_dashboard_analytics-page_card_grid");
     fireEvent.click(within(alert).getByRole("button", { name: /다시 시도/ }));
     expect(retryAnalytics).toHaveBeenCalledTimes(1);
     expect(retryClients).not.toHaveBeenCalled();
+  });
+
+  it("shows — instead of 0 while the client count is paused with no data", () => {
+    mockClients({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" });
+    render(<DashboardAnalyticsPage />);
+    expect(totalClientsValue()).toHaveTextContent("—");
+    expect(totalClientsValue()).not.toHaveTextContent("0");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows placeholders without an alert while analytics is paused with no data", () => {
+    mockAnalytics({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" });
+    render(<DashboardAnalyticsPage />);
+    expect(Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent)).toEqual(["12", "—", "—", "—"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached values when both refetches are paused", () => {
+    mockClients({ data: { total: 12 }, isPaused: true });
+    mockAnalytics({ data: analyticsData, isPaused: true });
+    render(<DashboardAnalyticsPage />);
+    expect(Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent)).toEqual(["12", "7", "3", "3"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("preserves the idle no-data rendering when queries are not paused", () => {
+    mockClients({ data: undefined, isPending: true, isPaused: false });
+    mockAnalytics({ data: undefined, isPending: true, isPaused: false });
+    render(<DashboardAnalyticsPage />);
+    expect(Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent)).toEqual(["0", "-", "-", "-"]);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the cached client total and both notices when analytics failed with no data", () => {
+    mockClients({ data: { total: 12 }, isError: true });
+    mockAnalytics({ data: undefined, isError: true });
+    render(<DashboardAnalyticsPage />);
+    expect(Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent)).toEqual(["12", "—", "—", "—"]);
+    const analyticsAlert = screen.getByText("통계를 불러오지 못했습니다").closest('[role="alert"]') as HTMLElement;
+    const clientsAlert = screen.getByText("최신 정보를 불러오지 못했습니다").closest('[role="alert"]') as HTMLElement;
+    expect(analyticsAlert).toHaveAttribute("data-size", "inline");
+    expect(clientsAlert).toBeInTheDocument();
+    fireEvent.click(within(analyticsAlert).getByRole("button", { name: /다시 시도/ }));
+    expect(retryAnalytics).toHaveBeenCalledTimes(1);
+    expect(retryClients).not.toHaveBeenCalled();
+  });
+
+  it("keeps the grid with unknown counts when both queries failed without cached data", () => {
+    mockClients({ data: undefined, isError: true });
+    mockAnalytics({ data: undefined, isError: true, isFetching: true });
+    render(<DashboardAnalyticsPage />);
+    expect(Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent)).toEqual(["—", "—", "—", "—"]);
+    const alert = screen.getByText("통계를 불러오지 못했습니다").closest('[role="alert"]') as HTMLElement;
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(within(alert).getByRole("button", { name: /다시 시도/ })).toBeDisabled();
+    expect(screen.getByText("전체 고객 정보를 불러오지 못했습니다")).toBeInTheDocument();
   });
 
   it("keeps the cached stats under one inline notice when a refetch failed", () => {
