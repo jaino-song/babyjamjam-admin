@@ -317,6 +317,83 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(shown);
     expect(screen.queryAllByText(hidden)).toHaveLength(0);
   });
+  it.each([
+    ["display_status", { display_status: "rejected_by_reviewer" }],
+    ["the 071 status code when display_status is absent", {}],
+  ])("shows a rejected contract as 반려됨 with the solid badge, from %s — never 서명 완료", (_source, extra) => {
+    // The backend reports a 071 contract as documentStatus requested + hasSigned, which the coarse
+    // summary alone would read as 서명 완료.
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      current_status: { status_type: "071", step_type: "06", step_name: "제공기관 확인" },
+      ...extra,
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("반려됨");
+    expect(screen.queryAllByText("서명 완료")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent("반려됨");
+    expect(cardBadge).toHaveClass("burgundy-solid");
+  });
+
+  it.each([
+    ["signed", "070", "signed", "서명 완료", "primary"],
+    ["review", "070", "review", "서명 완료", "primary"],
+    ["unsigned", "060", "pending", "서명 요청됨", "orange"],
+  ])("keeps the %s contract card exactly as the client summary reads", (_state, statusType, displayStatus, label, tone) => {
+    const hasSigned = statusType === "070";
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned,
+      documentStatus: "requested" as const,
+    };
+    const contractDocument = {
+      id: "document-1",
+      display_status: displayStatus,
+      current_status: {
+        status_type: statusType,
+        step_type: hasSigned ? "06" : "05",
+        step_name: hasSigned ? "제공기관 확인" : "이용자",
+      },
+    } as EformsignDocument;
+
+    const { container } = renderDetail(contractDocument, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent(label);
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+    const cardBadge = container.querySelector(
+      '[data-component$="_contract-card_doc-row"] .badge-mini',
+    );
+    expect(cardBadge).toHaveTextContent(label);
+    expect(cardBadge).toHaveClass(tone);
+    expect(cardBadge).not.toHaveClass("burgundy-solid");
+  });
+
+  it("falls back to the client summary when there is no contract document", () => {
+    const detailClient = {
+      ...client,
+      eDocId: "document-1",
+      hasSigned: true,
+      documentStatus: "requested" as const,
+    };
+
+    renderDetail(null, detailClient, "contracts");
+
+    expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("서명 완료");
+    expect(screen.queryAllByText("반려됨")).toHaveLength(0);
+  });
+
   it("does not supersede a signed contract that still reports documentStatus requested", async () => {
     const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
     jest.mocked(fetchClientServiceRecords).mockResolvedValue({

@@ -2229,6 +2229,33 @@ describe("EformsignController (Integration)", () => {
             expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
         });
 
+        it("carries the unclaimed flag on every status signal, 071 included (display_status loses it for 071)", async () => {
+            const reviewStep = { stepType: "06", stepName: "제공기관 확인" };
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({ documentId: "070-linked", statusType: "070", ...reviewStep }),
+                createMirrorRow({ documentId: "070-unclaimed", statusType: "070", ...reviewStep, clientId: null }),
+                createMirrorRow({ documentId: "071-linked", statusType: "071", ...reviewStep }),
+                createMirrorRow({ documentId: "071-unclaimed", statusType: "071", ...reviewStep, clientId: null }),
+            ]);
+
+            const response = await request(mirrorApp.getHttpServer())
+                .get("/api/documents/status-counts?accessToken=access-token");
+
+            expect(response.status).toBe(200);
+            const byStatus = (response.body.documents as Array<{
+                status_type: string;
+                display_status: string;
+                unassigned: boolean;
+            }>).map((signal) => [signal.status_type, signal.display_status, signal.unassigned]);
+            expect(byStatus).toEqual(expect.arrayContaining([
+                ["070", "review", false],
+                ["070", "unassigned", true],
+                ["071", "rejected_by_reviewer", false],
+                ["071", "rejected_by_reviewer", true],
+            ]));
+            expect(byStatus).toHaveLength(4);
+        });
+
         it.each([
             "/api/documents",
             "/api/documents/status-counts",

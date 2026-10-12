@@ -266,6 +266,7 @@ export function foldContractStats(
     step_recipient_types?: ReadonlyArray<string | null>;
     contract_end_date?: string | null;
     display_status?: string | null;
+    unassigned?: boolean;
   }>,
   calendar?: KrBusinessDayCalendar,
 ): ContractStatsBuckets {
@@ -294,8 +295,14 @@ export function foldContractStats(
     // sign — and is the only honest option among the existing buckets: it is
     // not a review anyone can perform, so counting it under 검토 필요 would
     // send the operator back to the button this change just removed.
-    // 071 (반려됨, 계약-04) is in progress and counts exactly where a 070 does: its display_status
-    // ("rejected_by_reviewer") says nothing about the review window, so it takes the window rule.
+    // 071 (반려됨, 계약-04) is in progress and counts exactly where a 070 does. Its display_status
+    // ("rejected_by_reviewer") says nothing about the review window or the assignment, so it takes the
+    // window rule, and an unassigned one (the separate `unassigned` flag) counts as 서명 완료 like
+    // the unassigned 070 whose display_status is "unassigned".
+    if (doc.display_status === "rejected_by_reviewer" && doc.unassigned === true) {
+      buckets.signed++;
+      continue;
+    }
     const isReviewDue = isContractDocDisplayStatus(doc.display_status) && doc.display_status !== "rejected_by_reviewer"
       ? doc.display_status === "review"
       : isContractReviewWindowOpen(
