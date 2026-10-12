@@ -520,8 +520,17 @@ describe("ServiceRecordEditRepository", () => {
     it.each([
         ["060", "in_progress"],
         ["040", "in_progress"],
+        ["045", "in_progress"],
+        ["041", "in_progress"],
         ["042", "rejected"],
+        ["090", "rejected"],
+        ["099", "rejected"],
+        ["047", "rejected"],
+        ["049", "rejected"],
+        ["062", "completed"],
         ["050", "completed"],
+        ["070", "in_progress"],
+        ["xyz", "unknown"],
     ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
         const { repository } = buildDraftSourceFixture(contractStatus);
 

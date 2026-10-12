@@ -193,7 +193,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             // Omitted (not undefined-valued) so the stored step columns stay untouched.
             ...(params.stepType !== undefined ? { stepType: params.stepType } : {}),
             ...(params.stepIndex !== undefined ? { stepIndex: params.stepIndex } : {}),
-            stepName: params.stepName,
+            ...(params.stepName !== undefined ? { stepName: params.stepName } : {}),
             expired: params.expired,
             ...(params.sourceUpdatedDate
                 ? { updatedDate: params.sourceUpdatedDate }
@@ -636,6 +636,14 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         return (await this.updateDocument(branchid, doc, false, options)).document;
     }
 
+    async updateWithOutcome(
+        branchid: string,
+        doc: EformsignDocEntity,
+        options?: EformsignDocStepWriteOptions,
+    ): Promise<{ document: EformsignDocEntity; applied: boolean }> {
+        return this.updateDocument(branchid, doc, false, options);
+    }
+
     async updateIfSourceNewer(
         branchid: string,
         doc: EformsignDocEntity,
@@ -1030,14 +1038,40 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         if (!doc.id) {
             throw new Error("Cannot update eformsign_doc without id");
         }
-        const { stepType, stepIndex, ...rest } = EformsignDocMapper.toPrismaUpdate(doc);
-        // A step column the caller did not supply holds the value it read earlier; leaving
-        // it out keeps whatever the mirror/backfill stored since, instead of reverting it.
+        const {
+            stepType,
+            stepIndex,
+            stepName,
+            stepRecipientType,
+            stepRecipientName,
+            stepRecipientSms,
+            documentNumber,
+            expiredDate,
+            stepRecipientTypes,
+            statusDetail,
+            expired,
+            ...rest
+        } = EformsignDocMapper.toPrismaUpdate(doc);
+        // A column the caller did not supply holds the value it read earlier; leaving it out
+        // keeps whatever the mirror/backfill stored since, instead of reverting it.
         // `data` feeds both the primary write and the pending-column retry below.
         const data = {
             ...rest,
             ...(options?.updateStepType === false ? {} : { stepType }),
             ...(options?.updateStepIndex === false ? {} : { stepIndex }),
+            ...(options?.updateStepName === false ? {} : { stepName }),
+            ...(options?.updateStepRecipient === false
+                ? {}
+                : { stepRecipientType, stepRecipientName, stepRecipientSms }),
+            ...(options?.updateStepRecipient === false || stepRecipientTypes === undefined
+                ? {}
+                : { stepRecipientTypes }),
+            ...(options?.updateStatusDetail === false ? {} : { statusDetail }),
+            ...(options?.updateExpired === false ? {} : { expired }),
+            ...(options?.updateDocumentNumber === false || documentNumber === undefined
+                ? {}
+                : { documentNumber }),
+            ...(options?.updateExpiredDate === false ? {} : { expiredDate }),
         };
         // Keep the purge/deleted fence in the UPDATE predicate for every write, not
         // only webhook CAS writes: a permanent purge can otherwise finish between
@@ -1048,6 +1082,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             permanentPurgeRequestedAt: null,
             statusType: { notIn: DELETED_EFORMSIGN_STATUS_TYPES },
             ...(onlyIfSourceNewer ? { updatedDate: { lt: doc.updatedDate } } : {}),
+            ...(options?.expectedStatusType === undefined
+                ? {}
+                : { AND: [{ statusType: options.expectedStatusType }] }),
         };
         let result: Prisma.BatchPayload;
 
@@ -1068,7 +1105,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         }
 
         if (result.count === 0) {
-            if (onlyIfSourceNewer) {
+            if (onlyIfSourceNewer || options?.expectedStatusType !== undefined) {
                 const current = await this.findFirstDomain({ id: doc.id, branchId: branchid });
                 if (current) {
                     return { document: current, applied: false };
@@ -1139,18 +1176,18 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             branchId: null,
         };
         const update = {
-            statusType: doc.statusType,
+            ...(options?.updateStatusType === false ? {} : { statusType: doc.statusType }),
             ...(options?.markMirrorPending ? { syncStatus: "pending" as const } : {}),
             ...(options?.updateStatusDetail === false ? {} : { statusDetail: doc.statusDetail }),
             ...(options?.updateStepType === false ? {} : { stepType: doc.stepType }),
             ...(options?.updateStepIndex === false ? {} : { stepIndex: doc.stepIndex }),
-            stepName: doc.stepName,
+            ...(options?.updateStepName === false ? {} : { stepName: doc.stepName }),
             ...(options?.updateExpired === false ? {} : { expired: doc.expired }),
             ...(options?.updateExpiredDate === false ? {} : { expiredDate: doc.expiredDate }),
             ...(options?.updateCreatedDate === false ? {} : { createdDate: doc.createdDate }),
             updatedDate: doc.updatedDate,
             ...(documentName ? { documentName } : {}),
-            ...(documentNumber ? { documentNumber } : {}),
+            ...(documentNumber && options?.updateDocumentNumber !== false ? { documentNumber } : {}),
             ...(templateId ? { templateId } : {}),
             ...(templateName ? { templateName } : {}),
             ...(options?.updateListDisplayFields && customerName ? { customerName } : {}),

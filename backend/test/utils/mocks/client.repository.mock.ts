@@ -343,22 +343,16 @@ export class MockClientRepository implements IClientRepository {
         });
     }
 
+    /**
+     * The real repository applies the dashboard's current-contract rule over `eformsign_doc`
+     * rows, which this in-memory mock does not hold; it reports none.
+     */
     async findWithoutContractSentStartingWithinDays(
         _branchid: string,
-        days: number
+        _calendar: KrBusinessDayCalendar,
+        _now?: Date,
     ): Promise<ClientEntity[]> {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const endDate = new Date(today);
-        endDate.setDate(endDate.getDate() + days);
-        endDate.setHours(23, 59, 59, 999);
-
-        return Array.from(this.clients.values()).filter(client => {
-            if (!client.startDate) return false;
-            const isStartingSoon = client.startDate >= today && client.startDate <= endDate;
-            const noContractSent = client.eDocId === null;
-            return isStartingSoon && noContractSent;
-        });
+        return [];
     }
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {

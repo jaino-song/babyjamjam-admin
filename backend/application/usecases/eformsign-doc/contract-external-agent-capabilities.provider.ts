@@ -27,6 +27,7 @@ const DISPATCH_CONFIRMED_IN_PROGRESS_STATUS_CODES = new Set([
     "010", // doc_request_approval
     "020", // doc_request_reception
     "030", // doc_request_outsider
+    "041", // doc_refuse_revoke: the revoke was refused, the document continues like 060
     "060", // doc_request_participant
     "063", // doc_rerequest_participant
     "064", // doc_open_participant

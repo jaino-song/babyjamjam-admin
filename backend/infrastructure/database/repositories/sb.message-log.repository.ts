@@ -345,8 +345,12 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return rows.map(MessageLogMapper.toDomain);
     }
 
-    async findRetryableServiceRecordSmsByScheduleId(scheduleId: number): Promise<MessageLogEntity[]> {
-        const jobs = await this.prisma.message_trigger_job.findMany({
+    async findRetryableServiceRecordSmsByScheduleId(
+        scheduleId: number,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageLogEntity[]> {
+        const client = transaction ?? this.prisma;
+        const jobs = await client.message_trigger_job.findMany({
             where: {
                 employeeScheduleId: scheduleId,
                 ruleId: SERVICE_RECORD_LINK_RULE_ID,
@@ -355,7 +359,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         });
         const triggerJobIds = jobs.map((job) => job.id);
 
-        const rows = await this.prisma.message_log.findMany({
+        const rows = await client.message_log.findMany({
             where: {
                 provider: "aligo_sms",
                 templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,

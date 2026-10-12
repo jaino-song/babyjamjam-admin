@@ -369,6 +369,36 @@ describe("service-record revision facts policy", () => {
         expect(result.missingFacts).toContain("sourceDocument.stage");
     });
 
+    it.each([
+        ["02", "signature_pending"],
+        ["05", "provider_participant"],
+    ])("reads 041 (a refused revoke) exactly like 060 for recipient type %s", (recipientType, stage) => {
+        const stageFor = (statusType: string) => {
+            const row = documentRow({
+                statusType,
+                stepType: "05",
+                stepName: "임의의 표시명",
+                stepRecipientType: recipientType,
+                workflowScope: { statusType, stepType: "05", stepIndex: "3", stepName: "임의의 표시명" },
+                detailPayload: detail({
+                    current_status: {
+                        status_type: statusType,
+                        step_type: "05",
+                        step_index: "3",
+                        step_name: "임의의 표시명",
+                        step_recipients: [],
+                        save_permission: true,
+                    },
+                }),
+            });
+            delete row.stage;
+            return captureServiceRecordRevisionFacts(input(row, [])).facts?.sourceDocument.stage;
+        };
+
+        expect(stageFor("060")).toBe(stage);
+        expect(stageFor("041")).toBe(stage);
+    });
+
     it("accepts structured recipient and save-permission evidence for workflow stage", () => {
         const row = documentRow({
             statusType: "070",

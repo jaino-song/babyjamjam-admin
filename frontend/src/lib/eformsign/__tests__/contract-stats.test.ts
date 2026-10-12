@@ -60,6 +60,27 @@ describe("foldContractStats", () => {
     ).toBe(1);
   });
 
+  it("counts 045 like 040 in no bucket, and 041 exactly like 060", () => {
+    const empty = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
+    expect(
+      foldContractStats([
+        { status_type: "045", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+        { status_type: "045", step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: PAST_CONTRACT_END_DATE },
+      ]),
+    ).toEqual(empty);
+    for (const step of [
+      { step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+      { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"], contract_end_date: PAST_CONTRACT_END_DATE },
+    ]) {
+      expect(foldContractStats([{ status_type: "041", ...step }])).toEqual(
+        foldContractStats([{ status_type: "060", ...step }]),
+      );
+    }
+    expect(
+      foldContractStats([{ status_type: "041", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]).sendRequired,
+    ).toBe(1);
+  });
+
   it("counts draft (001) as drafting, before the reviewNeeded split", () => {
     expect(
       foldContractStats([{ status_type: "001", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]),

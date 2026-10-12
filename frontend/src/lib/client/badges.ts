@@ -5,7 +5,7 @@ import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import type { Client, ClientBadge, ClientBadgeTone } from "@/lib/client/types";
 
 const SCHEDULE_CHANGE_BADGE_LABEL = "일정 변경";
-const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "service_status"] as const satisfies readonly ClientBadge["key"][];
+const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "contract_status", "service_status"] as const satisfies readonly ClientBadge["key"][];
 
 const isScheduleChangeBadge = (badge: ClientBadge): boolean => (
     badge.key === "service_status" && badge.status === "scheduleChange"

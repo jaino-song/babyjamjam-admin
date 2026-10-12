@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import {
     EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES,
     UNASSIGNED_TERMINAL_STATUS_CODES,
+    EFORMSIGN_REFUSE_REVOKE_STATUS_CODE,
     isReviewStageDocumentPdfReadable,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
@@ -113,6 +114,8 @@ implements IEformsignDocumentMirrorRepository {
             && (
                 normalizedStatus === "001"
                 || normalizedStatus === "060"
+                // 041 (a refused revoke) is the document's live participant stage, like 060.
+                || normalizedStatus === EFORMSIGN_REFUSE_REVOKE_STATUS_CODE
                 || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (!document?.detailPayload

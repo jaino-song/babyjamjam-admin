@@ -169,8 +169,34 @@ describe("revoke_requested (eformsign 040)", () => {
         })).toBe("revoke_requested");
     });
 
-    it("leaves other expired-bucket codes alone (042/090 revoked, 080 expired)", () => {
-        for (const statusType of ["042", "090", "080", "011", undefined, null]) {
+    it("labels 045 (doc_request_reject) exactly like 040", () => {
+        for (const statusType of ["045", "doc_request_reject"]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-07", statusType, now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("철회 요청됨");
+        }
+    });
+
+    it("resolves 041 (a refused revoke) exactly like 060, by step and review window", () => {
+        for (const [currentStatus, contractEndDate] of [
+            [CUSTOMER_STEP_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+        ] as const) {
+            const params = { category: "in-progress" as const, currentStatus, contractEndDate, now: kstNoon("2026-08-06") };
+            expect(resolveContractDocDisplayStatus({ ...params, statusType: "041" }))
+                .toBe(resolveContractDocDisplayStatus({ ...params, statusType: "060" }));
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress", currentStatus: CUSTOMER_STEP_STATUS, contractEndDate: null, statusType: "041",
+        })).toBe("pending");
+    });
+
+    it("leaves other expired-bucket codes alone (080 expired)", () => {
+        for (const statusType of ["080", "011", undefined, null]) {
             expect(resolveContractDocStatusLabel({
                 category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
             })).toBe("기간 만료");
@@ -181,6 +207,50 @@ describe("revoke_requested (eformsign 040)", () => {
         expect(isContractDocDisplayStatus("revoke_requested")).toBe(true);
         expect(isContractReceiptSendable({
             category: "expired", displayStatus: "revoke_requested", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+    });
+});
+
+/**
+ * 042 (doc_revoke) and 090 (synthesized withdrawal): the document was revoked — terminal. The
+ * category stays "expired" for tabs/filters/stats; only the label and tone differ.
+ */
+describe("revoked (eformsign 042 / 090)", () => {
+    it("labels 042 and 090 철회됨, checked before the expired category", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked).toBe("철회됨");
+        for (const statusType of ["042", "090", 42, 90, "doc_revoke", "doc_withdraw"]) {
+            const params = {
+                category: "expired" as const, currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            };
+            expect(resolveContractDocDisplayStatus(params)).toBe("revoked");
+            expect(resolveContractDocStatusLabel(params)).toBe("철회됨");
+        }
+    });
+
+    it("ignores step and end date", () => {
+        expect(resolveContractDocDisplayStatus({
+            category: "expired",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "042",
+            now: kstNoon("2026-08-06"),
+        })).toBe("revoked");
+    });
+
+    it("keeps 080 기간 만료 and 040/045 철회 요청됨 distinct from 철회됨", () => {
+        const base = { category: "expired" as const, currentStatus: null, contractEndDate: null, now: kstNoon("2026-08-01") };
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "040" })).toBe("철회 요청됨");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "045" })).toBe("철회 요청됨");
+    });
+
+    it("is recognised as a wire display status but never receipt-sendable", () => {
+        expect(isContractDocDisplayStatus("revoked")).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "expired", displayStatus: "revoked", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        expect(isContractReceiptSendable({
+            category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
         })).toBe(false);
     });
 });

@@ -80,6 +80,10 @@ const DOCUMENT_STATUS = {
     // Revocation
     DOC_REQUEST_REVOKE: "doc_request_revoke",       // 철회 요청
     DOC_REVOKE: "doc_revoke",                       // 철회됨
+    DOC_REQUEST_REJECT: "doc_request_reject",       // 반려 요청 (045)
+    // eformsign's public webhook guide names the same event doc_reject_request.
+    DOC_REJECT_REQUEST: "doc_reject_request",
+    DOC_REFUSE_REVOKE: "doc_refuse_revoke",         // 철회 요청 거절 (041)
 };
 
 /**
@@ -509,7 +513,6 @@ export class EformsignWebhookService {
                 branchid,
                 documentId,
                 mirroredDocument,
-                workflow_name,
                 "ready_document_pdf",
                 document_title,
                 template_name,
@@ -588,7 +591,6 @@ export class EformsignWebhookService {
                 statusType,
                 statusDetail,
                 ...mirroredStepFields(mirroredDocument),
-                stepName: workflow_name,
                 expired: status === DOCUMENT_STATUS.DOC_EXPIRED,
                 documentName: document_title,
                 templateName: template_name,
@@ -634,7 +636,6 @@ export class EformsignWebhookService {
             action,
             document_title,
             template_name,
-            workflow_name,
         } = document;
 
         this.logger.log(`Document action event: ${documentId} -> action=${action}`);
@@ -653,8 +654,11 @@ export class EformsignWebhookService {
                 statusType,
                 statusDetail,
                 ...mirroredStepFields(mirroredDocument),
-                stepName: workflow_name || "unknown",
                 expired: false,
+                // With a mirror the code is the mirror's own and the action knows nothing
+                // about the document's detail or expiry; without one this is the old
+                // synthesised 020, which the terminal fence in the usecase still refuses.
+                ...(mirroredDocument ? { actionOnly: true } : {}),
                 documentName: document_title,
                 templateName: template_name,
                 sourceUpdatedDate: webhookSourceUpdatedDate(document.updated_date),
@@ -710,7 +714,6 @@ export class EformsignWebhookService {
                 branchid,
                 documentId,
                 mirroredDocument,
-                workflow_name,
                 status,
                 document_title,
                 template_name,
@@ -763,7 +766,6 @@ export class EformsignWebhookService {
                     statusType,
                     statusDetail,
                     ...mirroredStepFields(mirroredDocument),
-                    stepName: workflow_name,
                     expired: status === DOCUMENT_STATUS.DOC_EXPIRED,
                     documentName: document_title,
                     templateName: template_name,
@@ -828,21 +830,20 @@ export class EformsignWebhookService {
         branchid: string,
         documentId: string,
         mirroredDocument: EformsignApiDocumentResponse | null | undefined,
-        workflowName: string,
         source: string,
         documentName?: string,
         templateName?: string,
         sourceUpdatedDate?: Date,
     ): Promise<EformsignWebhookCompletionClaim> {
-        // The position the webhook carries is not a step kind, and re-sending a stored value
-        // read earlier would race a newer step write. Without a mirror the claim simply
-        // omits the step columns and the atomic update leaves them untouched.
+        // The position the webhook carries is not a step kind, and the workflow name it
+        // carries is not a step name; re-sending a stored value read earlier would race a
+        // newer step write. Without a mirror the claim simply omits the step columns and
+        // the atomic update leaves them untouched.
         const claimResult = await this.eformsignDocRepository.claimCompletionStatus(branchid, {
             documentId,
             statusType: "050",
             statusDetail: "완료",
             ...mirroredStepFields(mirroredDocument),
-            stepName: workflowName,
             expired: false,
             sourceUpdatedDate,
             documentName: documentName?.trim() || undefined,
@@ -1147,7 +1148,8 @@ export class EformsignWebhookService {
         const { event_type, webhook_id, document, ready_document_pdf } = payload;
         let statusType: string;
         let statusDetail: string;
-        let stepName: string;
+        let isCompletionEvent = false;
+        let isActionOnMirror = false;
         let updatedTimestamp: number | undefined;
         let documentName: string | undefined;
         let templateId: string | undefined;
@@ -1156,7 +1158,7 @@ export class EformsignWebhookService {
 
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
             ({ statusType, statusDetail } = this.mapUnassignedStatus(document.status));
-            stepName = document.workflow_name;
+            isCompletionEvent = document.status === DOCUMENT_STATUS.DOC_COMPLETE;
             updatedTimestamp = document.updated_date;
             documentName = document.document_title?.trim() || undefined;
             templateId = document.template_id?.trim() || undefined;
@@ -1164,9 +1166,14 @@ export class EformsignWebhookService {
             expired = document.status === DOCUMENT_STATUS.DOC_EXPIRED;
         } else if (event_type === EVENT_TYPES.DOCUMENT_ACTION && document) {
             const isOpenAction = document.action?.includes("open");
-            statusType = "020";
+            // The action says nothing about the document's status, so carry the mirror's own
+            // code, as the branch-owned path does; a synthesised one would only ever
+            // disagree with it and lose to the mirror guard below.
+            statusType = mirroredDocument
+                ? normalizeEformsignStatusCode(mirroredDocument.current_status.status_type)
+                : "020";
+            isActionOnMirror = Boolean(mirroredDocument);
             statusDetail = isOpenAction ? "서명 페이지 열림" : `액션: ${document.action}`;
-            stepName = document.workflow_name || "unknown";
             updatedTimestamp = document.updated_date;
             documentName = document.document_title?.trim() || undefined;
             templateId = document.template_id?.trim() || undefined;
@@ -1174,7 +1181,7 @@ export class EformsignWebhookService {
             expired = false;
         } else if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
             ({ statusType, statusDetail } = this.mapUnassignedStatus(ready_document_pdf.document_status));
-            stepName = ready_document_pdf.workflow_name;
+            isCompletionEvent = ready_document_pdf.document_status === DOCUMENT_STATUS.DOC_COMPLETE;
             documentName = ready_document_pdf.document_title?.trim() || undefined;
             templateId = ready_document_pdf.template_id?.trim() || undefined;
             templateName = ready_document_pdf.template_name?.trim() || undefined;
@@ -1230,6 +1237,19 @@ export class EformsignWebhookService {
             return;
         }
 
+        // Same rule as the branch-owned path: the mirror holds the document's real current
+        // status, and the controller has already projected it onto this row before the
+        // webhook runs. A synthesised code that differs is the older event losing to it, so
+        // keep the mirrored value. A completion is exempt exactly as it is there: it settles
+        // through the completion claim, not this comparison.
+        if (!isCompletionEvent && !this.isCurrentMirrorStatus(mirroredDocument, statusType)) {
+            trace.settle(
+                EFORMSIGN_WEBHOOK_OUTCOME.IGNORED_STALE_MIRROR,
+                `mirror is ${normalizeEformsignStatusCode(mirroredDocument?.current_status.status_type)}`,
+            );
+            return;
+        }
+
         const mirrored = mirroredStepFields(mirroredDocument);
         const updatedDate = updatedTimestamp === undefined
             ? existing.updatedDate
@@ -1246,18 +1266,29 @@ export class EformsignWebhookService {
             // mirror/backfill writer stores them; without a mirror the stored pair stays.
             stepType: mirrored.stepType ?? existing.stepType,
             stepIndex: mirrored.stepIndex ?? existing.stepIndex,
-            stepName,
+            stepName: mirrored.stepName ?? existing.stepName,
             expired,
         });
         // A webhook carries no creation time; this entity copies it from the row we just
         // read. Writing it back would undo a creation-time repair the nightly sweep made
         // between that read and this write, and put the list's sort key wrong again.
         // Likewise a step column the mirror did not supply is the value read above;
-        // leave it out of the write so a newer step stored since is not reverted.
+        // leave it out of the write so a newer step stored since is not reverted. No
+        // webhook carries an expiry or a document number at all, so those are always left
+        // alone — and an expiry in particular is never worth re-sending.
         await this.eformsignDocRepository.upsertUnassignedByDocumentId(updated, {
             updateCreatedDate: false,
+            updateExpiredDate: false,
+            updateDocumentNumber: false,
+            // An action on a mirrored row says nothing about status, detail or expiry: the
+            // mirror projected them already, and the action's "서명 페이지 열림" and
+            // expired=false would otherwise erase "만료"/"거부" on a terminal row.
+            ...(isActionOnMirror
+                ? { updateStatusType: false, updateStatusDetail: false, updateExpired: false }
+                : {}),
             ...(mirrored.stepType === undefined ? { updateStepType: false } : {}),
             ...(mirrored.stepIndex === undefined ? { updateStepIndex: false } : {}),
+            ...(mirrored.stepName === undefined ? { updateStepName: false } : {}),
         });
         await this.bumpCompanySnapshotEpoch();
         trace.settle(EFORMSIGN_WEBHOOK_OUTCOME.APPLIED, "unassigned document updated");
@@ -1422,6 +1453,18 @@ export class EformsignWebhookService {
             case DOCUMENT_STATUS.DOC_REQUEST_REVOKE:
                 return { statusType: normalizeEformsignStatusCode(status), statusDetail: "철회 요청" };
 
+            // 045 is treated exactly like 040 downstream. 041 means eformsign refused the
+            // revoke request and the document goes on: it is the live signing state, the
+            // same as 060. Both fell to the default below (060 + the raw event name), so
+            // the branch-owned path discarded them as a stale mirror and the unassigned
+            // path stored a 060 that disagreed with the mirror. Literal codes: the
+            // status-code table has no name for 041.
+            case DOCUMENT_STATUS.DOC_REQUEST_REJECT:
+            case DOCUMENT_STATUS.DOC_REJECT_REQUEST:
+                return { statusType: "045", statusDetail: "철회 요청" };
+            case DOCUMENT_STATUS.DOC_REFUSE_REVOKE:
+                return { statusType: "041", statusDetail: "서명 요청됨" };
+
             // doc_decline is not in normalizeEformsignStatusCode's table, so there
             // is no real code to carry; it keeps the synthesized 080.
             case DOCUMENT_STATUS.DOC_DECLINE:
@@ -1485,16 +1528,22 @@ export class EformsignWebhookService {
  * `current_status`; take both columns from it, trimmed exactly as the mirror/backfill
  * writer (`MirrorUnassignedEformsignDocUsecase`) stores them so the two writers cannot
  * disagree. A missing or blank value is omitted so callers keep the stored one.
+ *
+ * The step NAME follows the same rule. The payload's `workflow_name` is the workflow or
+ * template name, not the current step's, so it is never a source for the stored step
+ * name; `current_status.step_name` is.
  */
 function mirroredStepFields(
     mirroredDocument: EformsignApiDocumentResponse | null | undefined,
-): { stepType?: string; stepIndex?: string } {
+): { stepType?: string; stepIndex?: string; stepName?: string } {
     const currentStatus = mirroredDocument?.current_status;
     const stepType = typeof currentStatus?.step_type === "string" ? currentStatus.step_type.trim() : "";
     const stepIndex = typeof currentStatus?.step_index === "string" ? currentStatus.step_index.trim() : "";
+    const stepName = typeof currentStatus?.step_name === "string" ? currentStatus.step_name.trim() : "";
     return {
         ...(stepType ? { stepType } : {}),
         ...(stepIndex ? { stepIndex } : {}),
+        ...(stepName ? { stepName } : {}),
     };
 }
 
