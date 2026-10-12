@@ -366,6 +366,29 @@ describe("HolidaySettingsSection", () => {
       }
     });
 
+    it("paused refetch over a cached year: the list stays, no skeleton, no alert", async () => {
+      const { queryClient } = renderSection();
+      await screen.findByText("한글날");
+      const yearKey = ["holiday-settings", "branch-1", 2026];
+
+      onlineManager.setOnline(false);
+      try {
+        act(() => {
+          void queryClient.invalidateQueries({ queryKey: yearKey });
+        });
+        await waitFor(() => {
+          expect(queryClient.getQueryState(yearKey)?.fetchStatus).toBe("paused");
+        });
+
+        expect(screen.getByText("한글날")).toBeInTheDocument();
+        expect(document.querySelector(SKELETON)).toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(api.getYear).toHaveBeenCalledTimes(1);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
     it("loaded year, go offline, switch year: skeleton, neither empty text, no stale sync sentence", async () => {
       renderSection();
       await screen.findByText("한글날");

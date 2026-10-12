@@ -181,6 +181,30 @@ describe("SendNotificationSection", () => {
       }
     });
 
+    it("paused refetch over cached recipients: the form stays, no skeleton, no alert", async () => {
+      mockedListRecipients.mockResolvedValue(RECIPIENTS);
+      const { container, queryClient } = renderSection();
+      await screen.findByLabelText("제목");
+
+      onlineManager.setOnline(false);
+      try {
+        act(() => {
+          void queryClient.invalidateQueries({ queryKey: RECIPIENTS_QUERY_KEY });
+        });
+        await waitFor(() => {
+          expect(queryClient.getQueryState(RECIPIENTS_QUERY_KEY)?.fetchStatus).toBe("paused");
+        });
+
+        expect(screen.getByLabelText("제목")).toBeInTheDocument();
+        expect(screen.getByText("지점 전체 (2명)")).toBeInTheDocument();
+        expect(container.querySelector(SKELETON)).toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(mockedListRecipients).toHaveBeenCalledTimes(1);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
     it("successful empty load: the existing empty text and no alert", async () => {
       mockedListRecipients.mockResolvedValue([]);
 

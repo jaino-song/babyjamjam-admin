@@ -131,6 +131,31 @@ describe("CallIngestTokenSection", () => {
       }
     });
 
+    it("paused refetch over cached rows: rows stay, no skeleton, no alert", async () => {
+      mockedList.mockResolvedValue([
+        { id: "tok-1", label: "인천본점 n8n", active: true, createdAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      const { container, queryClient } = renderSection();
+      await screen.findByText("인천본점 n8n");
+
+      onlineManager.setOnline(false);
+      try {
+        act(() => {
+          void queryClient.invalidateQueries({ queryKey: TOKENS_QUERY_KEY });
+        });
+        await waitFor(() => {
+          expect(queryClient.getQueryState(TOKENS_QUERY_KEY)?.fetchStatus).toBe("paused");
+        });
+
+        expect(screen.getByText("인천본점 n8n")).toBeInTheDocument();
+        expect(container.querySelector(SKELETON)).toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(mockedList).toHaveBeenCalledTimes(1);
+      } finally {
+        onlineManager.setOnline(true);
+      }
+    });
+
     it("successful empty load: empty text and no alert", async () => {
       mockedList.mockResolvedValue([]);
 
