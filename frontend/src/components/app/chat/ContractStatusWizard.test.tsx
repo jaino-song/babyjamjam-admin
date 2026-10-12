@@ -112,6 +112,26 @@ describe("ContractStatusWizard", () => {
         expect(onCheck).toHaveBeenCalledWith(expect.objectContaining({ rejectedByReviewer: false }));
     });
 
+    it("falls back to the summary when a refresh fails while a stale rejected document is cached", async () => {
+        queryClient.setQueryData(
+            ["eformsign-docs", "document", "doc-1"],
+            { display_status: "rejected_by_reviewer", current_status: { status_type: "071" } },
+            { updatedAt: 0 },
+        );
+        mockGetDocument.mockRejectedValue(new Error("boom"));
+        const onCheck = await submitFor(SUMMARY);
+        // The hook retries once (about a second) before the query settles in error with the old data kept.
+        await waitFor(() => expect(queryClient.getQueryState(["eformsign-docs", "document", "doc-1"])?.status).toBe("error"), {
+            timeout: 5000,
+        });
+        expect(mockGetDocument).toHaveBeenCalledTimes(2);
+        expect(queryClient.getQueryData(["eformsign-docs", "document", "doc-1"])).toBeDefined();
+        fireEvent.click(screen.getByRole("button", { name: /조회하기/ }));
+        expect(onCheck).toHaveBeenLastCalledWith(
+            expect.objectContaining({ hasSigned: true, rejectedByReviewer: false }),
+        );
+    });
+
     it("falls back to the summary, without a fetch, when the client has no contract document", async () => {
         const onCheck = await submitFor(
             { ...SUMMARY, latestContractDocumentId: null, eDocId: null },

@@ -35,9 +35,10 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
     }, []);
 
     // The contract document the summary was derived from. While it is loading, failed or absent the
-    // result falls back to the summary's own wording, so the wizard never waits on it.
+    // result falls back to the summary's own wording, so the wizard never waits on it. A failed refetch
+    // keeps the previously cached data, so the document counts only while the query's status is success.
     const contractDocumentId = selectedClient?.latestContractDocumentId ?? selectedClient?.eDocId ?? null;
-    const { data: contractDocument } = useQuery<EformsignDocument>({
+    const { data: contractDocument, isSuccess: contractDocumentLoaded } = useQuery<EformsignDocument>({
         queryKey: ["eformsign-docs", "document", contractDocumentId],
         queryFn: async () => {
             if (!contractDocumentId) throw new Error("documentId is required");
@@ -57,9 +58,9 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
             documentStatus: selectedClient.documentStatus,
             serviceStatus: selectedClient.serviceStatus,
             hasSigned: selectedClient.hasSigned,
-            rejectedByReviewer: isRejectedContractDocument(contractDocument),
+            rejectedByReviewer: contractDocumentLoaded && isRejectedContractDocument(contractDocument),
         });
-    }, [selectedClient, contractDocument, onCheck]);
+    }, [selectedClient, contractDocument, contractDocumentLoaded, onCheck]);
 
     return (
         <div data-component="mobile_chat_contract-status-wizard" className="flex flex-col">
