@@ -2449,7 +2449,9 @@ export default function ContractsPage() {
 
   const {
     data: serviceRecordTemplateData,
-    isError: isServiceRecordTemplateError,
+    isError: isServiceRecordTemplateQueryError,
+    isFetching: isServiceRecordTemplateFetching,
+    errorUpdateCount: serviceRecordTemplateErrorCount,
     refetch: refetchServiceRecordTemplate,
   } = useQuery({
     queryKey: ["eformsign-docs", "service-record-template-id"],
@@ -2457,6 +2459,12 @@ export default function ContractsPage() {
     enabled: isAuthenticated,
     staleTime: 1000 * 60 * 5,
   });
+  // react-query는 데이터가 없는 쿼리를 재조회하면 isError를 즉시 false(pending)로 되돌린다.
+  // 재시도 중에도 실패 표시와 비활성 재시도 버튼이 유지되도록, 이미 실패한 적이 있는 조회가
+  // 다시 진행 중인 동안은 실패로 본다.
+  const isServiceRecordTemplateError =
+    isServiceRecordTemplateQueryError
+    || (isServiceRecordTemplateFetching && serviceRecordTemplateErrorCount > 0);
 
   // 제공기록지 template id는 문서 분류(제공기록지 배지·완료 플로우)와 미설정 설치에서의
   // 제공기록지 섹션 비활성 판단에 쓴다. 목록 필터 자체는 section 파라미터로 서버가
@@ -2535,9 +2543,11 @@ export default function ContractsPage() {
     staleTime: 1000 * 60 * 5,
   });
 
+  // 이전에 성공한 목록 데이터가 남아 있으면 템플릿 조회가 끝나지 않았거나 실패해도 행을 지우지 않는다.
+  const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
   const isContractsLoading =
     isAuthLoading ||
-    (isAuthenticated && !isServiceRecordTemplateResolved) ||
+    (isAuthenticated && !isServiceRecordTemplateResolved && !hasListData) ||
     (
       isAuthenticated
       && sectionFilterReady
@@ -2552,17 +2562,27 @@ export default function ContractsPage() {
       )
     );
   // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
-  // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지)는 행을 그대로 두고
-  // 목록 위에 안내만 얹는다.
-  const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
+  // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지·템플릿 조회)는 행을
+  // 그대로 두고 목록 위에 안내만 얹는다.
   const isTemplateIdLoadFailed =
     activeSection === "service-records"
     && isServiceRecordTemplateError
     && serviceRecordTemplateData === undefined;
   const isListLoadFailed =
     activeSection !== "automations"
-    && (isTemplateIdLoadFailed || (isDocumentsError && !hasListData));
-  const isListStale = activeSection !== "automations" && isDocumentsError && hasListData;
+    && !hasListData
+    && (isTemplateIdLoadFailed || isDocumentsError);
+  const isListStale =
+    activeSection !== "automations"
+    && hasListData
+    && (isTemplateIdLoadFailed || isDocumentsError);
+  const isListStaleRetrying =
+    (isTemplateIdLoadFailed && isServiceRecordTemplateFetching)
+    || (isDocumentsError && (isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching));
+  const retryStaleList = () => {
+    if (isTemplateIdLoadFailed) void refetchServiceRecordTemplate();
+    if (isDocumentsError) void (isLoadMoreError ? fetchNextPage() : refetchDocuments());
+  };
   const isStatusCountsUnavailable = isStatusCountsError && statusCountsData === undefined;
   const isStatusCountsStale = isStatusCountsError && statusCountsData !== undefined;
   const { data: documentClientSummaries = [] } = useQuery({
@@ -2887,8 +2907,8 @@ export default function ContractsPage() {
                     dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_stale-error"
                     size="inline"
                     title="최신 정보를 불러오지 못했습니다"
-                    isRetrying={isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching}
-                    onRetry={() => void (isLoadMoreError ? fetchNextPage() : refetchDocuments())}
+                    isRetrying={isListStaleRetrying}
+                    onRetry={retryStaleList}
                   />
                 ) : null}
               </>
@@ -2915,7 +2935,7 @@ export default function ContractsPage() {
                 dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error"
                 size="panel"
                 title={`${activeSectionLabel} 정보를 불러오지 못했습니다`}
-                isRetrying={isTemplateIdLoadFailed ? false : isDocumentsRefetching}
+                isRetrying={isTemplateIdLoadFailed ? isServiceRecordTemplateFetching : isDocumentsRefetching}
                 onRetry={() => void (isTemplateIdLoadFailed ? refetchServiceRecordTemplate() : refetchDocuments())}
               />
             ) : visibleSections.length === 0 ? (

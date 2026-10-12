@@ -167,6 +167,13 @@ async function settle() {
   await waitFor(() => expect(screen.queryByLabelText("계약서 불러오는 중")).toBeNull());
 }
 
+// Let react-query's batched notifications reach the rendered page (without waiting for a loading state to end).
+async function flushQueryNotifications() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 async function mountWithCounts(
   list: Record<string, unknown>,
   counts: "ok" | "fail" | "cached-then-fail",
@@ -198,6 +205,9 @@ function staleNotice(): HTMLElement | null {
 }
 function countsNotice(): HTMLElement | null {
   return document.querySelector(`[data-component="${DC}_counts-error"]`);
+}
+function listRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll(`[data-component="${DC}_body_row"]`));
 }
 function headerCount(): string {
   return document.querySelector(`[data-component="${DC}_header"] .list-count`)?.textContent ?? "";
@@ -267,6 +277,15 @@ describe("ContractsPage list load failures (S5)", () => {
     fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
     expect(list.refetch).toHaveBeenCalledTimes(1);
     expect(list.fetchNextPage).not.toHaveBeenCalled();
+  });
+
+  it("stale notice retry is disabled while the list refetch is in flight", async () => {
+    const list = listState({ ...SUCCESS_ROWS(), isSuccess: false, isError: true, isRefetching: true });
+    await mountWithCounts(list, "ok");
+
+    const notice = staleNotice();
+    expect(notice).not.toBeNull();
+    expect(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" })).toBeDisabled();
   });
 
   it("failed next page: rows stay, notice shown, retry loads the next page once", async () => {
@@ -356,5 +375,100 @@ describe("ContractsPage service-record template lookup failure (S5)", () => {
     await settle();
     expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(TEMPLATE_KEY)).toBeDefined();
+  });
+
+  async function openServiceRecordsWithFailedTemplate(list: Record<string, unknown>) {
+    mockUseInfiniteContracts.mockReturnValue(list);
+    mockServiceRecordTemplateId.mockRejectedValue(new Error("network down"));
+    mountPage();
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await settle();
+  }
+
+  it("cached rows + failed list refetch + failed template lookup: rows stay, one inline notice, retry re-runs both", async () => {
+    const list = listState({ ...SUCCESS_ROWS(), isSuccess: false, isError: true });
+    await openServiceRecordsWithFailedTemplate(list);
+
+    expect(listRows()).toHaveLength(2);
+    expect(listCardPanel()).toBeNull();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    const notice = staleNotice();
+    expect(notice).not.toBeNull();
+    expect(notice).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(headerCount()).toBe("2건");
+
+    mockServiceRecordTemplateId.mockClear();
+    await act(async () => {
+      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    });
+    expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
+    expect(list.refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("cached rows + failed template lookup only: rows stay, retry re-runs only the template lookup and is disabled while in flight", async () => {
+    const list = listState(SUCCESS_ROWS());
+    await openServiceRecordsWithFailedTemplate(list);
+
+    expect(listRows()).toHaveLength(2);
+    expect(listCardPanel()).toBeNull();
+    const notice = staleNotice();
+    expect(notice).not.toBeNull();
+    expect(notice).toHaveAttribute("role", "alert");
+    expect(headerCount()).toBe("2건");
+
+    mockServiceRecordTemplateId.mockClear();
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    await act(async () => {
+      fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    });
+    expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
+    expect(list.refetch).not.toHaveBeenCalled();
+    await flushQueryNotifications();
+    expect(listRows()).toHaveLength(2);
+    expect(
+      within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" }),
+    ).toBeDisabled();
+  });
+
+  it("cached rows + template lookup still pending: rows stay instead of the loading skeleton", async () => {
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    mockUseInfiniteContracts.mockReturnValue(listState(SUCCESS_ROWS()));
+    mountPage();
+    await settle();
+
+    expect(listRows()).toHaveLength(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(headerCount()).toBe("2건");
+  });
+
+  it("no cached rows + failed template lookup: the panel error stays, retry re-runs the template lookup and is disabled while in flight", async () => {
+    // Like the real hook: the maternal list loaded (empty); the disabled 제공기록지 query has not run.
+    const list = listState();
+    mockUseInfiniteContracts.mockImplementation((options: { enabled?: boolean }) =>
+      options.enabled ? listState(SUCCESS_EMPTY()) : list,
+    );
+    mockServiceRecordTemplateId.mockRejectedValue(new Error("network down"));
+    mountPage();
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await settle();
+
+    const panel = listCardPanel();
+    expect(panel).not.toBeNull();
+    expect(staleNotice()).toBeNull();
+    expect(headerCount()).toBe("—");
+
+    mockServiceRecordTemplateId.mockClear();
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    await act(async () => {
+      fireEvent.click(within(panel as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    });
+    expect(mockServiceRecordTemplateId).toHaveBeenCalledTimes(1);
+    expect(list.refetch).not.toHaveBeenCalled();
+    await flushQueryNotifications();
+    expect(
+      within(listCardPanel() as HTMLElement).getByRole("button", { name: "다시 시도" }),
+    ).toBeDisabled();
   });
 });
