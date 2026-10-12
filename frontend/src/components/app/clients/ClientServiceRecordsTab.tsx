@@ -271,15 +271,18 @@ function ClientServiceRecordsTabContent({
 
     // Failed read with nothing from an earlier successful load to show: the failure
     // state, never the "no assignments" empty text. With cached content (assignments,
-    // a record, the schedule projection, or revision-history rows that this layout
-    // renders) the tab keeps it and says so inline (below). A revision-history
+    // a record, a schedule projection that renders, or revision-history rows that this
+    // layout renders) the tab keeps it and says so inline (below). A revision-history
     // loading/error flag alone is only a shell, so it does not count as cached content.
+    // With no assignments or record a projection renders only through its blocking-reason
+    // alert, so one without blocking reasons is not cached content either.
     const hasCachedRevisionHistory = layout === "desktop" && revisionHistory !== undefined;
+    const hasRenderedProjection = (scheduleProjection?.blockingReasons.length ?? 0) > 0;
     if (
         isError
         && assignments.length === 0
         && !record
-        && !hasAuthoritativeProjection
+        && !hasRenderedProjection
         && !hasCachedRevisionHistory
     ) {
         return (

@@ -689,6 +689,39 @@ describe("ClientServiceRecordsTab", () => {
             expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
         });
 
+        it.each(["desktop", "mobile"] as const)(
+            "shows the panel error on %s when the only cached content is a projection that renders nothing",
+            (layout) => {
+                const onRefresh = jest.fn();
+                render(
+                    <ClientServiceRecordsTab
+                        data-component={TEST_COMPONENT}
+                        layout={layout}
+                        overview={{
+                            record: null,
+                            assignments: [],
+                            scheduleProjection: {
+                                entries: [createPlannedSession(1, "2026-07-01")],
+                                blockingReasons: [],
+                            },
+                        }}
+                        clientId={100}
+                        isLoading={false}
+                        isError
+                        onRefresh={onRefresh}
+                    />,
+                );
+
+                const alert = screen.getByRole("alert");
+                expect(alert).toHaveTextContent("제공기록지 정보를 불러오지 못했습니다");
+                expect(screen.queryByText("최신 정보를 불러오지 못했습니다")).not.toBeInTheDocument();
+                expect(screen.queryByText("제공기록지 배정 정보가 없습니다")).not.toBeInTheDocument();
+
+                fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+                expect(onRefresh).toHaveBeenCalledTimes(1);
+            },
+        );
+
         it("shows the empty text and no alert for a successful load with no assignments", () => {
             render(
                 <ClientServiceRecordsTab
