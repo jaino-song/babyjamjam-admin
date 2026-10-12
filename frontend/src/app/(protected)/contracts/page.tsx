@@ -1903,7 +1903,8 @@ export function ContractDetail({
           <ServiceRecordHeaderCard
             data-component={`${dataComponent}_content_document_header-card`}
             header={serviceRecordHeader}
-            isLoading={serviceRecordQuery.data === undefined && isCustomerInfoLoading}
+            isLoading={(serviceRecordQuery.data === undefined && isCustomerInfoLoading)
+              || (serviceRecordQuery.isPaused && serviceRecordQuery.data === undefined)}
             showStatusBadge={false}
           />
         )}
