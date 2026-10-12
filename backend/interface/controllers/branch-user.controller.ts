@@ -35,7 +35,7 @@ export class BranchUserController {
     ) {
         this.assertSelectedBranch(branchId, tenant);
         const user = await this.userService.findById(userId, branchId);
-        if (!user) {
+        if (!user || (user.role === "owner" && tenant.globalRole !== "owner")) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
         return toPublicUser(user);

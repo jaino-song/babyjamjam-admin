@@ -57,6 +57,7 @@ export class UserController {
         return this.userService.findDirectory({
             branchId: req.user.branchId,
             includeUnassigned: req.user.role === "owner",
+            callerRole: req.user.role,
             status,
         });
     }
