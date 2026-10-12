@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, Mail, Send, type LucideIcon } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Switch } from "@/components/ui/switch";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { usePushNotification } from "@/hooks/usePushNotification";
@@ -140,17 +141,36 @@ export default function NotificationPage() {
       : isAppNotificationEnabled
         ? "앱에서 중요한 업무 알림을 받고 있습니다."
         : "앱에서 중요한 업무 알림을 받지 않아요.";
-  const emailNotificationDescription = !NOTIFICATION_EMAIL_ENABLED
+  const hasEmailPreference = notificationPreferencesQuery.data !== undefined;
+  const isEmailPreferenceLoadFailed = notificationPreferencesQuery.isError;
+  const emailNotificationBaseDescription = !NOTIFICATION_EMAIL_ENABLED
     ? "이메일 알림은 현재 비활성화되어 있습니다."
     : !accountEmail
       ? "현재 계정 이메일을 불러오는 중입니다."
       : notificationPreferencesQuery.isFetching
         ? "이메일 알림 설정을 불러오는 중입니다."
-        : notificationPreferencesQuery.isError
-          ? "이메일 알림 설정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
-          : updateNotificationPreferencesMutation.isError
-            ? "이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지해요."
-            : `${accountEmail}로 주요 알림을 받습니다.`;
+        : updateNotificationPreferencesMutation.isError
+          ? "이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지해요."
+          : `${accountEmail}로 주요 알림을 받습니다.`;
+  const emailNotificationDescription =
+    NOTIFICATION_EMAIL_ENABLED && accountEmail && isEmailPreferenceLoadFailed ? (
+      <>
+        <QueryErrorState
+          dataComponent={`${NOTIFICATION_SETTINGS_CHANNEL_SECTION}_email-row_load-error`}
+          size="inline"
+          title={
+            hasEmailPreference
+              ? "최신 정보를 불러오지 못했습니다"
+              : "이메일 알림 설정을 불러오지 못했습니다"
+          }
+          onRetry={() => void notificationPreferencesQuery.refetch()}
+          isRetrying={notificationPreferencesQuery.isFetching}
+        />
+        {hasEmailPreference ? emailNotificationBaseDescription : null}
+      </>
+    ) : (
+      emailNotificationBaseDescription
+    );
 
   const testNotificationMutation = useMutation({
     mutationFn: async () => {
@@ -281,7 +301,7 @@ export default function NotificationPage() {
                         || !accountEmail
                         || !emailNotificationUserId
                         || notificationPreferencesQuery.isFetching
-                        || notificationPreferencesQuery.isError
+                        || (isEmailPreferenceLoadFailed && !hasEmailPreference)
                         || updateNotificationPreferencesMutation.isPending
                       }
                       aria-label="이메일 알림 설정"

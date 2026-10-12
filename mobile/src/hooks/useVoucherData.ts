@@ -146,6 +146,8 @@ export function useAllVoucherPrices(year?: number) {
     isLoading: queries.some((q) => q.isLoading),
     isFetching: queries.some((q) => q.isFetching),
     isError: queries.some((q) => q.isError),
+    // Retries only the sub-queries that failed; the ones that loaded keep their cache.
+    refetch: () => Promise.all(queries.filter((q) => q.isError).map((q) => q.refetch())),
   };
 }
 
