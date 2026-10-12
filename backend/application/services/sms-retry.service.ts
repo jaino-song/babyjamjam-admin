@@ -36,6 +36,7 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY, IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 
 const INVALID_RETRY_SCHEDULE_REASON =
     "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요.";
@@ -86,6 +87,9 @@ export class SmsRetryService {
         private readonly automationAuthority?: AgentAutomationJobAuthorityService,
         @Optional()
         private readonly smsTriggerDeliveryService?: SmsTriggerDeliveryService,
+        @Optional()
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY)
+        private readonly jobRepository?: IMessageTriggerJobRepository,
     ) {}
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
@@ -132,6 +136,14 @@ export class SmsRetryService {
             const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
             if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking") {
                 if (invocation === "automatic") {
+                    // The failed job would otherwise block re-issuing the link once the
+                    // client leaves 예약 전; a system-cancelled row is revivable by the claim.
+                    if (this.jobRepository && sourceLog.branchId && sourceLog.triggerJobId) {
+                        await this.jobRepository.cancelFailedServiceRecordLinkJobForPreBooking(
+                            sourceLog.triggerJobId,
+                            sourceLog.branchId,
+                        );
+                    }
                     sourceLog.markRetrySuperseded(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
                     await this.logRepository.update(sourceLog);
                     return sourceLog;

@@ -213,6 +213,13 @@ export interface IMessageTriggerJobRepository {
      */
     cancelPendingByUser(id: string, branchId: string, reason: string): Promise<boolean>;
     /**
+     * Move one `failed` service-record link job to the system `canceled`
+     * pre-booking state so a later schedule claim can revive it. Only the
+     * link rule's `failed` row in this branch qualifies, and a row carrying
+     * the scheduling-retry lease is left alone. Returns whether a row moved.
+     */
+    cancelFailedServiceRecordLinkJobForPreBooking(id: string, branchId: string): Promise<boolean>;
+    /**
      * Promote only the exact automatic service-record scheduling marker owned
      * by this claim version. A null result means the claim was replaced or
      * otherwise lost and must fail closed without reading/reviving another row.
