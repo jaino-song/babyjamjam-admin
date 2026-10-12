@@ -97,6 +97,7 @@ describe("ServiceRecordItemLabel", () => {
     expect(title).toHaveClass("min-w-0");
     expect(container.firstElementChild).toHaveClass("grid");
     expect(container.querySelector("#m")).not.toHaveClass("ml-auto");
+    expect(container.querySelector("#m")).toHaveClass("justify-self-end", "max-w-full");
   });
 
   it("names its children from the root data-component", () => {

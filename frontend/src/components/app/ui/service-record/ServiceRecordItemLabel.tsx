@@ -89,7 +89,7 @@ export function ServiceRecordItemLabel({
         aria-live="polite"
         title={message?.text}
         className={cn(
-          "h-[1lh] min-w-0 truncate text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3]",
+          "h-[1lh] max-w-full min-w-0 justify-self-end truncate text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3]",
           MESSAGE_TONE_CLASS[message?.tone ?? "hint"],
         )}
       >
