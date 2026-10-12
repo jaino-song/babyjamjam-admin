@@ -808,6 +808,7 @@ export default function ContractsPage() {
               isDocumentsError ? <QueryErrorState
                 dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
                 size="panel"
+                className="pointer-events-auto"
                 onRetry={retryDocuments}
                 isRetrying={isFetchingDocuments}
               /> : <ListEmptyState
@@ -959,6 +960,7 @@ export default function ContractsPage() {
                       isDocumentsError ? <QueryErrorState
                         dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
                         size="panel"
+                        className="pointer-events-auto"
                         onRetry={retryDocuments}
                         isRetrying={isFetchingDocuments}
                       /> : <ListEmptyState

@@ -123,6 +123,7 @@ describe.each([
     listState({ isError: true, error: new Error("unavailable") });
     const view = renderPage(section);
     expect(screen.getByRole("alert")).toHaveAttribute("data-size", "panel");
+    expect(screen.getByRole("alert")).toHaveClass("pointer-events-auto");
     expect(screen.getByRole("alert")).toHaveTextContent("불러오지 못했습니다");
     expect(screen.queryByText(emptyText)).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" }));
