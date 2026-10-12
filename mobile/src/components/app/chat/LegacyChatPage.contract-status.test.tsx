@@ -52,7 +52,7 @@ jest.mock("@/hooks/useChatStream", () => ({
   }),
 }));
 
-function check(result: { documentStatus: string; hasSigned: boolean }) {
+function check(result: { documentStatus: string; hasSigned: boolean; rejectedByReviewer?: boolean }) {
   mockWizardResult = { clientId: 7, clientName: "홍길동", serviceStatus: null, ...result };
   render(<LegacyChatPage />);
   fireEvent.click(screen.getByRole("button", { name: "조회하기" }));
@@ -71,6 +71,12 @@ describe("LegacyChatPage contract-status result honours hasSigned", () => {
     expect(screen.getByText("서명 완료")).toBeInTheDocument();
     expect(screen.queryByText("서명 요청됨")).not.toBeInTheDocument();
     expect(screen.queryByText("requested")).not.toBeInTheDocument();
+  });
+
+  it("shows a rejected (071) contract as 반려됨 although the summary reads signed", () => {
+    check({ documentStatus: "requested", hasSigned: true, rejectedByReviewer: true });
+    expect(screen.getByText("반려됨")).toBeInTheDocument();
+    expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
   });
 
   it("reads requested + hasSigned=false as 서명 요청됨", () => {
