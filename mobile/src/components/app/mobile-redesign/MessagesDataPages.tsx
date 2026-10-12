@@ -608,15 +608,17 @@ export function MessagesHistoryPage() {
   const [dateMonth, setDateMonth] = useState("");
 
   const {
-    data: upcomingData = [],
+    data: rawUpcomingData,
     isLoading: isUpcomingLoading,
+    isPaused: isUpcomingPaused,
     isError: isUpcomingError,
     refetch: refetchUpcoming,
     isFetching: isUpcomingFetching,
   } = useUpcomingMessageTriggerJobs();
   const {
-    data: historyData = [],
+    data: rawHistoryData,
     isLoading: isHistoryLoading,
+    isPaused: isHistoryPaused,
     isError: isHistoryError,
     error: historyError,
     refetch: refetchHistory,
@@ -629,23 +631,23 @@ export function MessagesHistoryPage() {
   const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
 
   const upcomingJobs = useMemo(
-    () => upcomingData
+    () => (rawUpcomingData ?? [])
       .filter((job) => isSmsTriggerTemplate(job.templateKey))
       .sort(
         (left, right) => new Date(left.scheduledFor).getTime() - new Date(right.scheduledFor).getTime(),
       ),
-    [upcomingData],
+    [rawUpcomingData],
   );
 
   const historyRecords = useMemo(
-    () => historyData
+    () => (rawHistoryData ?? [])
       .filter(isSmsHistoryRecord)
       .sort(
         (left, right) =>
           new Date(right.lastAttemptAt || right.createdAt).getTime()
           - new Date(left.lastAttemptAt || left.createdAt).getTime(),
       ),
-    [historyData],
+    [rawHistoryData],
   );
 
   const historyYearOptions = useMemo(() => {
@@ -687,10 +689,12 @@ export function MessagesHistoryPage() {
       .filter((record) => matchesHistoryQuery(record, searchValue))
     : [];
 
-  // Both queries gate the whole list: they settle at different times, so keying
-  // each zone off its own flag would show real rows next to a loading zone.
-  // Same rule as desktop, where a cached history query makes that routine.
-  const isPanelLoading = isUpcomingLoading || isHistoryLoading;
+  // 각 영역은 자기 조회가 아직 값을 받지 못했을 때만 로딩을 표시한다.
+  // 다른 영역의 재시도로 이미 불러온 행과 건수를 가리지 않는다.
+  const isUpcomingZoneLoading = (isUpcomingLoading || isUpcomingPaused) && rawUpcomingData === undefined;
+  const isHistoryZoneLoading = (isHistoryLoading || isHistoryPaused) && rawHistoryData === undefined;
+  const isPanelLoading = (showUpcomingZone && isUpcomingZoneLoading)
+    || (showHistoryZone && isHistoryZoneLoading);
 
   const filterCounts: Record<MessageRecordStatusFilter, number> = {
     all: upcomingJobs.length + historyRecords.length,
@@ -708,11 +712,11 @@ export function MessagesHistoryPage() {
     canceled: !isHistoryError,
   };
 
-  // While either query is in flight every filterCounts entry is the empty-array
-  // default standing in for a number nobody has fetched, so the pills would
-  // publish confident zeros right beside the skeletoned counts. Skeleton them
-  // too, the way the sibling list screens do.
+  // 각 필터가 집계하는 조회의 값이 없으면 숫자 대신 로딩을 표시한다.
   const filterItems: MessageFilterItem[] = STATUS_FILTER_ORDER.map((filter) => {
+    const isCountLoading = filter === "all"
+      ? isPanelLoading
+      : filter === "upcoming" ? isUpcomingZoneLoading : isHistoryZoneLoading;
     const count = !filterCountAvailability[filter]
       ? <UnavailableCount />
       : filter === "failed"
@@ -721,9 +725,9 @@ export function MessagesHistoryPage() {
 
     return {
       label: MESSAGE_RECORD_STATUS_FILTER_LABELS[filter],
-      count: isPanelLoading ? "" : count,
+      count: isCountLoading ? "" : count,
       active: filter === statusFilter,
-      skeleton: isPanelLoading,
+      skeleton: isCountLoading,
     };
   });
 
@@ -942,7 +946,7 @@ export function MessagesHistoryPage() {
                               {" "}
                               <ZoneCount
                                 dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-upcoming_header_count`}
-                                isLoading={isPanelLoading}
+                                isLoading={isUpcomingZoneLoading}
                                 value={visibleUpcomingJobs.length}
                               />
                             </>
@@ -957,7 +961,7 @@ export function MessagesHistoryPage() {
                             isRetrying={isUpcomingFetching}
                           />
                         ) : null}
-                        {isUpcomingError && upcomingJobs.length === 0 ? null : isPanelLoading && !isUpcomingError ? (
+                        {isUpcomingError && upcomingJobs.length === 0 ? null : isUpcomingZoneLoading && !isUpcomingError ? (
                           Array.from({ length: 3 }, (_, index) => (
                             <RowSkeleton
                               key={index}
@@ -991,7 +995,7 @@ export function MessagesHistoryPage() {
                               {" "}
                               <ZoneCount
                                 dataComponent={`${HISTORY_LIST_BASE}_content_list-card_body_zone-past_header_count`}
-                                isLoading={isPanelLoading}
+                                isLoading={isHistoryZoneLoading}
                                 value={visibleHistoryRecords.length}
                               />
                             </>
@@ -1007,7 +1011,7 @@ export function MessagesHistoryPage() {
                             isRetrying={isHistoryFetching}
                           />
                         ) : null}
-                        {isHistoryError && historyRecords.length === 0 ? null : isPanelLoading && !isHistoryError ? (
+                        {isHistoryError && historyRecords.length === 0 ? null : isHistoryZoneLoading && !isHistoryError ? (
                           Array.from({ length: 4 }, (_, index) => (
                             <RowSkeleton
                               key={index}
