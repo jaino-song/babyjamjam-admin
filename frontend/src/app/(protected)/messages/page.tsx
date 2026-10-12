@@ -1832,13 +1832,10 @@ export default function MessagesPage() {
   // sibling of DetailTabPanels in the detail panel's flex column, so the panels
   // keep their `flex-1 min-h-0` share of the remaining height.
   //
-  // The title says whether the visible tab still has content to show. Every
-  // catalog row carries a list-item fallback, so that fallback alone can feed
-  // the read-only card and the preview; but the templates editor and a
-  // registered send form need the real detail, and without it the 상세정보 tab
-  // is empty — there the failure title (not "stale") is the truthful one.
-  const systemTemplateDetailTabNeedsDetail =
-    templateDetailTab === "details" && (activeSection === "templates" || Boolean(SelectedBuiltinForm));
+  // The title depends on one thing only: whether the real detail for the
+  // selected template is loaded. A cached detail (the refetch failed) means older
+  // content is on screen; without it, the list-item fallback that feeds the card
+  // or preview is not the template's information, so the failure title applies.
   const systemTemplateDetailLoadNotice =
     isBuiltin && isSystemTemplateDetailError ? (
       <QueryErrorState
@@ -1846,9 +1843,7 @@ export default function MessagesPage() {
         size="inline"
         className="shrink-0"
         title={
-          (systemTemplateDetailTabNeedsDetail
-            ? selectedSystemTemplateDetail
-            : selectedSystemTemplatePreview)
+          selectedSystemTemplateDetail
             ? "최신 정보를 불러오지 못했습니다"
             : "선택한 템플릿 정보를 불러오지 못했습니다"
         }

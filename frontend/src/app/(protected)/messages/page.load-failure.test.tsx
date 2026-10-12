@@ -654,7 +654,7 @@ describe("messages page 템플릿 — selected built-in template detail load fai
     expect(screen.getByText("선택한 템플릿의 내용을 확인하세요.")).toBeInTheDocument();
     const alerts = screen.getAllByRole("alert");
     expect(alerts).toHaveLength(1);
-    expect(within(alerts[0]).getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+    expect(within(alerts[0]).getByText("선택한 템플릿 정보를 불러오지 못했습니다")).toBeInTheDocument();
 
     fireEvent.click(getRetryButton(alerts[0]));
     expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
@@ -755,9 +755,35 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
       expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
     });
 
-    it("still shows exactly one working alert after switching to 미리보기", () => {
+    it("keeps the failure title, not the stale one, after switching to 미리보기 and to the 템플릿 section", () => {
       systemTemplatesState({ data: [infoTemplate] });
       systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openSend("안내 템플릿");
+      goToPreview();
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(within(alerts[0]).queryByText(STALE)).not.toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+
+      fireEvent.click(getRetryButton(alerts[0]));
+      expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
+
+      // The selection carries over, so only the section changes.
+      fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+      const templatesAlerts = screen.getAllByRole("alert");
+      expect(templatesAlerts).toHaveLength(1);
+      expect(within(templatesAlerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(within(templatesAlerts[0]).queryByText(STALE)).not.toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+    });
+
+    it("keeps the stale title with one working alert after switching to 미리보기 with a cached detail", () => {
+      systemTemplatesState({ data: [infoTemplate] });
+      systemTemplateDetailState({ data: infoTemplate, isError: true });
 
       render(<MessagesPage />);
       openSend("안내 템플릿");
@@ -798,7 +824,22 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
   });
 
   describe("send section without a registered form", () => {
-    it("shows exactly one alert after switching to 미리보기 and retries from it", () => {
+    it("shows the failure title on 상세정보, though the list-item card is shown, when the detail failed with no data", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ isError: true });
+
+      render(<MessagesPage />);
+      openSend("새 서버 템플릿");
+
+      expect(screen.getByText("선택한 템플릿의 내용을 확인하세요.")).toBeInTheDocument();
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(within(alerts[0]).queryByText(STALE)).not.toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+    });
+
+    it("shows exactly one failure alert after switching to 미리보기 and retries from it", () => {
       systemTemplatesState({ data: [futureTemplate] });
       systemTemplateDetailState({ isError: true });
 
@@ -808,16 +849,35 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
 
       const alerts = screen.getAllByRole("alert");
       expect(alerts).toHaveLength(1);
-      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(within(alerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(within(alerts[0]).queryByText(STALE)).not.toBeInTheDocument();
       expect(allAlertsInDocument()).toHaveLength(1);
 
       fireEvent.click(getRetryButton(alerts[0]));
       expect(mockRefetchSystemTemplate).toHaveBeenCalledTimes(1);
     });
+
+    it("shows the stale title on 상세정보 and 미리보기 with a cached detail", () => {
+      systemTemplatesState({ data: [futureTemplate] });
+      systemTemplateDetailState({ data: futureTemplate, isError: true });
+
+      render(<MessagesPage />);
+      openSend("새 서버 템플릿");
+
+      let alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+
+      goToPreview();
+      alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(allAlertsInDocument()).toHaveLength(1);
+    });
   });
 
   describe("templates section", () => {
-    it("shows exactly one alert after switching to 미리보기 and retries from it (no cached detail)", () => {
+    it("shows exactly one failure alert after switching to 미리보기 and retries from it (no cached detail)", () => {
       systemTemplatesState({ data: [futureTemplate] });
       systemTemplateDetailState({ isError: true });
 
@@ -827,7 +887,8 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
 
       const alerts = screen.getAllByRole("alert");
       expect(alerts).toHaveLength(1);
-      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
+      expect(within(alerts[0]).getByText(DETAIL_FAILED)).toBeInTheDocument();
+      expect(within(alerts[0]).queryByText(STALE)).not.toBeInTheDocument();
       expect(allAlertsInDocument()).toHaveLength(1);
 
       fireEvent.click(getRetryButton(alerts[0]));
@@ -863,7 +924,7 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
 
     it("disables the retry while the detail refetch is in flight after switching to 미리보기", () => {
       systemTemplatesState({ data: [futureTemplate] });
-      systemTemplateDetailState({ isError: true, isFetching: true });
+      systemTemplateDetailState({ data: futureTemplate, isError: true, isFetching: true });
 
       render(<MessagesPage />);
       openTemplates("새 서버 템플릿");
@@ -871,6 +932,7 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
 
       const alerts = screen.getAllByRole("alert");
       expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
       expect(getRetryButton(alerts[0])).toBeDisabled();
     });
 
