@@ -8,6 +8,7 @@ import {
 } from "./eformsign-doc-status";
 import {
     COMPLETED_STATUS_CODES,
+    DELETED_STATUS_CODES,
     EXPIRED_STATUS_CODES,
     getEformsignStatusCategory,
     IN_PROGRESS_STATUS_CODES,
@@ -498,6 +499,8 @@ describe("isContractReceiptSendable", () => {
             "063": false, "064": false, "070": false,
             // ... except 071, whose code alone says the customer signed and the reviewer rejected.
             "071": true,
+            // deleted-only bucket: 099 (legacy webhook tombstone) is in no category list.
+            "099": false,
         };
         // Same codes, but the payload sits at the provider review step (customer signed).
         const SENDABLE_AT_REVIEW_STEP: Record<string, boolean> = {
@@ -509,6 +512,8 @@ describe("isContractReceiptSendable", () => {
             "001": true, "002": true, "010": true, "020": true,
             "030": true, "041": true, "043": true, "060": true,
             "063": true, "064": true, "070": true, "071": true,
+            // a deleted document is never sendable, even parked at the provider review step.
+            "099": false,
         };
         const DISPLAY_STATUS_SENDABLE: Record<string, boolean> = {
             pending: false,
@@ -524,7 +529,12 @@ describe("isContractReceiptSendable", () => {
         };
 
         it("covers exactly the status codes the shared constants define", () => {
-            const defined = [...COMPLETED_STATUS_CODES, ...EXPIRED_STATUS_CODES, ...IN_PROGRESS_STATUS_CODES].sort();
+            const defined = [...new Set<string>([
+                ...COMPLETED_STATUS_CODES,
+                ...EXPIRED_STATUS_CODES,
+                ...IN_PROGRESS_STATUS_CODES,
+                ...DELETED_STATUS_CODES,
+            ])].sort();
             expect(Object.keys(SENDABLE_WITHOUT_STEP).sort()).toEqual(defined);
             expect(Object.keys(SENDABLE_AT_REVIEW_STEP).sort()).toEqual(defined);
         });

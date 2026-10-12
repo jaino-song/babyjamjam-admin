@@ -1,4 +1,5 @@
 import {
+    isDeletedEformsignStatusCode,
     isProviderReviewWorkflowStep,
     isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
@@ -220,6 +221,9 @@ export function isContractReceiptSendable(params: {
     if (isContractDocDisplayStatus(params.displayStatus)) {
         return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(params.displayStatus);
     }
+    // A deleted document (047/049/099) is never sendable. 099 sits in no category list, so the
+    // fallback resolver would otherwise read it as in-progress and open it at the review step.
+    if (isDeletedEformsignStatusCode(params.currentStatus?.status_type)) return false;
     const fallbackCategory: ContractDocStatusCategory = params.category === "completed"
         || params.category === "expired"
         ? params.category
