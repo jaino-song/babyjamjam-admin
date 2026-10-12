@@ -25,6 +25,7 @@ import {
     SmsProviderReconciliationInput,
 } from "./sms-provider-acceptance.service";
 import {
+    classifySmsProviderRejection,
     classifySmsProviderOutcome,
     countSmsRecipients,
 } from "./sms-provider-outcome.service";
@@ -406,6 +407,18 @@ export class SmsRetryService {
             );
             if (providerOutcome === "rejected") {
                 this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
+                // 수동 재시도의 주차 정책은 변경하지 않는다.
+                if (invocation === "automatic") {
+                    const rejection = classifySmsProviderRejection(result);
+                    if (rejection.kind === "permanent") {
+                        providerAttempt.nextRetryAt = null;
+                        providerAttempt.errorMessage = `발송 실패: ${rejection.reason}`;
+                        providerAttempt.variables = {
+                            ...providerAttempt.variables,
+                            retrySafety: "permanent-provider-rejected",
+                        };
+                    }
+                }
                 await this.logRepository.update(providerAttempt);
                 this.logger.warn(`[Retry] SMS retry rejected for log ${providerAttempt.id}: ${this.providerResponseMessage(result)}`);
                 return providerAttempt;

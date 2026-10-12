@@ -49,6 +49,12 @@ function historyRecord(overrides: Partial<MessageLogRecord> = {}): MessageLogRec
 }
 
 describe("shared message presentation contract", () => {
+  it.each(["잔액 부족", "인증 오류"])("preserves permanent failure prefix for %s", (reason) => {
+    const message = `발송 실패: ${reason}`;
+    expect(formatMessageFailureReason(message)).toBe(message);
+    expect(formatMessageFailureReason(formatMessageFailureReason(message))).toBe(message);
+    expect(normalizeMessageHistoryPresentation(historyRecord({ status: "failed", errorMessage: message })).failureReason).toBe(message);
+  });
   it("uses the same Korean labels for trigger, system, and delivery-log keys", () => {
     expect(getMessageTemplateLabel("SERVICE_RECORD_LINK")).toBe("제공기록지 작성 링크");
     expect(getMessageTemplateLabel("service_record_link_sms")).toBe("제공기록지 작성 링크");

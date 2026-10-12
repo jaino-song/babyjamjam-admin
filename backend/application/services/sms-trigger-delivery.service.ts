@@ -5,7 +5,6 @@ import { AligoService } from "application/services/aligo.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import {
     resolveAligoSmsMessageType,
-    SendAligoSmsResult,
     type AligoSmsMessageType,
 } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -45,6 +44,7 @@ import {
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
+import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients } from "./sms-provider-outcome.service";
 
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -569,18 +569,34 @@ export class SmsTriggerDeliveryService {
                 title: snapshot.title,
                 msgType: snapshot.requestedDeliveryType,
             });
-            const isAccepted = this.isAcceptedSmsResult(result);
+            const outcome = classifySmsProviderOutcome(result, countSmsRecipients(snapshot.receiver));
+            attempt.aligoMid = result?.response?.msg_id ? String(result.response.msg_id) : null;
+            if (outcome === "unknown") {
+                // 기존 예외 경로에서 uncertain을 기록하고 작업에도 같은 실패를 전달한다.
+                attempt.nextRetryAt = null;
+                throw new Error("문자 발송 결과를 확인할 수 없어 자동 재전송을 중단했습니다.");
+            }
+            const isAccepted = outcome === "accepted";
+            const rejection = outcome === "rejected" ? classifySmsProviderRejection(result) : null;
+            const isPermanent = rejection?.kind === "permanent";
             attempt.receiver = result.request.receiver;
             attempt.providerAcceptanceState = isAccepted ? "accepted" : "rejected";
             attempt.providerAcceptedAt = isAccepted ? new Date(Date.now()) : null;
-            attempt.aligoMid = result.response.msg_id ? String(result.response.msg_id) : null;
-            attempt.errorMessage = isAccepted ? null : result.response.message;
+            attempt.errorMessage = isAccepted ? null : isPermanent
+                ? `발송 실패: ${rejection.reason}`
+                : result.response.message;
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
-            attempt.nextRetryAt = isAccepted ? null : new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
+            attempt.nextRetryAt = !isAccepted && !isPermanent && attempt.canRetry()
+                ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+                : null;
             attempt.updatedAt = new Date(Date.now());
-            job.payload.templateVariables["retrySafety"] = isAccepted ? "delivered" : "provider-rejected";
+            job.payload.templateVariables["retrySafety"] = isAccepted ? "delivered"
+                : isPermanent ? "permanent-provider-rejected" : "provider-rejected";
+            if (isPermanent) {
+                attempt.variables = { ...attempt.variables, retrySafety: "permanent-provider-rejected" };
+            }
             await this.persistAttempt(attempt);
             return isAccepted;
         } catch (error) {
@@ -921,12 +937,6 @@ export class SmsTriggerDeliveryService {
             configHash: snapshot.configHash,
             ...(snapshot.systemTemplateKey ? { systemTemplateKey: snapshot.systemTemplateKey } : {}),
         });
-    }
-
-    private isAcceptedSmsResult(result: SendAligoSmsResult): boolean {
-        const resultCode = Number(result.response.result_code);
-        const errorCount = Number(result.response.error_cnt ?? 0);
-        return resultCode === 1 && errorCount === 0;
     }
 
     private formatErrorMessage(error: unknown): string {
