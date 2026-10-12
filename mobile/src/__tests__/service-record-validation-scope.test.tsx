@@ -1,7 +1,29 @@
+import type { ComponentType } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/ServiceRecordWizard";
 import { hasServiceRecordHeaderValues, isServiceRecordHeaderComplete } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
+import { MobileServiceRecordScreen } from "@/components/app/service-record/screen/MobileServiceRecordScreen";
+
+type Tone = "error" | "hint" | undefined;
+/** The same behaviour test runs on both; they differ only in how a message slot exposes its tone (class vs `data-tone`). */
+interface WizardRow {
+    name: string;
+    Component: ComponentType<ServiceRecordWizardProps>;
+    toneOf: (slot: HTMLElement | null) => Tone;
+}
+const ROWS: WizardRow[] = [
+    {
+        name: "shared wizard",
+        Component: ServiceRecordWizard,
+        toneOf: (slot) => (slot?.classList.contains("error") ? "error" : slot?.classList.contains("hint") ? "hint" : undefined),
+    },
+    {
+        name: "mobile screen",
+        Component: MobileServiceRecordScreen,
+        toneOf: (slot) => (slot?.getAttribute("data-tone") === "error" ? "error" : slot?.getAttribute("data-tone") === "hint" ? "hint" : undefined),
+    },
+];
 
 const legacyHeader = {
     momName: "이예지", momBirth: "900101", babyName: "이아기", babyBirth: "260615",
@@ -22,7 +44,8 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     };
 }
 
-describe("service record validation scope", () => {
+// Every case below passes a prop the mobile screen omits (`headerErrors`, `adminMode`), so it runs on the shared wizard only.
+describe("service record validation scope (shared wizard only)", () => {
     beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
     afterEach(() => jest.useRealTimers());
 
@@ -75,5 +98,27 @@ describe("service record validation scope", () => {
         expect(hasServiceRecordHeaderValues(legacyHeader)).toBe(true);
         expect(isServiceRecordHeaderComplete(legacyHeader)).toBe(false);
         expect(isServiceRecordHeaderComplete({ ...legacyHeader, momBirth: "1990-01-01", babyBirth: "2026-06-15" })).toBe(true);
+    });
+});
+
+// Added: the employee flow validates the whole header, with no supplied error map. Both implementations.
+describe.each(ROWS)("service record validation scope: employee header ($name)", ({ Component, toneOf }) => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+
+    it("validates the full legacy header: a press cannot save and surfaces the first problem", () => {
+        const props = makeProps();
+        render(<Component {...props} />);
+        const next = screen.getByRole("button", { name: "다음" });
+        expect(next).toBeEnabled();
+        fireEvent.click(next);
+        expect(props.onSaveHeader).not.toHaveBeenCalled();
+        const birth = screen.getByLabelText("산모 생년월일");
+        expect(birth).toHaveFocus();
+        expect(birth).not.toHaveAttribute("aria-invalid", "true");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("예: 19940315");
+        fireEvent.blur(birth);
+        expect(birth).toHaveAttribute("aria-invalid", "true");
+        expect(toneOf(document.getElementById(birth.getAttribute("aria-describedby")!))).toBe("error");
     });
 });
