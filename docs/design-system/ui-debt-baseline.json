@@ -173,14 +173,14 @@
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "263:61-263:112|visualTailwindInPage",
-        "265:65-265:96|visualTailwindInPage",
-        "266:65-266:91|visualTailwindInPage",
-        "268:61-268:100|visualTailwindInPage",
-        "302:137-302:275|visualTailwindInPage",
-        "364:160-364:233|visualTailwindInPage",
-        "365:73-365:116|visualTailwindInPage",
-        "366:172-366:248|visualTailwindInPage"
+        "283:61-283:112|visualTailwindInPage",
+        "285:65-285:96|visualTailwindInPage",
+        "286:65-286:91|visualTailwindInPage",
+        "288:61-288:100|visualTailwindInPage",
+        "322:137-322:275|visualTailwindInPage",
+        "384:160-384:233|visualTailwindInPage",
+        "385:73-385:116|visualTailwindInPage",
+        "386:172-386:248|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
@@ -189,7 +189,7 @@
         "397:10-397:22|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "2049:7-2056:8|rawUiElement"
+        "2064:7-2071:8|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
         "1051:36-1051:208|visualTailwindInPage",
@@ -198,13 +198,13 @@
         "1096:36-1096:208|visualTailwindInPage",
         "1117:36-1117:208|visualTailwindInPage",
         "1129:36-1129:208|visualTailwindInPage",
-        "1908:31-1908:63|visualTailwindInPage",
-        "1918:33-1918:81|visualTailwindInPage",
-        "1930:31-1930:63|visualTailwindInPage",
-        "1961:29-1961:136|visualTailwindInPage",
-        "2052:19-2052:233|visualTailwindInPage",
-        "2070:25-2070:232|visualTailwindInPage",
-        "2120:25-2120:157|visualTailwindInPage",
+        "1923:31-1923:63|visualTailwindInPage",
+        "1933:33-1933:81|visualTailwindInPage",
+        "1945:31-1945:63|visualTailwindInPage",
+        "1976:29-1976:136|visualTailwindInPage",
+        "2067:19-2067:233|visualTailwindInPage",
+        "2085:25-2085:232|visualTailwindInPage",
+        "2135:25-2135:157|visualTailwindInPage",
         "422:27-433:19|visualTailwindInPage",
         "720:72-720:177|visualTailwindInPage",
         "800:27-804:18|visualTailwindInPage",
@@ -213,54 +213,51 @@
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "290:21-294:22|rawUiElement"
+        "301:21-305:22|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "293:33-293:234|visualTailwindInPage",
-        "295:47-295:75|visualTailwindInPage"
+        "304:33-304:234|visualTailwindInPage",
+        "306:47-306:75|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/messages/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "559:10-559:35|pageLocalComponent",
-        "733:10-733:31|pageLocalComponent"
+        "560:10-560:35|pageLocalComponent",
+        "734:10-734:31|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1014:19-1025:20|rawUiElement"
+        "1043:19-1054:20|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1024:31-1024:184|visualTailwindInPage",
-        "1065:23-1065:87|visualTailwindInPage",
-        "1067:26-1067:62|visualTailwindInPage",
-        "1068:26-1068:59|visualTailwindInPage",
-        "1076:29-1076:117|visualTailwindInPage",
-        "1082:33-1082:76|visualTailwindInPage",
-        "1087:33-1087:149|visualTailwindInPage",
-        "1135:41-1135:88|visualTailwindInPage",
-        "1152:29-1152:117|visualTailwindInPage",
-        "1158:33-1158:76|visualTailwindInPage",
-        "1163:33-1163:148|visualTailwindInPage",
-        "1219:41-1219:94|visualTailwindInPage",
-        "1240:25-1240:129|visualTailwindInPage",
-        "1263:27-1263:147|visualTailwindInPage",
-        "1276:29-1276:43|visualTailwindInPage",
-        "1380:52-1380:84|visualTailwindInPage",
-        "1728:21-1728:141|visualTailwindInPage",
-        "1964:45-1964:127|visualTailwindInPage",
-        "1966:55-1966:87|visualTailwindInPage",
-        "1969:55-1969:81|visualTailwindInPage",
-        "2009:35-2009:139|visualTailwindInPage",
-        "2021:35-2026:27|visualTailwindInPage",
-        "580:25-580:166|visualTailwindInPage",
-        "615:37-615:154|visualTailwindInPage",
-        "631:25-631:129|visualTailwindInPage",
-        "647:30-647:66|visualTailwindInPage",
-        "648:30-648:75|visualTailwindInPage",
-        "665:33-665:92|visualTailwindInPage",
-        "669:35-669:75|visualTailwindInPage",
-        "671:36-671:65|visualTailwindInPage",
-        "973:25-973:69|visualTailwindInPage",
-        "978:25-978:147|visualTailwindInPage"
+        "1002:25-1002:69|visualTailwindInPage",
+        "1007:25-1007:147|visualTailwindInPage",
+        "1053:31-1053:184|visualTailwindInPage",
+        "1104:25-1104:113|visualTailwindInPage",
+        "1110:29-1110:72|visualTailwindInPage",
+        "1115:29-1115:145|visualTailwindInPage",
+        "1172:37-1172:84|visualTailwindInPage",
+        "1189:25-1189:113|visualTailwindInPage",
+        "1195:29-1195:72|visualTailwindInPage",
+        "1200:29-1200:144|visualTailwindInPage",
+        "1265:37-1265:90|visualTailwindInPage",
+        "1284:25-1284:129|visualTailwindInPage",
+        "1307:27-1307:147|visualTailwindInPage",
+        "1320:29-1320:43|visualTailwindInPage",
+        "1424:52-1424:84|visualTailwindInPage",
+        "1792:21-1792:141|visualTailwindInPage",
+        "2065:45-2065:127|visualTailwindInPage",
+        "2067:55-2067:87|visualTailwindInPage",
+        "2070:55-2070:81|visualTailwindInPage",
+        "2110:35-2110:139|visualTailwindInPage",
+        "2122:35-2127:27|visualTailwindInPage",
+        "581:25-581:166|visualTailwindInPage",
+        "616:37-616:154|visualTailwindInPage",
+        "632:25-632:129|visualTailwindInPage",
+        "648:30-648:66|visualTailwindInPage",
+        "649:30-649:75|visualTailwindInPage",
+        "666:33-666:92|visualTailwindInPage",
+        "670:35-670:75|visualTailwindInPage",
+        "672:36-672:65|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/messages/templates/[id]/edit/page.tsx": {
@@ -833,7 +830,7 @@
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "180:10-180:28|pageLocalComponent"
+        "181:10-181:28|pageLocalComponent"
       ]
     },
     "mobile/src/app/(shell)/contracts/new/page.tsx": {
@@ -935,15 +932,15 @@
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "121:35-121:60|visualTailwindInPage",
-        "131:21-131:100|visualTailwindInPage",
-        "133:30-133:71|visualTailwindInPage",
-        "134:24-134:75|visualTailwindInPage",
-        "135:29-135:57|visualTailwindInPage",
-        "146:31-146:72|visualTailwindInPage",
-        "148:26-148:69|visualTailwindInPage",
-        "149:26-149:61|visualTailwindInPage",
-        "36:32-36:67|visualTailwindInPage"
+        "141:35-141:60|visualTailwindInPage",
+        "151:21-151:100|visualTailwindInPage",
+        "153:30-153:71|visualTailwindInPage",
+        "154:24-154:75|visualTailwindInPage",
+        "155:29-155:57|visualTailwindInPage",
+        "166:31-166:72|visualTailwindInPage",
+        "168:26-168:69|visualTailwindInPage",
+        "169:26-169:61|visualTailwindInPage",
+        "40:32-40:67|visualTailwindInPage"
       ]
     },
     "mobile/src/app/(shell)/messages/templates/[id]/edit/page.tsx": {
@@ -984,13 +981,13 @@
     },
     "mobile/src/app/(shell)/notification/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "45:10-45:33|pageLocalComponent"
+        "46:10-46:33|pageLocalComponent"
       ],
       "ui-architecture/no-page-style-constants": [
-        "27:7-27:36|pageStyleConstant"
+        "28:7-28:36|pageStyleConstant"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "307:21-313:22|rawUiElement"
+        "328:21-334:22|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/page.tsx": {
@@ -1001,15 +998,15 @@
     },
     "mobile/src/app/(shell)/prices/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "366:10-366:28|pageLocalComponent",
-        "405:10-405:28|pageLocalComponent"
+        "413:10-413:28|pageLocalComponent",
+        "452:10-452:28|pageLocalComponent"
       ],
       "ui-architecture/no-page-style-constants": [
-        "30:7-30:30|pageStyleConstant"
+        "31:7-31:30|pageStyleConstant"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "245:25-254:26|rawUiElement",
-        "259:25-266:26|rawUiElement"
+        "273:25-282:26|rawUiElement",
+        "287:25-294:26|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/privacy/page.tsx": {
