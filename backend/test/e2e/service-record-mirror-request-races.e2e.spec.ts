@@ -307,6 +307,7 @@ async function createExistingClient(branchId: string, phone: string): Promise<{
         data: {
             name: "김고객",
             voucherClient: true,
+            birthday: "1992-03-04",
             phone: `010-${phone.slice(3, 7)}-${phone.slice(7)}`,
             phoneNormalized: phone,
             branchId,

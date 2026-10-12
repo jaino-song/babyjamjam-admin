@@ -1093,7 +1093,7 @@ describe("ClientService", () => {
             expect(documentSnapshotService.bumpCompanyEpoch).toHaveBeenCalledTimes(1);
         });
 
-        it("does not refresh the client pointer when a partial contract is ambiguous", async () => {
+        it.each(["ambiguous", "needs_confirmation"])("does not refresh the client pointer or snapshots when a partial contract returns %s", async (result) => {
             const mockClient = createClientEntity();
             createClientUsecase.execute.mockResolvedValue(mockClient);
             prismaService.eformsign_doc.findMany
@@ -1102,15 +1102,15 @@ describe("ClientService", () => {
                     documentId: "DOC-PARTIAL",
                     branchId: null,
                 }]);
-            linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue("ambiguous");
+            linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue(result);
 
-            await service.create(branchId, {
+            await expect(service.create(branchId, {
                 name: "New Client",
                 phone: "010-1234-5678",
                 careCenter: false,
                 voucherClient: true,
                 breastPump: false,
-            });
+            })).resolves.toBe(mockClient);
 
             expect(prismaService.client.findUnique).not.toHaveBeenCalled();
             expect(mockClient.eDocId).toBeNull();

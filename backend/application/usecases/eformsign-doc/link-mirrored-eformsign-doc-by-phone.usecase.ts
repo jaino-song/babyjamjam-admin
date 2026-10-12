@@ -8,6 +8,7 @@ import { NotificationService } from "application/services/notification.service";
 import { persistClientMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
 import { fulfillClientMessageAutomationIntent } from "application/services/client-message-automation-intent-fulfiller";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
 import { SystemSettingService } from "application/services/system-setting.service";
 import {
     EformsignContractClientCandidate,
@@ -116,6 +117,7 @@ export type LinkMirroredEformsignDocResult =
     | "disabled"
     | "not_completed"
     | "mirror_not_ready"
+    | "needs_confirmation"
     | "skipped";
 
 export interface LinkMirroredEformsignDocOptions {
@@ -151,12 +153,14 @@ export interface ExpectedEformsignMirrorGeneration {
 
 interface TransactionResult {
     status: LinkMirroredEformsignDocResult;
+    matchedClientBranchId?: string;
     createdClientId?: number;
     createdBranchId?: string;
     createdScheduleId?: number;
 }
 
 const ASSIGNMENT_REQUIRED_NOTIFICATION_TYPE = "eformsign_assignment_required";
+const LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE = "eformsign_link_confirmation_required";
 
 /**
  * Reconciles a locally mirrored contract with its client.
@@ -366,6 +370,13 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 );
             }
         }
+        if (
+            result.status === "needs_confirmation"
+            && result.matchedClientBranchId !== undefined
+            && !options.suppressOutboundAutomation
+        ) {
+            await this.notifyLinkConfirmationRequired(result.matchedClientBranchId, documentId);
+        }
         return result.status;
     }
 
@@ -409,6 +420,27 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         } catch (error) {
             this.logger.warn(
                 `Failed to send assignment-required notification for document ${documentId}: `
+                + (error instanceof Error ? error.name : "UnknownError"),
+            );
+        }
+    }
+
+    private async notifyLinkConfirmationRequired(branchId: string, documentId: string): Promise<void> {
+        if (!this.notificationService) return;
+        try {
+            const result = await this.notificationService.sendToBranchUsers(
+                branchId,
+                "계약서 연결 확인 필요",
+                "전화번호가 같은 고객이 있지만 이름 또는 생년월일이 달라 계약서를 자동으로 연결하지 않았습니다.",
+                { type: LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE, documentId },
+                { dedupe: { type: LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE, documentId } },
+            );
+            this.logger.log(
+                `Link-confirmation-required notification for document ${documentId}: ${result.sent} sent, ${result.failed} failed`,
+            );
+        } catch (error) {
+            this.logger.warn(
+                `Failed to send link-confirmation-required notification for document ${documentId}: `
                 + (error instanceof Error ? error.name : "UnknownError"),
             );
         }
@@ -637,6 +669,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     branchId: true,
                                     phone: true,
                                     eDocId: true,
+                                    name: true,
+                                    birthday: true,
                                 },
                             })
                             : [];
@@ -648,6 +682,18 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             return { status: "ambiguous" };
                         }
                         if (matches.length === 1) {
+                            if (detail === null) return { status: "mirror_not_ready" };
+                            const differences = compareEformsignClientIdentity(candidate, matches[0]!, new Date());
+                            if (differences.length > 0) {
+                                this.logger.log({
+                                    event: "eformsign_link_confirmation_required",
+                                    fields: differences,
+                                });
+                                return {
+                                    status: "needs_confirmation",
+                                    matchedClientBranchId: matches[0]!.branchId ?? undefined,
+                                };
+                            }
                             if (completeLockSurface) {
                                 const matched = matches[0]!;
                                 // `client.e_doc_id` is unique, so a different client that still points
