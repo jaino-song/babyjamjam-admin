@@ -4,6 +4,8 @@ import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
 import { eformsignApi } from "@/services/api";
 import type { Client, DocumentStatus } from "@/lib/client/types";
@@ -34,11 +36,10 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
         setSelectedClient(client);
     }, []);
 
-    // The contract document the summary was derived from. While it is loading, failed or absent the
-    // result falls back to the summary's own wording, so the wizard never waits on it. A failed refetch
-    // keeps the previously cached data, so the document counts only while the query's status is success.
+    // 문서가 있으면 조회 성공 전에는 답하지 않는다. 실패한 refetch는 캐시를 남기므로
+    // 데이터 존재 여부가 아니라 query의 success 상태로 판단한다.
     const contractDocumentId = selectedClient?.latestContractDocumentId ?? selectedClient?.eDocId ?? null;
-    const { data: contractDocument, isSuccess: contractDocumentLoaded } = useQuery<EformsignDocument>({
+    const { data: contractDocument, isSuccess: contractDocumentLoaded, isError, isFetching, refetch } = useQuery<EformsignDocument>({
         queryKey: ["eformsign-docs", "document", contractDocumentId],
         queryFn: async () => {
             if (!contractDocumentId) throw new Error("documentId is required");
@@ -46,11 +47,12 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
         },
         enabled: Boolean(contractDocumentId),
         staleTime: 1000 * 60,
-        retry: 1,
     });
+    const documentUnresolved = Boolean(contractDocumentId) && !contractDocumentLoaded;
+    const documentLoading = documentUnresolved && isFetching;
 
     const handleSubmit = useCallback(() => {
-        if (!selectedClient) return;
+        if (!selectedClient || documentUnresolved) return;
 
         onCheck?.({
             clientId: selectedClient.id,
@@ -60,7 +62,7 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
             hasSigned: selectedClient.hasSigned,
             rejectedByReviewer: contractDocumentLoaded && isRejectedContractDocument(contractDocument),
         });
-    }, [selectedClient, contractDocument, contractDocumentLoaded, onCheck]);
+    }, [selectedClient, contractDocument, contractDocumentLoaded, documentUnresolved, onCheck]);
 
     return (
         <div data-component="desktop_chat_page_wizard-contract-status" className="flex flex-col">
@@ -82,13 +84,28 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
                     required
                 />
 
+                {contractDocumentId && isError ? (
+                    <QueryErrorState
+                        dataComponent="desktop_chat_page_wizard-contract-status_body_document-error"
+                        size="inline"
+                        isRetrying={isFetching}
+                        onRetry={() => { void refetch(); }}
+                    />
+                ) : null}
+
                 <Button
+                    data-component="desktop_chat_page_wizard-contract-status_body_submit"
                     onClick={handleSubmit}
                     className="w-full"
                     size="lg"
-                    disabled={!selectedClient}
+                    disabled={!selectedClient || documentUnresolved}
+                    aria-busy={documentLoading}
                 >
-                    <Search className="w-4 h-4 mr-2" />
+                    {documentLoading ? (
+                        <Spinner data-component="desktop_chat_page_wizard-contract-status_body_submit_spinner" size="sm" aria-hidden="true" />
+                    ) : (
+                        <Search className="w-4 h-4 mr-2" />
+                    )}
                     조회하기
                 </Button>
             </div>
