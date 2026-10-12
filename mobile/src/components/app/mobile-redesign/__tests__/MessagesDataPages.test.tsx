@@ -390,21 +390,20 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(screen.getByText(zone === "upcoming" ? "김고객" : "김문자")).toBeInTheDocument();
   });
 
-  it("skeletons both zones and every count while the upcoming query loads, even with cached history", () => {
+  it("keeps cached history rows and counts while the upcoming query loads", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: true, isError: false, data: undefined });
     mockUseMessageHistory.mockReturnValue({ isLoading: false, isError: false, data: [sentRecord] });
 
     const { container } = render(<MessagesHistoryPage />);
 
-    // The cached past record must not render while the sibling query is in
-    // flight — the whole list skeletons as one unit.
-    expect(screen.queryByText(/김문자/)).not.toBeInTheDocument();
+    expect(screen.getByText(/김문자/)).toBeInTheDocument();
     expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
-    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(4);
+    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(0);
+    expect(container.querySelector('[data-component$="_zone-past_header_count"]')).toHaveTextContent("1건");
+    expect(container.querySelectorAll('.filter-pill-skeleton')).toHaveLength(2);
 
     for (const suffix of [
       "_zone-upcoming_header_count",
-      "_zone-past_header_count",
       "_content_list-card_header_count",
     ]) {
       const node = container.querySelector(`[data-component$="${suffix}"]`);
@@ -414,14 +413,120 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     }
   });
 
-  it("skeletons the list while the history query loads, even with a settled upcoming job", () => {
+  it("keeps settled upcoming rows and counts while the history query loads", () => {
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ isLoading: false, isError: false, data: [cancelableJob] });
     mockUseMessageHistory.mockReturnValue({ isLoading: true, isError: false, data: undefined });
 
     const { container } = render(<MessagesHistoryPage />);
 
-    expect(screen.queryByText("김고객")).not.toBeInTheDocument();
+    expect(screen.getByText("김고객")).toBeInTheDocument();
+    expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(0);
+    expect(container.querySelector('[data-component$="_zone-upcoming_header_count"]')).toHaveTextContent("1건");
+    expect(container.querySelectorAll('.filter-pill-skeleton')).toHaveLength(4);
+  });
+
+  it("treats both cold paused queries as loading, not successful empty results", () => {
+    const paused = { data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" };
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue(paused);
+    mockUseMessageHistory.mockReturnValue(paused);
+    const { container } = render(<MessagesHistoryPage />);
+    expect(screen.queryByText("0건")).not.toBeInTheDocument();
+    expect(screen.queryByText("표시할 메시지가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("불러오고 있습니다");
+    expect(container.querySelectorAll('.filter-pill-skeleton')).toHaveLength(5);
     expect(container.querySelectorAll('[data-component$="_zone-upcoming_row-skeleton"]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-component$="_zone-past_row-skeleton"]')).toHaveLength(4);
+  });
+
+  it.each(["upcoming", "past"] as const)("keeps healthy %s rows and count during its sibling's cold retry", async (zone) => {
+    const healthyHook = zone === "upcoming" ? mockUseUpcomingMessageTriggerJobs : mockUseMessageHistory;
+    const siblingHook = zone === "upcoming" ? mockUseMessageHistory : mockUseUpcomingMessageTriggerJobs;
+    const refetch = jest.fn();
+    healthyHook.mockReturnValue({ data: zone === "upcoming" ? [cancelableJob] : [sentRecord], isLoading: false, isError: false });
+    siblingHook.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
+    const { container, rerender } = render(<MessagesHistoryPage />);
+    const rowText = zone === "upcoming" ? "김고객" : "김문자";
+    const count = () => container.querySelector(`[data-component$="_zone-${zone}_header_count"]`);
+    expect(screen.getByText(rowText)).toBeInTheDocument();
+    expect(count()).toHaveTextContent("1건");
+    await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    siblingHook.mockReturnValue({ data: undefined, isLoading: true, isFetching: true, isError: false, refetch });
+    rerender(<MessagesHistoryPage />);
+    expect(screen.getByText(rowText)).toBeInTheDocument();
+    expect(count()).toHaveTextContent("1건");
+    expect(container.querySelector('[data-component$="_content_list-card_header_count"]')).toHaveAttribute("data-source-component", "ListCountSkeleton");
+  });
+
+  it("preserves the empty state for disabled pending queries that are not paused", () => {
+    const disabled = { data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: false, status: "pending", fetchStatus: "idle" };
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue(disabled);
+    mockUseMessageHistory.mockReturnValue(disabled);
+    render(<MessagesHistoryPage />);
+    expect(screen.getByText("0건")).toBeInTheDocument();
+    expect(screen.getByText("표시할 메시지가 없습니다.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("does not gate a visible settled zone on a filtered-away loading zone", async () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [cancelableJob], isLoading: false, isError: false });
+    mockUseMessageHistory.mockReturnValue({ data: undefined, isLoading: false, isPaused: true, isError: false });
+    const { container } = render(<MessagesHistoryPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /예정/ }));
+    expect(screen.getByText("김고객")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_content_list-card_header_count"]')).toHaveTextContent("1건");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps the all pill loading when filtered-away history is cold paused", async () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [cancelableJob], isLoading: false, isError: false });
+    mockUseMessageHistory.mockReturnValue({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused" });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const filterBar = container.querySelector('[data-component$="_filters"]') as HTMLElement;
+    await userEvent.setup().click(within(filterBar).getByRole("button", { name: /^예정/ }));
+
+    const allPill = within(filterBar).getByText("전체").closest("button");
+    expect(allPill).toHaveClass("filter-pill-skeleton");
+    expect(allPill).toHaveAttribute("aria-hidden", "true");
+    expect(allPill?.querySelector(".count")).not.toBeInTheDocument();
+    const upcomingPill = within(filterBar).getByRole("button", { name: /^예정/ });
+    expect(upcomingPill).not.toHaveClass("filter-pill-skeleton");
+    expect(upcomingPill).toHaveTextContent("1");
+    expect(container.querySelector('[data-component$="_content_list-card_header_count"]')).toHaveTextContent("1건");
+    expect(screen.getByText("김고객")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps the all pill loading when filtered-away upcoming is on its first load", async () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: undefined, isPending: true, isLoading: true, isError: false, isFetching: true, isPaused: false, status: "pending", fetchStatus: "fetching" });
+    mockUseMessageHistory.mockReturnValue({ data: [sentRecord], isLoading: false, isError: false });
+
+    const { container } = render(<MessagesHistoryPage />);
+    const filterBar = container.querySelector('[data-component$="_filters"]') as HTMLElement;
+    await userEvent.setup().click(within(filterBar).getByRole("button", { name: /^발송 성공/ }));
+
+    const allPill = within(filterBar).getByText("전체").closest("button");
+    expect(allPill).toHaveClass("filter-pill-skeleton");
+    expect(allPill).toHaveAttribute("aria-hidden", "true");
+    expect(allPill?.querySelector(".count")).not.toBeInTheDocument();
+    const sentPill = within(filterBar).getByRole("button", { name: /^발송 성공/ });
+    expect(sentPill).not.toHaveClass("filter-pill-skeleton");
+    expect(sentPill).toHaveTextContent("1");
+    expect(container.querySelector('[data-component$="_content_list-card_header_count"]')).toHaveTextContent("1건");
+    expect(screen.getByText("김문자")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps cached rows and counts during paused refetches", () => {
+    mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [cancelableJob], isLoading: false, isPaused: true, isError: false });
+    mockUseMessageHistory.mockReturnValue({ data: [sentRecord], isLoading: false, isPaused: true, isError: false });
+    const { container } = render(<MessagesHistoryPage />);
+    expect(screen.getByText("김고객")).toBeInTheDocument();
+    expect(screen.getByText("김문자")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_content_list-card_header_count"]')).toHaveTextContent("2건");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("shows SMS history and excludes non-SMS provider records", () => {
@@ -563,6 +668,9 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_zone-upcoming"]')).toBeInTheDocument();
     expect(container.querySelector('[data-component$="_zone-past"]')).not.toBeInTheDocument();
 
+    expect(screen.getByRole("button", { name: /^전체/ })).toHaveTextContent("3");
+    expect(screen.getByRole("button", { name: /^전체/ })).not.toHaveClass("filter-pill-skeleton");
+
     // "발송 취소" filter: zone 1 hidden, zone 2 shows only the canceled row.
     // Scoped to the filter bar: the upcoming zone's still-visible cancel-row
     // button (MESSAGE_JOB_CANCEL_COPY.action) is also exactly "발송 취소",
@@ -573,6 +681,9 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_zone-upcoming"]')).not.toBeInTheDocument();
     expect(screen.getByText("취소 고객")).toBeInTheDocument();
     expect(screen.queryByText(/김문자/)).not.toBeInTheDocument();
+
+    expect(within(filterBar).getByRole("button", { name: /^전체/ })).toHaveTextContent("3");
+    expect(within(filterBar).getByRole("button", { name: /^전체/ })).not.toHaveClass("filter-pill-skeleton");
 
     // back to "전체": both zones return.
     await user.click(screen.getByRole("button", { name: /^전체/ }));

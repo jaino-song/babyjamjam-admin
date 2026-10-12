@@ -157,9 +157,11 @@ export function MessageTriggerList({
     data: rulesResponse,
     isError: isRulesError,
     isLoading: isRulesLoading,
+    isPaused: isRulesPaused,
     refetch: refetchRules,
     isFetching: isRulesFetching,
   } = useMessageTriggerRules();
+  const isRulesLoadPending = isRulesLoading || (isRulesPaused && rulesResponse === undefined);
   const updateRuleMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
 
@@ -227,7 +229,7 @@ export function MessageTriggerList({
     <SettingsListCard
       data-component={dataComponent}
       title="자동 전송"
-      count={isRulesError && rulesResponse === undefined ? "—" : displayRows.length}
+      count={isRulesLoadPending || (isRulesError && rulesResponse === undefined) ? "—" : displayRows.length}
       subtitle="메시지 자동 전송 규칙을 정할 수 있어요"
       actionLabel={canManage && onCreate ? "+ 규칙" : undefined}
       onAction={canManage ? onCreate : undefined}
@@ -298,11 +300,11 @@ export function MessageTriggerList({
           );
       })}
 
-      {isRulesLoading ? (
+      {isRulesLoadPending ? (
         <SettingsListRowsSkeleton data-component={sub("items_loading")} />
       ) : null}
 
-      {!isRulesLoading && !isRulesError && displayRows.length === 0 ? (
+      {!isRulesLoadPending && !isRulesError && displayRows.length === 0 ? (
         <div className="message-empty-state" data-component={sub("items_empty")}>
           등록된 자동 전송 트리거가 없습니다.
         </div>

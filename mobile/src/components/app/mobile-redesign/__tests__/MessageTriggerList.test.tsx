@@ -266,6 +266,31 @@ describe("MessageTriggerList", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("shows an unknown count and skeleton for a cold rules load (paused=%s)", (isPaused) => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: !isPaused, isError: false, isFetching: !isPaused, isPaused, status: "pending", fetchStatus: isPaused ? "paused" : "fetching" });
+    const { container } = renderPage();
+    expect(screen.getByText("—개")).toBeInTheDocument();
+    expect(screen.queryByText("0개")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_items_loading_row"]')).toBeInTheDocument();
+  });
+
+  it("preserves the empty state for disabled pending rules that are not paused", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: false, status: "pending", fetchStatus: "idle" });
+    renderPage();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
+  });
+
+  it("keeps cached rules and count during a paused refetch", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: false, isPaused: true });
+    const { container } = renderPage();
+    expect(screen.getByText("실제 서비스 시작 규칙")).toBeInTheDocument();
+    expect(screen.getByText("1개")).toBeInTheDocument();
+    expect(container.querySelector('[data-component$="_items_loading_row"]')).not.toBeInTheDocument();
+  });
+
   it("shows an unavailable count and retries a failed first rules load", () => {
     const refetch = jest.fn();
     mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch });
