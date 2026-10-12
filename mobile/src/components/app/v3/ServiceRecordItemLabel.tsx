@@ -28,7 +28,8 @@ const MESSAGE_TONE_CLASS: Record<SlotMessage["tone"], string> = {
   error: "text-v3-burgundy",
 };
 
-const TITLE_CLASS = "shrink-0 text-sm font-semibold leading-snug text-v3-text";
+const TITLE_CLASS =
+  "min-w-0 [word-break:keep-all] [overflow-wrap:anywhere] text-sm font-semibold leading-snug text-v3-text";
 
 /**
  * One item's title row plus its single message slot at the right. The slot is
@@ -60,7 +61,7 @@ export function ServiceRecordItemLabel({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className={cn("mb-1.5 flex min-w-0 items-center gap-2", className)}
+      className={cn("mb-1.5 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2", className)}
     >
       {htmlFor ? (
         <label
@@ -84,7 +85,7 @@ export function ServiceRecordItemLabel({
         aria-live="polite"
         title={message?.text}
         className={cn(
-          "ml-auto min-w-0 truncate text-right text-xs font-semibold leading-tight",
+          "max-w-full min-w-0 justify-self-end truncate text-right text-xs font-semibold leading-tight",
           MESSAGE_TONE_CLASS[message?.tone ?? "hint"],
         )}
       >

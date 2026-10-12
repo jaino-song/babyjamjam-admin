@@ -30,7 +30,7 @@ const MESSAGE_TONE_CLASS: Record<SlotMessage["tone"], string> = {
 };
 
 const TITLE_CLASS =
-  "shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-snug text-v3-text";
+  "min-w-0 [word-break:keep-all] [overflow-wrap:anywhere] text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-snug text-v3-text";
 
 /**
  * One item's title row plus its single message slot at the right. The slot is
@@ -65,7 +65,7 @@ export function ServiceRecordItemLabel({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className={cn("mb-[calc(6px*var(--glint-ui-scale,1))] flex min-w-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]", className)}
+      className={cn("mb-[calc(6px*var(--glint-ui-scale,1))] grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-[calc(8px*var(--glint-ui-scale,1))]", className)}
     >
       {htmlFor ? (
         <label
@@ -89,7 +89,7 @@ export function ServiceRecordItemLabel({
         aria-live="polite"
         title={message?.text}
         className={cn(
-          "ml-auto h-[1lh] min-w-0 truncate text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3]",
+          "h-[1lh] max-w-full min-w-0 justify-self-end truncate text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3]",
           MESSAGE_TONE_CLASS[message?.tone ?? "hint"],
         )}
       >
