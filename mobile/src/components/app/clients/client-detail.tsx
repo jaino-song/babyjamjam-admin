@@ -1387,6 +1387,16 @@ export function ClientDetailContent({
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_message`} name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (
+          <>
+          {isNotificationLogsError && displayNotificationLogs.length > 0 ? (
+            <QueryErrorState
+              dataComponent={`${dataComponent}_tab-panel_message_history-detail_stale-error`}
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => onRetryNotificationLogs?.()}
+              isRetrying={isNotificationLogsRetrying}
+            />
+          ) : null}
           <ClientMessageHistoryDetail
             data-component={`${dataComponent}_tab-panel_message_history-detail`}
             view={{
@@ -1410,6 +1420,7 @@ export function ClientDetailContent({
             }}
             onBack={() => setSelectedEntry(null)}
           />
+          </>
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_message_history-card`} title="발송 내역">
             {isNotificationLogsLoading ? (

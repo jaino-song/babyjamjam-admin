@@ -983,6 +983,68 @@ describe("ClientDetailContent", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
+    describe("while a message detail is open", () => {
+      const detailProps = (extra: Record<string, unknown> = {}) => ({
+        notificationLogs: [{ ...cachedLog, messageBody: "열린 메시지 본문" }],
+        onRetryNotificationLogs: jest.fn(),
+        ...extra,
+      });
+      const renderOpenDetail = async (extra: Record<string, unknown> = {}) => {
+        const props = detailProps(extra);
+        const view = renderMessageTab(props);
+        await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        return { view, props };
+      };
+      const rerenderWith = (view: ReturnType<typeof renderMessageTab>, props: Record<string, unknown>) =>
+        view.rerender(
+          <ClientDetailContent
+            data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+            client={client}
+            contractDocument={null}
+            activeTab="message"
+            onTabChange={jest.fn()}
+            onMessage={jest.fn()}
+            onIssueContract={jest.fn()}
+            onEdit={jest.fn()}
+            onDelete={jest.fn()}
+            onClientUpdated={jest.fn()}
+            {...props}
+          />,
+        );
+
+      it("shows the notice above the kept message body after a failed refetch, and its retry refetches", async () => {
+        const { view, props } = await renderOpenDetail();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        const body = screen.getByText("열린 메시지 본문");
+        expect(alert.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+        await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(props.onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+      });
+
+      it("disables the notice's retry while a refetch is in flight", async () => {
+        const { view, props } = await renderOpenDetail();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
+
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      });
+
+      it("shows no notice over the open detail when the load succeeded", async () => {
+        await renderOpenDetail();
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+    });
+
     it("keeps the truncation notice over cached logs after a failed refetch", () => {
       renderMessageTab({ notificationLogs: [cachedLog], hasMoreNotificationLogs: true, isNotificationLogsError: true });
 
