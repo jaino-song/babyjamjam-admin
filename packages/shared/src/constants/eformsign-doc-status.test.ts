@@ -6,7 +6,13 @@ import {
     resolveContractDocDisplayStatus,
     resolveContractDocStatusLabel,
 } from "./eformsign-doc-status";
-import { getEformsignStatusCategory } from "./eformsign-status-codes";
+import {
+    COMPLETED_STATUS_CODES,
+    DELETED_STATUS_CODES,
+    EXPIRED_STATUS_CODES,
+    getEformsignStatusCategory,
+    IN_PROGRESS_STATUS_CODES,
+} from "./eformsign-status-codes";
 import {
     createKrBusinessDayCalendar,
     KR_BUILTIN_HOLIDAYS,
@@ -432,6 +438,142 @@ describe("isContractReceiptSendable", () => {
             category: "unknown",
             currentStatus: CUSTOMER_STEP_STATUS,
         })).toBe(false);
+    });
+
+    // 계약-04: a reviewer rejection (071) keeps the customer's signature, so the receipt link may
+    // send even on a legacy payload that carries only the status code (no display_status, and no
+    // workflow step to prove the customer signed).
+    it("allows 071 without display_status even when the payload carries no workflow step", () => {
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: "071", step_type: null, step_name: null },
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: 71, step_type: null, step_name: null },
+            displayStatus: undefined,
+        })).toBe(true);
+    });
+
+    it("keeps 070 without a workflow step and without display_status not sendable (unchanged)", () => {
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: { status_type: "070", step_type: null, step_name: null },
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(false);
+    });
+
+    it("agrees with the 반려됨 label for the same payload", () => {
+        const payload = { status_type: "071", step_type: null, step_name: null };
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: payload,
+            contractEndDate: null,
+            statusType: payload.status_type,
+        })).toBe("반려됨");
+        expect(isContractReceiptSendable({
+            category: "in-progress",
+            currentStatus: payload,
+            contractEndDate: null,
+            displayStatus: null,
+        })).toBe(true);
+    });
+
+    describe("status code table (expected values written out)", () => {
+        // Every status code the shared constants define. `true` = the customer-signed
+        // receipt gate is open for a payload WITHOUT display_status and WITHOUT a workflow step.
+        const SENDABLE_WITHOUT_STEP: Record<string, boolean> = {
+            // completed category
+            "003": true, "012": true, "022": true, "032": true,
+            "050": true, "062": true, "072": true, "092": true,
+            // expired category (040/045 revoke-requested, 042/090 revoked, 047/049 deleted included)
+            "011": false, "021": false, "031": false, "040": false,
+            "042": false, "045": false, "047": false, "049": false,
+            "061": false, "080": false, "090": false,
+            // in-progress category: no step proves the customer signed ...
+            "001": false, "002": false, "010": false, "020": false,
+            "030": false, "041": false, "043": false, "060": false,
+            "063": false, "064": false, "070": false,
+            // ... except 071, whose code alone says the customer signed and the reviewer rejected.
+            "071": true,
+            // deleted-only bucket: 099 (legacy webhook tombstone) is in no category list.
+            "099": false,
+        };
+        // Same codes, but the payload sits at the provider review step (customer signed).
+        const SENDABLE_AT_REVIEW_STEP: Record<string, boolean> = {
+            "003": true, "012": true, "022": true, "032": true,
+            "050": true, "062": true, "072": true, "092": true,
+            "011": false, "021": false, "031": false, "040": false,
+            "042": false, "045": false, "047": false, "049": false,
+            "061": false, "080": false, "090": false,
+            "001": true, "002": true, "010": true, "020": true,
+            "030": true, "041": true, "043": true, "060": true,
+            "063": true, "064": true, "070": true, "071": true,
+            // a deleted document is never sendable, even parked at the provider review step.
+            "099": false,
+        };
+        const DISPLAY_STATUS_SENDABLE: Record<string, boolean> = {
+            pending: false,
+            signed: true,
+            review: true,
+            completed: true,
+            revoke_requested: false,
+            revoked: false,
+            rejected_by_reviewer: true,
+            expired: false,
+            unassigned: false,
+            unknown: false,
+        };
+
+        it("covers exactly the status codes the shared constants define", () => {
+            const defined = [...new Set<string>([
+                ...COMPLETED_STATUS_CODES,
+                ...EXPIRED_STATUS_CODES,
+                ...IN_PROGRESS_STATUS_CODES,
+                ...DELETED_STATUS_CODES,
+            ])].sort();
+            expect(Object.keys(SENDABLE_WITHOUT_STEP).sort()).toEqual(defined);
+            expect(Object.keys(SENDABLE_AT_REVIEW_STEP).sort()).toEqual(defined);
+        });
+
+        it("resolves every status code without display_status as written out", () => {
+            for (const [code, expected] of Object.entries(SENDABLE_WITHOUT_STEP)) {
+                expect([code, isContractReceiptSendable({
+                    category: getEformsignStatusCategory(code),
+                    currentStatus: { status_type: code, step_type: null, step_name: null },
+                    contractEndDate: null,
+                    displayStatus: null,
+                })]).toEqual([code, expected]);
+            }
+        });
+
+        it("resolves every status code at the provider review step without display_status as written out", () => {
+            for (const [code, expected] of Object.entries(SENDABLE_AT_REVIEW_STEP)) {
+                expect([code, isContractReceiptSendable({
+                    category: getEformsignStatusCategory(code),
+                    currentStatus: { status_type: code, step_type: "06", step_name: "제공기관 확인" },
+                    contractEndDate: null,
+                    displayStatus: undefined,
+                    now: kstNoon("2026-08-06"),
+                })]).toEqual([code, expected]);
+            }
+        });
+
+        it("lets an authoritative display_status win for every status code and every value", () => {
+            for (const code of Object.keys(SENDABLE_WITHOUT_STEP)) {
+                for (const [displayStatus, expected] of Object.entries(DISPLAY_STATUS_SENDABLE)) {
+                    expect([code, displayStatus, isContractReceiptSendable({
+                        category: getEformsignStatusCategory(code),
+                        currentStatus: { status_type: code, step_type: null, step_name: null },
+                        contractEndDate: null,
+                        displayStatus,
+                    })]).toEqual([code, displayStatus, expected]);
+                }
+            }
+        });
     });
 });
 

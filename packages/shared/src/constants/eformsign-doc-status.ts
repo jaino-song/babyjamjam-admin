@@ -1,4 +1,5 @@
 import {
+    isDeletedEformsignStatusCode,
     isProviderReviewWorkflowStep,
     isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
@@ -207,7 +208,12 @@ const RECEIPT_SENDABLE_DISPLAY_STATUSES: ReadonlySet<ContractDocDisplayStatus> =
 export function isContractReceiptSendable(params: {
     displayStatus?: string | null;
     category: ContractDocStatusCategory | "unknown";
-    currentStatus?: { step_type?: string | null; step_name?: string | null } | null;
+    /**
+     * The provider status code rides along on `current_status`; the fallback resolver needs it
+     * so a payload without `display_status` reads the same status the label resolvers read
+     * (071 → 반려됨 stays sendable, 040/045/042/090 are never folded into a signed document).
+     */
+    currentStatus?: { status_type?: string | number | null; step_type?: string | null; step_name?: string | null } | null;
     contractEndDate?: string | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;
@@ -215,6 +221,9 @@ export function isContractReceiptSendable(params: {
     if (isContractDocDisplayStatus(params.displayStatus)) {
         return RECEIPT_SENDABLE_DISPLAY_STATUSES.has(params.displayStatus);
     }
+    // A deleted document (047/049/099) is never sendable. 099 sits in no category list, so the
+    // fallback resolver would otherwise read it as in-progress and open it at the review step.
+    if (isDeletedEformsignStatusCode(params.currentStatus?.status_type)) return false;
     const fallbackCategory: ContractDocStatusCategory = params.category === "completed"
         || params.category === "expired"
         ? params.category
@@ -223,6 +232,7 @@ export function isContractReceiptSendable(params: {
         resolveContractDocDisplayStatus({
             category: fallbackCategory,
             currentStatus: params.currentStatus ?? null,
+            statusType: params.currentStatus?.status_type,
             contractEndDate: params.contractEndDate ?? null,
             now: params.now,
             calendar: params.calendar,
