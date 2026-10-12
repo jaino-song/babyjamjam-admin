@@ -79,7 +79,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
                     is: expect.objectContaining({
                         branchId: { in: ["branch-1"] },
                         replaced: false,
-                        startDate: { gte: new Date("2026-08-20T00:00:00.000Z") },
+                        endDate: { gte: new Date("2026-08-20T00:00:00.000Z") },
                     }),
                 }),
             }),
@@ -94,6 +94,30 @@ describe("ServiceRecordLinkReconciliationService", () => {
             [10],
             [13],
         ]);
+    });
+
+    it("retries a failed late-registration marker through the end date, not after it", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        const markers = [
+            { ...createMarker(10, "01011112222"), startDate: new Date("2026-11-01T00:00:00.000Z"), endDate: new Date("2026-11-06T00:00:00.000Z") },
+            { ...createMarker(11, "01033334444"), startDate: new Date("2026-11-01T00:00:00.000Z"), endDate: new Date("2026-11-05T00:00:00.000Z") },
+        ];
+        prisma.message_trigger_job.findMany.mockImplementation(async ({ where }: {
+            where: { employeeSchedule: { is: { startDate?: { gte: Date }; endDate?: { gte: Date } } } };
+        }) => {
+            const bound = where.employeeSchedule.is;
+            return markers.filter((marker) => (
+                (!bound.startDate || marker.startDate >= bound.startDate.gte)
+                && (!bound.endDate || marker.endDate >= bound.endDate.gte)
+            ));
+        });
+        const service = new ServiceRecordLinkReconciliationService(
+            prisma as unknown as PrismaService, linkService as never, createSchedulerLeaseMock(),
+        );
+        // UTC is still November 5, but KST has crossed into November 6.
+        expect(await service.reconcileMissingJobs(new Date("2026-11-05T15:00:00.000Z"))).toBe(1);
+        expect(linkService.scheduleForServiceStart.mock.calls).toEqual([[10]]);
     });
 
     it("does not infer opt-in from a schedule that has no trigger job", async () => {

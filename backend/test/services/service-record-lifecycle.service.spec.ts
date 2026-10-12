@@ -406,7 +406,7 @@ describe("ServiceRecordLifecycleService", () => {
         // The two values diverge once the grace period is non-zero.
         expect(finalizationDueAt.getTime()).not.toBe(tokenExpiresAt.getTime());
         expect(finalizationDueAt.toISOString()).toBe("2026-09-09T11:00:00.000Z");
-        expect(tokenExpiresAt.toISOString()).toBe("2026-09-16T11:00:00.000Z");
+        expect(tokenExpiresAt.toISOString()).toBe("2026-09-09T15:00:00.000Z");
 
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
             update: expect.objectContaining({ finalizationDueAt }),

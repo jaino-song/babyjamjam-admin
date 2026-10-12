@@ -205,18 +205,15 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
     });
 
-    it("adds the 7-day grace period to the fallback link-expiry shown before a link is issued", () => {
+    it("shows midnight after the end date as fallback expiry before a link is issued", () => {
         // Assignment 1 has status "none" (link.token is null), so the
         // displayed expiry falls back to endDateExpiry(assignment.endDate).
-        // endDate is TEST_END_DATE = 2026-07-30; endDateExpiry must add the
-        // SERVICE_RECORD_LINK_GRACE_DAYS grace period (7 calendar days,
-        // mirroring the backend constant) -> 2026-08-06 20:00 KST, not the
-        // pre-grace 2026-07-30 20:00 KST.
+        // Mirrors getServiceRecordTokenExpiresAt: 2026-07-31 00:00 KST.
         renderComponent({
             assignments: [createAssignment(1, "none")],
         });
 
-        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.08.06 20:00");
+        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.07.31 00:00");
     });
 
     it("formats the newborn birth date instead of exposing raw YYMMDD", () => {

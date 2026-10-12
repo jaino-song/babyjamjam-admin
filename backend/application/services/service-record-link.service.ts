@@ -77,7 +77,7 @@ function readStoredCustomVariables(
 
 /**
  * Issues / revokes the no-login 제공기록지 link for an assignment (BJJ-247).
- * Assignment flows schedule the SMS for service-start day 15:00 KST; the existing
+ * Assignment flows schedule the SMS for noon KST the day before service start; the existing
  * Message trigger scheduler later dispatches it and writes retryable SMS logs.
  */
 @Injectable()
@@ -382,6 +382,15 @@ export class ServiceRecordLinkService {
         const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         if (!options.isManualSend) {
+            // 종료일은 KST 자정까지 유효하므로 종료일 당일의 늦은 등록도 발송한다.
+            if (
+                schedule.terminatedAt
+                || schedule.client?.serviceStatus === "completed"
+                || schedule.client?.serviceStatus === "terminated"
+                || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()
+            ) {
+                return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
+            }
             automaticSchedulingClaim = await this.claimAutomaticScheduling({
                 branchId: schedule.branchId,
                 scheduleId,

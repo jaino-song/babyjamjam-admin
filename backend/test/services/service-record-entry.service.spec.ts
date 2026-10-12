@@ -979,7 +979,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
         expect(extendExpiryForCase).toHaveBeenCalledWith(
             CASE_ID,
-            new Date("2026-07-17T11:00:00.000Z"),
+            new Date("2026-07-10T15:00:00.000Z"),
             expect.anything(),
         );
         // requiredSessionCount is never touched by the extension.
@@ -1051,7 +1051,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         });
         expect(extendExpiryForCase).toHaveBeenCalledWith(
             CASE_ID,
-            new Date("2026-09-09T11:00:00.000Z"),
+            new Date("2026-09-02T15:00:00.000Z"),
             expect.anything(),
         );
         expect(transactionRecord.requiredSessionCount).toBe(15);

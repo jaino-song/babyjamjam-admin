@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SERVICE_RECORD_LINK_RULE_ID } from "@babyjamjam/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
@@ -746,11 +747,14 @@ export function TriggerRulesManager({
   }, [availableTemplates, formState.templateKey, isSelectedDedicatedRule]);
 
   const listItems = useMemo<RuleListItem[]>(() => {
+    // getServiceRecordLinkScheduledFor computes this timing; the stored rule is only a carrier.
     return filteredRules.map((rule): TriggerRuleListItem => ({
       kind: "trigger-rule",
       id: rule.id,
       title: rule.name,
-      subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${getRuleSummary(toFormState(rule))}`,
+      subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${rule.id === SERVICE_RECORD_LINK_RULE_ID
+        ? "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송 · 주 담당 직원"
+        : getRuleSummary(toFormState(rule))}`,
       active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),
       rule,

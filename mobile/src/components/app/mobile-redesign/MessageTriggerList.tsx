@@ -6,6 +6,7 @@ import { MessageSquareText, type LucideIcon } from "lucide-react";
 import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_RECIPIENT_LABELS,
+  SERVICE_RECORD_LINK_RULE_ID,
   getMessageTemplateLabel,
 } from "@babyjamjam/shared";
 
@@ -66,6 +67,10 @@ function getRuleTitle(rule: MessageTriggerRule) {
 }
 
 function getRuleTimingLabel(rule: MessageTriggerRule) {
+  // getServiceRecordLinkScheduledFor computes this timing, not the carrier rule's sendTime.
+  if (rule.id === SERVICE_RECORD_LINK_RULE_ID) {
+    return "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송";
+  }
   const eventLabel = MESSAGE_EVENT_LABELS[rule.eventType];
 
   if (rule.offsetType === "IMMEDIATE") {
