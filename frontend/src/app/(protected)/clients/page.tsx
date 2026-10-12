@@ -321,6 +321,7 @@ export default function ClientsPage() {
     const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
     const createdClientSelectionRef = useRef<Client | null>(null);
+    const previousClientIdParamRef = useRef(clientIdParam);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -405,6 +406,17 @@ export default function ClientsPage() {
             setUrlSelectionSuppressed(false);
         }
     }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
+    useEffect(() => {
+        // A new ?id= (e.g. from a notification) outranks a stale row selection.
+        if (previousClientIdParamRef.current === clientIdParam) {
+            return;
+        }
+        previousClientIdParamRef.current = clientIdParam;
+        if (clientIdParam) {
+            setSelectedClient(null);
+            setUrlSelectionSuppressed(false);
+        }
+    }, [clientIdParam]);
     useEffect(() => {
         const previousBranchId = previousBranchIdRef.current;
         if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {

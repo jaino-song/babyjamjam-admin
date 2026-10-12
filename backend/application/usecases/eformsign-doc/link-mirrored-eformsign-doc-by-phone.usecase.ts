@@ -136,6 +136,7 @@ export interface ExpectedEformsignMirrorGeneration {
 interface TransactionResult {
     status: LinkMirroredEformsignDocResult;
     matchedClientBranchId?: string;
+    matchedClientId?: number;
     createdClientId?: number;
     createdBranchId?: string;
     createdScheduleId?: number;
@@ -355,9 +356,14 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         if (
             result.status === "needs_confirmation"
             && result.matchedClientBranchId !== undefined
+            && result.matchedClientId !== undefined
             && !options.suppressOutboundAutomation
         ) {
-            await this.notifyLinkConfirmationRequired(result.matchedClientBranchId, documentId);
+            await this.notifyLinkConfirmationRequired(
+                result.matchedClientBranchId,
+                documentId,
+                result.matchedClientId,
+            );
         }
         return result.status;
     }
@@ -407,14 +413,23 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         }
     }
 
-    private async notifyLinkConfirmationRequired(branchId: string, documentId: string): Promise<void> {
+    private async notifyLinkConfirmationRequired(
+        branchId: string,
+        documentId: string,
+        clientId: number,
+    ): Promise<void> {
         if (!this.notificationService) return;
         try {
             const result = await this.notificationService.sendToBranchUsers(
                 branchId,
                 "계약서 연결 확인 필요",
                 "전화번호가 같은 고객이 있지만 이름 또는 생년월일이 달라 계약서를 자동으로 연결하지 않았습니다.",
-                { type: LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE, documentId },
+                {
+                    type: LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE,
+                    documentId,
+                    clientId,
+                    url: `/clients?id=${clientId}`,
+                },
                 { dedupe: { type: LINK_CONFIRMATION_REQUIRED_NOTIFICATION_TYPE, documentId } },
             );
             this.logger.log(
@@ -674,6 +689,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 return {
                                     status: "needs_confirmation",
                                     matchedClientBranchId: matches[0]!.branchId ?? undefined,
+                                    matchedClientId: matches[0]!.id,
                                 };
                             }
                             // 계약-05: the identity matches, but a document is linked

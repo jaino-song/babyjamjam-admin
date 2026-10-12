@@ -247,7 +247,12 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
                 "branch-1", "계약서 연결 확인 필요",
                 "전화번호가 같은 고객이 있지만 이름 또는 생년월일이 달라 계약서를 자동으로 연결하지 않았습니다.",
-                { type: "eformsign_link_confirmation_required", documentId: "doc-1" },
+                {
+                    type: "eformsign_link_confirmation_required",
+                    documentId: "doc-1",
+                    clientId: 21,
+                    url: "/clients?id=21",
+                },
                 { dedupe: { type: "eformsign_link_confirmation_required", documentId: "doc-1" } },
             );
         }

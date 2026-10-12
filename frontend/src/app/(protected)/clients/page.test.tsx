@@ -885,3 +885,96 @@ describe("ClientsPage unknown data is never shown as a definite value (paused / 
     });
   });
 });
+
+describe("ClientsPage a new ?id= outranks a stale row selection (BJJ-432)", () => {
+  let ClientsPage: ComponentType;
+  const CLIENT_A = { id: 21, name: "목록에서 고른 고객" };
+  const CLIENT_B = { id: 42, name: "알림으로 연 고객" };
+
+  function directoryOf(clients: Array<{ id: number; name: string }>) {
+    return {
+      clients,
+      data: { pages: [{ data: clients, total: clients.length }] },
+      fetchNextPage: jest.fn(),
+      hasNextPage: false,
+      hasStaleData: false,
+      isBranchContextReady: true,
+      isEndOfList: true,
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+      isInitialError: false,
+      isInitialLoading: false,
+      isNextPageError: false,
+      isRefetchError: false,
+      isRefreshError: false,
+      isSuccessfulEmpty: false,
+      matchedTotal: clients.length,
+      refetch: jest.fn(),
+    };
+  }
+
+  beforeAll(async () => {
+    const pageModule = await import("./page");
+    ClientsPage = pageModule.default as ComponentType;
+  });
+
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    mockRouter.replace.mockReset();
+    mockDirectory.mockReset();
+    mockListSummary.mockReset();
+    mockListSummary.mockReturnValue({
+      data: undefined,
+      isBranchContextReady: true,
+      isInitialError: false,
+      isInitialLoading: false,
+      isRefreshError: false,
+    });
+    mockDirectory.mockReturnValue(directoryOf([CLIENT_A]));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("shows the URL-selected client after the id changes while another row is selected", () => {
+    const { rerender } = render(<ClientsPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: CLIENT_A.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+
+    mockSearchParams = new URLSearchParams(`id=${CLIENT_B.id}`);
+    mockClientFromParam = CLIENT_B;
+    rerender(<ClientsPage />);
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_B.name);
+    expect(screen.getByTestId("client-detail")).not.toHaveTextContent(CLIENT_A.name);
+  });
+
+  it("keeps a row selected while the URL still carries the same id", () => {
+    mockSearchParams = new URLSearchParams(`id=${CLIENT_B.id}`);
+    mockClientFromParam = CLIENT_B;
+    const { rerender } = render(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_B.name);
+
+    fireEvent.click(screen.getByRole("button", { name: CLIENT_A.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+
+    mockSearchParams = new URLSearchParams(`id=${CLIENT_B.id}`);
+    rerender(<ClientsPage />);
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+  });
+
+  it("keeps a row selected across a rerender when the URL has no id", () => {
+    const { rerender } = render(<ClientsPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: CLIENT_A.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+
+    mockSearchParams = new URLSearchParams();
+    rerender(<ClientsPage />);
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+  });
+});
