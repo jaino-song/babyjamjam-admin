@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TemplateEditor } from "@/components/app/my-templates/template-editor";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useMessageTemplate } from "@/hooks/use-message-templates";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -47,9 +48,9 @@ export default function EditTemplatePage() {
     const id = params.id as string;
     const locale = useLocale();
 
-    const { data: template, isLoading, error } = useMessageTemplate(id);
+    const { data: template, isLoading, isPaused, isError, refetch, isFetching } = useMessageTemplate(id);
 
-    if (isLoading) {
+    if (isLoading || (isPaused && template === undefined)) {
         return (
             <div data-component="desktop_messages_sections_template-edit" className="bg-background">
                 <div data-component="desktop_messages_sections_template-edit_template-edit-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
@@ -65,7 +66,7 @@ export default function EditTemplatePage() {
         );
     }
 
-    if (error || !template) {
+    if (!template) {
         return (
             <div data-component="desktop_messages_sections_template-edit" className="bg-background">
                 <div data-component="desktop_messages_sections_template-edit_template-edit-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
@@ -74,9 +75,18 @@ export default function EditTemplatePage() {
                         title={t(locale, "template-editor.edit-title")}
                         className="min-h-[70vh]"
                     >
-                        <Alert variant="destructive">
-                            <AlertDescription>{t(locale, "common.error-loading")}</AlertDescription>
-                        </Alert>
+                        {isError && template === undefined ? (
+                            <QueryErrorState
+                                dataComponent="desktop_messages_sections_template-edit_template-edit-content_load-error"
+                                title="템플릿을 불러오지 못했습니다"
+                                onRetry={() => void refetch()}
+                                isRetrying={isFetching}
+                            />
+                        ) : (
+                            <Alert variant="destructive">
+                                <AlertDescription>{t(locale, "common.error-loading")}</AlertDescription>
+                            </Alert>
+                        )}
                     </ContentPaper>
                 </div>
             </div>
@@ -92,6 +102,15 @@ export default function EditTemplatePage() {
                     subtitle={t(locale, "template-editor.edit-subtitle")}
                     className="min-h-[70vh]"
                 >
+                    {isError && template !== undefined ? (
+                        <QueryErrorState
+                            dataComponent="desktop_messages_sections_template-edit_template-edit-content_load-error"
+                            size="inline"
+                            title="최신 정보를 불러오지 못했습니다"
+                            onRetry={() => void refetch()}
+                            isRetrying={isFetching}
+                        />
+                    ) : null}
                     <TemplateEditor initialData={template} />
                 </ContentPaper>
             </section>
