@@ -16,6 +16,7 @@ import {
   SettingsListRowsSkeleton,
 } from "@/components/app/mobile-redesign/settings/SettingsListCard";
 import { Switch } from "@/components/ui/switch";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   useMessageTriggerRules,
   useUpdateMessageTriggerRuleBranchActivation,
@@ -153,9 +154,11 @@ export function MessageTriggerList({
 }) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const {
-    data: rulesResponse = [],
+    data: rulesResponse,
     isError: isRulesError,
     isLoading: isRulesLoading,
+    refetch: refetchRules,
+    isFetching: isRulesFetching,
   } = useMessageTriggerRules();
   const updateRuleMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
@@ -224,12 +227,21 @@ export function MessageTriggerList({
     <SettingsListCard
       data-component={dataComponent}
       title="자동 전송"
-      count={displayRows.length}
+      count={isRulesError && rulesResponse === undefined ? "—" : displayRows.length}
       subtitle="메시지 자동 전송 규칙을 정할 수 있어요"
       actionLabel={canManage && onCreate ? "+ 규칙" : undefined}
       onAction={canManage ? onCreate : undefined}
     >
       {beforeItems}
+      {!isRulesLoading && isRulesError ? (
+        <QueryErrorState
+          dataComponent={sub("items_error")}
+          size={displayRows.length > 0 ? "inline" : "panel"}
+          title={displayRows.length > 0 ? "최신 정보를 불러오지 못했습니다" : "자동 전송 트리거를 불러오지 못했습니다."}
+          onRetry={() => void refetchRules()}
+          isRetrying={isRulesFetching}
+        />
+      ) : null}
       {displayRows.map((row) => {
           const rowActive = row.rule.isActive;
           const rowKey = row.rule.id;
@@ -288,12 +300,6 @@ export function MessageTriggerList({
 
       {isRulesLoading ? (
         <SettingsListRowsSkeleton data-component={sub("items_loading")} />
-      ) : null}
-
-      {!isRulesLoading && isRulesError ? (
-        <div className="message-empty-state" data-component={sub("items_error")}>
-          자동 전송 트리거를 불러오지 못했습니다.
-        </div>
       ) : null}
 
       {!isRulesLoading && !isRulesError && displayRows.length === 0 ? (

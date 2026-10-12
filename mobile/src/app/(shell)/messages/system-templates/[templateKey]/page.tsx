@@ -2,11 +2,13 @@
 
 import Link from 'next/link';
 import { use } from 'react';
+import { normalizeApiError } from '@babyjamjam/shared';
 import { FileText, Loader2, Monitor, Send, Workflow } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { InfoCard } from '@/components/app/mobile-redesign/detail-sheet';
 import { MobileDetailSlideUp } from '@/components/app/mobile-redesign/mobile-detail-slideup';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 
 export function buildSystemTemplateSendHref(templateKey: string, content: string) {
   const params = new URLSearchParams({ template: templateKey, body: content });
@@ -16,7 +18,9 @@ export function buildSystemTemplateSendHref(templateKey: string, content: string
 export default function EditSystemTemplatePage({ params }: { params: Promise<{ templateKey: string }> }) {
   const { templateKey } = use(params);
   const router = useRouter();
-  const { data: template, isLoading } = useSystemTemplate(templateKey);
+  const { data: template, branchId, isLoading, isError, error, refetch, isFetching } = useSystemTemplate(templateKey);
+  const isNotFound = !branchId || (isError && normalizeApiError(error, { operation: 'read', locale: 'ko-KR' }).status === 404);
+  const isLoadError = isError && !isNotFound;
 
   const handleClose = () => router.back();
 
@@ -40,7 +44,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
     );
   }
 
-  if (!template) {
+  if (!template || isNotFound) {
     return (
       <MobileDetailSlideUp
         name="messages-system-template-detail"
@@ -48,9 +52,16 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
         onClose={handleClose}
         title="시스템 템플릿"
       >
-        <div className="detail-empty-state" data-component="mobile_messages_system-templates_template-key-detail_error">
+        {isLoadError ? (
+          <QueryErrorState
+            dataComponent="mobile_messages_system-templates_template-key-detail_error"
+            title="템플릿을 불러오지 못했습니다"
+            onRetry={() => void refetch()}
+            isRetrying={isFetching}
+          />
+        ) : <div className="detail-empty-state" data-component="mobile_messages_system-templates_template-key-detail_error">
           템플릿을 찾을 수 없습니다.
-        </div>
+        </div>}
       </MobileDetailSlideUp>
     );
   }
@@ -77,6 +88,15 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
       }}
     >
       <div className="message-detail pop-up" data-component="mobile_messages_system-templates_template-key-detail_detail-panel">
+        {isLoadError ? (
+          <QueryErrorState
+            dataComponent="mobile_messages_system-templates_template-key-detail_detail-panel_load-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => void refetch()}
+            isRetrying={isFetching}
+          />
+        ) : null}
         <div className="message-detail-head" data-component="mobile_messages_system-templates_template-key-detail_detail-panel_summary">
           <div className="doc-icon doc-icon-primary" data-component="mobile_messages_system-templates_template-key-detail_detail-panel_summary_icon">
             <FileText size={16} strokeWidth={2.5} />

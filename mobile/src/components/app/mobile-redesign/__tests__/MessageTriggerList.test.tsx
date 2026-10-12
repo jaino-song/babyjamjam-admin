@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { MessageTriggerList } from "../MessageTriggerList";
 import {
@@ -262,6 +262,50 @@ describe("MessageTriggerList", () => {
     renderPage();
 
     expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows an unavailable count and retries a failed first rules load", () => {
+    const refetch = jest.fn();
+    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch });
+    renderPage();
+    expect(screen.getByText("—개")).toBeInTheDocument();
+    expect(screen.queryByText("0개")).not.toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveAttribute("data-size", "panel");
+    expect(alert).toHaveTextContent("자동 전송 트리거를 불러오지 못했습니다.");
+    fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains a cached successful zero count after a failed refetch", () => {
+    mockUseMessageTriggerRules.mockReturnValue({ data: [], isLoading: false, isError: true, isFetching: false, refetch: jest.fn() });
+    renderPage();
+    expect(screen.getByText("0개")).toBeInTheDocument();
+    expect(screen.queryByText("—개")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps cached rules and count above a retryable inline notice (fetching=%s)", (isFetching) => {
+    const refetch = jest.fn();
+    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: true, isFetching, refetch });
+    renderPage();
+    const alert = screen.getByRole("alert");
+    const row = screen.getByText("실제 서비스 시작 규칙");
+    expect(alert).toHaveAttribute("data-size", "inline");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("1개")).toBeInTheDocument();
+    const retry = within(alert).getByRole("button", { name: "다시 시도" });
+    if (isFetching) {
+      expect(retry).toBeDisabled();
+    } else {
+      fireEvent.click(retry);
+      expect(refetch).toHaveBeenCalledTimes(1);
+    }
   });
 
   // M5: a branchless (system) rule is never editable (content is fixed), but this branch may

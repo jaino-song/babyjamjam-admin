@@ -16,7 +16,7 @@ const SETTINGS_ROW_GEOMETRY_CLASS =
 export interface SettingsListCardProps {
   "data-component": string;
   title: string;
-  count: number;
+  count: number | string;
   subtitle: string;
   actionLabel?: string;
   onAction?: () => void;
