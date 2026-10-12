@@ -54,6 +54,7 @@ describe("UserService", () => {
     let updateUserUsecase: ReturnType<typeof createMockUsecase>;
     let deleteUserUsecase: ReturnType<typeof createMockUsecase>;
     let prismaService: ReturnType<typeof createMockPrismaService>;
+    let auditAppend: jest.Mock;
 
     // 권한-04: owner-only global writes and branch-membership writes re-read the caller
     // inside the transaction, so every such call needs an acting user.
@@ -66,6 +67,7 @@ describe("UserService", () => {
         updateUserUsecase = createMockUsecase();
         deleteUserUsecase = createMockUsecase();
         prismaService = createMockPrismaService();
+        auditAppend = jest.fn().mockResolvedValue(undefined);
 
         service = new UserService(
             createUserUsecase as unknown as CreateUserUsecase,
@@ -74,7 +76,7 @@ describe("UserService", () => {
             updateUserUsecase as unknown as UpdateUserUsecase,
             deleteUserUsecase as unknown as DeleteUserUsecase,
             prismaService as unknown as PrismaService,
-            { append: jest.fn().mockResolvedValue(undefined) } as unknown as AdminAuditEventWriter,
+            { append: auditAppend } as unknown as AdminAuditEventWriter,
         );
     });
 
@@ -98,7 +100,7 @@ describe("UserService", () => {
             expect(result[0]).not.toHaveProperty("passwordHash");
         });
         it("revokes active sessions after deleting a branch membership", async () => {
-            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "other" });
+            prismaService.branch.findUnique.mockResolvedValue({ id: "branch-1", ownerId: "other", isActive: true });
             prismaService.user_branch.deleteMany.mockResolvedValue({ count: 1 });
             prismaService.user.findUnique.mockResolvedValue({ role: "owner" });
             await service.delete("u1", "branch-1", ownerActor);
@@ -2042,7 +2044,7 @@ describe("UserService", () => {
                 branchOwnerId = null,
             } = scenario;
             membershipUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-            prismaService.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: branchOwnerId });
+            prismaService.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: branchOwnerId, isActive: true });
             prismaService.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1") return { id: "caller-1", role: callerGlobal };
                 if (where.id === "target-1") {
@@ -2535,7 +2537,7 @@ describe("UserService", () => {
             client: ReturnType<typeof createMockPrismaService>,
             caller: Authority,
         ) => {
-            client.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: null });
+            client.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: null, isActive: true });
             client.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1" || where.id === "owner-1") {
                     return caller.global === null ? null : { id: where.id, role: caller.global };
@@ -2758,6 +2760,79 @@ describe("UserService", () => {
                     await service.delete(targetIds.ordinary, BRANCH, callerActor);
 
                     expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+                });
+            });
+
+            describe("a branch deactivated after the guard admitted the request (the transaction sees it INACTIVE)", () => {
+                /** A Prisma-like read that returns only the columns the query selects. */
+                const projected = (row: Record<string, unknown>) =>
+                    async ({ select }: { select?: Record<string, boolean> }) =>
+                        select
+                            ? Object.fromEntries(Object.entries(select).filter(([, on]) => on).map(([key]) => [key, row[key]]))
+                            : row;
+
+                /** Root client says ACTIVE (stale); the transaction client says INACTIVE. */
+                const arrangeInactive = (authority: Authority) => {
+                    arrangeBoth(authority, authority);
+                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: true }));
+                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: false }));
+                };
+                const expectNoTargetLookup = () => {
+                    const asked = txClient.user.findUnique.mock.calls.map(([args]: [{ where: { id: string } }]) => args.where.id);
+                    expect(asked.filter((id: string) => id !== "caller-1")).toEqual([]);
+                };
+
+                it.each([
+                    ["지점장", { global: "user", membership: "admin" }],
+                    ["매니저", { global: "user", membership: "manager" }],
+                    ["owner", { global: "owner" }],
+                ] as const)("a still-authorized %s: DELETE answers 404, with no target lookup, no write and no audit", async (_label, authority) => {
+                    arrangeInactive(authority);
+
+                    await expect(service.delete(targetIds.ordinary, BRANCH, callerActor)).rejects.toMatchObject({
+                        status: 404,
+                        response: expect.objectContaining({ code: "RESOURCE_NOT_FOUND" }),
+                    });
+
+                    expectNoTargetLookup();
+                    expectNothingWrittenAnywhere();
+                    expect(auditAppend).not.toHaveBeenCalled();
+                });
+
+                describe.each([
+                    ["demoted to 회원", demoted],
+                    ["with no membership row", noMembership],
+                    ["whose account row vanished", { global: null } as Authority],
+                ] as const)("caller %s", (_label, authority) => {
+                    it.each(["ordinary", "owner", "missing"] as const)("DELETE of a %s target: 403, not 404, nothing looked up or written", async (kind) => {
+                        arrangeInactive(authority);
+
+                        await expect(service.delete(targetIds[kind], BRANCH, callerActor)).rejects.toMatchObject(forbidden);
+
+                        expectNoTargetLookup();
+                        expectNothingWrittenAnywhere();
+                        expect(auditAppend).not.toHaveBeenCalled();
+                    });
+                });
+
+                it("an ACTIVE branch in the transaction deletes even when the root client says INACTIVE; the columns are read through the transaction client", async () => {
+                    arrangeBoth(stillManager, stillManager);
+                    prismaService.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: false }));
+                    txClient.branch.findUnique.mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: true }));
+
+                    await service.delete(targetIds.ordinary, BRANCH, callerActor);
+
+                    expect(txClient.branch.findUnique).toHaveBeenCalledWith({
+                        where: { id: BRANCH },
+                        select: { ownerId: true, isActive: true },
+                    });
+                    expect(prismaService.branch.findUnique).not.toHaveBeenCalled();
+                    expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+                    expect(txClient.auth_session.updateMany).toHaveBeenCalledTimes(1);
+                    expect(auditAppend).toHaveBeenCalledWith(
+                        txClient,
+                        expect.objectContaining({ action: "user.membership.deleted", branchId: BRANCH }),
+                    );
                 });
             });
 

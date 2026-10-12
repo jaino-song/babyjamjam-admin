@@ -940,10 +940,19 @@ export class UserService {
     ): Promise<void> {
         await runSerializableTransaction(this.prismaService, async (tx) => {
             await this.lockRow(tx, "branch", branchId);
-            const branch = await tx.branch.findUnique({ where: { id: branchId }, select: { ownerId: true } });
+            const branch = await tx.branch.findUnique({
+                where: { id: branchId },
+                select: { ownerId: true, isActive: true },
+            });
             if (!branch) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
             // 권한-04: same in-transaction caller re-read and rank rule as a role change.
             const caller = await this.readBranchCaller(tx, actor, branchId);
+            // The branch must still be active when the delete runs, not only when the guard
+            // admitted the request. Checked after the caller re-read so a caller who lost
+            // authority still gets 403, and before any target lookup or write.
+            if (branch.isActive !== true) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
             if (!caller.isOwner) {
                 const target = await tx.user.findUnique({
                     where: { id },

@@ -279,8 +279,15 @@ describe("BranchUserController re-checks the caller before answering about the t
         membership: string | null;
     }
 
-    const makeClient = (caller: Caller) => ({
-        branch: { findUnique: jest.fn().mockResolvedValue({ id: BRANCH, ownerId: null }) },
+    /** A Prisma-like read that returns only the columns the query selects. */
+    const projected = (row: Record<string, unknown>) =>
+        async ({ select }: { select?: Record<string, boolean> }) =>
+            select
+                ? Object.fromEntries(Object.entries(select).filter(([, on]) => on).map(([key]) => [key, row[key]]))
+                : row;
+
+    const makeClient = (caller: Caller, branchActive = true) => ({
+        branch: { findUnique: jest.fn().mockImplementation(projected({ id: BRANCH, ownerId: null, isActive: branchActive })) },
         user: {
             findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) => {
                 if (where.id === "caller-1") return caller.global === null ? null : { id: "caller-1", role: caller.global };
@@ -305,10 +312,13 @@ describe("BranchUserController re-checks the caller before answering about the t
     let controller: BranchUserController;
     let rootClient: ReturnType<typeof makeClient>;
     let txClient: ReturnType<typeof makeClient>;
+    let auditAppend: jest.Mock;
 
-    const build = (root: Caller, tx: Caller): void => {
-        rootClient = makeClient(root);
-        txClient = makeClient(tx);
+    /** `active` says whether each client sees the branch as ACTIVE (default: both do). */
+    const build = (root: Caller, tx: Caller, active: { root?: boolean; tx?: boolean } = {}): void => {
+        rootClient = makeClient(root, active.root ?? true);
+        txClient = makeClient(tx, active.tx ?? true);
+        auditAppend = jest.fn().mockResolvedValue(undefined);
         const prisma = { ...rootClient, $transaction: jest.fn(async (cb: (c: unknown) => unknown) => cb(txClient)) };
         // The target lookup a controller could make before the transaction: it sees the
         // owner as an owner and the ghost as missing, exactly as the tables above do.
@@ -323,7 +333,7 @@ describe("BranchUserController re-checks the caller before answering about the t
             {} as never,
             {} as never,
             prisma as never,
-            { append: jest.fn().mockResolvedValue(undefined) } as never,
+            { append: auditAppend } as never,
         );
         controller = new BranchUserController(service);
     };
@@ -393,6 +403,91 @@ describe("BranchUserController re-checks the caller before answering about the t
 
         it("DELETE: ordinary and owner targets removed, missing target 404 (same codes as before)", async () => {
             expect(await Promise.all(kinds.map((kind) => del(kind, ownerTenant)))).toEqual(["ok", "ok", 404]);
+        });
+    });
+
+    /** Ids the transaction client was asked about, via `user.findUnique`. */
+    const lookedUpUserIds = (): string[] =>
+        txClient.user.findUnique.mock.calls.map(([args]: [{ where: { id: string } }]) => args.where.id);
+
+    const notFoundBody = async (run: () => Promise<unknown>): Promise<unknown> => {
+        try {
+            await run();
+            return undefined;
+        } catch (error) {
+            return (error as { getResponse?: () => unknown }).getResponse?.();
+        }
+    };
+
+    describe("a branch deactivated after the guard admitted the request (the transaction sees it INACTIVE)", () => {
+        describe.each([
+            ["a 지점장", { global: "user", membership: "admin" }, stale],
+            ["a 매니저", { global: "user", membership: "manager" }, stale],
+            ["an owner", { global: "owner", membership: null }, ownerTenant],
+        ] as const)("caller still authorized as %s", (_label, authority, tenant) => {
+            beforeEach(() => build(authority, authority, { root: true, tx: false }));
+
+            it("DELETE answers 404, with no target lookup, no write, no session revocation and no audit", async () => {
+                expect(await del("ordinary", tenant)).toBe(404);
+
+                expect(await notFoundBody(() => controller.delete(BRANCH, ids.ordinary, tenant)))
+                    .toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+                expect(lookedUpUserIds().filter((id) => id !== "caller-1")).toEqual([]);
+                expectNothingWritten();
+                expect(auditAppend).not.toHaveBeenCalled();
+            });
+        });
+
+        describe.each([
+            ["demoted to 회원", { global: "user", membership: "user" }],
+            ["without any membership row", { global: "user", membership: null }],
+            ["whose account row vanished", { global: null, membership: null }],
+        ] as const)("a caller %s", (_label, txCaller) => {
+            beforeEach(() => build({ global: "user", membership: "admin" }, txCaller, { root: true, tx: false }));
+
+            it("DELETE answers 403 (not 404) for an ordinary, an owner and a missing target alike", async () => {
+                expect(await Promise.all(kinds.map((kind) => del(kind)))).toEqual([403, 403, 403]);
+
+                expect(lookedUpUserIds().filter((id) => id !== "caller-1")).toEqual([]);
+                expectNothingWritten();
+                expect(auditAppend).not.toHaveBeenCalled();
+            });
+        });
+    });
+
+    describe("an ACTIVE branch (the transaction sees it ACTIVE)", () => {
+        it("reads the branch columns from the transaction client, not the root client", async () => {
+            // The root client is told the branch is INACTIVE; only the transaction answer counts.
+            build({ global: "user", membership: "admin" }, { global: "user", membership: "admin" }, { root: false, tx: true });
+
+            expect(await del("ordinary")).toBe("ok");
+
+            expect(txClient.branch.findUnique).toHaveBeenCalledWith({
+                where: { id: BRANCH },
+                select: { ownerId: true, isActive: true },
+            });
+            expect(rootClient.branch.findUnique).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["a 지점장", { global: "user", membership: "admin" }, stale],
+            ["a 매니저", { global: "user", membership: "manager" }, stale],
+            ["an owner", { global: "owner", membership: null }, ownerTenant],
+        ] as const)("DELETE by %s removes the membership, revokes sessions and appends the audit", async (_label, authority, tenant) => {
+            build(authority, authority);
+
+            expect(await del("ordinary", tenant)).toBe("ok");
+
+            expect(txClient.user_branch.deleteMany).toHaveBeenCalledWith({ where: { userId: ids.ordinary, branchId: BRANCH } });
+            expect(txClient.auth_session.updateMany).toHaveBeenCalledWith({
+                where: { userId: ids.ordinary, revokedAt: null },
+                data: { revokedAt: expect.any(Date), revokedReason: "membership_deleted" },
+            });
+            expect(auditAppend).toHaveBeenCalledTimes(1);
+            expect(auditAppend).toHaveBeenCalledWith(
+                txClient,
+                expect.objectContaining({ action: "user.membership.deleted", branchId: BRANCH }),
+            );
         });
     });
 });
