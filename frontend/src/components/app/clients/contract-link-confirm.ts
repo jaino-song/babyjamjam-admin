@@ -11,6 +11,9 @@ import type { EformsignLinkConfirmation } from "@/services/eformsign";
 export const clientContractDocsQueryKey = (clientId: number) => ["eformsign-docs", "client", clientId] as const;
 export const linkConfirmationsQueryKey = (clientId: number) =>
     ["eformsign-docs", "link-confirmations", clientId] as const;
+export const linkConfirmationsPrefixQueryKey = ["eformsign-docs", "link-confirmations"] as const;
+export const allLinkConfirmationsQueryKey = (branchId: string | null) =>
+    [...linkConfirmationsPrefixQueryKey, "all", branchId] as const;
 
 export type LinkConfirmField = "name" | "birthday";
 export type LinkConfirmSide = "contract" | "client";

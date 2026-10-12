@@ -222,14 +222,15 @@ describe("ContractLinkConfirmDialog", () => {
 
             await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
             const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey);
-            expect(keys).toEqual(
-                expect.arrayContaining([
-                    ["eformsign-docs", "client", 7],
-                    ["eformsign-docs", "link-confirmations", 7],
-                    ["clients"],
-                    ["clients", "detail", 7],
-                ]),
-            );
+            expect(keys).toEqual([
+                ["eformsign-docs", "client", 7],
+                ["eformsign-docs", "link-confirmations"],
+                ["clients"],
+                ["clients", "detail", 7],
+                ["eformsign-documents"],
+                ["eformsign-status-counts"],
+                ["eformsign-client-names"],
+            ]);
         });
 
         it("treats an adopt response with warnings as a success", async () => {

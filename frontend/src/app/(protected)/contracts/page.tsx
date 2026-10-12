@@ -76,6 +76,7 @@ import {
   SectionNav,
 } from "@/components/app/v3";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
+import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
@@ -750,6 +751,7 @@ export default function ContractsPage() {
         onJobsPopoverOpenChange={setIsDocumentJobsPopoverOpen}
       />
 
+      {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
       <div
         data-component="desktop_contracts_sections"
         data-slot="contracts-sections"
