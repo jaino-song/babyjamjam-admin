@@ -11,7 +11,13 @@ import {
   type Document,
 } from "@/hooks/use-documents";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
-import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
+import {
+  ListCard,
+  ListItemRow,
+  ListLoadMoreSentinel,
+  ListRowsSkeleton,
+} from "@/components/app/mobile-redesign/primitives";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
 import {
@@ -37,6 +43,8 @@ type FileKind = "pdf" | "img" | "doc" | "xls" | "misc";
 type DetailTabId = "preview" | "info" | "description" | "tags";
 
 const ALL_FILTER = "전체";
+const UNKNOWN_COUNT = "—";
+const NO_DOCUMENTS: Document[] = [];
 const INLINE_PREVIEW_IMAGE_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
@@ -377,7 +385,20 @@ export function FileStorageScreen() {
   const [selectedDoc, setSelectedDoc] = useState<Document | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTabId>("preview");
 
-  const { data: documents = [] } = useDocuments();
+  const {
+    data: documentsData,
+    isLoading: isDocumentsLoadingQuery,
+    isPaused: isDocumentsPaused,
+    isError: isDocumentsError,
+    isFetching: isDocumentsFetching,
+    refetch: refetchDocuments,
+  } = useDocuments();
+  // `undefined` means the documents were never loaded; an empty array is a real, successful empty load.
+  const hasDocumentsData = documentsData !== undefined;
+  const documents = documentsData ?? NO_DOCUMENTS;
+  const isDocumentsLoading = isDocumentsLoadingQuery || (isDocumentsPaused && !hasDocumentsData);
+  const isDocumentsLoadFailed = isDocumentsError && !hasDocumentsData;
+  const isDocumentsStale = isDocumentsError && hasDocumentsData;
   const { data: categories = [] } = useDocumentCategories();
 
   const categoryLookup = useMemo(() => {
@@ -415,14 +436,17 @@ export function FileStorageScreen() {
 
   const filterItems = useMemo(() => {
     const items: Array<{ label: string; count: string }> = [
-      { label: ALL_FILTER, count: String(searchFilteredDocs.length) },
+      {
+        label: ALL_FILTER,
+        count: hasDocumentsData ? String(searchFilteredDocs.length) : UNKNOWN_COUNT,
+      },
     ];
     for (const [categoryId, docs] of groupedAll.entries()) {
       const label = categoryLookup.get(categoryId) ?? "기타";
       items.push({ label, count: String(docs.length) });
     }
     return items;
-  }, [groupedAll, searchFilteredDocs.length, categoryLookup]);
+  }, [groupedAll, searchFilteredDocs.length, categoryLookup, hasDocumentsData]);
 
   const sectionsFull = useMemo(() => {
     const sections: Array<{ title: string; categoryId: string; fullDocs: Document[]; fullCount: number }> = [];
@@ -476,7 +500,7 @@ export function FileStorageScreen() {
           <ListCard
             data-component="mobile_files_detail-sheet_stack_list-page_content_list-card"
             title="파일"
-            count={`${documents.length}개`}
+            count={hasDocumentsData ? `${documents.length}개` : UNKNOWN_COUNT}
             actionLabel="업로드"
             actionHref="/files/upload"
             filters={filterItems}
@@ -495,7 +519,31 @@ export function FileStorageScreen() {
               />
             }
           >
-            {visibleSections.length === 0 ? (
+            {isDocumentsStale && (
+              <QueryErrorState
+                dataComponent="mobile_files_detail-sheet_stack_list-page_content_list-card_body_error"
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={() => void refetchDocuments()}
+                isRetrying={isDocumentsFetching}
+              />
+            )}
+            {isDocumentsLoading ? (
+              <div
+                role="status"
+                aria-label="파일 로딩 중"
+                data-component="mobile_files_detail-sheet_stack_list-page_content_list-card_body_loading-status"
+              >
+                <ListRowsSkeleton data-component="mobile_files_detail-sheet_stack_list-page_content_list-card_body_loading" />
+              </div>
+            ) : isDocumentsLoadFailed ? (
+              <QueryErrorState
+                dataComponent="mobile_files_detail-sheet_stack_list-page_content_list-card_body_error"
+                title="파일을 불러오지 못했습니다"
+                onRetry={() => void refetchDocuments()}
+                isRetrying={isDocumentsFetching}
+              />
+            ) : visibleSections.length === 0 ? (
               <div
                 style={{
                   padding: "32px 16px",

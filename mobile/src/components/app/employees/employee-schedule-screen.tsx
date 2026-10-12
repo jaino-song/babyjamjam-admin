@@ -15,6 +15,7 @@ import { DetailTabPills, MobileSearchBar } from "@/components/app/mobile-redesig
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import type { Client } from "@/lib/client/types";
@@ -286,7 +287,11 @@ export function EmployeeScheduleScreen({
   const [selectedDateKey, setSelectedDateKey] = useState(() => dateKey(initialDate));
   const [selectedEntry, setSelectedEntry] = useState<ScheduleEntry | null>(null);
   const [detailClientOverride, setDetailClientOverride] = useState<Client | null>(null);
-  const { allClients, isLoading, isError, refetch } = useInfiniteClients();
+  const { allClients, isLoading, isError, isPaused, hasData, isFetching, refetch } = useInfiniteClients();
+  // A paused first load (device offline) has no data and is not `isLoading`; it is still a load in progress.
+  const isScheduleLoading = isLoading || (isPaused && !hasData);
+  const isScheduleLoadFailed = isError && !hasData;
+  const isScheduleStale = isError && hasData;
   const entries = useMemo(() => buildScheduleEntries(allClients, today), [allClients, today]);
   const searchFilteredEntries = useMemo(
     () => filterScheduleEntries(entries, "all", searchQuery),
@@ -383,6 +388,15 @@ export function EmployeeScheduleScreen({
         activeTab={viewMode}
         onTabChange={(tab) => setViewMode(tab as (typeof VIEW_TABS)[number]["id"])}
       />
+      {isScheduleStale && (
+        <QueryErrorState
+          dataComponent={`${listBase}_error`}
+          size="inline"
+          title="최신 정보를 불러오지 못했습니다"
+          onRetry={() => void refetch()}
+          isRetrying={isFetching}
+        />
+      )}
       <ListCard
         key={viewMode}
         data-component={cardBase}
@@ -464,7 +478,7 @@ export function EmployeeScheduleScreen({
       data-component={dataComponent}
       data-slot="employee-schedule-screen"
     >
-      {isLoading ? (
+      {isScheduleLoading ? (
         <div
           className="shell-content flex min-h-0 flex-1 flex-col"
           role="status"
@@ -481,7 +495,7 @@ export function EmployeeScheduleScreen({
             <ListRowsSkeleton data-component={`${dataComponent}_loading-card_rows`} />
           </ListCard>
         </div>
-      ) : isError ? (
+      ) : isScheduleLoadFailed ? (
         <div className="shell-content flex min-h-0 flex-1 flex-col" data-component={`${dataComponent}_error`}>
           <Alert variant="destructive" role="alert">
             <AlertTitle>일정을 불러오지 못했습니다</AlertTitle>
