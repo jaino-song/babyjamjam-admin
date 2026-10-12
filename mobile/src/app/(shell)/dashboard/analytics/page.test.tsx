@@ -90,4 +90,38 @@ describe("DashboardAnalyticsPage load failures", () => {
     expect(totalClientsValue()).toHaveTextContent("12");
     expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
   });
+
+  it("keeps the cached stats while the client count is in its initial load and the stats refetch failed", () => {
+    mockClients({ data: undefined, isLoading: true });
+    mockAnalytics({ data: analyticsData, isError: true });
+    render(<DashboardAnalyticsPage />);
+    const values = Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent);
+    expect(values).toEqual(["—", "7", "3", "3"]);
+    expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+  });
+
+  it("keeps the cached client total while the stats are in their initial load", () => {
+    mockClients({ data: { total: 12 } });
+    mockAnalytics({ data: undefined, isLoading: true });
+    render(<DashboardAnalyticsPage />);
+    const values = Array.from(document.querySelectorAll(".mini-stat-num")).map((el) => el.textContent);
+    expect(values).toEqual(["12", "—", "—", "—"]);
+  });
+
+  it("retries only the client count from the cached-count notice", () => {
+    mockClients({ data: { total: 12 }, isError: true });
+    render(<DashboardAnalyticsPage />);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    fireEvent.click(within(alert).getByRole("button", { name: /다시 시도/ }));
+    expect(retryClients).toHaveBeenCalledTimes(1);
+    expect(retryAnalytics).not.toHaveBeenCalled();
+  });
+
+  it("disables the cached-count notice's retry while the client refetch is in flight", () => {
+    mockClients({ data: { total: 12 }, isError: true, isFetching: true });
+    render(<DashboardAnalyticsPage />);
+    expect(totalClientsValue()).toHaveTextContent("12");
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: /다시 시도/ })).toBeDisabled();
+  });
 });

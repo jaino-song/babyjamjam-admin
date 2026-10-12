@@ -25,6 +25,9 @@ export default function DashboardAnalyticsPage() {
   const isLoading = analyticsLoading || clientsLoading;
   const hasData = !isLoading && analytics && clientsPage;
 
+  // Each card is masked only by the query that feeds it, and only while that query has no data.
+  const clientsPending = clientsLoading && !clientsPage;
+  const analyticsPending = analyticsLoading && !analytics;
   // A failed count with nothing cached shows "—", never 0.
   const totalClients = clientsError && !clientsPage ? "—" : String(clientsPage?.total ?? 0);
   // Unknown counts (server stats unavailable) show "-", never 0.
@@ -35,11 +38,11 @@ export default function DashboardAnalyticsPage() {
       ? pendingReview + pendingSend
       : null;
 
-  const cards: Array<[string, string]> = [
-    [totalClients, "전체 고객"],
-    [formatAnalyticsCount(analytics?.activeClients), "진행중"],
-    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작"],
-    [formatAnalyticsCount(pendingActions), "처리 필요"],
+  const cards: Array<[string, string, boolean]> = [
+    [totalClients, "전체 고객", clientsPending],
+    [formatAnalyticsCount(analytics?.activeClients), "진행중", analyticsPending],
+    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작", analyticsPending],
+    [formatAnalyticsCount(pendingActions), "처리 필요", analyticsPending],
   ];
 
   return (
@@ -83,7 +86,7 @@ export default function DashboardAnalyticsPage() {
             style={{ padding: "8px" }}
             data-component="mobile_dashboard_analytics-page_card_grid"
           >
-            {cards.map(([value, label]) => (
+            {cards.map(([value, label, pending]) => (
               <div
                 className="mini-stat"
                 data-component="mobile_dashboard_analytics-page_card_grid_stat"
@@ -94,7 +97,7 @@ export default function DashboardAnalyticsPage() {
                     className="mini-stat-num"
                     data-component="mobile_dashboard_analytics-page_card_grid_stat_content_value"
                   >
-                    {isLoading ? "—" : value}
+                    {pending ? "—" : value}
                   </div>
                   <div
                     className="mini-stat-label"
