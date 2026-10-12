@@ -100,7 +100,7 @@ export function PhoneStep({
                     <Input
                         id={PHONE_INPUT_ID}
                         data-component={child("body_phone-input")}
-                        className="text-base aria-[invalid=true]:border-v3-burgundy"
+                        className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel"

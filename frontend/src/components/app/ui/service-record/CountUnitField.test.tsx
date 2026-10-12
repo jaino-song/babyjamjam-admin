@@ -109,6 +109,15 @@ describe("CountUnitField", () => {
     expect(container.firstElementChild).toHaveClass("border-v3-burgundy!");
   });
 
+  it("drops the focus border when invalid so focus can never beat the error border", () => {
+    const { container, rerender } = render(<Harness />);
+    expect(container.firstElementChild).toHaveClass("border-input!", "focus-within:border-v3-primary!");
+
+    rerender(<Harness invalid />);
+    expect(container.firstElementChild).not.toHaveClass("focus-within:border-v3-primary!");
+    expect(container.firstElementChild).not.toHaveClass("border-input!");
+  });
+
   it("names its children from the root data-component", () => {
     const { container } = render(<Harness />);
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "CountUnitField");

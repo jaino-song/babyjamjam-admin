@@ -131,7 +131,7 @@ export function SignaturePad({
 
     return (
         // The Tailwind classes are the v3 look outside `.srec`; the package's `.srec` classes (kept) still style the old wizard.
-        <div data-component={dataComponent} className={`sign-fld mt-4 border-t border-dashed border-v3-border pt-3.5 ${locked ? "locked" : ""}`}>
+        <div data-component={dataComponent} className={`sign-fld mt-4 border-t border-dashed border-v3-border! pt-3.5 ${locked ? "locked" : ""}`}>
             <div className="sign-head mb-2 flex items-baseline justify-between">
                 <label className="lab m-0 text-sm font-semibold text-v3-text">산모 서명</label>
                 {!locked && (

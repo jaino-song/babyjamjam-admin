@@ -189,7 +189,7 @@ export function ServiceInfoStep({
                             <Input
                                 id={inputId}
                                 data-component={`${inputComponent}_control`}
-                                className="text-base aria-[invalid=true]:border-v3-burgundy"
+                                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={field.ph}
                                 inputMode={field.inputMode}
                                 maxLength={HEADER_DATE_KEYS.includes(key) ? 10 : undefined}

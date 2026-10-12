@@ -67,8 +67,7 @@ export function CountUnitField({
       data-source-component={SOURCE_COMPONENT}
       className={cn(
         "flex h-12 min-w-0 items-center gap-2 rounded-[12px] border-[1.5px] bg-white px-3 text-sm text-v3-text transition-colors",
-        "focus-within:border-v3-primary",
-        invalid ? "border-v3-burgundy" : "border-v3-border",
+        invalid ? "border-v3-burgundy!" : "border-v3-border! focus-within:border-v3-primary!",
         disabled && "bg-v3-dim-white",
         className,
       )}
