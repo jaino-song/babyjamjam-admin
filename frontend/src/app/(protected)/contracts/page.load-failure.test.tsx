@@ -224,7 +224,8 @@ it("keeps an open detail mounted when a cached list refetch fails", async () => 
     '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]',
   )).toBe(detail);
   expect(row()).toBeInTheDocument();
-  expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+  expect(screen.getAllByRole("alert")[0]).toHaveAttribute("data-size", "inline");
 });
 
 it("keeps the auth failure full-page banner", () => {
