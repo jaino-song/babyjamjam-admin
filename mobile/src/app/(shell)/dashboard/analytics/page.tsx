@@ -1,5 +1,6 @@
 "use client";
 
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useClients } from "@/hooks/useClients";
 import { useDashboardAnalytics } from "@/hooks/useDashboardAnalytics";
 import { formatAnalyticsCount } from "@/lib/dashboard/analytics";
@@ -10,13 +11,22 @@ export default function DashboardAnalyticsPage() {
     data: analytics,
     isLoading: analyticsLoading,
     isError: analyticsError,
+    isFetching: analyticsFetching,
+    refetch: refetchAnalytics,
   } = useDashboardAnalytics();
-  const { data: clientsPage, isLoading: clientsLoading } = useClients(1, 1);
+  const {
+    data: clientsPage,
+    isLoading: clientsLoading,
+    isError: clientsError,
+    isFetching: clientsFetching,
+    refetch: refetchClients,
+  } = useClients(1, 1);
 
   const isLoading = analyticsLoading || clientsLoading;
   const hasData = !isLoading && analytics && clientsPage;
 
-  const totalClients = clientsPage?.total ?? 0;
+  // A failed count with nothing cached shows "—", never 0.
+  const totalClients = clientsError && !clientsPage ? "—" : String(clientsPage?.total ?? 0);
   // Unknown counts (server stats unavailable) show "-", never 0.
   const pendingReview = analytics?.contractsPendingSignature;
   const pendingSend = analytics?.contractsNotSent;
@@ -26,7 +36,7 @@ export default function DashboardAnalyticsPage() {
       : null;
 
   const cards: Array<[string, string]> = [
-    [String(totalClients), "전체 고객"],
+    [totalClients, "전체 고객"],
     [formatAnalyticsCount(analytics?.activeClients), "진행중"],
     [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작"],
     [formatAnalyticsCount(pendingActions), "처리 필요"],
@@ -41,14 +51,32 @@ export default function DashboardAnalyticsPage() {
             <span className="list-count">이번 달</span>
           </span>
         </div>
-        {analyticsError ? (
-          <div
-            className="action-feedback"
-            role="alert"
-            data-component="mobile_dashboard_analytics-page_card_error"
-          >
-            통계를 불러오지 못했습니다.
-          </div>
+        {clientsError ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_clients-error"
+            size="inline"
+            title={clientsPage ? "최신 정보를 불러오지 못했습니다" : "전체 고객 정보를 불러오지 못했습니다"}
+            isRetrying={clientsFetching}
+            onRetry={() => void refetchClients()}
+          />
+        ) : null}
+        {analyticsError && analytics ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_stale-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            isRetrying={analyticsFetching}
+            onRetry={() => void refetchAnalytics()}
+          />
+        ) : null}
+        {analyticsError && !analytics ? (
+          <QueryErrorState
+            dataComponent="mobile_dashboard_analytics-page_card_error"
+            size="panel"
+            title="통계를 불러오지 못했습니다"
+            isRetrying={analyticsFetching}
+            onRetry={() => void refetchAnalytics()}
+          />
         ) : (
           <div
             className="stats-grid"
