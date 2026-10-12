@@ -9,6 +9,7 @@ import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "appl
 import { parseKstSchedule } from "application/utils/kst-schedule";
 import {
     MessageLogEntity,
+    withoutAligoHistoryBookkeeping,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
     SMS_DELIVERY_RETRY_DELAY_MS,
     SMS_PARTIAL_RETRY_SAFETY,
@@ -563,7 +564,7 @@ export class SmsRetryService {
             sourceLog.clientId,
             sourceLog.messageBody,
             {
-                ...sourceLog.variables,
+                ...withoutAligoHistoryBookkeeping(sourceLog.variables),
                 retryOfLogId: String(sourceLog.id),
                 retryAttempt: String(retryAttempt),
                 // Persist the attempt conservatively before the provider call. If the

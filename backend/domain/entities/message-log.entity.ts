@@ -1,5 +1,16 @@
 export const SMS_DELIVERY_MAX_ATTEMPTS = 3;
 export const SMS_DELIVERY_RETRY_DELAY_MS = 5 * 60 * 1000;
+export const ALIGO_HISTORY_MIN_AGE_MS = 5 * 60 * 1000;
+export const ALIGO_HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const ALIGO_HISTORY_BOOKKEEPING_KEYS = [
+    "historyLookup", "historyLookupAt", "historyLookupFailures", "historyLookupAbsentAt",
+] as const;
+
+export function withoutAligoHistoryBookkeeping(variables: Record<string, string>): Record<string, string> {
+    const result = { ...variables };
+    for (const key of ALIGO_HISTORY_BOOKKEEPING_KEYS) delete result[key];
+    return result;
+}
 
 export interface MessageDeliveryRetryPolicy {
     maxAttempts: number;
@@ -246,12 +257,22 @@ export class MessageLogEntity {
         this.updatedAt = now;
     }
 
-    /** Apply one authoritative operator reconciliation. */
+    markStaleStartedAsUncertain(now = new Date()): void {
+        const age = this.providerCallStartedAt ? now.getTime() - this.providerCallStartedAt.getTime() : NaN;
+        if (this.providerAcceptanceState !== "started" || !Number.isFinite(age)
+            || age < ALIGO_HISTORY_MIN_AGE_MS || age > ALIGO_HISTORY_MAX_AGE_MS) {
+            throw new Error("SMS provider started attempt is not eligible for history reconciliation");
+        }
+        this.markProviderOutcomeUncertain("발송 결과 확인 중", now);
+    }
+
+    /** Apply one authoritative operator or history reconciliation. */
     reconcileProviderOutcome(params: {
         outcome: "delivered" | "not-delivered";
         actor: string;
         reason: string;
         providerMessageId?: string | null;
+        retry?: "schedule" | "none";
         now?: Date;
     }): void {
         const actor = params.actor.trim();
@@ -284,6 +305,7 @@ export class MessageLogEntity {
         this.updatedAt = now;
         this.lastAttemptAt = now;
 
+        this.variables = withoutAligoHistoryBookkeeping(this.variables);
         if (params.outcome === "delivered") {
             this.status = "sent";
             this.errorMessage = null;
@@ -295,7 +317,7 @@ export class MessageLogEntity {
 
         this.status = "failed";
         this.errorMessage = reason;
-        this.nextRetryAt = now;
+        this.nextRetryAt = params.retry === "none" ? null : now;
         this.variables = { ...this.variables, retrySafety: "reconciled-not-delivered" };
     }
 

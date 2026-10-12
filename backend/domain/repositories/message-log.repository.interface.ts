@@ -54,6 +54,14 @@ export interface IMessageLogRepository {
         actor: string,
         reason: string,
         providerMessageId?: string | null,
+        options?: { retry?: "schedule" | "none"; expectedUpdatedAt?: Date; variables?: Record<string, string> },
+    ): Promise<MessageLogEntity | null>;
+    findAligoHistoryCandidatesSystemScope(now: Date, limit: number): Promise<MessageLogEntity[]>;
+    findAligoMidsStoredOnOtherLogs(mids: string[], logId: number): Promise<Set<string>>;
+    claimAligoHistoryBookkeeping(
+        log: MessageLogEntity,
+        expectedState: "started" | "uncertain",
+        expectedUpdatedAt: Date,
     ): Promise<MessageLogEntity | null>;
     startRetryAttempt(
         sourceLog: MessageLogEntity,

@@ -61,6 +61,26 @@ export const MESSAGE_HISTORY_STATUS_LABELS: Readonly<Record<MessageLogStatus, st
   canceled: "발송 취소",
 };
 
+/** Detail-only provider-history state; list badges retain the stored status. */
+export function getMessageHistoryDetailStatusLabel(record: {
+  status: string;
+  variables?: Record<string, unknown> | null;
+}): string {
+  if (record.status !== "sent") {
+    if (record.variables?.["historyLookup"] === "checking") return "확인 중";
+    if (record.variables?.["historyLookup"] === "exhausted") return "확인 필요";
+  }
+  switch (record.status) {
+    case "sent":
+    case "failed":
+    case "pending":
+    case "canceled":
+      return MESSAGE_HISTORY_STATUS_LABELS[record.status];
+    default:
+      return record.status || "-";
+  }
+}
+
 export const MESSAGE_JOB_STATUS_LABELS: Readonly<Record<MessageTriggerJobStatus, string>> = {
   pending: "발송 대기",
   processing: "발송 중",

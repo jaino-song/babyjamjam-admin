@@ -44,6 +44,62 @@ describe("SbMessageLogRepository", () => {
         jest.clearAllMocks();
     });
 
+    describe("Aligo history conditional claims", () => {
+        const historyLog = () => {
+            const log = MessageLogEntity.create({ provider: "aligo_sms", templateKey: "manual_sms", receiver: "01012345678", messageBody: "message", variables: {}, branchId: "branch-1" });
+            log.providerAcceptanceState = "uncertain";
+            log.providerCallStartedAt = new Date("2026-10-12T00:00:00Z");
+            log.updatedAt = new Date("2026-10-12T00:10:00Z");
+            return log;
+        };
+        it("lost bookkeeping CAS leaves a concurrent operator's row unchanged", async () => {
+            const log = historyLog(); const expected = log.updatedAt;
+            log.variables = { historyLookup: "checking" }; log.updatedAt = new Date(expected.getTime() + 1);
+            messageLogModel.updateMany.mockResolvedValue({ count: 0 });
+            expect(await repository.claimAligoHistoryBookkeeping(log, "uncertain", expected)).toBeNull();
+            expect(messageLogModel.updateMany.mock.calls[0][0].where).toEqual({ id: log.id, branchId: log.branchId, providerAcceptanceState: "uncertain", updatedAt: expected });
+            expect(messageLogModel.findUnique).not.toHaveBeenCalled(); expect(messageLogModel.update).not.toHaveBeenCalled();
+        });
+        it("stale lookup cannot reconcile a row with a newer updatedAt", async () => {
+            const log = historyLog();
+            messageLogModel.findUnique.mockResolvedValue({ ...log, updatedAt: new Date(log.updatedAt.getTime() + 1) });
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            expect(await repository.reconcileProviderAttempt(log, "delivered", "system:aligo-history", "checked", "ours", { expectedUpdatedAt: log.updatedAt })).toBeNull();
+            expect(messageLogModel.updateMany).not.toHaveBeenCalled();
+        });
+        it("only one concurrent stale started claim increments the attempt", async () => {
+            const log = historyLog(); log.providerAcceptanceState = "started"; const expected = log.updatedAt;
+            log.markStaleStartedAsUncertain(new Date("2026-10-12T00:15:00Z"));
+            messageLogModel.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+            messageLogModel.findUnique.mockResolvedValue({ ...log });
+            expect((await repository.claimAligoHistoryBookkeeping(log, "started", expected))?.attempts).toBe(1);
+            expect(await repository.claimAligoHistoryBookkeeping(log, "started", expected)).toBeNull();
+            expect(messageLogModel.updateMany.mock.calls[0][0].where).toMatchObject({ providerAcceptanceState: "started", updatedAt: expected });
+        });
+        it("reconciliation removes bookkeeping in the same CAS and retry none is permanent", async () => {
+            const log = historyLog(); log.variables = { historyLookup: "checking", historyLookupAbsentAt: "before" };
+            messageLogModel.findUnique.mockResolvedValue({ ...log }); messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            await repository.reconcileProviderAttempt(log, "not-delivered", "system:aligo-history", "발송 실패: 응답 없음", null,
+                { expectedUpdatedAt: log.updatedAt, retry: "none", variables: {} });
+            expect(messageLogModel.updateMany.mock.calls[0][0].data).toMatchObject({ status: "failed", nextRetryAt: null, variables: { retrySafety: "reconciled-not-delivered" } });
+        });
+        it("filters age and exhausted rows inside the bounded selection query", async () => {
+            queryRaw.mockResolvedValue([]); const now = new Date("2026-10-12T00:20:00Z");
+            expect(await repository.findAligoHistoryCandidatesSystemScope(now, 10)).toEqual([]);
+            const sql = queryRaw.mock.calls[0][0];
+            expect(sql.sql).toContain("provider_call_started_at >="); expect(sql.sql).toContain("provider_call_started_at <=");
+            expect(sql.sql).toContain("variables->>'historyLookup' IS DISTINCT FROM 'exhausted'");
+            expect(sql.sql).toContain("LIMIT"); expect(sql.sql).not.toContain("status =");
+            expect(sql.values).toEqual([new Date(now.getTime() - 24 * 60 * 60_000), new Date(now.getTime() - 5 * 60_000), new Date(now.getTime() - 5 * 60_000).toISOString(), 10]);
+            expect(messageLogModel.findMany).not.toHaveBeenCalled();
+        });
+        it("mid ownership lookup excludes the current row", async () => {
+            messageLogModel.findMany.mockResolvedValue([{ aligoMid: "other" }]);
+            expect(await repository.findAligoMidsStoredOnOtherLogs(["other", "ours"], 12)).toEqual(new Set(["other"]));
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({ where: { id: { not: 12 }, aligoMid: { in: ["other", "ours"] } }, select: { aligoMid: true } });
+        });
+    });
+
     describe("findSentTriggerJobIdsSystemScope", () => {
         it("should return an empty set without querying when jobIds is empty", async () => {
             const result = await repository.findSentTriggerJobIdsSystemScope([]);

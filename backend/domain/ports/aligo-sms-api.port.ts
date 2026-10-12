@@ -21,6 +21,9 @@ export interface AligoSendSmsParams {
 
 export interface IAligoSmsApiPort {
     sendSms(params: AligoSendSmsParams): Promise<AligoSmsResponse>;
+    /** Legacy send-only adapters fail closed when history is unavailable. */
+    listHistory?(params: { page: number; page_size: number; start_date: string; limit_day: number }): Promise<unknown>;
+    listSmsHistory?(params: { mid: string; page: number; page_size: number }): Promise<unknown>;
     /** Read-only identity of the default-sender path used by automation, never explicit-sender requests. */
     getDefaultSenderPolicy?(): AligoDefaultSenderPolicy;
 }

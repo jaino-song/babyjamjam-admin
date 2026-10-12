@@ -8,12 +8,21 @@ import {
   formatMessageFailureReason,
   getMessageChannelLabel,
   getMessageHistoryTitle,
+  getMessageHistoryDetailStatusLabel,
   getMessageHistoryTimestamp,
   getMessageTemplateLabel,
   isHistoryRecordInChannel,
   normalizeMessageHistoryPresentation,
 } from "@babyjamjam/shared";
 import type { MessageLogRecord } from "@babyjamjam/shared/types/message";
+
+describe("history detail lookup status", () => {
+  it.each(["checking", "exhausted"])("uses %s only for detail labels", historyLookup => {
+    const record = historyRecord({ status: "failed", variables: { historyLookup } });
+    expect(getMessageHistoryDetailStatusLabel(record)).toBe(historyLookup === "checking" ? "확인 중" : "확인 필요");
+    expect(normalizeMessageHistoryPresentation(record).status).toBe("failed");
+  });
+});
 
 function historyRecord(overrides: Partial<MessageLogRecord> = {}): MessageLogRecord {
   return {

@@ -8,7 +8,7 @@ import {
     MessageRetryInvocation,
     MessageRetryStartResult,
 } from "domain/repositories/message-log.repository.interface";
-import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { ALIGO_HISTORY_MAX_AGE_MS, ALIGO_HISTORY_MIN_AGE_MS, MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -140,6 +140,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         actor: string,
         reason: string,
         providerMessageId?: string | null,
+        options?: { retry?: "schedule" | "none"; expectedUpdatedAt?: Date; variables?: Record<string, string> },
     ): Promise<MessageLogEntity | null> {
         const branchWhere = this.branchWhereFragment(log);
         return this.prisma.$transaction(async (transaction) => {
@@ -149,6 +150,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             if (!current) return null;
 
             const currentEntity = MessageLogMapper.toDomain(current);
+            if (options?.expectedUpdatedAt && currentEntity.updatedAt.getTime() !== options.expectedUpdatedAt.getTime()) return null;
             if (!currentEntity.canReconcileProviderOutcome()) {
                 return null;
             }
@@ -160,7 +162,10 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 actor,
                 reason,
                 providerMessageId,
+                retry: options?.retry,
             });
+            // The reconciliation transition always sets retrySafety before metadata replacement.
+            if (options?.variables) currentEntity.variables = { ...options.variables, retrySafety: currentEntity.variables["retrySafety"]! };
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: log.id,
@@ -180,6 +185,56 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 where: { id: log.id, ...branchWhere },
             });
             return updated ? MessageLogMapper.toDomain(updated) : null;
+        });
+    }
+
+    async findAligoHistoryCandidatesSystemScope(now: Date, limit: number): Promise<MessageLogEntity[]> {
+        const oldest = new Date(now.getTime() - ALIGO_HISTORY_MAX_AGE_MS);
+        const newest = new Date(now.getTime() - ALIGO_HISTORY_MIN_AGE_MS);
+        // Missing JSON keys must remain eligible (NOT equals on JSON would lose NULLs).
+        const ids = await this.prisma.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id FROM message_log
+            WHERE provider = 'aligo_sms'
+              AND provider_acceptance_state IN ('started', 'uncertain')
+              AND provider_call_started_at >= ${oldest} AND provider_call_started_at <= ${newest}
+              AND variables->>'historyLookup' IS DISTINCT FROM 'exhausted'
+              AND variables->>'retrySafety' IS DISTINCT FROM 'partial'
+              AND variables->>'msgType' IS DISTINCT FROM 'MMS'
+              AND COALESCE(variables->>'scheduledDate', '') = ''
+              AND variables->>'testMode' IS DISTINCT FROM 'true'
+              AND receiver ~ '^[0-9 +()-]+$'
+              AND length(regexp_replace(receiver, '[^0-9]', '', 'g')) BETWEEN 10 AND 11
+              AND (variables->>'historyLookupAt' IS NULL OR variables->>'historyLookupAt' <= ${newest.toISOString()})
+            ORDER BY provider_call_started_at, id
+            LIMIT ${limit}
+        `);
+        if (ids.length === 0) return [];
+        const rows = await this.prisma.message_log.findMany({ where: { id: { in: ids.map(row => row.id) } }, orderBy: [{ providerCallStartedAt: "asc" }, { id: "asc" }] });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findAligoMidsStoredOnOtherLogs(mids: string[], logId: number): Promise<Set<string>> {
+        if (mids.length === 0) return new Set();
+        const rows = await this.prisma.message_log.findMany({
+            where: { id: { not: logId }, aligoMid: { in: mids } }, select: { aligoMid: true },
+        });
+        return new Set(rows.flatMap(row => row.aligoMid ? [row.aligoMid] : []));
+    }
+
+    async claimAligoHistoryBookkeeping(
+        log: MessageLogEntity,
+        expectedState: "started" | "uncertain",
+        expectedUpdatedAt: Date,
+    ): Promise<MessageLogEntity | null> {
+        return this.prisma.$transaction(async transaction => {
+            const branchWhere = this.branchWhereFragment(log);
+            const claimed = await transaction.message_log.updateMany({
+                where: { id: log.id, ...branchWhere, providerAcceptanceState: expectedState, updatedAt: expectedUpdatedAt },
+                data: MessageLogMapper.toPrismaUpdate(log),
+            });
+            if (claimed.count !== 1) return null;
+            const row = await transaction.message_log.findUnique({ where: { id: log.id, ...branchWhere } });
+            return row ? MessageLogMapper.toDomain(row) : null;
         });
     }
 

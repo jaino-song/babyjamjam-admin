@@ -18,6 +18,32 @@ describe("AligoApiClient SMS", () => {
         jest.restoreAllMocks();
     });
 
+    it.each(["list", "sms_list"] as const)("posts %s with existing credentials and a ten second signal", async endpoint => {
+        const { client } = createClient({ ALIGO_API_KEY: "synthetic-key", ALIGO_USER_ID: "synthetic-user" });
+        const timeout = jest.spyOn(AbortSignal, "timeout");
+        const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(new Response(JSON.stringify({ result_code: 1, message: "ok", list: [], next_yn: "N" })));
+        if (endpoint === "list") await client.listHistory({ page: 1, page_size: 500, start_date: "20261012", limit_day: 1 });
+        else await client.listSmsHistory({ mid: "123", page: 1, page_size: 500 });
+        expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://apis.aligo.in/${endpoint}/`);
+        const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+        expect(form.get("key")).toBe("synthetic-key"); expect(form.get("user_id")).toBe("synthetic-user");
+        expect(timeout).toHaveBeenCalledWith(10_000);
+    });
+
+    it.each(["not JSON", "{}", JSON.stringify({ result_code: -1, message: "failure" }), JSON.stringify({ result_code: 1, message: "ok", list: [], next_yn: "bad" })])("rejects malformed/failed history (%s)", async body => {
+        const { client } = createClient({ ALIGO_API_KEY: "synthetic-key", ALIGO_USER_ID: "synthetic-user" });
+        jest.spyOn(global, "fetch").mockResolvedValue(new Response(body));
+        await expect(client.listHistory({ page: 1, page_size: 500, start_date: "20261012", limit_day: 1 })).rejects.toThrow();
+    });
+
+    it("does not log response bodies or credentials on history HTTP failure", async () => {
+        const { client } = createClient({ ALIGO_API_KEY: "synthetic-key", ALIGO_USER_ID: "synthetic-user" });
+        const error = jest.spyOn(Logger.prototype, "error");
+        jest.spyOn(global, "fetch").mockResolvedValue(new Response("private body", { status: 500 }));
+        await expect(client.listSmsHistory({ mid: "123", page: 1, page_size: 500 })).rejects.toThrow("Aligo history HTTP failure");
+        expect(error).not.toHaveBeenCalled();
+    });
+
     it("sends SMS without Alimtalk-only environment variables", async () => {
         const { client } = createClient({
             ALIGO_API_KEY: "api-key",

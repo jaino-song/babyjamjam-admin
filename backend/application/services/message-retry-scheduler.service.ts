@@ -8,6 +8,7 @@ import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 import { SmsRetryService } from "./sms-retry.service";
 import { SystemSettingService } from "./system-setting.service";
+import { SmsHistoryReconciliationService } from "./sms-history-reconciliation.service";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -43,6 +44,8 @@ export class MessageRetrySchedulerService {
         private readonly schedulerLease: SchedulerLeaseService,
         @Optional()
         private readonly systemSettingService?: SystemSettingService,
+        @Optional()
+        private readonly smsHistoryReconciliationService?: SmsHistoryReconciliationService,
     ) {}
 
     @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
@@ -57,6 +60,7 @@ export class MessageRetrySchedulerService {
         }
 
         try {
+            await this.smsHistoryReconciliationService?.reconcile().catch(() => this.logger.warn("Aligo history reconciliation step failed"));
             const pendingLogs = await this.logRepository.findPendingRetriesSystemScope();
             if (pendingLogs.length === 0) return;
 

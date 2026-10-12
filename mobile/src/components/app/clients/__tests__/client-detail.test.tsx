@@ -13,6 +13,24 @@ import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useIssueContract } from "@/hooks/useIssueContract";
 import { useFormStore } from "@/stores/form-store";
 
+describe("client message lookup detail labels", () => {
+  it.each(["checking", "exhausted"])("renders %s in detail without changing the list label", async historyLookup => {
+    const row: ClientNotificationLogRecord = {
+      id: 901, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "failed",
+      receiver: "01012345678", messageBody: "내용", variables: { historyLookup },
+      recipientName: null, clientId: null, errorMessage: null, ruleName: null,
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    render(<ClientDetailContent data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+      client={client} contractDocument={null} activeTab="message" notificationLogs={[row]}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+    const button = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+    expect(button).toHaveTextContent("발송 실패");
+    await userEvent.setup().click(button);
+    expect(screen.getByText(historyLookup === "checking" ? "확인 중" : "확인 필요")).toBeInTheDocument();
+  });
+});
+
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({ data: [] }),
 }));

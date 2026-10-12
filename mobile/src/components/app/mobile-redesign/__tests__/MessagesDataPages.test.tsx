@@ -143,6 +143,15 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     mockToast.mockReset();
   });
 
+  it.each(["checking", "exhausted"])("renders visible detail-header lookup %s while keeping the list failed", async historyLookup => {
+    mockUseMessageHistory.mockReturnValue({ data: [{ ...sentRecord, status: "failed", variables: { historyLookup } }], isLoading: false, isError: false });
+    const { container } = render(<MessagesHistoryPage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /김문자/ }));
+    const header = container.querySelector('[data-component$="_detail-pane_header_status"]');
+    expect(header).toHaveTextContent(historyLookup === "checking" ? "확인 중" : "확인 필요");
+    expect(container.querySelector('[data-component$="_body_item_status"]')).toHaveTextContent("발송 실패");
+  });
+
   it.each(["processing", "dispatching"] as const)(
     "labels a %s upcoming job 발송 중 with the info tone",
     (status) => {
