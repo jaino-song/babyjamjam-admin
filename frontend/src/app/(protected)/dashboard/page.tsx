@@ -19,6 +19,7 @@ import {
   RecentActivitiesPanel,
 } from "@/components/app/v3";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   Users,
   Calendar,
@@ -57,6 +58,7 @@ export default function DashboardPage() {
     data: overview,
     isLoading: overviewLoading,
     isError: overviewError,
+    isFetching: overviewFetching,
     refetch: refetchOverview,
   } = useDashboardOverview(50);
   const user = useInitialUser();
@@ -241,7 +243,7 @@ export default function DashboardPage() {
           density="responsive-square"
           items={DASHBOARD_STAT_KEYS.map((s) => ({
             icon: s.icon,
-            value: dashboardStats[s.valueKey],
+            value: overviewError && overview === undefined ? "—" : dashboardStats[s.valueKey],
             label: s.label,
             counter: s.counter,
             colorIndex: s.colorIndex,
@@ -260,13 +262,22 @@ export default function DashboardPage() {
           <Block
             name="desktop_dashboard_split_activities-panel"
             data-slot="activities-panel"
-            className="h-full min-h-0"
+            className="h-full min-h-0 flex flex-col"
           >
+            {overviewError && overview !== undefined ? (
+              <QueryErrorState
+                dataComponent="desktop_dashboard_split_activities-panel_load-error"
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={() => void refetchOverview()}
+                isRetrying={overviewFetching}
+              />
+            ) : null}
             <RecentActivitiesPanel
               items={endingNextBusinessDayClients}
               calendar={calendar}
               isLoading={overviewLoading}
-              isError={overviewError}
+              isError={overviewError && overview === undefined}
               onRetry={() => refetchClients()}
               selectedId={selectedClientData?.id}
               onSelect={handleSelectClient}

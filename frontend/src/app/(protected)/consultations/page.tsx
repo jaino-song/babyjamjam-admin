@@ -25,6 +25,7 @@ import {
     getConsultationIdentityKey,
 } from "./list-state";
 import { StatusPill } from "@/components/app/ui/status-badge";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
     useAllConsultationInquiries,
@@ -125,10 +126,13 @@ export default function ConsultationsPage() {
     );
 
     const hasSearchQuery = search.trim().length > 0;
-    const { data, isLoading } = useConsultationInquiries(queryParams);
-    const { data: searchData, isLoading: isSearchLoading } =
-        useAllConsultationInquiries(searchQueryParams, hasSearchQuery);
-    const { data: statsData, isLoading: isStatsLoading } = useConsultationInquiries(statsQueryParams);
+    const listQuery = useConsultationInquiries(queryParams);
+    const searchQuery = useAllConsultationInquiries(searchQueryParams, hasSearchQuery);
+    const { data, isLoading } = listQuery;
+    const { data: searchData, isLoading: isSearchLoading } = searchQuery;
+    const { data: statsData, isLoading: isStatsLoading, isError: isStatsError } = useConsultationInquiries(statsQueryParams);
+    const activeListQuery = hasSearchQuery ? searchQuery : listQuery;
+    const statsUnavailable = isStatsError && statsData === undefined;
     const markRead = useMarkConsultationInquiryRead();
     const inquiries = useMemo(
         () => (hasSearchQuery ? searchData?.data ?? [] : data?.data ?? []),
@@ -145,6 +149,7 @@ export default function ConsultationsPage() {
         }),
         [activeReadState, inquiries, search, selectedInquiry],
     );
+    const hasListData = activeListQuery.data !== undefined || visibleInquiries.length > 0;
     const activeInquiry = selectedInquiry
         ? inquiries.find((item) => item.id === selectedInquiry.id) ?? selectedInquiry
         : null;
@@ -198,10 +203,10 @@ export default function ConsultationsPage() {
                 name="consultations"
                 isLoading={isListLoading || isStatsLoading}
                 items={[
-                    { icon: Headset, value: stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
-                    { icon: CalendarClock, value: stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
-                    { icon: Phone, value: stats.contactedCount, label: "연락 완료", counter: "건", colorIndex: 2 },
-                    { icon: Search, value: stats.closedCount, label: "종료", counter: "건", colorIndex: 3 },
+                    { icon: Headset, value: statsUnavailable ? "—" : stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
+                    { icon: CalendarClock, value: statsUnavailable ? "—" : stats.unreadCount, label: "읽지 않음", counter: "건", colorIndex: 1 },
+                    { icon: Phone, value: statsUnavailable ? "—" : stats.contactedCount, label: "연락 완료", counter: "건", colorIndex: 2 },
+                    { icon: Search, value: statsUnavailable ? "—" : stats.closedCount, label: "종료", counter: "건", colorIndex: 3 },
                 ]}
             />
 
@@ -226,11 +231,26 @@ export default function ConsultationsPage() {
                     searchPlaceholder="이름, 연락처, 주소 검색..."
                     isLoading={isListLoading}
                     emptyState={!isListLoading && visibleInquiries.length === 0 ? (
-                        <ListEmptyState
+                        activeListQuery.isError && !hasListData ? <QueryErrorState
+                            dataComponent="desktop_consultations_split-layout_list-panel_load-error"
+                            size="panel"
+                            className="pointer-events-auto"
+                            onRetry={() => void activeListQuery.refetch()}
+                            isRetrying={activeListQuery.isFetching}
+                        /> : <ListEmptyState
                             message={search ? "검색 결과가 없습니다" : "상담 문의가 없습니다"}
                         />
                     ) : undefined}
                 >
+                    {activeListQuery.isError && hasListData ? (
+                        <QueryErrorState
+                            dataComponent="desktop_consultations_split-layout_list-panel_load-error"
+                            size="inline"
+                            title="최신 정보를 불러오지 못했습니다"
+                            onRetry={() => void activeListQuery.refetch()}
+                            isRetrying={activeListQuery.isFetching}
+                        />
+                    ) : null}
                     <AnimatedSlotList<ConsultationInquiry>
                         items={visibleInquiries}
                         isLoading={isListLoading}
