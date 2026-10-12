@@ -6,16 +6,20 @@ import { useRouter, useParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AGENT_SAFE_MARKDOWN_LINK_COMPONENTS } from '@/components/app/chat/agent-markdown-link-components';
+import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
 
 export default function FeedbackDetailPage() {
   const router = useRouter();
   const params = useParams();
   const feedbackId = params.id as string;
 
-  const { data: feedback, isLoading, error } = useQuery({
+  const { data: feedback, isLoading, isPaused, isError, error, isFetching, refetch } = useQuery({
     queryKey: ['feedbackDetail', feedbackId],
     queryFn: () => getFeedbackDetail(feedbackId),
   });
+  // Only a 404 means "this feedback does not exist"; any other failure is an unknown, not a deletion.
+  const isNotFoundError = (error as { response?: { status?: unknown } } | null)?.response?.status === 404;
+  const loadFailed = feedback === undefined && isError && !isNotFoundError;
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -28,7 +32,7 @@ export default function FeedbackDetailPage() {
     });
   };
 
-  if (isLoading) {
+  if (isLoading || (isPaused && feedback === undefined)) {
     return (
       <div data-component="desktop_admin-feedback_detail_loading" className="min-h-screen bg-muted/50 p-8">
         <div data-component="desktop_admin-feedback_detail_loading_content" className="max-w-4xl mx-auto">
@@ -48,7 +52,7 @@ export default function FeedbackDetailPage() {
     );
   }
 
-  if (error || !feedback) {
+  if (!feedback) {
     return (
       <div data-component="desktop_admin-feedback_detail_error" className="min-h-screen bg-muted/50 p-8">
         <div data-component="desktop_admin-feedback_detail_error_content" className="max-w-4xl mx-auto">
@@ -59,10 +63,20 @@ export default function FeedbackDetailPage() {
           >
             ←
           </button>
-          <div data-component="desktop_admin-feedback_detail_error_content_panel" className="bg-card rounded-lg shadow p-12 text-center">
-            <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
-            <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
-          </div>
+          {loadFailed ? (
+            <QueryErrorState
+              dataComponent="desktop_admin-feedback_detail_error_content_load-error"
+              size="panel"
+              title="피드백을 불러오지 못했습니다"
+              onRetry={() => void refetch()}
+              isRetrying={isFetching}
+            />
+          ) : (
+            <div data-component="desktop_admin-feedback_detail_error_content_panel" className="bg-card rounded-lg shadow p-12 text-center">
+              <p className="text-destructive text-lg font-medium mb-2">피드백을 찾을 수 없습니다</p>
+              <p className="text-muted-foreground">요청하신 피드백이 존재하지 않거나 삭제되었습니다.</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -79,6 +93,16 @@ export default function FeedbackDetailPage() {
         >
           ←
         </button>
+
+        {isError ? (
+          <QueryErrorState
+            dataComponent="desktop_admin-feedback_detail_content_load-error"
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => void refetch()}
+            isRetrying={isFetching}
+          />
+        ) : null}
 
         <div data-component="desktop_admin-feedback_detail_content_info" className="bg-card rounded-lg shadow p-6 mb-6">
           <h2 className="text-xl font-bold text-foreground mb-4">피드백 정보</h2>
