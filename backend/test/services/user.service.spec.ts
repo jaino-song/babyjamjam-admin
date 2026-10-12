@@ -2680,5 +2680,111 @@ describe("UserService", () => {
                 expectNothingWrittenAnywhere();
             });
         });
+
+        describe("a caller without authority at transaction time is refused before any target-specific answer", () => {
+            type Targets = "ordinary" | "owner" | "missing";
+            const targetIds: Record<Targets, string> = { ordinary: "target-1", owner: "target-owner", missing: "target-ghost" };
+
+            /** Same wiring as arrangeClient, but the target table now has an owner and a missing id. */
+            const arrangeTargets = (client: ReturnType<typeof createMockPrismaService>, caller: Authority) => {
+                arrangeClient(client, caller);
+                client.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
+                    if (where.id === "caller-1") return caller.global === null ? null : { id: where.id, role: caller.global };
+                    if (where.id === targetIds.owner) return { id: where.id, name: "오너", role: "owner", approvalStatus: "approved" };
+                    if (where.id === targetIds.missing) return null;
+                    return { id: where.id, name: "대상", role: "user", approvalStatus: "approved" };
+                });
+            };
+            const arrangeBoth = (root: Authority, tx: Authority) => {
+                txClient = createMockPrismaService();
+                arrangeTargets(prismaService, root);
+                arrangeTargets(txClient, tx);
+                prismaService.$transaction.mockImplementation(async (callback) => callback(txClient));
+            };
+            const demoted: Authority = { global: "user", membership: "user" };
+            const noMembership: Authority = { global: "user", membership: null };
+            const stillManager: Authority = { global: "user", membership: "manager" };
+            const ownerCaller: Authority = { global: "owner" };
+
+            describe.each([
+                ["demoted to 회원", demoted],
+                ["with no membership row", noMembership],
+            ] as const)("caller %s", (_label, authority) => {
+                it.each(["ordinary", "owner", "missing"] as const)("DELETE of a %s target: 403, nothing written", async (kind) => {
+                    arrangeBoth({ global: "owner", membership: "admin" }, authority);
+
+                    await expect(service.delete(targetIds[kind], BRANCH, callerActor)).rejects.toMatchObject(forbidden);
+
+                    expectNothingWrittenAnywhere();
+                });
+
+                it.each(["ordinary", "owner", "missing"] as const)("PATCH of a %s target: 403, nothing written", async (kind) => {
+                    arrangeBoth({ global: "owner", membership: "admin" }, authority);
+
+                    await expect(
+                        service.update(targetIds[kind], { branchId: BRANCH, branchRole: "user", actor: callerActor }),
+                    ).rejects.toMatchObject(forbidden);
+
+                    expectNothingWrittenAnywhere();
+                });
+            });
+
+            describe("a still-authorized 매니저 keeps the target-specific answers", () => {
+                it.each(["DELETE", "PATCH"] as const)("%s of an owner target: 404", async (verb) => {
+                    arrangeBoth(stillManager, stillManager);
+                    const act = verb === "DELETE"
+                        ? service.delete(targetIds.owner, BRANCH, callerActor)
+                        : service.update(targetIds.owner, { branchId: BRANCH, branchRole: "user", actor: callerActor });
+
+                    await expect(act).rejects.toBeInstanceOf(NotFoundException);
+
+                    expectNothingWrittenAnywhere();
+                });
+
+                it.each(["DELETE", "PATCH"] as const)("%s of a missing target: 404", async (verb) => {
+                    arrangeBoth(stillManager, stillManager);
+                    const act = verb === "DELETE"
+                        ? service.delete(targetIds.missing, BRANCH, callerActor)
+                        : service.update(targetIds.missing, { branchId: BRANCH, branchRole: "user", actor: callerActor });
+
+                    await expect(act).rejects.toBeInstanceOf(NotFoundException);
+
+                    expectNothingWrittenAnywhere();
+                });
+
+                it("DELETE of an ordinary 회원 still goes through (rank rule satisfied)", async () => {
+                    arrangeBoth(stillManager, stillManager);
+
+                    await service.delete(targetIds.ordinary, BRANCH, callerActor);
+
+                    expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+                });
+            });
+
+            describe("an owner caller's answers are unchanged", () => {
+                it("DELETE of an ordinary target succeeds", async () => {
+                    arrangeBoth(ownerCaller, ownerCaller);
+
+                    await service.delete(targetIds.ordinary, BRANCH, callerActor);
+
+                    expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+                });
+
+                it("DELETE of an owner target is not hidden from an owner (removes the membership)", async () => {
+                    arrangeBoth(ownerCaller, ownerCaller);
+
+                    await service.delete(targetIds.owner, BRANCH, callerActor);
+
+                    expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+                });
+
+                it("DELETE of a missing target: 404 (no membership row to remove)", async () => {
+                    arrangeBoth(ownerCaller, ownerCaller);
+                    txClient.user_branch.deleteMany.mockResolvedValue({ count: 0 });
+
+                    await expect(service.delete(targetIds.missing, BRANCH, callerActor)).rejects.toBeInstanceOf(NotFoundException);
+                });
+            });
+        });
     });
 });

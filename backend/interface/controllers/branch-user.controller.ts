@@ -64,6 +64,11 @@ export class BranchUserController {
         })));
     }
 
+    // The target is deliberately NOT looked up here: every target-specific answer (owner or
+    // missing target -> 404, rank rule -> 403, conflicts -> 409) is decided by the service
+    // inside the write transaction, after it has re-read the caller's authority. Answering
+    // about the target first would let a caller whose authority just lapsed probe which ids
+    // are ordinary members.
     @Delete(":userId")
     @UseGuards(BranchManagerGuard)
     async delete(
@@ -72,10 +77,6 @@ export class BranchUserController {
         @CurrentTenant() tenant: VerifiedTenantPrincipal,
     ) {
         this.assertSelectedBranch(branchId, tenant);
-        const target = await this.userService.findById(userId, branchId);
-        if (!target || (target.role === "owner" && tenant.globalRole !== "owner")) {
-            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
-        }
         const actor = this.auditActor(tenant);
         await runWithAdminAuditActor(actor, () => this.userService.delete(userId, branchId, actor));
         return { success: true };

@@ -252,3 +252,147 @@ describe("BranchUserController guards (BJJ-435)", () => {
         await request(app.getHttpServer()).get(`/branches/${BRANCH}/users/user-2`).expect(200);
     });
 });
+
+/**
+ * 권한-04 (BJJ-435): DELETE (and PATCH) must re-check the caller before they answer anything
+ * about the target. The controller is wired to the REAL UserService here, with a root client
+ * and a distinct transaction client, so a target lookup that happens outside the transaction
+ * (owner target -> 404, missing target -> 404) would show up as a non-403 for a caller whose
+ * authority lapsed after the guard.
+ */
+describe("BranchUserController re-checks the caller before answering about the target (BJJ-435)", () => {
+    const BRANCH = "branch-1";
+    const stale = { userId: "caller-1", branchId: BRANCH, globalRole: "admin", branchRole: "admin" } as VerifiedTenantPrincipal;
+    const ownerTenant = { ...stale, globalRole: "owner" } as VerifiedTenantPrincipal;
+
+    const ids = { ordinary: "target-1", owner: "target-owner", missing: "target-ghost" } as const;
+    type Kind = keyof typeof ids;
+    const kinds: Kind[] = ["ordinary", "owner", "missing"];
+
+    const entityFor = (id: string, role: string): UserEntity =>
+        UserEntity.reconstitute(id, "kakao-" + id, id + "@example.com", id, null, role, new Date("2026-01-01"), null, false, null, "email");
+
+    interface Caller {
+        /** Global role of the caller row (null = no row). */
+        global: string | null;
+        /** Branch membership role of the caller (null = no row). */
+        membership: string | null;
+    }
+
+    const makeClient = (caller: Caller) => ({
+        branch: { findUnique: jest.fn().mockResolvedValue({ id: BRANCH, ownerId: null }) },
+        user: {
+            findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) => {
+                if (where.id === "caller-1") return caller.global === null ? null : { id: "caller-1", role: caller.global };
+                if (where.id === ids.owner) return { id: where.id, name: "오너", role: "owner", approvalStatus: "approved" };
+                if (where.id === ids.missing) return null;
+                return { id: where.id, name: "대상", role: "user", approvalStatus: "approved" };
+            }),
+        },
+        user_branch: {
+            findUnique: jest.fn().mockImplementation(async ({ where }: { where: { userId_branchId: { userId: string } } }) => {
+                const role = where.userId_branchId.userId === "caller-1" ? caller.membership : "user";
+                return role === null ? null : { role };
+            }),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            upsert: jest.fn().mockResolvedValue({}),
+            deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        auth_session: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        $queryRaw: jest.fn().mockResolvedValue([]),
+    });
+
+    let controller: BranchUserController;
+    let rootClient: ReturnType<typeof makeClient>;
+    let txClient: ReturnType<typeof makeClient>;
+
+    const build = (root: Caller, tx: Caller): void => {
+        rootClient = makeClient(root);
+        txClient = makeClient(tx);
+        const prisma = { ...rootClient, $transaction: jest.fn(async (cb: (c: unknown) => unknown) => cb(txClient)) };
+        // The target lookup a controller could make before the transaction: it sees the
+        // owner as an owner and the ghost as missing, exactly as the tables above do.
+        const findUserById = {
+            execute: jest.fn(async (id: string) =>
+                id === ids.missing ? null : entityFor(id, id === ids.owner ? "owner" : "user")),
+        };
+        const service = new UserService(
+            {} as never,
+            findUserById as never,
+            {} as never,
+            {} as never,
+            {} as never,
+            prisma as never,
+            { append: jest.fn().mockResolvedValue(undefined) } as never,
+        );
+        controller = new BranchUserController(service);
+    };
+
+    const expectNothingWritten = (): void => {
+        for (const client of [rootClient, txClient]) {
+            expect(client.user_branch.deleteMany).not.toHaveBeenCalled();
+            expect(client.user_branch.updateMany).not.toHaveBeenCalled();
+            expect(client.user_branch.upsert).not.toHaveBeenCalled();
+            expect(client.auth_session.updateMany).not.toHaveBeenCalled();
+        }
+    };
+
+    const statusOf = async (run: () => Promise<unknown>): Promise<number | "ok"> => {
+        try {
+            await run();
+            return "ok";
+        } catch (error) {
+            return (error as { getStatus?: () => number }).getStatus?.() ?? 500;
+        }
+    };
+
+    const del = (kind: Kind, tenant = stale) => statusOf(() => controller.delete(BRANCH, ids[kind], tenant));
+    const patch = (kind: Kind, tenant = stale) =>
+        statusOf(() => controller.update(BRANCH, ids[kind], tenant, { branchRole: "user" } as never));
+
+    describe.each([
+        ["demoted to 회원 at transaction time", { global: "user", membership: "user" }],
+        ["without any membership row at transaction time", { global: "user", membership: null }],
+        ["whose account row vanished at transaction time", { global: null, membership: null }],
+    ] as const)("a caller %s (the guard and token still say 지점장)", (_label, txCaller) => {
+        beforeEach(() => build({ global: "user", membership: "admin" }, txCaller));
+
+        it("DELETE answers 403 for an ordinary, an owner and a missing target alike", async () => {
+            expect(await Promise.all(kinds.map((kind) => del(kind)))).toEqual([403, 403, 403]);
+            expectNothingWritten();
+        });
+
+        it("PATCH answers 403 for an ordinary, an owner and a missing target alike", async () => {
+            expect(await Promise.all(kinds.map((kind) => patch(kind)))).toEqual([403, 403, 403]);
+            expectNothingWritten();
+        });
+    });
+
+    describe("a still-authorized 매니저", () => {
+        beforeEach(() => build({ global: "user", membership: "manager" }, { global: "user", membership: "manager" }));
+
+        it("DELETE: ordinary target removed, owner target 404, missing target 404", async () => {
+            expect(await Promise.all(kinds.map((kind) => del(kind)))).toEqual(["ok", 404, 404]);
+            expect(txClient.user_branch.deleteMany).toHaveBeenCalledTimes(1);
+            expect(txClient.user_branch.deleteMany).toHaveBeenCalledWith({ where: { userId: ids.ordinary, branchId: BRANCH } });
+        });
+
+        it("PATCH: ordinary target changed, owner target 404, missing target 404", async () => {
+            expect(await Promise.all(kinds.map((kind) => patch(kind)))).toEqual(["ok", 404, 404]);
+        });
+    });
+
+    describe("an owner caller", () => {
+        beforeEach(() => {
+            build({ global: "owner", membership: null }, { global: "owner", membership: null });
+            // A ghost id has no membership row to remove.
+            txClient.user_branch.deleteMany.mockImplementation(async ({ where }: { where: { userId: string } }) => ({
+                count: where.userId === ids.missing ? 0 : 1,
+            }));
+        });
+
+        it("DELETE: ordinary and owner targets removed, missing target 404 (same codes as before)", async () => {
+            expect(await Promise.all(kinds.map((kind) => del(kind, ownerTenant)))).toEqual(["ok", "ok", 404]);
+        });
+    });
+});
