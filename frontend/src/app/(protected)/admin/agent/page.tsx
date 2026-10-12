@@ -40,12 +40,17 @@ type AgentAction = {
   errorCode?: string | null;
 };
 
+// The shared retry policy reads `error.response.status`; a bare Error would look like a network failure and be retried.
+function httpFailure(message: string, response: Response) {
+  return Object.assign(new Error(message), { response: { status: response.status } });
+}
+
 export default function AgentDiagnosticsPage() {
   const { data, isLoading: diagnosticsQueryLoading, isPaused: diagnosticsPaused, isError: diagnosticsError, isFetching: diagnosticsFetching, refetch: refetchDiagnostics } = useQuery<AgentDiagnostics>({
     queryKey: ['agentDiagnostics'],
     queryFn: async () => {
       const response = await fetch('/api/ai/agent/diagnostics', { credentials: 'same-origin' });
-      if (!response.ok) throw new Error('diagnostics unavailable');
+      if (!response.ok) throw httpFailure('diagnostics unavailable', response);
       return response.json() as Promise<AgentDiagnostics>;
     },
   });
@@ -56,7 +61,7 @@ export default function AgentDiagnosticsPage() {
     queryFn: async () => {
       const response = await fetch('/api/ai/agent/diagnostics/actions', { credentials: 'same-origin' });
       // A failed load must reach the screen as a failure, never as an empty list.
-      if (!response.ok) throw new Error('agent actions unavailable');
+      if (!response.ok) throw httpFailure('agent actions unavailable', response);
       const value = await response.json() as unknown;
       return Array.isArray(value) ? value as AgentAction[] : [];
     },

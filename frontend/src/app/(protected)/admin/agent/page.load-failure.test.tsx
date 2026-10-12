@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { shouldRetryQuery } from "@/lib/queryClient";
 import AgentDiagnosticsPage from "./page";
 
 const diagnostics = {
@@ -28,7 +29,7 @@ const action = {
   expiresAt: "2026-10-02T03:00:00.000Z", errorCode: null,
 };
 
-type Reply = { ok: boolean; body?: unknown } | "network-error";
+type Reply = { ok: boolean; status?: number; body?: unknown } | "network-error";
 const replies: { diagnostics: Reply; actions: Reply } = {
   diagnostics: { ok: true, body: diagnostics },
   actions: { ok: true, body: [] },
@@ -37,7 +38,7 @@ const fetchMock = jest.fn();
 
 function respond(reply: Reply) {
   if (reply === "network-error") return Promise.reject(new TypeError("Failed to fetch"));
-  return Promise.resolve({ ok: reply.ok, status: reply.ok ? 200 : 500, json: () => Promise.resolve(reply.body) });
+  return Promise.resolve({ ok: reply.ok, status: reply.status ?? (reply.ok ? 200 : 500), json: () => Promise.resolve(reply.body) });
 }
 
 function callsTo(path: string) {
@@ -47,6 +48,15 @@ function callsTo(path: string) {
 function renderPage(seed?: (client: QueryClient) => void) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   seed?.(client);
+  return render(
+    <QueryClientProvider client={client}>
+      <AgentDiagnosticsPage />
+    </QueryClientProvider>,
+  );
+}
+
+function renderPageWithRealRetryPolicy() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: shouldRetryQuery, retryDelay: 0 } } });
   return render(
     <QueryClientProvider client={client}>
       <AgentDiagnosticsPage />
@@ -231,5 +241,28 @@ describe("AgentDiagnosticsPage actions", () => {
     fireEvent.click(within(actionsCard(container)).getByRole("button", { name: "다시 시도" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
     expect(callsTo("/api/ai/agent/diagnostics/actions")).toBe(2);
+  });
+});
+
+describe("AgentDiagnosticsPage retry policy", () => {
+  const endpoints = [
+    { name: "actions", path: "/api/ai/agent/diagnostics/actions", key: "actions" as const, title: "작업 목록을 불러오지 못했습니다" },
+    { name: "diagnostics", path: "/api/ai/agent/diagnostics", key: "diagnostics" as const, title: "에이전트 진단 정보를 불러오지 못했습니다" },
+  ];
+  const cases: [string, Reply, number][] = [
+    ["a 403", { ok: false, status: 403 }, 1],
+    ["a 429", { ok: false, status: 429 }, 1],
+    ["a 500", { ok: false, status: 500 }, 4],
+    ["a network failure", "network-error", 4],
+  ];
+
+  describe.each(endpoints)("$name endpoint", ({ path, key, title }) => {
+    it.each(cases)("sends the expected number of requests for %s", async (_label, reply, expected) => {
+      replies[key] = reply;
+      renderPageWithRealRetryPolicy();
+
+      expect(await screen.findByText(title)).toBeInTheDocument();
+      expect(callsTo(path)).toBe(expected);
+    });
   });
 });

@@ -142,4 +142,30 @@ describe("FeedbackDetailPage load failure", () => {
       onlineManager.setOnline(true);
     }
   });
+
+  it("keeps 'not found' and adds one notice whose retry refetches when a refresh fails after a successful empty load", async () => {
+    mockDetail.mockRejectedValue(new Error("Network Error"));
+    renderPage((client) => client.setQueryData(["feedbackDetail", "fb-1"], null));
+
+    expect(await screen.findByText("피드백을 찾을 수 없습니다")).toBeInTheDocument();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.queryByText("피드백을 불러오지 못했습니다")).not.toBeInTheDocument();
+
+    mockDetail.mockResolvedValue(detail);
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(await screen.findByText("피드백 정보")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows 'not found' with no notice after a successful empty load", async () => {
+    mockDetail.mockResolvedValue(null as unknown as FeedbackDetail);
+    renderPage();
+
+    expect(await screen.findByText("피드백을 찾을 수 없습니다")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+  });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { getFeedbackDetail, SessionMessage } from '@/lib/api/admin';
+import { FeedbackDetail, getFeedbackDetail, SessionMessage } from '@/lib/api/admin';
 import { useRouter, useParams } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -20,6 +20,8 @@ export default function FeedbackDetailPage() {
   // Only a 404 means "this feedback does not exist"; any other failure is an unknown, not a deletion.
   const isNotFoundError = (error as { response?: { status?: unknown } } | null)?.response?.status === 404;
   const loadFailed = feedback === undefined && isError && !isNotFoundError;
+  // The endpoint can answer with an empty result (null); that is cached data too, so a failed refresh must not hide behind it.
+  const cachedResultRefreshFailed = isError && (feedback as FeedbackDetail | null | undefined) !== undefined;
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -63,6 +65,15 @@ export default function FeedbackDetailPage() {
           >
             ←
           </button>
+          {cachedResultRefreshFailed ? (
+            <QueryErrorState
+              dataComponent="desktop_admin-feedback_detail_content_load-error"
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => void refetch()}
+              isRetrying={isFetching}
+            />
+          ) : null}
           {loadFailed ? (
             <QueryErrorState
               dataComponent="desktop_admin-feedback_detail_error_content_load-error"
