@@ -58,10 +58,9 @@ export default function AllMenuPage() {
   const messageTemplates = safeArrayPayload(messageTemplatesQuery.data);
   const unreadConsultationCount = unreadCountQuery.data?.total;
   const isClientsInitialLoading = clientsQuery.isLoading && clientsQuery.data === undefined;
-  // No employee value to show: still loading, or the load failed with nothing cached.
-  // Judged from the data itself, so a failed load is never printed as "0명".
-  const isEmployeesValueUnavailable =
-    employeesQuery.data === undefined && (employeesQuery.isLoading || employeesQuery.isError);
+  // No employee value to show: nothing is cached (loading, failed, or a retry paused offline).
+  // Judged from the data alone, so an unknown count is never printed as "0명".
+  const isEmployeesValueUnavailable = employeesQuery.data === undefined;
   const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && messageTemplatesQuery.data === undefined;
   const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
   const employeesNormalizedError = employeesQuery.error

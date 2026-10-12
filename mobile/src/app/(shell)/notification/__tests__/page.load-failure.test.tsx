@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import NotificationPage from "../page";
 import { settingsApi } from "@/services/api";
@@ -110,6 +110,39 @@ describe("NotificationPage email preference load failures", () => {
     expect(emailSwitch).not.toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(mockedSettingsApi.getNotificationPreferences).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the switch disabled and unchecked when a retry is paused offline with nothing cached", async () => {
+    mockedSettingsApi.getNotificationPreferences
+      .mockRejectedValueOnce(new Error("load failed"))
+      .mockResolvedValueOnce({ emailNotificationsEnabled: true });
+
+    const { queryClient } = renderPage();
+
+    await screen.findByRole("alert");
+    const emailSwitch = screen.getByRole("switch", { name: "이메일 알림 설정" });
+
+    onlineManager.setOnline(false);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+
+      // Paused retry: pending + paused, so neither isFetching nor isError, and still no data.
+      await waitFor(() => {
+        const state = queryClient.getQueryState(PREFERENCES_KEY);
+        expect(state?.status).toBe("pending");
+        expect(state?.fetchStatus).toBe("paused");
+      });
+      expect(queryClient.getQueryData(PREFERENCES_KEY)).toBeUndefined();
+      expect(emailSwitch).toBeDisabled();
+      expect(emailSwitch).toHaveAttribute("aria-checked", "false");
+      expect(mockedSettingsApi.updateNotificationPreferences).not.toHaveBeenCalled();
+    } finally {
+      onlineManager.setOnline(true);
+    }
+
+    // Back online the paused retry resumes and the switch becomes operable with the loaded value.
+    await waitFor(() => expect(emailSwitch).not.toBeDisabled());
+    expect(emailSwitch).toHaveAttribute("aria-checked", "true");
   });
 
   it("shows no alert and an operable switch after a successful load", async () => {
