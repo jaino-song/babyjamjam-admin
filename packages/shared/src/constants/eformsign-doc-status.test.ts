@@ -6,6 +6,7 @@ import {
     resolveContractDocDisplayStatus,
     resolveContractDocStatusLabel,
 } from "./eformsign-doc-status";
+import { getEformsignStatusCategory } from "./eformsign-status-codes";
 import {
     createKrBusinessDayCalendar,
     KR_BUILTIN_HOLIDAYS,
@@ -255,6 +256,56 @@ describe("revoked (eformsign 042 / 090)", () => {
     });
 });
 
+/**
+ * 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document. Shown "반려됨",
+ * NOT terminal: category in-progress, the customer's signature stays valid. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("rejected_by_reviewer (eformsign 071)", () => {
+    it("labels 071 반려됨, checked before the category, whatever the step or end date", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer).toBe("반려됨");
+        for (const statusType of ["071", 71, "doc_reject_reviewer"]) {
+            for (const [currentStatus, contractEndDate] of [
+                [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+                [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+                [CUSTOMER_STEP_STATUS, null],
+                [null, null],
+            ] as const) {
+                const params = {
+                    category: "in-progress" as const, currentStatus, contractEndDate, statusType, now: kstNoon("2026-08-06"),
+                };
+                expect(resolveContractDocDisplayStatus(params)).toBe("rejected_by_reviewer");
+                expect(resolveContractDocStatusLabel(params)).toBe("반려됨");
+            }
+        }
+    });
+
+    it("is in the in-progress category, never expired or unknown", () => {
+        expect(getEformsignStatusCategory("071")).toBe("in-progress");
+    });
+
+    it("does not change 080 (기간 만료), 061 (거절) or 070 (서명 완료)", () => {
+        const base = { currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-20", now: kstNoon("2026-08-06") };
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "061" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "in-progress", statusType: "070" })).toBe("서명 완료");
+    });
+
+    it("is a wire display status and is receipt-sendable (the customer signature is still valid)", () => {
+        expect(isContractDocDisplayStatus("rejected_by_reviewer")).toBe(true);
+        expect(isContractReceiptSendable({
+            category: "in-progress", displayStatus: "rejected_by_reviewer", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(true);
+        // 080 (expired) and 061 (rejected by the participant) stay unsendable.
+        expect(isContractReceiptSendable({
+            category: "expired", displayStatus: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        expect(isContractReceiptSendable({
+            category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+    });
+});
+
 describe("resolveContractDocStatusLabel", () => {
     it("labels completed documents 계약 완료 and expired ones 기간 만료 regardless of dates", () => {
         expect(resolveContractDocStatusLabel({
@@ -314,9 +365,14 @@ describe("isContractReceiptSendable", () => {
     };
 
     it("allows signed, review, and completed display statuses", () => {
-        for (const displayStatus of ["signed", "review", "completed", "unassigned", "pending", "expired", "unknown"] as const) {
+        for (const displayStatus of ["signed", "review", "completed", "rejected_by_reviewer", "unassigned", "pending", "expired", "unknown"] as const) {
             expect(isContractReceiptSendable({ ...providerReviewParams, displayStatus }))
-                .toBe(displayStatus === "signed" || displayStatus === "review" || displayStatus === "completed");
+                .toBe(
+                    displayStatus === "signed"
+                    || displayStatus === "review"
+                    || displayStatus === "completed"
+                    || displayStatus === "rejected_by_reviewer",
+                );
         }
     });
 

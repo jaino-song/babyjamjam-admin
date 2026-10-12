@@ -81,6 +81,41 @@ describe("foldContractStats", () => {
     ).toBe(1);
   });
 
+  it("counts 071 (반려됨, 계약-04) in progress exactly where a 070 is counted — never expired or completed", () => {
+    const reviewStep = { step_type: "06", step_name: "제공기관 검토", step_recipient_types: ["01"] };
+    const customerStep = { step_type: "05", step_name: "이용자", step_recipient_types: ["01"] };
+    for (const extra of [
+      { contract_end_date: FAR_CONTRACT_END_DATE },
+      { contract_end_date: PAST_CONTRACT_END_DATE },
+      {},
+    ]) {
+      // With the backend's display_status (the status-counts payload) and without it.
+      for (const displayStatus of ["rejected_by_reviewer", undefined]) {
+        expect(
+          foldContractStats(
+            [{ status_type: "071", ...reviewStep, ...extra, display_status: displayStatus }],
+            createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS),
+          ),
+        ).toEqual(
+          foldContractStats(
+            [{ status_type: "070", ...reviewStep, ...extra }],
+            createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS),
+          ),
+        );
+      }
+    }
+    expect(foldContractStats([{ status_type: "071", ...customerStep }])).toEqual(
+      foldContractStats([{ status_type: "070", ...customerStep }]),
+    );
+    const counted = foldContractStats([
+      { status_type: "071", ...reviewStep, contract_end_date: FAR_CONTRACT_END_DATE, display_status: "rejected_by_reviewer" },
+    ]);
+    expect(counted.expired).toBe(0);
+    expect(counted.signed + counted.reviewNeeded + counted.sendRequired).toBe(1);
+    // 080 is still the only expired code.
+    expect(foldContractStats([{ status_type: "080", ...reviewStep }]).expired).toBe(1);
+  });
+
   it("counts draft (001) as drafting, before the reviewNeeded split", () => {
     expect(
       foldContractStats([{ status_type: "001", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] }]),

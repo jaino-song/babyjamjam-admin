@@ -5,6 +5,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
     TERMINAL_STATUS_CODES,
+    isReviewerRejectedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
 import { normalizeEformsignStatusCode, isProviderReviewWorkflowStep } from "domain/utils/eformsign-status-code";
 import {
@@ -187,7 +188,8 @@ export class ReceiptLinkIssueService {
      * minted. True either when the mirrored status is a completed code or
      * when the current workflow step is the provider's review/confirmation
      * step (only current after the client signature). Terminal codes are
-     * excluded BEFORE the step check: a rejected/expired document keeps the
+     * excluded BEFORE the step check (071, a reviewer rejection, is not terminal and is allowed
+     * outright — the customer's signature stays valid): a rejected/expired document keeps the
      * provider-review step as its last step, so the step alone cannot prove
      * a live signature. Anything earlier (drafting, participant request),
      * any unprovable state, and terminal codes fall closed to
@@ -198,6 +200,10 @@ export class ReceiptLinkIssueService {
         const currentStatus = state?.detailPayload?.current_status ?? null;
         const statusType = normalizeEformsignStatusCode(currentStatus?.status_type);
         if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) return;
+        // 071 (reviewer rejection, 계약-04): the review stage only exists after the customer signed
+        // and the signature stays valid, so the receipt link may be issued. Allowed explicitly
+        // rather than by falling through to the step check below.
+        if (isReviewerRejectedStatus(statusType)) return;
         // Terminal-but-not-completed here means rejected/revoked/deleted/expired.
         if (TERMINAL_STATUS_CODES.has(statusType)) throw new ReceiptLinkSkipError("contract_not_signed");
         const signedOrLater = isProviderReviewWorkflowStep(

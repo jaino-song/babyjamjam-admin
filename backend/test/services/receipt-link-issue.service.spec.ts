@@ -337,6 +337,61 @@ describe("ReceiptLinkIssueService", () => {
         expect(tokenService.issue).not.toHaveBeenCalled();
     });
 
+    // 계약-04: 071 (the provider's reviewer rejected the document) is not terminal and the customer's
+    // signature stays valid, so the receipt link may be issued — whatever step the row last reports.
+    it.each([
+        ["제공기관 확인", "06"],
+        ["검토 반려", "06"],
+        ["이용자 서명", "05"],
+    ] as const)(
+        "allows sending for status 071 (reviewer rejection) at step %s (step type %s)",
+        async (stepName, stepType) => {
+            const { service, tokenService } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: "071",
+                            step_type: stepType,
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+
+            const preflight = await service.preflight({ branchId: BRANCH, clientId: 7 });
+
+            expect(preflight.pdf.equals(PDF)).toBe(true);
+            expect(tokenService.issue).not.toHaveBeenCalled();
+        },
+    );
+
+    it("still refuses status 060 (customer has not signed) and the other terminal contracts", async () => {
+        for (const [statusType, stepType, stepName] of [
+            ["060", "05", "이용자 서명"],
+            ["011", "06", "제공기관 확인"],
+            ["021", "06", "제공기관 확인"],
+            ["031", "06", "제공기관 확인"],
+        ] as const) {
+            const { service } = makeService({
+                mirrorState: {
+                    detailPayload: {
+                        ...SIGNED_MIRROR_STATE.detailPayload,
+                        current_status: {
+                            ...SIGNED_MIRROR_STATE.detailPayload!.current_status,
+                            status_type: statusType,
+                            step_type: stepType,
+                            step_name: stepName,
+                        },
+                    } as EformsignDocumentMirrorState["detailPayload"],
+                },
+            });
+            await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
+                .rejects.toMatchObject({ skipReason: "contract_not_signed" });
+        }
+    });
+
     it("skips with contract_not_signed when the mirror cannot prove a signature at all", async () => {
         const { service } = makeService({ mirrorState: null });
         await expect(service.preflight({ branchId: BRANCH, clientId: 7 }))
@@ -353,7 +408,8 @@ describe("ReceiptLinkIssueService", () => {
     });
 
     const terminalWithProviderReviewStepCases = [
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const;
     it.each(terminalWithProviderReviewStepCases)(
@@ -425,7 +481,8 @@ describe("ReceiptLinkIssueService", () => {
     });
 
     it.each([
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const)(
         "rejects a terminal status %s introduced by the PDF re-sync before issuance",
@@ -457,7 +514,8 @@ describe("ReceiptLinkIssueService", () => {
     );
 
     it.each([
-        ["071", "검토 반려"],
+        ["042", "철회"],
+        ["061", "거부"],
         ["080", "만료"],
     ] as const)(
         "rejects a terminal status %s observed at the delivery-readiness boundary",

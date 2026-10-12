@@ -55,6 +55,7 @@ import {
   isProviderReviewWorkflowStep,
   isDeletedStatusCode,
   isReceiptSendableOnCalendar,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   mapDocStatusLabel,
@@ -86,6 +87,7 @@ import { HeadlessProgressModal } from "@/components/app/eformsign/HeadlessProgre
 import { ContractPdfViewerPlaceholder } from "@/components/app/contracts/contract-pdf-viewer-placeholder";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { StatusPill } from "@/components/app/ui/status-badge";
 
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
 import {
@@ -191,7 +193,11 @@ const ContractPdfViewer = dynamic(
 // server still files it under the "기간 만료" filter, so FILTER_BY_CATEGORY maps it there and the
 // pill counts keep matching the server's expired filter. "revoked" is eformsign 042/090 (the
 // document was revoked): terminal, shown 철회됨 in the danger tone, and filed the same way.
-type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
+// "rejected-by-reviewer" is eformsign 071 (the provider's reviewer rejected the document, 계약-04): NOT
+// terminal and not expired. The customer's signature stays valid; a later 070 or 072 moves it on. It has
+// no pill of its own — the server's displayStatus filter only accepts signed|review — so it lists under
+// 전체 and is left out of the per-pill counts.
+type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
 type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
@@ -304,6 +310,7 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   completed: "completed",
   revoke_requested: "revoke-requested",
   revoked: "revoked",
+  rejected_by_reviewer: "rejected-by-reviewer",
   expired: "expired",
   unknown: "unknown",
 };
@@ -334,6 +341,8 @@ function categorize(doc: EformsignDocument, calendar: KrBusinessDayCalendar): Co
   if (isRevokeRequestedEformsignStatus(doc.current_status?.status_type)) return "revoke-requested";
   // 042/090 are in the "expired" bucket too, but the document was revoked, not timed out.
   if (isRevokedEformsignStatus(doc.current_status?.status_type)) return "revoked";
+  // 071 is in-progress, not expired, and not the review stage: its own category (계약-04).
+  if (isReviewerRejectedEformsignStatus(doc.current_status?.status_type)) return "rejected-by-reviewer";
   const cat = getStatusCategory(doc.current_status?.status_type);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewStep(doc)) return "drafting";
@@ -356,7 +365,7 @@ const FILTER_TO_DISPLAY_STATUS = {
   "검토 필요": "review",
 } as const;
 
-const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
+const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey | null> = {
   drafting: "서명 대기",
   signed: "서명 완료",
   "in-progress": "검토 필요",
@@ -364,6 +373,9 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey> = {
   // Filed under the server's expired filter, so the pill counts match it.
   "revoke-requested": "기간 만료",
   revoked: "기간 만료",
+  // 반려됨 (071) has no pill: the server's displayStatus filter cannot select it, so counting it under
+  // a pill would make the pill count disagree with the filtered list. It lists under 전체 only.
+  "rejected-by-reviewer": null,
   expired: "기간 만료",
   unknown: "알 수 없음",
 };
@@ -375,6 +387,7 @@ function categorizeSignal(signal: EformsignStatusSignal, calendar: KrBusinessDay
   }
   if (isRevokeRequestedEformsignStatus(signal.status_type)) return "revoke-requested";
   if (isRevokedEformsignStatus(signal.status_type)) return "revoked";
+  if (isReviewerRejectedEformsignStatus(signal.status_type)) return "rejected-by-reviewer";
   const cat = getStatusCategory(signal.status_type ?? undefined);
   if (cat === "completed" || cat === "expired" || cat === "unknown") return cat;
   if (!isProviderReviewWorkflowStep(signal)) return "drafting";
@@ -435,6 +448,15 @@ function categoryTones(category: ContractCategory): {
     case "revoked":
       return {
         badge: "철회됨",
+        badgeTone: "burgundy",
+        badgeMini: "burgundy",
+        infoTone: "burgundy",
+      };
+    case "rejected-by-reviewer":
+      // The list row renders this one as the solid StatusPill; the detail header and info row can only
+      // take the closed soft tones, so they fall back to burgundy.
+      return {
+        badge: "반려됨",
         badgeTone: "burgundy",
         badgeMini: "burgundy",
         infoTone: "burgundy",
@@ -592,7 +614,10 @@ function hasOpenedDocument(doc: EformsignDocument): boolean {
  * document under it solely at the review step or for display_status "review".
  */
 function isCustomerSignedCategory(category: ContractCategory): boolean {
-  return category === "completed" || category === "signed" || category === "in-progress";
+  return category === "completed"
+    || category === "signed"
+    || category === "in-progress"
+    || category === "rejected-by-reviewer";
 }
 
 function hasSendFailureEventRecord(record: UnknownRecord): boolean {
@@ -641,6 +666,7 @@ function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar):
   if (category === "completed") return "6/6 - 계약서 완료";
   if (category === "revoke-requested") return "철회 요청됨";
   if (category === "revoked") return "철회됨";
+  if (category === "rejected-by-reviewer") return "반려됨 - 제공기관 재검토 대기";
   if (category === "expired") return "기간 만료";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
@@ -1247,6 +1273,17 @@ function contractStageItems(
       icon: AlertTriangle,
       iconVariant: "danger",
       text: "문서가 철회됐어요",
+      time: updatedAt,
+    });
+    return items;
+  }
+
+  if (category === "rejected-by-reviewer") {
+    // 071 is not terminal: a later 070 returns it to 서명 완료 and a 072 completes it.
+    items.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요",
       time: updatedAt,
     });
     return items;
@@ -2638,7 +2675,8 @@ export default function ContractsPage() {
       "알 수 없음": 0,
     };
     for (const signal of statusCountsData?.documents ?? []) {
-      counts[FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)]] += 1;
+      const pill = FILTER_BY_CATEGORY[categorizeSignal(signal, calendar)];
+      if (pill) counts[pill] += 1;
     }
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
   }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
@@ -2810,8 +2848,13 @@ export default function ContractsPage() {
                     const name = isServiceRecordRow
                       ? serviceRecordCustomerName === "-" ? "이름 없음" : serviceRecordCustomerName
                       : contractDisplayName(doc);
+                    // 071 on a 제공기록지 keeps today's danger "거부·만료" reading (계약-04 scopes 반려됨 to
+                    // contracts); on a contract it is the solid 반려됨 pill.
+                    const isRejectedByReviewer = cat === "rejected-by-reviewer";
                     const badgeLabel = isServiceRecordRow
-                      ? mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
+                      ? isRejectedByReviewer
+                        ? "거부·만료"
+                        : mapDocStatusLabel(doc.current_status, doc.contract_end_date, doc.display_status, calendar)
                       : tones.badge;
 
                     return (
@@ -2874,11 +2917,22 @@ export default function ContractsPage() {
                         }
                         metaClassName={isServiceRecordRow ? "list-meta flex flex-col items-start gap-0.5" : undefined}
                         right={
-                          <Badge
-                            data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
-                            label={badgeLabel}
-                            tone={tones.badgeTone}
-                          />
+                          isRejectedByReviewer && !isServiceRecordRow ? (
+                            <StatusPill
+                              data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
+                              data-slot="status-badge"
+                              variant="rejected_by_reviewer"
+                              size="sm"
+                            >
+                              {badgeLabel}
+                            </StatusPill>
+                          ) : (
+                            <Badge
+                              data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row_right_status"
+                              label={badgeLabel}
+                              tone={tones.badgeTone}
+                            />
+                          )
                         }
                         onClick={() => {
                           setSelectedDoc(doc);

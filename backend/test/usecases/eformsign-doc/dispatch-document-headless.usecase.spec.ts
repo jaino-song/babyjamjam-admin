@@ -915,6 +915,10 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         ["045", true],
         ["041", true],
         ["060", true],
+        // 071 (reviewer rejection, 계약-04) is a live contract now: it blocks a duplicate send.
+        ["070", true],
+        ["071", true],
+        ["080", false],
         ["042", false],
         ["090", false],
         ["099", false],
@@ -966,6 +970,8 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         ["041", "서명 단계"],
         ["060", "서명 단계"],
         ["042", "거부"],
+        // 071 left the rejected set (계약-04) but the detail written for it stays "거부".
+        ["071", "거부"],
         ["003", "완료"],
     ])("stores the same statusDetail as the webhook for a %s document after headless creation", async (statusType, statusDetail) => {
         const createEformsignDocUsecase = { execute: jest.fn().mockResolvedValue(undefined) };

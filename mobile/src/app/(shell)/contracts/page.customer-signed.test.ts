@@ -7,6 +7,7 @@ import {
   getStatusCategory,
   isContractReviewWindowOpen,
   isProviderReviewWorkflowStep,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   normalizeStatusCode,
@@ -40,7 +41,7 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
 interface StageItem {
   text: string;
 }
@@ -53,6 +54,7 @@ const helpers = vm.runInNewContext(
     getStatusCategory,
     isContractReviewWindowOpen,
     isProviderReviewWorkflowStep,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
     isRevokedEformsignStatus,
     normalizeStatusCode,
@@ -278,6 +280,38 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     // FILTER_BY_CATEGORY / categoryTones live beside the helpers in page.tsx; pin them in source.
     expect(/"revoke-requested": "기간 만료"/.test(source)).toBe(true);
     expect(/case "revoke-requested":\s*return \{\s*badge: "철회 요청됨",\s*badgeTone: "orange"/.test(source)).toBe(true);
+  });
+
+  it.each([
+    ["with display_status", "rejected_by_reviewer"],
+    ["without display_status (legacy payload)", undefined],
+  ])("files 071 (반려됨, 계약-04) as its own category, not expired, not 검토 필요 — %s", (_label, displayStatus) => {
+    for (const [stepType, stepName] of [
+      ["06", "제공기관 검토"],
+      ["05", "이용자"],
+    ] as const) {
+      const doc = makeDoc({ statusType: "071", stepType, stepName, displayStatus });
+      const { category, progress, stages } = view(doc);
+
+      expect(category).toBe("rejected-by-reviewer");
+      expect(progress).toBe("반려됨 - 제공기관 재검토 대기");
+      expect(progress).not.toBe("5/6 - 제공기관 검토 필요");
+      // The customer's signature stays valid, and the rejection is stated.
+      expect(stages).toContain(SIGNED_STAGE);
+      expect(stages).toContain("제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요");
+      expect(stages).not.toContain("문서 기간이 만료됐어요");
+    }
+  });
+
+  it("returns a document to a signed reading after a later 070, and completes it on 072", () => {
+    expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
+    expect(view(makeDoc({ statusType: "072", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");
+  });
+
+  it("gives 반려됨 a badge and no pill of its own (the server displayStatus filter cannot select it)", () => {
+    expect(/case "rejected-by-reviewer":\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*return \{\s*badge: "반려됨"/.test(source)).toBe(true);
+    expect(/"rejected-by-reviewer": null/.test(source)).toBe(true);
+    expect(/rejected_by_reviewer: "rejected-by-reviewer"/.test(source)).toBe(true);
   });
 
   it("no longer scans histories for signature keywords", () => {

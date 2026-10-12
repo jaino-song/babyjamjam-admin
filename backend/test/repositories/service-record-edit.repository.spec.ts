@@ -530,6 +530,10 @@ describe("ServiceRecordEditRepository", () => {
         ["062", "completed"],
         ["050", "completed"],
         ["070", "in_progress"],
+        // 계약-04: a reviewer rejection is a live contract, not a rejected one.
+        ["071", "in_progress"],
+        ["080", "rejected"],
+        ["061", "rejected"],
         ["xyz", "unknown"],
     ])("reports contract status %s as the %s stage", async (contractStatus, stage) => {
         const { repository } = buildDraftSourceFixture(contractStatus);

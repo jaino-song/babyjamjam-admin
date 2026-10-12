@@ -287,7 +287,8 @@ describe("EformsignDocService", () => {
             },
         );
 
-        it.each(["042", "047", "061"])("keeps %s on the 거부 detail", async (statusType) => {
+        // 071 left the rejected set (계약-04: not terminal) but the detail written for it stays 거부.
+        it.each(["042", "047", "061", "071"])("keeps %s on the 거부 detail", async (statusType) => {
             fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
                 createApiDocument({ status_type: statusType, step_name: "이용자 서명" }),
             );

@@ -25,6 +25,7 @@ import {
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
     TERMINAL_STATUS_CODES,
+    isReviewerRejectedStatus,
     isRevokeRequestedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
@@ -523,6 +524,9 @@ export class FinalizeDocumentHeadlessUsecase {
                 EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
             ].includes(document.documentKind)
             || TERMINAL_STATUS_CODES.has(document.statusType)
+            // 071 (a reviewer rejection) is not terminal either (계약-04), but a rejected document
+            // is not finalized as if the review had not happened: refused here as it always was.
+            || isReviewerRejectedStatus(document.statusType)
             // 040 is not terminal, but a document whose cancellation was requested is
             // not finalized as if nothing happened (it was refused here while 040 was terminal).
             || isRevokeRequestedStatus(document.statusType)
@@ -629,7 +633,10 @@ export class FinalizeDocumentHeadlessUsecase {
                 if (current.statusCode && EFORMSIGN_COMPLETED_STATUS_CODES.has(current.statusCode)) {
                     return "completed";
                 }
-                if (current.statusCode && TERMINAL_STATUS_CODES.has(current.statusCode)) {
+                // 071 left the terminal set (계약-04) but still ends this finalize attempt as failed:
+                // the reviewer rejected the document, so it will not complete by waiting.
+                if (current.statusCode
+                    && (TERMINAL_STATUS_CODES.has(current.statusCode) || isReviewerRejectedStatus(current.statusCode))) {
                     return "failed";
                 }
                 // Before the advancement check: a revoke request moves the status code, which
@@ -653,7 +660,9 @@ export class FinalizeDocumentHeadlessUsecase {
             }
             if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusCode)) return "completed";
             if (isRevokeRequestedStatus(statusCode)) return "revoke_requested";
-            return TERMINAL_STATUS_CODES.has(statusCode) ? "failed" : "pending";
+            return TERMINAL_STATUS_CODES.has(statusCode) || isReviewerRejectedStatus(statusCode)
+                ? "failed"
+                : "pending";
         } catch (error) {
             const reason = sanitizeEformsignErrorMessage(error);
             this.logger.warn(`Could not read eformsign status for ${documentId}: ${reason}`);

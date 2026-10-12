@@ -31,7 +31,7 @@ export type DocumentStatusCategory =
     | "unknown";
 
 export const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
-export const EXPIRED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080", "090"]);
+export const EXPIRED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "080", "090"]);
 export const DELETED_STATUS_CODES = new Set(["047", "049", "099"]);
 export const IN_PROGRESS_STATUS_CODES: ReadonlySet<string> = EFORMSIGN_IN_PROGRESS_STATUS_CODES;
 export const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);

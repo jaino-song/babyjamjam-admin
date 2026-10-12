@@ -3288,7 +3288,18 @@ describe("ClientService", () => {
                 expect(result?.hasSigned).toBe(true);
             });
 
-            it.each(["071", "042", "049", "080", "999"])(
+            it("is true for 071 (reviewer rejection, 계약-04) on the provider-review step: the customer's signature is still valid", async () => {
+                listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.hasSigned).toBe(true);
+            });
+
+            it.each(["042", "049", "080", "999"])(
                 "fails closed for dead or unknown status %s",
                 async (statusType) => {
                     listClientsUsecase.execute.mockResolvedValue([clientWithDocument()]);
@@ -3421,11 +3432,24 @@ describe("ClientService", () => {
                 expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
             });
 
+            it("should not show contract required for a document at 071 (reviewer rejection, 계약-04): it is a live contract", async () => {
+                const client = createWaitingClient("2026-07-16", "reviewer-rejected-document");
+                listClientsUsecase.execute.mockResolvedValue([client]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue([
+                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                ]);
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("requested");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+            });
+
             it("should show contract required when a document rejected at the review step is the latest", async () => {
                 const client = createWaitingClient("2026-07-16", "rejected-document");
                 listClientsUsecase.execute.mockResolvedValue([client]);
                 prismaService.eformsign_doc.findMany.mockResolvedValue([
-                    { clientId: 1, statusType: "071", stepType: "06", stepName: "제공기관 확인" },
+                    { clientId: 1, statusType: "061", stepType: "06", stepName: "제공기관 확인" },
                 ]);
 
                 const [result] = await service.findAll(branchId);
