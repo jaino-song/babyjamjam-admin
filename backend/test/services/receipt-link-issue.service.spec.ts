@@ -251,6 +251,25 @@ function makeService(overrides: MakeServiceOverrides = {}) {
 }
 
 describe("ReceiptLinkIssueService", () => {
+    it.each([
+        ["1994-03-07", "19940307"],
+        ["940307", "940307"],
+    ])("issues stored birthday %s without inferring or dropping its century", async (birthday, expected) => {
+        const { service, tokenService } = makeService({
+            client: { id: 7, name: "김산모", phone: null, voucherClient: true, birthday, eDocId: "doc-ext-1" },
+        });
+        await service.issue({ branchId: BRANCH, clientId: 7, source: "manual" });
+        expect(tokenService.issue).toHaveBeenCalledWith(expect.objectContaining({ birthday: expected }));
+    });
+
+    it.each([null, "", "garbage", "1994030", "199403070"])("skips unusable birthday %s before issuing", async (birthday) => {
+        const { service, tokenService } = makeService({
+            client: { id: 7, name: "김산모", phone: null, voucherClient: true, birthday, eDocId: "doc-ext-1" },
+        });
+        await expect(service.issue({ branchId: BRANCH, clientId: 7, source: "manual" })).rejects.toMatchObject({ skipReason: "missing_birthday" });
+        expect(tokenService.issue).not.toHaveBeenCalled();
+    });
+
     it("renders page 7, uploads under an issuance-specific path, issues a token and builds the url", async () => {
         const { service, rasterizer, storage, tokenService, clientRepository } = makeService();
         const result = await service.issue({ branchId: BRANCH, clientId: 7, source: "auto_trigger", jobId: "job-1" });

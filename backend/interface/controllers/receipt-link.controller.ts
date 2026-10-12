@@ -94,7 +94,7 @@ export class ReceiptLinkController {
                     ...problemBody("VALIDATION_FAILED", {
                         pointer: "/birthday",
                         code: "INVALID_FORMAT",
-                        detail: "생년월일 6자리를 입력해 주세요.",
+                        detail: "생년월일 8자리를 입력해 주세요.",
                         location: "body",
                     }),
                     reason: result.reason,

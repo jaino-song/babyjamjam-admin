@@ -140,9 +140,8 @@ export class ReceiptLinkIssueService {
         if (!client) throw new ReceiptLinkSkipError("no_contract_document");
         if (!client.voucherClient) throw new ReceiptLinkSkipError("not_voucher_client");
 
-        // normalizeBirthdayInput accepts both 6-digit (YYMMDD) and 8-digit (YYYYMMDD) input and
-        // returns the canonical 6-digit form — the same normalization issue() relies on, so a
-        // birthday that would fail there must be caught here instead, not just an empty one.
+        // 8자리(YYYYMMDD)는 전체를 보존하고, 기존 6자리(YYMMDD)는 세기를 추론하지 않는다.
+        // issue()와 같은 정규화로 사용할 수 없는 생년월일은 발급 전에 건너뛴다.
         const birthday = normalizeBirthdayInput(client.birthday ?? "");
         if (!birthday) throw new ReceiptLinkSkipError("missing_birthday");
 

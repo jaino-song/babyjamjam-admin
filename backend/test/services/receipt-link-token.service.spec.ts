@@ -177,10 +177,10 @@ async function issue(service: ReceiptLinkTokenService, overrides: Partial<Parame
 }
 
 describe("normalizeBirthdayInput", () => {
-    it("accepts 6 digits, takes the last 6 of 8 digits, rejects anything else", () => {
+    it("preserves 6 or 8 digits and rejects anything else", () => {
         expect(normalizeBirthdayInput("940315")).toBe("940315");
-        expect(normalizeBirthdayInput("1994-03-15")).toBe("940315");
-        expect(normalizeBirthdayInput("19940315")).toBe("940315");
+        expect(normalizeBirthdayInput("1994-03-15")).toBe("19940315");
+        expect(normalizeBirthdayInput("19940315")).toBe("19940315");
         expect(normalizeBirthdayInput("9403")).toBeNull();
         expect(normalizeBirthdayInput("")).toBeNull();
     });
@@ -188,10 +188,10 @@ describe("normalizeBirthdayInput", () => {
 
 describe("ReceiptLinkTokenService", () => {
     it.each([
-        ["1958-03-03", "580303"],
-        ["1905-01-01", "050101"],
-        ["2005-01-01", "050101"],
-    ])("keeps public six-digit verification compatible with stored birthday %s", async (birthday, input) => {
+        ["1958-03-03", "19580303"],
+        ["1905-01-01", "19050101"],
+        ["2005-01-01", "20050101"],
+    ])("accepts the full eight-digit birthday for stored birthday %s", async (birthday, input) => {
         const { service } = makeService();
         const link = await issue(service, { birthday });
         expect(await service.verifyBirthday(link.linkToken, input, NOW)).toMatchObject({ ok: true });
@@ -237,8 +237,8 @@ describe("ReceiptLinkTokenService", () => {
         const { service } = makeService();
         const first = await issue(service);
         expect(await issue(service, { birthday: "950101" })).toMatchObject({ linkToken: first.linkToken });
-        expect(await service.verifyBirthday(first.linkToken, "940315", NOW)).toMatchObject({ ok: false });
-        expect(await service.verifyBirthday(first.linkToken, "950101", NOW)).toMatchObject({ ok: true });
+        expect(await service.verifyBirthday(first.linkToken, "19940315", NOW)).toMatchObject({ ok: false });
+        expect(await service.verifyBirthday(first.linkToken, "19950101", NOW)).toMatchObject({ ok: true });
     });
 
     it("derives the same URL across instances and jobs, but separates contracts and branches", async () => {
@@ -292,16 +292,68 @@ describe("ReceiptLinkTokenService", () => {
         expect(JSON.stringify(repository.rows)).not.toContain(second.linkToken);
     });
 
-    it("rejects issue() when the birthday does not normalize to 6 digits", async () => {
+    it("rejects issue() when the birthday does not normalize to 6 or 8 digits", async () => {
         const { service } = makeService();
         await expect(issue(service, { birthday: "" })).rejects.toThrow(/YYMMDD/);
         await expect(issue(service, { birthday: "94" })).rejects.toThrow(/YYMMDD/);
     });
 
-    it("normalizes the birthday before hashing, so an 8-digit issue matches a 6-digit verify", async () => {
+    it("hashes all eight digits and refuses a wrong century with exactly one failed attempt", async () => {
+        const { repository, service } = makeService();
+        const { linkToken } = await issue(service, { birthday: "1994-03-07" });
+        expect(repository.rows[0]!.expectedBirthdayHash).toBe(createHash("sha256").update("test-salt:19940307").digest("hex"));
+        expect(await service.verifyBirthday(linkToken, "19940307", NOW)).toMatchObject({ ok: true });
+        const reserveSpy = jest.spyOn(repository, "reserveVerificationAttempt");
+        expect(await service.verifyBirthday(linkToken, "20940307", NOW)).toEqual({ ok: false, reason: "verification_failed", remainingAttempts: 4 });
+        expect(reserveSpy).toHaveBeenCalledTimes(1);
+        expect(repository.rows[0]!.failedAttempts).toBe(1);
+    });
+
+    it.each(["1994-03-07", "2094-03-07"])("keeps a six-digit legacy hash compatible with %s but refuses a wrong day", async (input) => {
+        const { repository, service } = makeService();
+        const { linkToken } = await issue(service, { birthday: "940307" });
+        expect(repository.rows[0]!.expectedBirthdayHash).toBe(createHash("sha256").update("test-salt:940307").digest("hex"));
+        expect(await service.verifyBirthday(linkToken, input, NOW)).toMatchObject({ ok: true });
+        expect(await service.verifyBirthday(linkToken, "19940308", NOW)).toEqual({ ok: false, reason: "verification_failed", remainingAttempts: 4 });
+        expect(repository.rows[0]!.failedAttempts).toBe(1);
+    });
+
+    it.each(["940307", "19940307"])("rejects six-digit verification without reserving an attempt for stored birthday %s", async (birthday) => {
+        const { repository, service } = makeService();
+        const { linkToken } = await issue(service, { birthday });
+        const reserveSpy = jest.spyOn(repository, "reserveVerificationAttempt");
+        expect(await service.verifyBirthday(linkToken, "940307", NOW)).toEqual({ ok: false, reason: "invalid_format" });
+        expect(reserveSpy).not.toHaveBeenCalled();
+        expect(repository.rows[0]!.failedAttempts).toBe(0);
+    });
+
+    it("makes a legacy link strict after reissue with an eight-digit birthday", async () => {
         const { service } = makeService();
-        const { linkToken } = await issue(service, { birthday: "19940315" });
-        expect(await service.verifyBirthday(linkToken, "940315", NOW)).toMatchObject({ ok: true });
+        const first = await issue(service, { birthday: "940307" });
+        expect(await service.verifyBirthday(first.linkToken, "20940307", NOW)).toMatchObject({ ok: true });
+        expect(await issue(service, { birthday: "1994-03-07" })).toMatchObject({ linkToken: first.linkToken });
+        expect(await service.verifyBirthday(first.linkToken, "20940307", NOW)).toMatchObject({ ok: false, reason: "verification_failed" });
+        expect(await service.verifyBirthday(first.linkToken, "19940307", NOW)).toMatchObject({ ok: true });
+    });
+
+    it("refreshes the hash from the latest locked profile without dropping its century", async () => {
+        const { repository, service } = makeService();
+        const first = await issue(service, { birthday: "940307" });
+        const originalCreate = repository.createOrRefreshContractLink.bind(repository);
+        const issuanceRepository: IReceiptLinkTokenIssuanceRepository = {
+            findActiveByJobId: repository.findActiveByJobId.bind(repository),
+            createOrRefreshContractLink: async (data, now, refresh) => originalCreate({
+                ...data,
+                ...refresh!({ birthday: "1994-03-07" }),
+            }, now),
+        };
+        await service.issue({
+            branchId: "11111111-1111-1111-1111-111111111111", clientId: 7, eformsignDocId: 42,
+            birthday: "940307", storagePath: "receipts/b/42/abc.png", contentSha256: "a".repeat(64),
+            byteSize: 1000, source: "manual", now: NOW,
+        }, issuanceRepository);
+        expect(await service.verifyBirthday(first.linkToken, "20940307", NOW)).toMatchObject({ ok: false, reason: "verification_failed" });
+        expect(await service.verifyBirthday(first.linkToken, "19940307", NOW)).toMatchObject({ ok: true });
     });
 
     it("fails closed when RECEIPT_LINK_HASH_SALT is not configured", async () => {
@@ -313,7 +365,7 @@ describe("ReceiptLinkTokenService", () => {
         const unsaltedService = new ReceiptLinkTokenService(repository, noSaltConfig as never);
 
         await expect(issue(unsaltedService)).rejects.toThrow(/RECEIPT_LINK_HASH_SALT/);
-        await expect(unsaltedService.verifyBirthday(linkToken, "940315", NOW)).rejects.toThrow(/RECEIPT_LINK_HASH_SALT/);
+        await expect(unsaltedService.verifyBirthday(linkToken, "19940315", NOW)).rejects.toThrow(/RECEIPT_LINK_HASH_SALT/);
     });
 
     it("reports status without exposing the client name", async () => {
@@ -337,7 +389,7 @@ describe("ReceiptLinkTokenService", () => {
     it("reports state: verified after a successful verification", async () => {
         const { service } = makeService();
         const { linkToken } = await issue(service);
-        await service.verifyBirthday(linkToken, "940315", NOW);
+        await service.verifyBirthday(linkToken, "19940315", NOW);
         expect(await service.getStatus(linkToken, NOW)).toMatchObject({ ok: true, state: "verified" });
     });
 
@@ -361,7 +413,7 @@ describe("ReceiptLinkTokenService", () => {
         const { linkToken } = await issue(service);
         repository.rows[0]!.clientName = null;
 
-        const result = await service.verifyBirthday(linkToken, "940315", NOW);
+        const result = await service.verifyBirthday(linkToken, "19940315", NOW);
         expect(result).toMatchObject({ ok: true, clientName: "산모" });
         const accessToken = (result as { accessToken: string }).accessToken;
 
@@ -372,7 +424,7 @@ describe("ReceiptLinkTokenService", () => {
     it("resolveAccess returns null once the token has expired", async () => {
         const { service } = makeService();
         const { linkToken } = await issue(service);
-        const result = await service.verifyBirthday(linkToken, "940315", NOW);
+        const result = await service.verifyBirthday(linkToken, "19940315", NOW);
         const accessToken = (result as { accessToken: string }).accessToken;
 
         const afterExpiry = new Date(EXPIRES.getTime() + 1);
@@ -386,7 +438,7 @@ describe("ReceiptLinkTokenService", () => {
         repository.rows[0]!.active = false;
 
         expect(await service.getStatus(revokedToken, NOW)).toEqual({ ok: false, reason: "revoked" });
-        expect(await service.verifyBirthday(revokedToken, "940315", NOW)).toEqual({ ok: false, reason: "revoked" });
+        expect(await service.verifyBirthday(revokedToken, "19940315", NOW)).toEqual({ ok: false, reason: "revoked" });
         expect(await service.resolveAccess(revokedToken, "efra_anything", NOW)).toBeNull();
     });
 
@@ -394,31 +446,31 @@ describe("ReceiptLinkTokenService", () => {
         const { service } = makeService();
         const { linkToken } = await issue(service);
         for (let attempt = 1; attempt < RECEIPT_LINK_MAX_FAILED_ATTEMPTS; attempt += 1) {
-            expect(await service.verifyBirthday(linkToken, "000000", NOW)).toEqual({
+            expect(await service.verifyBirthday(linkToken, "00000000", NOW)).toEqual({
                 ok: false,
                 reason: "verification_failed",
                 remainingAttempts: RECEIPT_LINK_MAX_FAILED_ATTEMPTS - attempt,
             });
         }
         const lockedUntil = new Date(NOW.getTime() + RECEIPT_LINK_LOCK_MS).toISOString();
-        expect(await service.verifyBirthday(linkToken, "000000", NOW)).toEqual({ ok: false, reason: "locked", lockedUntil });
-        expect(await service.verifyBirthday(linkToken, "940315", NOW)).toEqual({ ok: false, reason: "locked", lockedUntil });
+        expect(await service.verifyBirthday(linkToken, "00000000", NOW)).toEqual({ ok: false, reason: "locked", lockedUntil });
+        expect(await service.verifyBirthday(linkToken, "19940315", NOW)).toEqual({ ok: false, reason: "locked", lockedUntil });
         expect(await service.getStatus(linkToken, NOW)).toMatchObject({ remainingAttempts: 0, lockedUntil });
 
         const later = new Date(NOW.getTime() + RECEIPT_LINK_LOCK_MS + 1);
-        expect(await service.verifyBirthday(linkToken, "940315", later)).toMatchObject({ ok: true });
+        expect(await service.verifyBirthday(linkToken, "19940315", later)).toMatchObject({ ok: true });
     });
 
     it("after the lock window elapses, a wrong attempt restarts the counter instead of re-locking immediately", async () => {
         const { service } = makeService();
         const { linkToken } = await issue(service);
         for (let attempt = 0; attempt < RECEIPT_LINK_MAX_FAILED_ATTEMPTS; attempt += 1) {
-            await service.verifyBirthday(linkToken, "000000", NOW);
+            await service.verifyBirthday(linkToken, "00000000", NOW);
         }
         // The token is now locked (the 5th wrong attempt just above triggered it).
 
         const later = new Date(NOW.getTime() + RECEIPT_LINK_LOCK_MS + 1);
-        expect(await service.verifyBirthday(linkToken, "000000", later)).toEqual({
+        expect(await service.verifyBirthday(linkToken, "00000000", later)).toEqual({
             ok: false,
             reason: "verification_failed",
             remainingAttempts: RECEIPT_LINK_MAX_FAILED_ATTEMPTS - 1,
@@ -451,7 +503,7 @@ describe("ReceiptLinkTokenService", () => {
         });
 
         const results = await Promise.all(
-            Array.from({ length: 50 }, () => service.verifyBirthday(linkToken, "000000", NOW)),
+            Array.from({ length: 50 }, () => service.verifyBirthday(linkToken, "00000000", NOW)),
         );
 
         // verifyBirthday only ever compares the birthday hash after a "recorded" reservation
@@ -487,7 +539,7 @@ describe("ReceiptLinkTokenService", () => {
         const { service } = makeService();
         const { linkToken } = await issue(service);
 
-        const guesses = [...Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => "000000"), "940315"];
+        const guesses = [...Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => "00000000"), "19940315"];
         const results = await Promise.all(guesses.map((guess) => service.verifyBirthday(linkToken, guess, NOW)));
 
         const correctGuessResult = results[results.length - 1]!;
@@ -504,10 +556,10 @@ describe("ReceiptLinkTokenService", () => {
         const { linkToken } = await issue(service);
 
         await Promise.all(
-            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => service.verifyBirthday(linkToken, "000000", NOW)),
+            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => service.verifyBirthday(linkToken, "00000000", NOW)),
         );
 
-        const correct = await service.verifyBirthday(linkToken, "940315", NOW);
+        const correct = await service.verifyBirthday(linkToken, "19940315", NOW);
         expect(correct).toMatchObject({ ok: false, reason: "locked" });
     });
 
@@ -515,13 +567,13 @@ describe("ReceiptLinkTokenService", () => {
         const { repository, service } = makeService();
         const { linkToken } = await issue(service);
         await Promise.all(
-            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => service.verifyBirthday(linkToken, "000000", NOW)),
+            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS }, () => service.verifyBirthday(linkToken, "00000000", NOW)),
         );
         // The token is now locked from the batch above.
 
         const later = new Date(NOW.getTime() + RECEIPT_LINK_LOCK_MS + 1);
         await Promise.all(
-            Array.from({ length: 50 }, () => service.verifyBirthday(linkToken, "000000", later)),
+            Array.from({ length: 50 }, () => service.verifyBirthday(linkToken, "00000000", later)),
         );
 
         // Every one of the 50 calls reserved an attempt against the same row; the old bug (each
@@ -535,11 +587,11 @@ describe("ReceiptLinkTokenService", () => {
         const { repository, service } = makeService();
         const { linkToken } = await issue(service);
         await Promise.all(
-            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS - 1 }, () => service.verifyBirthday(linkToken, "000000", NOW)),
+            Array.from({ length: RECEIPT_LINK_MAX_FAILED_ATTEMPTS - 1 }, () => service.verifyBirthday(linkToken, "00000000", NOW)),
         );
         expect(repository.rows[0]!.failedAttempts).toBe(RECEIPT_LINK_MAX_FAILED_ATTEMPTS - 1);
 
-        const result = await service.verifyBirthday(linkToken, "940315", NOW);
+        const result = await service.verifyBirthday(linkToken, "19940315", NOW);
         expect(result).toMatchObject({ ok: true });
         expect(repository.rows[0]!.failedAttempts).toBe(0);
         expect(repository.rows[0]!.lockedAt).toBeNull();
@@ -560,7 +612,7 @@ describe("ReceiptLinkTokenService", () => {
         const { repository, service } = makeService();
         const { linkToken } = await issue(service);
         for (let attempt = 0; attempt < RECEIPT_LINK_MAX_FAILED_ATTEMPTS; attempt += 1) {
-            await service.verifyBirthday(linkToken, "000000", NOW);
+            await service.verifyBirthday(linkToken, "00000000", NOW);
         }
         expect(repository.rows[0]!.lockedAt).toEqual(NOW);
 
@@ -586,7 +638,7 @@ describe("ReceiptLinkTokenService", () => {
             return { outcome: "unusable" };
         });
 
-        expect(await service.verifyBirthday(linkToken, "940315", NOW)).toEqual({ ok: false, reason: "revoked" });
+        expect(await service.verifyBirthday(linkToken, "19940315", NOW)).toEqual({ ok: false, reason: "revoked" });
     });
 
     it("when reserveVerificationAttempt reports outcome: unusable because the row expired in the gap, verifyBirthday re-reads and reports expired", async () => {
@@ -598,7 +650,7 @@ describe("ReceiptLinkTokenService", () => {
             return { outcome: "unusable" };
         });
 
-        expect(await service.verifyBirthday(linkToken, "940315", NOW)).toEqual({ ok: false, reason: "expired" });
+        expect(await service.verifyBirthday(linkToken, "19940315", NOW)).toEqual({ ok: false, reason: "expired" });
     });
 
     // M1: exercises the fake's own guard directly (not via a mocked outcome) — reserving on an
