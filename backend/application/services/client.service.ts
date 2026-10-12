@@ -2568,6 +2568,22 @@ export class ClientService {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
             const currentClient = lockedClient ?? client;
+            // Rule 기록-09: a 예약 전 client has no service-record case and no
+            // provider link. A replacement would write replacement_requested,
+            // which makes ensureForClient create the case and lets the link
+            // gate pass, so it is refused before anything is written.
+            if (getEffectiveClientServiceStatus(
+                currentClient.serviceStatus ?? null,
+                currentClient.startDate ?? null,
+                currentClient.endDate ?? null,
+            ) === SERVICE_STATUS.PRE_BOOKING) {
+                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                    pointer: "/id",
+                    code: "INVALID_VALUE",
+                    detail: "예약 전 고객은 제공인력 교체를 요청할 수 없습니다",
+                    location: "path",
+                }));
+            }
             mergeAndValidateClientServicePeriod(currentClient, {});
             // Use the owning transaction's timestamp so a client edit that
             // waited on this lock cannot derive a replacement from a stale
