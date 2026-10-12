@@ -227,6 +227,41 @@ beforeEach(() => {
 });
 
 describe("ContractsPage list load failures (S5)", () => {
+  it("counts retry pending keeps loaded rows, header and load-more out of loading", async () => {
+    await mountWithCounts(listState(SUCCESS_ROWS()), "fail");
+    const notice = countsNotice();
+    expect(notice).not.toBeNull();
+    mockStatusCounts.mockClear();
+    mockStatusCounts.mockReturnValue(new Promise(() => undefined));
+
+    fireEvent.click(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" }));
+    await flushQueryNotifications();
+
+    expect(mockStatusCounts).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryState(COUNTS_KEY)).toMatchObject({ status: "pending", fetchStatus: "fetching" });
+    expect(listRows()).toHaveLength(2);
+    expect(screen.getByText("김가나 계약서")).toBeInTheDocument();
+    expect(screen.getByText("이다라 계약서")).toBeInTheDocument();
+    expect(headerCount()).toBe("2건");
+    expect(document.querySelector(".contracts-loading-row")).toBeNull();
+    expect(document.querySelector(`[data-component="${DC}_load-more_placeholder"]`)).toBeNull();
+    expect(pills()).toHaveLength(8);
+    for (const pill of pills()) {
+      expect(pill).not.toHaveTextContent(/\b0\b/);
+      expect(pill).toHaveAttribute("data-loading", "true");
+    }
+  });
+
+  it("genuine first document load without rows still shows row skeletons", async () => {
+    mockUseInfiniteContracts.mockReturnValue(listState({ isLoading: true }));
+    mountPage();
+    await flushQueryNotifications();
+
+    expect(listRows()).toHaveLength(0);
+    expect(document.querySelector(".contracts-loading-row")).not.toBeNull();
+    expect(screen.getByLabelText("계약서 불러오는 중")).toBeInTheDocument();
+  });
+
   it("failed first load with no rows: error panel with 다시 시도, no 없습니다, no 0건, retry refetches once", async () => {
     const list = listState({ isError: true });
     await mountWithCounts(list, "ok");
@@ -350,6 +385,45 @@ describe("ContractsPage list load failures (S5)", () => {
 });
 
 describe("ContractsPage service-record template lookup failure (S5)", () => {
+  it("failed template lookup without cached ids or counts shows unknown pills, not zero", async () => {
+    mockUseInfiniteContracts.mockImplementation((options: { enabled?: boolean }) =>
+      options.enabled ? listState(SUCCESS_EMPTY()) : listState(),
+    );
+    mockServiceRecordTemplateId.mockRejectedValue(new Error("network down"));
+    mountPage();
+    await settle();
+    mockStatusCounts.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await settle();
+
+    expect(listCardPanel()).toHaveTextContent("제공기록지 정보를 불러오지 못했습니다");
+    expect(headerCount()).toBe("—");
+    expect(countsNotice()).toBeNull();
+    expect(mockStatusCounts).not.toHaveBeenCalled();
+    expect(pills()).toHaveLength(8);
+    for (const pill of pills()) {
+      expect(pill.querySelector(".count")?.textContent).toBe("—");
+      expect(pill).not.toHaveTextContent(/\b0\b/);
+    }
+  });
+
+  it("failed template lookup preserves cached service-record counts", async () => {
+    queryClient.setQueryData(
+      ["eformsign-documents", "status-counts", "branch-1", "service-records", ""],
+      { documents: SIGNALS },
+    );
+    mockUseInfiniteContracts.mockReturnValue(listState(SUCCESS_ROWS()));
+    mockServiceRecordTemplateId.mockRejectedValue(new Error("network down"));
+    mountPage();
+    await settle();
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await settle();
+
+    expect(pills()[0].querySelector(".count")?.textContent).toBe("3");
+    expect(countsNotice()).toBeNull();
+    expect(listRows()).toHaveLength(2);
+  });
+
   it("never shows the list as empty when the 제공기록지 template lookup failed; retry refetches it", async () => {
     // Like the real hook: a disabled query has not run, so it is neither success nor error.
     mockUseInfiniteContracts.mockImplementation((options: { enabled?: boolean }) =>

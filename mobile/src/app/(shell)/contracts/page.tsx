@@ -2551,11 +2551,6 @@ export default function ContractsPage() {
     && (
       isDocumentsLoading
       || (!isDocumentsSuccess && !isDocumentsError)
-      || (
-        Boolean(branchId)
-        && !isStatusCountsSuccess
-        && !isStatusCountsError
-      )
     );
   const isContractsLoading =
     isAuthLoading ||
@@ -2566,7 +2561,8 @@ export default function ContractsPage() {
   const isStatusCountsPending =
     isAuthLoading ||
     (isAuthenticated && !isServiceRecordTemplateResolved) ||
-    isSectionQueryPending;
+    isSectionQueryPending ||
+    (isAuthenticated && sectionFilterReady && Boolean(branchId) && !isStatusCountsSuccess && !isStatusCountsError);
   // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
   // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지·템플릿 조회)는 행을
   // 그대로 두고 목록 위에 안내만 얹는다.
@@ -2589,7 +2585,7 @@ export default function ContractsPage() {
     if (isTemplateIdLoadFailed) void refetchServiceRecordTemplate();
     if (isDocumentsError) void (isLoadMoreError ? fetchNextPage() : refetchDocuments());
   };
-  const isStatusCountsUnavailable = isStatusCountsError && statusCountsData === undefined;
+  const isStatusCountsUnavailable = (isStatusCountsError || isTemplateIdLoadFailed) && statusCountsData === undefined;
   const isStatusCountsStale = isStatusCountsError && statusCountsData !== undefined;
   const { data: documentClientSummaries = [] } = useQuery({
     queryKey: ["eformsign-doc-client-names"],
@@ -2897,7 +2893,7 @@ export default function ContractsPage() {
             isLoadingMore={isFetchingNextPage}
             beforeScroll={activeSection === "automations" ? undefined : (
               <>
-                {isStatusCountsUnavailable || isStatusCountsStale ? (
+                {isStatusCountsError && (isStatusCountsUnavailable || isStatusCountsStale) && !isTemplateIdLoadFailed ? (
                   <QueryErrorState
                     dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_counts-error"
                     size="inline"
