@@ -10,6 +10,7 @@ export default function DashboardAnalyticsPage() {
   const {
     data: analytics,
     isLoading: analyticsLoading,
+    isPaused: analyticsPaused,
     isError: analyticsError,
     isFetching: analyticsFetching,
     refetch: refetchAnalytics,
@@ -17,6 +18,7 @@ export default function DashboardAnalyticsPage() {
   const {
     data: clientsPage,
     isLoading: clientsLoading,
+    isPaused: clientsPaused,
     isError: clientsError,
     isFetching: clientsFetching,
     refetch: refetchClients,
@@ -26,8 +28,8 @@ export default function DashboardAnalyticsPage() {
   const hasData = !isLoading && analytics && clientsPage;
 
   // Each card is masked only by the query that feeds it, and only while that query has no data.
-  const clientsPending = clientsLoading && !clientsPage;
-  const analyticsPending = analyticsLoading && !analytics;
+  const clientsPending = (clientsLoading || clientsPaused) && !clientsPage;
+  const analyticsPending = (analyticsLoading || analyticsPaused) && !analytics;
   // A failed count with nothing cached shows "—", never 0.
   const totalClients = clientsError && !clientsPage ? "—" : String(clientsPage?.total ?? 0);
   // Unknown counts (server stats unavailable) show "-", never 0.
@@ -40,9 +42,9 @@ export default function DashboardAnalyticsPage() {
 
   const cards: Array<[string, string, boolean]> = [
     [totalClients, "전체 고객", clientsPending],
-    [formatAnalyticsCount(analytics?.activeClients), "진행중", analyticsPending],
-    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작", analyticsPending],
-    [formatAnalyticsCount(pendingActions), "처리 필요", analyticsPending],
+    [formatAnalyticsCount(analytics?.activeClients), "진행중", analyticsPending || (analyticsError && !analytics)],
+    [formatAnalyticsCount(analytics?.upcomingWithinWeek), "7일 내 시작", analyticsPending || (analyticsError && !analytics)],
+    [formatAnalyticsCount(pendingActions), "처리 필요", analyticsPending || (analyticsError && !analytics)],
   ];
 
   return (
@@ -75,41 +77,40 @@ export default function DashboardAnalyticsPage() {
         {analyticsError && !analytics ? (
           <QueryErrorState
             dataComponent="mobile_dashboard_analytics-page_card_error"
-            size="panel"
+            size="inline"
             title="통계를 불러오지 못했습니다"
             isRetrying={analyticsFetching}
             onRetry={() => void refetchAnalytics()}
           />
-        ) : (
-          <div
-            className="stats-grid"
-            style={{ padding: "8px" }}
-            data-component="mobile_dashboard_analytics-page_card_grid"
-          >
-            {cards.map(([value, label, pending]) => (
-              <div
-                className="mini-stat"
-                data-component="mobile_dashboard_analytics-page_card_grid_stat"
-                key={label}
-              >
-                <div data-component="mobile_dashboard_analytics-page_card_grid_stat_content">
-                  <div
-                    className="mini-stat-num"
-                    data-component="mobile_dashboard_analytics-page_card_grid_stat_content_value"
-                  >
-                    {pending ? "—" : value}
-                  </div>
-                  <div
-                    className="mini-stat-label"
-                    data-component="mobile_dashboard_analytics-page_card_grid_stat_content_label"
-                  >
-                    {label}
-                  </div>
+        ) : null}
+        <div
+          className="stats-grid"
+          style={{ padding: "8px" }}
+          data-component="mobile_dashboard_analytics-page_card_grid"
+        >
+          {cards.map(([value, label, pending]) => (
+            <div
+              className="mini-stat"
+              data-component="mobile_dashboard_analytics-page_card_grid_stat"
+              key={label}
+            >
+              <div data-component="mobile_dashboard_analytics-page_card_grid_stat_content">
+                <div
+                  className="mini-stat-num"
+                  data-component="mobile_dashboard_analytics-page_card_grid_stat_content_value"
+                >
+                  {pending ? "—" : value}
+                </div>
+                <div
+                  className="mini-stat-label"
+                  data-component="mobile_dashboard_analytics-page_card_grid_stat_content_label"
+                >
+                  {label}
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
         {hasData && (
           <div
             className="action-feedback"
