@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-09",
+  "updated": "2026-10-12",
   "purpose": "Machine-readable inventory of BabyJamJam design-system components. Agents MUST consult this before any UI work and compose ONLY these components in pages. See docs/design-system/AGENT_UI_RULES.md.",
   "docs": {
     "rules": "docs/design-system/AGENT_UI_RULES.md",
@@ -1528,6 +1528,145 @@
         ],
         "requiredFor": [
           "Statistics period selection with URL-preserving navigation"
+        ]
+      },
+      {
+        "name": "ServiceRecordStepHeader",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceRecordStepHeader.tsx",
+        "exports": [
+          "ServiceRecordStepHeader"
+        ],
+        "replaces": [
+          "package .srec step header"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "OptionButtonGroup",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/OptionButtonGroup.tsx",
+        "exports": [
+          "OptionButtonGroup"
+        ],
+        "replaces": [
+          "package .opts option buttons"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "CountUnitField",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/CountUnitField.tsx",
+        "exports": [
+          "CountUnitField",
+          "CountUnitFieldRow"
+        ],
+        "replaces": [
+          "package .segrow count inputs"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "DayCardGrid",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/DayCardGrid.tsx",
+        "exports": [
+          "DayCardGrid",
+          "DayCard"
+        ],
+        "replaces": [
+          "package .days session cards"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "ReviewSection",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ReviewSection.tsx",
+        "exports": [
+          "ReviewSection",
+          "ReviewRow",
+          "ReviewRowGrid"
+        ],
+        "replaces": [
+          "package .review-* rows"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "StickyActionBar",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/StickyActionBar.tsx",
+        "exports": [
+          "StickyActionBar"
+        ],
+        "replaces": [
+          "page-local fixed footers"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "ServiceRecordItemLabel",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceRecordItemLabel.tsx",
+        "exports": [
+          "ServiceRecordItemLabel"
+        ],
+        "replaces": [
+          "package FieldLabelRow lab-msg"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "ReadOnlySignature",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ReadOnlySignature.tsx",
+        "exports": [
+          "ReadOnlySignature"
+        ],
+        "replaces": [
+          "package .admin-signature-image block"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
+        ]
+      },
+      {
+        "name": "ServiceDateDisplay",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceDateDisplay.tsx",
+        "exports": [
+          "ServiceDateDisplay"
+        ],
+        "replaces": [
+          "package .day-date service-date display"
+        ],
+        "requiredFor": [
+          "admin service-record editor"
         ]
       }
     ],
