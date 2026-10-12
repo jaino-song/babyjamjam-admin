@@ -171,6 +171,14 @@ export function useClientDetailController({
     enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
     staleTime: 1000 * 60,
   });
+  const linkConfirmationsQuery = useQuery({
+    queryKey: ["eformsign-docs", "link-confirmations", resolvedClientId],
+    queryFn: () => {
+      if (resolvedClientId === null) throw new Error("clientId is required");
+      return eformsignApi.getLinkConfirmations(resolvedClientId);
+    },
+    enabled: resolvedClientId !== null && detailSheetTab === "contracts",
+  });
 
   // The client detail response is the canonical contract projection. The
   // legacy eFormSign document is still passed through for field fallbacks,
@@ -273,6 +281,11 @@ export function useClientDetailController({
           data-component={dataComponent}
           client={localDetailClient}
           contractDocument={detailContractDocument ?? null}
+          linkConfirmations={linkConfirmationsQuery.data}
+          isLinkConfirmationsError={linkConfirmationsQuery.isError}
+          isLinkConfirmationsFetching={linkConfirmationsQuery.isFetching}
+          refetchLinkConfirmations={linkConfirmationsQuery.refetch}
+          onContractLinked={retryDetail}
           activeTab={detailSheetTab}
           notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
           hasMoreNotificationLogs={hasMoreNotificationLogs}

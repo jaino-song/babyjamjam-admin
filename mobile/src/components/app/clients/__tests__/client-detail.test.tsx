@@ -122,7 +122,7 @@ jest.mock("../ServiceScheduleChangeModal", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }) },
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }), getLinkConfirmations: jest.fn().mockResolvedValue([]) },
 }));
 
 const client: Client = {

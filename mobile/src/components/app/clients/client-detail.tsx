@@ -22,7 +22,8 @@ import {
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
-import { eformsignApi } from "@/services/api";
+import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -69,6 +70,8 @@ import {
 import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+
+import { ContractLinkConfirmSheet } from "./contract-link-confirm-sheet";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -627,6 +630,11 @@ export function ClientDetailContent({
   "data-component": dataComponent,
   client,
   contractDocument,
+  linkConfirmations,
+  isLinkConfirmationsError = false,
+  isLinkConfirmationsFetching = false,
+  refetchLinkConfirmations,
+  onContractLinked,
   activeTab,
   notificationLogs = [],
   hasMoreNotificationLogs = false,
@@ -645,6 +653,11 @@ export function ClientDetailContent({
   "data-component": string;
   client: Client;
   contractDocument?: EformsignDocument | null;
+  linkConfirmations?: EformsignLinkConfirmation[];
+  isLinkConfirmationsError?: boolean;
+  isLinkConfirmationsFetching?: boolean;
+  refetchLinkConfirmations?: () => Promise<{ data?: EformsignLinkConfirmation[]; isError?: boolean }>;
+  onContractLinked?: () => void;
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
   /** The server holds older records than `notificationLogs`; say so instead of presenting a complete history. */
@@ -665,6 +678,8 @@ export function ClientDetailContent({
   // Keyed selection so the open message-detail auto-resets when the tab or client changes
   // (derive-during-render — avoids a setState-in-effect).
   const detailKey = `${activeTab}:${client.id}`;
+  const [selectedConfirmation, setSelectedConfirmation] = useState<{ key: string; entry: EformsignLinkConfirmation } | null>(null);
+  const confirmationEntry = selectedConfirmation?.key === detailKey ? selectedConfirmation.entry : null;
   const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
   const selectedLog = selectedEntry && selectedEntry.key === detailKey ? selectedEntry.log : null;
   const serviceRecordsQuery = useClientServiceRecords(client.id, {
@@ -1352,6 +1367,41 @@ export function ClientDetailContent({
       </MobileDetailTabPanel>
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_contracts`} name="clients" tabId="contracts" activeTab={activeTab}>
+        {isLinkConfirmationsError ? (
+          <QueryErrorState
+            dataComponent={`${dataComponent}_tab-panel_contracts_link-confirmations-error`}
+            size="inline"
+            title={linkConfirmations === undefined ? "연결 확인이 필요한 계약서를 불러오지 못했습니다" : "최신 정보를 불러오지 못했습니다"}
+            isRetrying={isLinkConfirmationsFetching}
+            onRetry={() => { void refetchLinkConfirmations?.(); }}
+          />
+        ) : null}
+        {linkConfirmations && linkConfirmations.length > 0 ? (
+          <InfoCard data-component={`${dataComponent}_tab-panel_contracts_link-confirmations`} title={`확인 필요 계약서 ${linkConfirmations.length}건`}>
+            {linkConfirmations.map((entry, index) => (
+              <DetailDocRow
+                key={entry.documentId}
+                data-component={`${dataComponent}_tab-panel_contracts_link-confirmations_doc-${index}`}
+                icon={<FileCheck2 size={16} strokeWidth={2.5} />}
+                title={entry.documentName || "계약서"}
+                badge="연결 확인 필요"
+                tone="orange"
+                meta={<>
+                  <span>{entry.differences.map(field => field === "name" ? "이름이 다릅니다" : "생년월일이 다릅니다").join(" · ")}</span>
+                  {entry.canConfirm ? <Button size="sm" variant="v3-outline" data-component={`${dataComponent}_tab-panel_contracts_link-confirmations_doc-${index}_info_meta_confirm`}
+                    onClick={() => setSelectedConfirmation({ key: detailKey, entry })}>확인</Button>
+                    : <span>지점 관리자만 연결을 확정할 수 있습니다</span>}
+                </>}
+              />
+            ))}
+          </InfoCard>
+        ) : null}
+        {confirmationEntry && refetchLinkConfirmations ? (
+          <ContractLinkConfirmSheet key={`${client.id}:${confirmationEntry.documentId}`}
+            data-component={`${dataComponent}_tab-panel_contracts_link-confirm-sheet`}
+            entry={confirmationEntry} refetchConfirmations={refetchLinkConfirmations}
+            onClose={() => setSelectedConfirmation(null)} onConfirmed={onContractLinked} />
+        ) : null}
         {hasContractDocument ? (
           <>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_contract-card`} title="계약서">
@@ -1376,7 +1426,7 @@ export function ClientDetailContent({
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
           </>
-        ) : (
+        ) : linkConfirmations?.length ? null : (
           <InfoCard data-component={`${dataComponent}_tab-panel_contracts_contract-card`} title="계약서">
             <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_contracts_contract-card_empty`} data-slot="detail-empty-state">
               계약서 정보가 없습니다.

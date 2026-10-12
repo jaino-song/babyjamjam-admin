@@ -26,6 +26,18 @@ import type {
 import type { RegisterRequest } from "@babyjamjam/shared";
 import { isAxiosError } from "axios";
 
+export interface EformsignLinkConfirmation {
+    documentId: string;
+    documentName: string | null;
+    statusType: string;
+    statusDetail: string;
+    createdDate: string;
+    document: { name: string | null; phone: string; birthday: string | null };
+    client: { id: number; name: string; phone: string | null; birthday: string | null };
+    differences: Array<"name" | "birthday">;
+    canConfirm: boolean;
+}
+
 export interface ContractDataDto {
   customerName: string;
   customerContact: string;
@@ -316,6 +328,10 @@ export const authApi = {
 // eformsign APIs
 // Note: axios client baseURL is '/api', so paths here should NOT include '/api/' prefix
 export const eformsignApi = {
+    getLinkConfirmations: async (clientId: number): Promise<EformsignLinkConfirmation[]> => {
+        const { data } = await api.get('/eformsign-docs/link-confirmations', { params: { clientId } });
+        return data;
+    },
     generateSignature: async (executionTime: number) => {
         const { data } = await api.post('/generate-signature', { executionTime });
         return data;

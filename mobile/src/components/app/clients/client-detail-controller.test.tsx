@@ -77,7 +77,7 @@ jest.mock("@/components/app/clients/client-detail", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn() },
+  eformsignApi: { getDocument: jest.fn(), getLinkConfirmations: jest.fn().mockResolvedValue([]) },
 }));
 
 const mockedFetchClient = jest.mocked(fetchClient);
@@ -250,6 +250,25 @@ describe("useClientDetailController", () => {
     });
     expect(getDocument).toHaveBeenCalledTimes(calls);
     expect(result.current.detailClient?.id).toBe(1);
+  });
+
+  it.each([
+    ["a 500", { response: { status: 500 } }, 4],
+    ["a 404", { response: { status: 404 } }, 1],
+  ])("loads link confirmations for the contracts tab with the shared retry policy: %s", async (_name, error, calls) => {
+    const getLinkConfirmations = jest.mocked(eformsignApi.getLinkConfirmations);
+    getLinkConfirmations.mockClear().mockRejectedValue(error);
+    const { result } = renderHook(
+      () => useClientDetailController({ client: makeClient(7), dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createAppPolicyWrapper() },
+    );
+    expect(getLinkConfirmations).not.toHaveBeenCalled();
+    act(() => result.current.setDetailSheetTab("contracts"));
+    await waitFor(() => expect(getLinkConfirmations).toHaveBeenCalledTimes(calls));
+    expect(getLinkConfirmations).toHaveBeenCalledWith(7);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    expect(getLinkConfirmations).toHaveBeenCalledTimes(calls);
+    getLinkConfirmations.mockResolvedValue([]);
   });
 
   it("preserves the selected tab when a same-client fresh response completes", async () => {
