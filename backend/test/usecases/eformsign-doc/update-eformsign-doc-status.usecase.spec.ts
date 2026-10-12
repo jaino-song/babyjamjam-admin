@@ -248,9 +248,26 @@ describe("UpdateEformsignDocStatusUsecase", () => {
                 updateStepRecipient: false,
                 updateDocumentNumber: false,
                 updateExpiredDate: false,
+                updateOwnershipIdentity: false,
             },
         );
     });
+
+    it.each([undefined, new Date("2026-05-03T00:00:00.000Z")])(
+        "withholds ownership/identity on an actionOnly write (timestamp=%s)", async (sourceUpdatedDate) => {
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
+            await usecase.execute(branchId, {
+                documentId, statusType: "060", statusDetail: "서명 페이지 열림",
+                actionOnly: true, sourceUpdatedDate,
+            });
+            const writer = sourceUpdatedDate
+                ? eformsignDocRepository.updateIfSourceNewer
+                : eformsignDocRepository.updateWithOutcome;
+            expect(writer).toHaveBeenCalledWith(branchId, expect.any(EformsignDocEntity), expect.objectContaining({
+                updateOwnershipIdentity: false, expectedStatusType: "060",
+            }));
+        },
+    );
 
     it("writes the step fields the caller supplies and withholds only the ones it never sets", async () => {
         const sourceUpdatedDate = new Date("2026-05-03T00:00:00.000Z");
@@ -276,6 +293,7 @@ describe("UpdateEformsignDocStatusUsecase", () => {
                 updateStepRecipient: false,
                 updateDocumentNumber: false,
                 updateExpiredDate: false,
+                updateOwnershipIdentity: false,
             },
         );
     });

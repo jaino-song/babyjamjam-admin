@@ -6,7 +6,7 @@ import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
 import { extractEformsignContractClientCandidate } from "application/utils/eformsign-contract-client-candidate";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
+import { EFORMSIGN_DOC_REPOSITORY, EformsignDocOwnershipConflictError, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
@@ -66,6 +66,7 @@ export class AdoptEformsignDocUsecase {
                 const result = await this.createEformsignDocUsecase.execute(branchId, {
                     documentId: remote.id || params.documentId,
                     clientId,
+                    ...(params.clientId === undefined ? { expectedOwnerClientId: clientId } : {}),
                     statusType: normalizeEformsignStatusCode(remote.current_status.status_type),
                     statusDetail: remote.current_status.status_doc_detail || remote.current_status.step_name || "진행중",
                     stepType: remote.current_status.step_type || "01",
@@ -93,6 +94,11 @@ export class AdoptEformsignDocUsecase {
                     stepRecipientTypes: remote.current_status.step_recipients
                         ?.map((item) => item.recipient_type)
                         ?? null,
+                }).catch((error: unknown) => {
+                    if (params.clientId === undefined && error instanceof EformsignDocOwnershipConflictError) {
+                        throw new Error("clientId가 필요합니다.");
+                    }
+                    throw error;
                 });
 
                 try {

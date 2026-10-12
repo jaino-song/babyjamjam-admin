@@ -1,5 +1,6 @@
 import { CreateEformsignDocParams, CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
 import { ClientEntity } from "domain/entities/client.entity";
+import { EformsignDocOwnershipConflictError } from "domain/repositories/eformsign-doc.repository.interface";
 import { EFORMSIGN_DOCUMENT_KIND, EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
@@ -224,6 +225,47 @@ describe("CreateEformsignDocUsecase", () => {
 
         expect(result.clientId).toBe(7);
         expect(clientRepository.update).toHaveBeenCalledWith(branchId, client);
+    });
+
+    it.each([true, false])("threads the inferred owner expectation (preserveProjection=%s)", async (preserveExistingMirrorProjection) => {
+        clientRepository.findById.mockResolvedValue(createClient(7, "01012345678"));
+
+        await usecase.execute(branchId, createParams({
+            preserveExistingMirrorProjection,
+            expectedOwnerClientId: 7,
+        }));
+
+        expect(eformsignDocRepository.upsertByDocumentId).toHaveBeenCalledWith(
+            branchId,
+            expect.objectContaining({ clientId: 7 }),
+            {
+                ...(preserveExistingMirrorProjection ? { preserveExistingMirrorProjection: true } : {}),
+                expectedOwnerClientId: 7,
+            },
+        );
+    });
+
+    it.each([undefined, "version-1"])("propagates ownership conflict before any client pointer write (version=%s)", async (clientTargetVersion) => {
+        const client = createClient(7, "01012345678");
+        clientRepository.findById.mockResolvedValue(client);
+        const conflict = new EformsignDocOwnershipConflictError(documentId);
+        eformsignDocRepository.upsertByDocumentId.mockRejectedValueOnce(conflict);
+        const updateIfTargetVersion = jest.fn();
+        const fencedUsecase = new CreateEformsignDocUsecase(
+            eformsignDocRepository as never,
+            { ...clientRepository, updateIfTargetVersion } as never,
+            createHolidayCalendarStub(),
+        );
+
+        await expect(fencedUsecase.execute(branchId, createParams({
+            preserveExistingMirrorProjection: true,
+            expectedOwnerClientId: 7,
+            clientTargetVersion,
+        }))).rejects.toBe(conflict);
+
+        expect(client.eDocId).toBeNull();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(updateIfTargetVersion).not.toHaveBeenCalled();
     });
 
     it("stores service-record snapshot linkage without updating the client contract pointer", async () => {
