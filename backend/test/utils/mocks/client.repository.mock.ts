@@ -1,6 +1,7 @@
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     AutomaticServiceStatusUpdateResult,
+    ClientPhoneMatch,
     ClientWithInitialSchedule,
     ClientListSummary,
     ClientListTab,
@@ -57,6 +58,13 @@ export class MockClientRepository implements IClientRepository {
 
     async findById(_branchid: string, id: number): Promise<ClientEntity | null> {
         return this.clients.get(id) ?? null;
+    }
+
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
+        return Array.from(this.clients.values())
+            .filter(client => client.branchId === branchId
+                && phoneSuffixes.some(suffix => client.phone?.endsWith(suffix)))
+            .map(({ id, branchId, name, phone, birthday }) => ({ id, branchId, name, phone, birthday }));
     }
 
     async findByIdForUpdate(

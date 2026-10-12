@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
 import {
     FindEformsignDocByIdUsecase,
     FindEformsignDocByDocumentIdUsecase,
@@ -137,6 +138,7 @@ import { HolidayModule } from "./holiday.module";
         LinkDocumentToClientUsecase,
         ListClientNamesByBranchUsecase,
         ListReviewStageContractsUsecase,
+        ListEformsignLinkConfirmationsUsecase,
         FindClientByIdUsecase,
         SyncClientEndDateUsecase,
         // Use cases - External API

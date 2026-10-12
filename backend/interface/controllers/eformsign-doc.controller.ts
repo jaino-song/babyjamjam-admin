@@ -27,6 +27,7 @@ import { EformsignHeadlessProgressService } from "application/services/eformsign
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { ListClientNamesByBranchUsecase } from "application/usecases/eformsign-doc/list-client-names-by-branch.usecase";
 import { ListReviewStageContractsUsecase } from "application/usecases/eformsign-doc/list-review-stage-contracts.usecase";
+import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
 import { DispatchDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/dispatch-document-headless.usecase";
 import { FinalizeDocumentHeadlessUsecase } from "application/usecases/eformsign-doc/finalize-document-headless.usecase";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
@@ -43,6 +44,7 @@ import {
     EformsignDispatchIntentResponseDto,
     AdoptEformsignDocDto,
     ReviewNeededContractDto,
+    EformsignLinkConfirmationDto,
 } from "interface/dto/eformsign-doc.dto";
 import {
     CreateEformsignDocumentJobDto,
@@ -78,6 +80,7 @@ export class EformsignDocController {
         private readonly headlessProgressService: EformsignHeadlessProgressService,
         private readonly configService: ConfigService,
         private readonly documentJobService: EformsignDocumentJobService,
+        private readonly listEformsignLinkConfirmationsUsecase: ListEformsignLinkConfirmationsUsecase,
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
     ) {}
 
@@ -123,6 +126,23 @@ export class EformsignDocController {
                 autoFinalizeLastAttemptAt:
                     contract.autoFinalizeLastAttemptAt?.toISOString() ?? null,
             }));
+    }
+
+    @Get("link-confirmations")
+    async listLinkConfirmations(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Query("clientId") clientId?: string,
+    ): Promise<EformsignLinkConfirmationDto[]> {
+        const parsedClientId = clientId === undefined ? undefined : parseInteger(clientId, "clientId", { min: 1 });
+        let canConfirm = true;
+        try {
+            assertEformsignProviderCapability(tenant, "contract.adopt");
+        } catch (error) {
+            if (!(error instanceof ForbiddenException)) throw error;
+            canConfirm = false;
+        }
+        const confirmations = await this.listEformsignLinkConfirmationsUsecase.execute(tenant.branchId ?? "", parsedClientId);
+        return confirmations.map(confirmation => ({ ...confirmation, canConfirm }));
     }
 
     /**

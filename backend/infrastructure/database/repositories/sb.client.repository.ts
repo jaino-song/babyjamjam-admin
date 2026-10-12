@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     ClientWithInitialSchedule,
+    ClientPhoneMatch,
     AutomaticServiceStatusUpdateResult,
     IClientRepository,
     InitialClientSchedule,
@@ -866,6 +867,17 @@ export class SbClientRepository implements IClientRepository {
             );
         }
         return needingSend.map((client) => ClientMapper.toDomain(client as any));
+    }
+
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
+        if (phoneSuffixes.length === 0) return [];
+        return this.prismaService.client.findMany({
+            where: {
+                branchId,
+                OR: [...new Set(phoneSuffixes)].map(suffix => ({ phone: { endsWith: suffix } })),
+            },
+            select: { id: true, branchId: true, name: true, phone: true, birthday: true },
+        });
     }
 
     async findByPhone(branchid: string, normalizedPhone: string): Promise<ClientEntity | null> {
