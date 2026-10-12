@@ -138,6 +138,37 @@ describe("mobile consultations page", () => {
     expect(screen.queryByText("상담 문의가 없습니다.")).not.toBeInTheDocument();
   });
 
+  it("shows the loading text, not the empty text, with unknown counts while the load is paused offline", () => {
+    // react-query state for a query started offline: pending but paused, so isLoading is false.
+    mockUseConsultationInquiries.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPaused: true,
+      status: "pending",
+      fetchStatus: "paused",
+    });
+    const { container } = render(<ConsultationsPage />);
+    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.queryByText("상담 문의가 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]')).map((el) => el.textContent)).toEqual(["—", "—", "—", "—"]);
+    expect(screen.getByTestId("title-count")).toHaveTextContent("—");
+    expect(screen.getByTestId("pills")).toHaveTextContent("전체:—미확인:—확인:—");
+  });
+
+  it("keeps the cached list when a refetch is paused offline", () => {
+    mockUseConsultationInquiries.mockReturnValue({
+      data: { data: [inquiry], total: 1, page: 1, limit: 100, totalPages: 1 },
+      isLoading: false, isError: false, isFetching: false, isPaused: true, fetchStatus: "paused",
+    });
+    render(<ConsultationsPage />);
+    expect(screen.getByRole("button", { name: "김상담" })).toBeInTheDocument();
+    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+  });
+
   it("renders the consultation stats in the canonical order", () => {
     const { container } = render(<ConsultationsPage />);
     const labels = Array.from(container.querySelectorAll('[data-slot="stat-mini-label"]'))

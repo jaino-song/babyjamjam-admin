@@ -57,11 +57,13 @@ export default function AllMenuPage() {
   const employees = safeArrayPayload(employeesQuery.data);
   const messageTemplates = safeArrayPayload(messageTemplatesQuery.data);
   const unreadConsultationCount = unreadCountQuery.data?.total;
-  const isClientsInitialLoading = clientsQuery.isLoading && clientsQuery.data === undefined;
+  // A load paused offline has no data and is not "loading" to react-query, but it is no more a known
+  // zero than a running one: both read as loading until a load has actually succeeded.
+  const isClientsInitialLoading = (clientsQuery.isLoading || clientsQuery.isPaused) && clientsQuery.data === undefined;
   // No employee value to show: nothing is cached (loading, failed, or a retry paused offline).
   // Judged from the data alone, so an unknown count is never printed as "0명".
   const isEmployeesValueUnavailable = employeesQuery.data === undefined;
-  const isMessageTemplatesInitialLoading = messageTemplatesQuery.isLoading && messageTemplatesQuery.data === undefined;
+  const isMessageTemplatesInitialLoading = (messageTemplatesQuery.isLoading || messageTemplatesQuery.isPaused) && messageTemplatesQuery.data === undefined;
   const isUnreadInitialLoading = unreadCountQuery.isLoading && unreadCountQuery.data === undefined;
   const employeesNormalizedError = employeesQuery.error
     ? normalizeApiError(employeesQuery.error, { operation: "read", locale: "ko-KR" })

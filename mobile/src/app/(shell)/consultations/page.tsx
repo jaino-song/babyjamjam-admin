@@ -310,8 +310,11 @@ export default function ConsultationsPage() {
   const [activeTab, setActiveTab] = useState<DetailTabId>("info");
   const [statsReferenceTime] = useState(() => Date.now());
 
-  const { data, isLoading, isError, refetch, isFetching } = useConsultationInquiries({ limit: 100 });
+  const { data, isLoading, isError, isPaused, refetch, isFetching } = useConsultationInquiries({ limit: 100 });
   const hasData = data !== undefined;
+  // A load paused offline with nothing cached is still loading, not an empty list. `isLoading`
+  // stays the stats' own flag, so the counts read "—" while paused.
+  const isListLoading = isLoading || (isPaused && !hasData);
   const markRead = useMarkConsultationInquiryAsRead();
 
   const rows = useMemo<ConsultationRow[]>(
@@ -461,7 +464,7 @@ export default function ConsultationsPage() {
                   isRetrying={isFetching}
                 />
               )}
-              {isLoading ? (
+              {isListLoading ? (
                 <div
                   style={{
                     padding: "32px 16px",

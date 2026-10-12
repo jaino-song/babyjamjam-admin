@@ -81,8 +81,9 @@ export default function CallsPage() {
   // coming before the next page has arrived. Never below what is already
   // loaded, or a shrinking total would strand rows the user can see.
   const serverTotal = isQueue ? draftsQuery.total : recordsQuery.total;
-  const isLoadingActive = isQueue ? draftsQuery.isLoading : recordsQuery.isLoading;
   const activeQuery = isQueue ? draftsQuery : recordsQuery;
+  // A load paused offline with nothing cached is still loading: not an empty list.
+  const isLoadingActive = activeQuery.isLoading || (activeQuery.isPaused && activeQuery.data === undefined);
   const hasData = activeQuery.data !== undefined || loadedCount > 0;
   const isErrorActive = isQueue ? draftsQuery.isError : recordsQuery.isError;
   const hasNextPage = isQueue ? draftsQuery.hasNextPage : recordsQuery.hasNextPage;
