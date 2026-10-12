@@ -42,7 +42,7 @@ export class RateLimitGuard implements CanActivate, OnModuleDestroy {
     // shared office IP must not exhaust a 5-request budget. Still throttles credential stuffing,
     // which needs orders of magnitude more than this per window.
     private readonly maxAttemptsPerIp = 100;
-    private readonly windowMs = 15 * 60 * 1000;
+    private readonly windowMs = 5 * 60 * 1000;
     private readonly cleanupProbability = 0.01;
     private readonly redis: Redis | null;
 

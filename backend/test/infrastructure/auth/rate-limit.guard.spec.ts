@@ -1,8 +1,11 @@
 import { HttpException, HttpStatus, ServiceUnavailableException } from "@nestjs/common";
 import { ExecutionContext } from "@nestjs/common/interfaces";
 import { Request } from "express";
+import Redis from "ioredis";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { PrismaService } from "infrastructure/database/prisma.service";
+
+jest.mock("ioredis", () => jest.fn());
 
 type MockRequest = {
     body: { email?: string };
@@ -12,11 +15,14 @@ type MockRequest = {
     query?: { email?: string | string[] };
 };
 
-const createExecutionContext = (request: MockRequest): ExecutionContext => ({
+const createExecutionContext = (
+    request: MockRequest,
+    response?: { setHeader: jest.Mock },
+): ExecutionContext => ({
     getHandler: () => ({ login() {} }).login,
     switchToHttp: () => ({
         getRequest: () => ({ method: "POST", ...request }) as Request,
-        getResponse: () => undefined,
+        getResponse: () => response,
         getNext: () => undefined,
     }),
 }) as unknown as ExecutionContext;
@@ -31,12 +37,94 @@ describe("RateLimitGuard", () => {
         $executeRaw: jest.fn(),
     };
     let guard: RateLimitGuard;
+    const originalValkeyUrl = process.env["VALKEY_URL"];
 
     beforeEach(() => {
         jest.clearAllMocks();
+        delete process.env["VALKEY_URL"];
         prisma.$queryRaw.mockResolvedValue(row(1));
         prisma.$executeRaw.mockResolvedValue(1);
         guard = new RateLimitGuard(prisma as unknown as PrismaService);
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
+        jest.restoreAllMocks();
+        if (originalValkeyUrl === undefined) {
+            delete process.env["VALKEY_URL"];
+        } else {
+            process.env["VALKEY_URL"] = originalValkeyUrl;
+        }
+    });
+
+    it("should bind a five-minute window floor into both PostgreSQL upsert predicates", async () => {
+        const now = new Date("2026-10-12T12:00:00.000Z");
+        jest.useFakeTimers().setSystemTime(now);
+        prisma.$queryRaw.mockResolvedValue(row(1, now));
+
+        await expect(guard.canActivate(createExecutionContext({
+            ip: "198.51.100.10",
+            body: { email: "user@example.com" },
+        }))).resolves.toBe(true);
+
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
+        for (const [query] of prisma.$queryRaw.mock.calls) {
+            expect(query.values.slice(1)).toEqual([
+                new Date(now.getTime() - 300_000),
+                new Date(now.getTime() - 300_000),
+            ]);
+        }
+    });
+
+    it.each([5, 6])("should allow identity count 5 and reject count 6 (count %i)", async (count) => {
+        const now = new Date("2026-10-12T12:00:00.000Z");
+        jest.useFakeTimers().setSystemTime(now);
+        prisma.$queryRaw
+            .mockResolvedValueOnce(row(count, now))
+            .mockResolvedValueOnce(row(1, now));
+        const response = { setHeader: jest.fn() };
+        const attempt = guard.canActivate(createExecutionContext({
+            ip: "198.51.100.10",
+            body: { email: "user@example.com" },
+        }, response));
+
+        if (count === 5) {
+            await expect(attempt).resolves.toBe(true);
+            expect(response.setHeader).not.toHaveBeenCalledWith("Retry-After", expect.anything());
+        } else {
+            await expect(attempt).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+            expect(response.setHeader).toHaveBeenCalledWith("Retry-After", "300");
+        }
+        expect(response.setHeader).toHaveBeenCalledWith("RateLimit-Limit", "5");
+        expect(response.setHeader).toHaveBeenCalledWith("RateLimit-Remaining", "0");
+        expect(response.setHeader).toHaveBeenCalledWith("RateLimit-Reset", "300");
+    });
+
+    it("should pass a five-minute expiry to the Valkey increment script", async () => {
+        const redis = {
+            status: "ready",
+            eval: jest.fn().mockResolvedValue([1, 300_000]),
+            disconnect: jest.fn(),
+        };
+        jest.mocked(Redis).mockImplementation(() => redis as unknown as Redis);
+        process.env["VALKEY_URL"] = "redis://127.0.0.1:6379";
+        guard = new RateLimitGuard(prisma as unknown as PrismaService);
+
+        await expect(guard.canActivate(createExecutionContext({
+            ip: "198.51.100.10",
+            body: { email: "user@example.com" },
+        }))).resolves.toBe(true);
+
+        expect(redis.eval).toHaveBeenCalledTimes(2);
+        for (const [script, keyCount, key, expiry] of redis.eval.mock.calls) {
+            expect(script).toContain('redis.call("PEXPIRE", KEYS[1], ARGV[1])');
+            expect(keyCount).toBe(1);
+            expect(key).toMatch(/^auth:rate-limit:[a-f0-9]{64}$/);
+            expect(expiry).toBe(300_000);
+        }
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        await guard.onModuleDestroy();
+        expect(redis.disconnect).toHaveBeenCalledTimes(1);
     });
 
     it("should atomically enforce both per-identity and per-IP counters without storing email PII", async () => {
@@ -98,7 +186,27 @@ describe("RateLimitGuard", () => {
         expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
     });
 
-    it("should allow a rolled-over window and encode the atomic reset predicate in SQL", async () => {
+    it.each([100, 101])("should enforce the unchanged IP-only ceiling (count %i)", async (count) => {
+        const now = new Date("2026-10-12T12:00:00.000Z");
+        jest.useFakeTimers().setSystemTime(now);
+        prisma.$queryRaw.mockResolvedValue(row(count, now));
+        const response = { setHeader: jest.fn() };
+        const attempt = guard.canActivate(createExecutionContext({
+            ip: "198.51.100.10",
+            body: {},
+        }, response));
+
+        if (count === 100) {
+            await expect(attempt).resolves.toBe(true);
+        } else {
+            await expect(attempt).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+        }
+        expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(response.setHeader).toHaveBeenCalledWith("RateLimit-Limit", "100");
+        expect(response.setHeader).toHaveBeenCalledWith("RateLimit-Reset", "300");
+    });
+
+    it("should encode the atomic window reset predicate in SQL", async () => {
         prisma.$queryRaw.mockResolvedValue(row(1, new Date()));
 
         await expect(guard.canActivate(createExecutionContext({
