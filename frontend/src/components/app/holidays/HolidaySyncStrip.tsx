@@ -9,7 +9,8 @@ const SOURCE_COMPONENT = "HolidaySyncStrip";
 const DEFAULT_DATA_COMPONENT = "desktop_settings_sections_holidays_sync-strip";
 
 interface HolidaySyncStripProps {
-  synced: boolean;
+  /** `undefined` = the year's sync state is not known (no data yet): the status sentence is not rendered. */
+  synced?: boolean;
   lastSyncedAt: string | null;
   pending: boolean;
   disabled?: boolean;
@@ -39,11 +40,13 @@ export function HolidaySyncStrip({
       className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-v3-dim-white px-4 py-3.5"
     >
       <div data-component={`${dataComponent}_info`} className="grid min-w-0 gap-1">
-        <p data-slot="holiday-sync-status" className="text-sm font-semibold text-v3-dark">
-          {synced
-            ? `마지막 동기화 ${lastSyncedLabel}`.trim()
-            : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
-        </p>
+        {synced === undefined ? null : (
+          <p data-slot="holiday-sync-status" className="text-sm font-semibold text-v3-dark">
+            {synced
+              ? `마지막 동기화 ${lastSyncedLabel}`.trim()
+              : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
+          </p>
+        )}
         <p className="text-xs text-v3-text-muted">
           매일 새벽 4시에 한국천문연구원 특일 정보에서 받아와요.
         </p>
