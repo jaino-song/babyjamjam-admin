@@ -916,10 +916,12 @@ describe("TriggerRulesManager", () => {
 
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
     fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
-    fireEvent.click(screen.getByLabelText("발송 템플릿"));
 
+    // No picker is offered for a catalog that has not loaded (the loading wording stands in).
+    expect(screen.queryByLabelText("발송 템플릿")).not.toBeInTheDocument();
     expect(screen.queryAllByRole("option")).toHaveLength(0);
     expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
+    expect(screen.getByText("템플릿 정보를 불러오는 중이에요.")).toBeInTheDocument();
   });
 
   it("shows the client registration greeting condition on the existing CLIENT_GREETING rule", () => {
@@ -2103,6 +2105,303 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
 
       expect(screen.getAllByText("고객 자동 등록 설정을 불러오는 중이에요.").length).toBeGreaterThan(0);
       expect(screen.queryByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("template catalog", () => {
+    const NO_REQUIREMENTS_TEXT = "이 템플릿은 추가 정보 없이 발송할 수 있습니다.";
+    const CATALOG_ERROR_TITLE = "템플릿 정보를 불러오지 못했습니다";
+    const CATALOG_LOADING_TEXT = "템플릿 정보를 불러오는 중이에요.";
+    const SERVICE_INFO_TEMPLATE = {
+      key: "SERVICE_INFO",
+      name: "서비스 안내",
+      description: "서비스 시작 전에 안내합니다.",
+      allowedEventTypes: ["SERVICE_START"],
+      allowedRecipientTypes: ["CLIENT"],
+      requiredVariables: [] as Array<{ key: string; label: string }>,
+      providers: { sms: { templateKey: "SERVICE_INFO" } },
+    };
+
+    function mockCatalog(result: Record<string, unknown>) {
+      mockedUseMessageTriggerTemplates.mockReturnValue(
+        result as unknown as ReturnType<typeof useMessageTriggerTemplates>,
+      );
+    }
+
+    function openExistingRuleAndEdit() {
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "바뀐 이름" } });
+    }
+
+    beforeEach(() => {
+      mockSettingsQueries({ senderApproved: true });
+    });
+
+    it("failed with no data: inline alert whose retry refetches the catalog, no requirements claim, save closed", () => {
+      const refetch = jest.fn();
+      mockCatalog({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        status: "error",
+        fetchStatus: "idle",
+        refetch,
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      const alert = screen.getByRole("alert");
+      expect(within(alert).getByText(CATALOG_ERROR_TITLE)).toBeInTheDocument();
+      expect(alert).toHaveAttribute("data-component", `${DC}_trigger-rules-template-catalog-error`);
+      expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText("필수 자동 입력 정보")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("발송 템플릿")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+      // Rule rows do not depend on the catalog.
+      expect(screen.getByRole("switch", { name: `${RULE_NAME} 활성화` })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "삭제" })).toBeEnabled();
+
+      fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("paused with no data: loading wording, no alert, no requirements claim, save closed", () => {
+      mockCatalog({ ...PAUSED_QUERY_RESULT, refetch: jest.fn() });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      expect(screen.getByText(CATALOG_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(CATALOG_ERROR_TITLE)).not.toBeInTheDocument();
+      expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("발송 템플릿")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+      expect(screen.getByRole("switch", { name: `${RULE_NAME} 활성화` })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "삭제" })).toBeEnabled();
+    });
+
+    it("loading with no data reads like paused: loading wording, save closed", () => {
+      mockCatalog({
+        data: undefined,
+        isLoading: true,
+        isError: false,
+        isFetching: true,
+        isPaused: false,
+        status: "pending",
+        fetchStatus: "fetching",
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      expect(screen.getByText(CATALOG_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    });
+
+    it("a loaded catalog whose template has no requirements says so and keeps save open", () => {
+      mockCatalog({
+        data: [SERVICE_INFO_TEMPLATE],
+        isLoading: false,
+        isError: false,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      expect(screen.getAllByText(NO_REQUIREMENTS_TEXT).length).toBeGreaterThan(0);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(CATALOG_LOADING_TEXT)).not.toBeInTheDocument();
+      expect(screen.getByLabelText("발송 템플릿")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    });
+
+    it("a loaded catalog whose template has requirements renders them", () => {
+      mockCatalog({
+        data: [{
+          ...SERVICE_INFO_TEMPLATE,
+          requiredVariables: [{ key: "name", label: "산모님 성함" }],
+        }],
+        isLoading: false,
+        isError: false,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      expect(screen.getByText("산모님 성함")).toBeInTheDocument();
+      expect(screen.getByText(/고객 정보에서 자동으로 입력/)).toBeInTheDocument();
+      expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    });
+
+    it("cached catalog data with a failed refetch keeps the editor exactly as loaded", () => {
+      mockCatalog({
+        data: [SERVICE_INFO_TEMPLATE],
+        isLoading: false,
+        isError: true,
+        isFetching: false,
+        isPaused: false,
+        refetch: jest.fn(),
+      });
+
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openExistingRuleAndEdit();
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getAllByText(NO_REQUIREMENTS_TEXT).length).toBeGreaterThan(0);
+      expect(screen.getByLabelText("발송 템플릿")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    });
+  });
+
+  describe("editing handlers refuse an unknown approval (called without the disabled DOM control)", () => {
+    // The disabled controls swallow DOM clicks, so a DOM click cannot tell a guarded handler from an
+    // unguarded one. These tests call the control's own React onClick prop, which is the handler the
+    // component wired in; React's disabled filter sits in front of it and is bypassed here.
+    function reactPropsOf(element: Element): { onClick: (event: unknown) => void } {
+      const key = Object.keys(element).find((name) => name.startsWith("__reactProps$"));
+      if (!key) throw new Error("element has no React props");
+      return (element as unknown as Record<string, { onClick: (event: unknown) => void }>)[key];
+    }
+
+    function callHandler(element: HTMLElement) {
+      const event = {
+        defaultPrevented: false,
+        preventDefault: () => undefined,
+        stopPropagation: () => undefined,
+        isPropagationStopped: () => false,
+      };
+      act(() => {
+        reactPropsOf(element).onClick(event);
+      });
+    }
+
+    function mockMutations() {
+      const updateMutation = jest.fn().mockResolvedValue(undefined);
+      const deleteMutation = jest.fn().mockResolvedValue(undefined);
+      const createMutation = jest.fn().mockResolvedValue(undefined);
+      mockedUseUpdateMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: updateMutation,
+      } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+      mockedUseDeleteMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: deleteMutation,
+      } as unknown as ReturnType<typeof useDeleteMessageTriggerRule>);
+      mockedUseCreateMessageTriggerRule.mockReturnValue({
+        isPending: false,
+        mutateAsync: createMutation,
+      } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
+      return { updateMutation, deleteMutation, createMutation };
+    }
+
+    function openRuleForEditing() {
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "바뀐 이름" } });
+    }
+
+    it("toggle: unknown approval calls no mutation; an approved answer toggles through the same route", async () => {
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "failed" });
+      const unknown = mockMutations();
+
+      const { unmount } = render(<TriggerRulesManager dataComponent={DC} />);
+      const blockedSwitch = screen.getByRole("switch", { name: `${RULE_NAME} 활성화` });
+      expect(blockedSwitch).toBeDisabled();
+      callHandler(blockedSwitch);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(unknown.updateMutation).not.toHaveBeenCalled();
+      unmount();
+
+      mockSettingsQueries({ senderApproved: true });
+      const approved = mockMutations();
+      render(<TriggerRulesManager dataComponent={DC} />);
+      callHandler(screen.getByRole("switch", { name: `${RULE_NAME} 활성화` }));
+      await waitFor(() => expect(approved.updateMutation).toHaveBeenCalledTimes(1));
+      expect(approved.updateMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "rule-1", dto: expect.objectContaining({ isActive: false }) }),
+      );
+    });
+
+    it("save: unknown approval calls no mutation; an approved answer saves through the same route", async () => {
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "failed" });
+      const unknown = mockMutations();
+
+      const { unmount } = render(<TriggerRulesManager dataComponent={DC} />);
+      openRuleForEditing();
+      const blockedSave = screen.getByRole("button", { name: "저장" });
+      expect(blockedSave).toBeDisabled();
+      callHandler(blockedSave);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(unknown.updateMutation).not.toHaveBeenCalled();
+      expect(unknown.createMutation).not.toHaveBeenCalled();
+      unmount();
+
+      mockSettingsQueries({ senderApproved: true });
+      const approved = mockMutations();
+      render(<TriggerRulesManager dataComponent={DC} />);
+      openRuleForEditing();
+      callHandler(screen.getByRole("button", { name: "저장" }));
+      await waitFor(() => expect(approved.updateMutation).toHaveBeenCalledTimes(1));
+      expect(approved.updateMutation).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "rule-1", dto: expect.objectContaining({ name: "바뀐 이름" }) }),
+      );
+    });
+
+    it("delete: unknown approval calls no mutation; an approved answer deletes through the same route", async () => {
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "failed" });
+      const unknown = mockMutations();
+
+      const { unmount } = render(<TriggerRulesManager dataComponent={DC} />);
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      const blockedDelete = screen.getByRole("button", { name: "삭제" });
+      expect(blockedDelete).toBeDisabled();
+      callHandler(blockedDelete);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(unknown.deleteMutation).not.toHaveBeenCalled();
+      unmount();
+
+      mockSettingsQueries({ senderApproved: true });
+      const approved = mockMutations();
+      render(<TriggerRulesManager dataComponent={DC} />);
+      fireEvent.click(screen.getAllByText(RULE_NAME)[0]);
+      callHandler(screen.getByRole("button", { name: "삭제" }));
+      await waitFor(() => expect(approved.deleteMutation).toHaveBeenCalledWith("rule-1"));
+    });
+
+    it("create: unknown approval offers no 새 규칙 control; an approved answer opens the new-rule editor", () => {
+      // handleCreateNew is wired only to the 새 규칙 header button, which is not rendered while editing is
+      // blocked, so its guard cannot be reached from a prop (reported, not exported for a test).
+      mockSettingsQueries({ senderApproved: true, senderApprovalState: "failed" });
+      mockMutations();
+
+      const { unmount } = render(<TriggerRulesManager dataComponent={DC} />);
+      expect(screen.queryByRole("button", { name: "새 규칙" })).not.toBeInTheDocument();
+      expect(screen.queryByText("새 발송 규칙")).not.toBeInTheDocument();
+      unmount();
+
+      mockSettingsQueries({ senderApproved: true });
+      mockMutations();
+      render(<TriggerRulesManager dataComponent={DC} />);
+      callHandler(screen.getByRole("button", { name: "새 규칙" }));
+      expect(screen.getByText("새 발송 규칙")).toBeInTheDocument();
     });
   });
 });
