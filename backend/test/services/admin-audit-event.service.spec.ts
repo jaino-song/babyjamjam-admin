@@ -111,7 +111,7 @@ describe("admin authority invariants and audit ledger", () => {
     });
 
     it("refuses branch owner membership downgrade and removal", async () => {
-        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "admin" });
+        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "admin", callerId: "owner-2" });
         const audit = { append: jest.fn() };
         const service = createUserService(prisma, audit);
         const actor = { userId: "owner-2", globalRole: "owner", branchRole: "admin" };
@@ -131,7 +131,7 @@ describe("admin authority invariants and audit ledger", () => {
 
     it("couples an allowed branch membership role change to one audit event", async () => {
         const user = completeUserRow({ id: "member-1", role: "manager" });
-        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "manager", user });
+        const prisma = createMembershipPrisma({ ownerId: "owner-1", membershipRole: "manager", user, callerId: "owner-1" });
         const audit = { append: jest.fn().mockResolvedValue(undefined) };
         const service = createUserService(prisma, audit);
 
@@ -153,7 +153,7 @@ describe("admin authority invariants and audit ledger", () => {
     });
 
     it("fails the authority mutation when audit persistence fails", async () => {
-        const prisma = createMembershipPrisma({ ownerId: null, membershipRole: "manager" });
+        const prisma = createMembershipPrisma({ ownerId: null, membershipRole: "manager", callerId: "owner-1" });
         const audit = { append: jest.fn().mockRejectedValue(new Error("audit unavailable")) };
         const service = createUserService(prisma, audit);
 
@@ -251,13 +251,16 @@ function createMembershipPrisma(options: {
     ownerId: string | null;
     membershipRole: string;
     user?: Record<string, unknown>;
+    /** The acting user; 권한-04 re-reads their global role inside the transaction. */
+    callerId: string;
 }) {
     const prisma: any = {
         branch: {
-            findUnique: jest.fn().mockResolvedValue({ ownerId: options.ownerId }),
+            findUnique: jest.fn().mockResolvedValue({ ownerId: options.ownerId, isActive: true }),
         },
         user: {
-            findUnique: jest.fn().mockResolvedValue(options.user ?? completeUserRow()),
+            findUnique: jest.fn().mockImplementation(async ({ where }: { where: { id: string } }) =>
+                where.id === options.callerId ? { role: "owner" } : options.user ?? completeUserRow()),
         },
         user_branch: {
             findUnique: jest.fn().mockResolvedValue({ role: options.membershipRole }),

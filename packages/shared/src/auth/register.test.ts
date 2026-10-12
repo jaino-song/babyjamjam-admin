@@ -1,4 +1,4 @@
-import { registerRequestSchema } from "./register";
+import { REGISTERABLE_ROLE_OPTIONS, registerRequestSchema } from "./register";
 
 describe("registerRequestSchema", () => {
   it("accepts profile details and a requested role without a user-selected branch", () => {
@@ -12,5 +12,16 @@ describe("registerRequestSchema", () => {
     });
 
     expect(result.success).toBe(true);
+  });
+});
+
+describe("REGISTERABLE_ROLE_OPTIONS", () => {
+  // 권한-04 (BJJ-435): user is shown as 회원 and admin as 지점장.
+  it("names the registerable roles 지점장 / 매니저 / 회원", () => {
+    expect(REGISTERABLE_ROLE_OPTIONS).toEqual([
+      { value: "admin", label: "지점장" },
+      { value: "manager", label: "매니저" },
+      { value: "user", label: "회원" },
+    ]);
   });
 });

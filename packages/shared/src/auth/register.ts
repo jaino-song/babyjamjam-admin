@@ -10,7 +10,7 @@ export const REGISTERABLE_ROLE_OPTIONS: ReadonlyArray<{
 }> = [
   { value: "admin", label: "지점장" },
   { value: "manager", label: "매니저" },
-  { value: "user", label: "상담원" },
+  { value: "user", label: "회원" },
 ];
 
 export const authPasswordSchema = z

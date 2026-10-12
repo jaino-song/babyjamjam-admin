@@ -60,7 +60,7 @@ import {
   updateSystemAdminUserAccount,
   type SystemAdminUser,
 } from "@/lib/api/users";
-import { REGISTERABLE_ROLE_OPTIONS, ROLES } from "@/lib/constants/roles";
+import { REGISTERABLE_ROLE_OPTIONS, ROLE_LABELS, ROLES, type Role } from "@/lib/constants/roles";
 import { cn } from "@/lib/utils";
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 
@@ -181,20 +181,20 @@ const OWNER_ADMIN_SECTIONS = [
         indicatorClassName: "bg-amber-600",
       },
       {
-        label: "지점장",
+        label: ROLE_LABELS.admin,
         value: "branch-manager",
         activeClassName: "text-amber-700",
         indicatorClassName: "bg-amber-600",
       },
       {
-        label: "매니저",
+        label: ROLE_LABELS.manager,
         value: "manager",
         activeClassName: "text-sky-700",
         indicatorClassName: "bg-sky-600",
       },
-      { label: "직원", value: "user" },
+      { label: ROLE_LABELS.user, value: "user" },
       {
-        label: "오너",
+        label: ROLE_LABELS.owner,
         value: "owner",
         activeClassName: "text-emerald-700",
         indicatorClassName: "bg-emerald-600",
@@ -364,18 +364,9 @@ function formatBirthDate(value: string | null): string {
 }
 
 function getAccountRoleLabel(role: string | null): string {
-  switch (role) {
-    case "owner":
-      return "오너";
-    case "admin":
-      return "지점장";
-    case "manager":
-      return "매니저";
-    case "user":
-      return "직원";
-    default:
-      return "미지정";
-  }
+  return role !== null && Object.prototype.hasOwnProperty.call(ROLE_LABELS, role)
+    ? ROLE_LABELS[role as Role]
+    : "미지정";
 }
 
 function getDefaultPendingApprovalRole(user: SystemAdminUser): string {
