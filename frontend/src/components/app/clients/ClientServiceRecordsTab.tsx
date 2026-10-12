@@ -16,6 +16,7 @@ import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 
 import { DetailEmptyState, InfoCard, InfoRow } from "@/components/app/v3";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -268,14 +269,29 @@ function ClientServiceRecordsTabContent({
         return <ClientServiceRecordsSkeleton layout={layout} />;
     }
 
-    if (isError) {
+    // Failed read with nothing from an earlier successful load to show: the failure
+    // state, never the "no assignments" empty text. With cached content (assignments,
+    // a record, a schedule projection that renders, or revision-history rows that this
+    // layout renders) the tab keeps it and says so inline (below). A revision-history
+    // loading/error flag alone is only a shell, so it does not count as cached content.
+    // With no assignments or record a projection renders only through its blocking-reason
+    // alert, so one without blocking reasons is not cached content either.
+    const hasCachedRevisionHistory = layout === "desktop" && revisionHistory !== undefined;
+    const hasRenderedProjection = (scheduleProjection?.blockingReasons.length ?? 0) > 0;
+    if (
+        isError
+        && assignments.length === 0
+        && !record
+        && !hasRenderedProjection
+        && !hasCachedRevisionHistory
+    ) {
         return (
-            <div
-                data-component={`${dataComponent}_error`}
-                className="py-12 text-center text-[calc(13px*var(--glint-ui-scale,1))] text-v3-text-muted"
-            >
-                제공기록지 정보를 불러오지 못했습니다
-            </div>
+            <QueryErrorState
+                dataComponent={`${dataComponent}_error`}
+                title="제공기록지 정보를 불러오지 못했습니다"
+                onRetry={() => onRefresh?.()}
+                isRetrying={isRefreshing}
+            />
         );
     }
 
@@ -293,6 +309,15 @@ function ClientServiceRecordsTabContent({
     return (
         <>
             <div data-component={dataComponent} data-source-component="ClientServiceRecordsTab" className="space-y-[calc(16px*var(--glint-ui-scale,1))]">
+                {isError ? (
+                    <QueryErrorState
+                        dataComponent={`${dataComponent}_refresh-error`}
+                        title="최신 정보를 불러오지 못했습니다"
+                        size="inline"
+                        onRetry={() => onRefresh?.()}
+                        isRetrying={isRefreshing}
+                    />
+                ) : null}
                 {scheduleProjection && scheduleProjection.blockingReasons.length > 0 ? (
                     <ScheduleProjectionAlert reasons={scheduleProjection.blockingReasons} />
                 ) : null}
@@ -812,13 +837,18 @@ function RevisionHistoryCard({
         );
     }
 
-    if (isError) {
+    // A failed read with no earlier history to show gets the failure state; with
+    // cached history the card below keeps it and adds an inline notice.
+    if (isError && history === undefined) {
         return (
             <InfoCard data-component={dataComponent} title="수정본·문서 이력">
-                <Alert variant="warning">
-                    <AlertTitle>문서 이력을 확인할 수 없습니다</AlertTitle>
-                    <AlertDescription>잠시 후 다시 조회해 주세요.</AlertDescription>
-                </Alert>
+                <QueryErrorState
+                    dataComponent={`${dataComponent}_error`}
+                    title="문서 이력을 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={() => onRefresh?.()}
+                    isRetrying={isRefreshing}
+                />
             </InfoCard>
         );
     }
@@ -842,6 +872,16 @@ function RevisionHistoryCard({
                 </Button>
             ) : undefined}
         >
+            {isError ? (
+                <QueryErrorState
+                    dataComponent={`${dataComponent}_refresh-error`}
+                    title="최신 정보를 불러오지 못했습니다"
+                    size="inline"
+                    onRetry={() => onRefresh?.()}
+                    isRetrying={isRefreshing}
+                    className="mb-[calc(12px*var(--glint-ui-scale,1))]"
+                />
+            ) : null}
             <div data-component={`${dataComponent}_pointers`} className="mb-[calc(12px*var(--glint-ui-scale,1))]">
                 <ServiceRecordInfoRow
                     label="현재 확정본"

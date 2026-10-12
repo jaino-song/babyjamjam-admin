@@ -212,10 +212,11 @@ describe("ClientDetailPanel contracts area: loading, failed and empty are differ
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
-    it("keeps showing cached contracts when a refetch fails, with no error panel", async () => {
+    it("keeps showing cached contracts when a refetch fails, and says so with a retry notice", async () => {
         getDocuments.mockResolvedValue([contractDoc]);
         openContractsTab();
         await waitFor(() => expect(screen.getAllByTestId("contract-card")).toHaveLength(1));
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
         getDocuments.mockRejectedValue(new Error("boom"));
         await act(async () => {
@@ -225,8 +226,17 @@ describe("ClientDetailPanel contracts area: loading, failed and empty are differ
         await waitFor(() => expect(getDocuments).toHaveBeenCalledTimes(2));
         expect(queryClient.getQueryState(["eformsign-docs", "client", client.id])?.status).toBe("error");
         expect(screen.getAllByTestId("contract-card")).toHaveLength(1);
-        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-        expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert.getAttribute("data-component")).toMatch(/-contracts-refresh-error$/);
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+
+        // Retry refetches; once it succeeds the notice goes away and the data stays.
+        getDocuments.mockResolvedValue([contractDoc]);
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        await waitFor(() => expect(getDocuments).toHaveBeenCalledTimes(3));
+        await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+        expect(screen.getAllByTestId("contract-card")).toHaveLength(1);
     });
 
     it("shows the existing empty state, and no retry button, for a successful empty result", async () => {

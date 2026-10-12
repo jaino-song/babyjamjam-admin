@@ -145,19 +145,19 @@ export function useClientUpcomingMessageTriggerJobs(
         refetchIntervalInBackground: false,
     });
 
-    const items = query.isError
-        ? []
-        : Array.from(
-            new Map(
-                (query.data?.pages.flatMap((page) => page.items) ?? [])
-                    .filter((job) => (
-                        job.status === "pending"
-                        || job.status === "processing"
-                        || job.status === "dispatching"
-                    ))
-                    .map((job) => [job.id, job] as const),
-            ).values(),
-        );
+    // A failed refetch keeps the jobs from the last successful load: callers
+    // read `isError` to say the list may be out of date, never to hide it.
+    const items = Array.from(
+        new Map(
+            (query.data?.pages.flatMap((page) => page.items) ?? [])
+                .filter((job) => (
+                    job.status === "pending"
+                    || job.status === "processing"
+                    || job.status === "dispatching"
+                ))
+                .map((job) => [job.id, job] as const),
+        ).values(),
+    );
 
     return {
         ...query,
@@ -241,17 +241,18 @@ export function useClientMessageHistory(
         refetchInterval: options.refetchInterval ?? 5_000,
     });
 
-    const { isError, data } = query;
+    // A failed refetch or a failed older page keeps the pages from the last
+    // successful load: callers read `isError` to say the history may be out of
+    // date, never to hide it. A failed first load has no data, so it stays [].
+    const { data } = query;
     const items = useMemo(
-        () => isError
-            ? []
-            : Array.from(
-                new Map(
-                    (data?.pages.flatMap((page) => page.items) ?? [])
-                        .map((record) => [record.id, record] as const),
-                ).values(),
-            ),
-        [isError, data],
+        () => Array.from(
+            new Map(
+                (data?.pages.flatMap((page) => page.items) ?? [])
+                    .map((record) => [record.id, record] as const),
+            ).values(),
+        ),
+        [data],
     );
 
     return {
