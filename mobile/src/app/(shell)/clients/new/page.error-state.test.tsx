@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared/errors/problem-details";
+import { useQuery } from "@tanstack/react-query";
 
 import type { Client } from "@/lib/client/types";
 import { api } from "@/lib/api/client";
@@ -25,7 +26,7 @@ jest.mock("next/navigation", () => ({
 }));
 
 jest.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: mockEditingContractDocument }),
+  useQuery: jest.fn(() => ({ data: mockEditingContractDocument })),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -213,6 +214,15 @@ describe("mobile client wizard mutation error presentation", () => {
     (api.get as jest.Mock).mockResolvedValue({ data: { exists: false } });
     mockCreateClient.mockReset().mockResolvedValue({ id: 1 });
     mockUpdateClient.mockReset().mockResolvedValue({ id: 7 });
+  });
+
+  it("inherits the app-wide retry policy for the eformsign document query", () => {
+    renderEdit();
+    const options = jest.mocked(useQuery).mock.calls.map(([options]) => options).find(
+      (options) => options.queryKey?.[0] === "eformsign-docs" && options.queryKey?.[1] === "document",
+    );
+    expect(options).toBeDefined();
+    expect(options).not.toHaveProperty("retry");
   });
 
   it("keeps two structured field errors, preserves input, and focuses a linked field", async () => {
