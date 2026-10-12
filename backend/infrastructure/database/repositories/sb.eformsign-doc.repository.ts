@@ -1050,6 +1050,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             stepRecipientTypes,
             statusDetail,
             expired,
+            clientId,
+            documentKind,
+            employeeScheduleId,
+            templateId,
             ...rest
         } = EformsignDocMapper.toPrismaUpdate(doc);
         // A column the caller did not supply holds the value it read earlier; leaving it out
@@ -1057,6 +1061,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         // `data` feeds both the primary write and the pending-column retry below.
         const data = {
             ...rest,
+            ...(options?.updateOwnershipIdentity === false
+                ? {}
+                : { clientId, documentKind, employeeScheduleId, templateId }),
             ...(options?.updateStepType === false ? {} : { stepType }),
             ...(options?.updateStepIndex === false ? {} : { stepIndex }),
             ...(options?.updateStepName === false ? {} : { stepName }),
@@ -1152,6 +1159,9 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                     { branchId: null },
                     { branchId: branchid },
                 ],
+                ...(options?.expectedOwnerClientId === undefined
+                    ? {}
+                    : { AND: [{ OR: [{ clientId: null }, { clientId: options.expectedOwnerClientId }] }] }),
             },
         });
     }

@@ -1,6 +1,9 @@
 import { Logger } from "@nestjs/common";
 
 import { AdoptEformsignDocUsecase } from "application/usecases/eformsign-doc/adopt-eformsign-doc.usecase";
+import { CreateEformsignDocUsecase } from "application/usecases/eformsign-doc/create-eformsign-doc.usecase";
+import { EformsignDocOwnershipConflictError } from "domain/repositories/eformsign-doc.repository.interface";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const TEST_PRINCIPAL = {
     userId: "test-user",
@@ -112,7 +115,9 @@ describe("AdoptEformsignDocUsecase", () => {
             expect(clients.findByPhone).toHaveBeenCalledWith("branch-1", CLIENT_PHONE);
             expect(clients.findById).not.toHaveBeenCalled();
             expect(docs.findByDocumentId).toHaveBeenCalledWith("branch-1", "doc-phone");
-            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                clientId: 7, expectedOwnerClientId: 7, preserveExistingMirrorProjection: true,
+            }));
         });
 
         it("accepts a document customer phone written without hyphens when it equals the client's", async () => {
@@ -121,6 +126,57 @@ describe("AdoptEformsignDocUsecase", () => {
             await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
 
             expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        });
+
+        it("reports a raced inferred ownership conflict as the usual missing-client error", async () => {
+            const { usecase, create, mirror } = setup({ localRow: { clientId: null } });
+            create.execute.mockRejectedValueOnce(new EformsignDocOwnershipConflictError("doc-phone"));
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toEqual(new Error("clientId가 필요합니다."));
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+        });
+
+        it("leaves the client pointer untouched when the real create path encounters a raced claim", async () => {
+            const client = {
+                id: 7, name: "김고객", birthday: "1992-03-04", phoneNormalized: CLIENT_PHONE,
+                eDocId: null, update: jest.fn(),
+            };
+            const clients = {
+                findByPhone: jest.fn().mockResolvedValue(client),
+                findById: jest.fn().mockResolvedValue(client),
+                update: jest.fn(), updateIfTargetVersion: jest.fn(),
+            };
+            const docs = {
+                findByDocumentId: jest.fn().mockResolvedValue({ clientId: null }),
+                upsertByDocumentId: jest.fn().mockRejectedValue(new EformsignDocOwnershipConflictError("doc-phone")),
+            };
+            const mirror = { syncDocumentWithToken: jest.fn() };
+            const create = new CreateEformsignDocUsecase(docs as never, clients as never, createHolidayCalendarStub());
+            const usecase = new AdoptEformsignDocUsecase(
+                createCredentialBoundary() as never,
+                { execute: jest.fn().mockResolvedValue(remoteFor()) } as never,
+                create, clients as never, mirror as never, docs as never,
+            );
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toEqual(new Error("clientId가 필요합니다."));
+            expect(docs.upsertByDocumentId).toHaveBeenCalledWith("branch-1", expect.anything(), {
+                preserveExistingMirrorProjection: true, expectedOwnerClientId: 7,
+            });
+            expect(client.eDocId).toBeNull();
+            expect(client.update).not.toHaveBeenCalled();
+            expect(clients.update).not.toHaveBeenCalled();
+            expect(clients.updateIfTargetVersion).not.toHaveBeenCalled();
+            expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+        });
+
+        it("does not translate unrelated create failures", async () => {
+            const { usecase, create } = setup();
+            const error = new Error("storage failed");
+            create.execute.mockRejectedValueOnce(error);
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toBe(error);
         });
 
         it("accepts the same name and birthday in a different written form", async () => {
@@ -214,6 +270,11 @@ describe("AdoptEformsignDocUsecase", () => {
         expect(clients.findByPhone).not.toHaveBeenCalled();
         expect(docs.findByDocumentId).not.toHaveBeenCalled();
         expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({ clientId: 7 }));
+        expect(create.execute.mock.calls[0][1]).not.toHaveProperty("expectedOwnerClientId");
+        const conflict = new EformsignDocOwnershipConflictError("doc-chosen");
+        create.execute.mockRejectedValueOnce(conflict);
+        await expect(usecase.execute("branch-1", { documentId: "doc-chosen", clientId: 7 }, TEST_PRINCIPAL))
+            .rejects.toBe(conflict);
     });
 
     it("uses document-id upsert semantics on repeated adoption", async () => {

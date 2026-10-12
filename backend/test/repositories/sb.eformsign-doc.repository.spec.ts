@@ -1041,6 +1041,60 @@ describe("SbEformsignDocRepository", () => {
         expect(result.documentName).toBe("기존 문서명");
     });
 
+    it.each(["updateIfSourceNewer", "updateWithOutcome"] as const)(
+        "%s withholds ownership/identity only when requested", async (method) => {
+            eformsignDocModel.updateMany.mockResolvedValue({ count: 1 });
+            eformsignDocModel.findFirst.mockResolvedValue(legacyRow);
+            const doc = createEntity();
+            await repository[method]("branch-1", doc, { updateOwnershipIdentity: false });
+            const withheld = eformsignDocModel.updateMany.mock.calls[0][0].data;
+            for (const key of ["clientId", "documentKind", "employeeScheduleId", "templateId"]) {
+                expect(withheld).not.toHaveProperty(key);
+            }
+            await repository[method]("branch-1", doc);
+            const defaultData = eformsignDocModel.updateMany.mock.calls[1][0].data;
+            expect(defaultData).toEqual({
+                ...withheld, clientId: 55, documentKind: null, employeeScheduleId: null, templateId: null,
+            });
+        },
+    );
+
+    it.each([null, 55])("allows inferred adoption when the current owner is %s", async (clientId) => {
+        const row = { ...legacyRow, branchId: "branch-1", clientId };
+        eformsignDocModel.updateMany.mockImplementation(async ({ where, data }) => {
+            expect(where).toEqual({
+                documentId: "doc-1",
+                OR: [{ branchId: null }, { branchId: "branch-1" }],
+                AND: [{ OR: [{ clientId: null }, { clientId: 55 }] }],
+            });
+            Object.assign(row, data);
+            return { count: 1 };
+        });
+        eformsignDocModel.findFirst.mockImplementation(async () => row);
+
+        await repository.upsertByDocumentId("branch-1", createEntity(), { expectedOwnerClientId: 55 });
+        expect(row.clientId).toBe(55);
+        expect(eformsignDocModel.create).not.toHaveBeenCalled();
+    });
+
+    it("does not overwrite a client linked after inference, including the unique-create retry", async () => {
+        const row = { ...legacyRow, branchId: "branch-1", clientId: 99 };
+        eformsignDocModel.updateMany.mockImplementation(async ({ where, data }) => {
+            const owners = where.AND?.[0]?.OR;
+            const matches = !owners || owners.some((owner: { clientId: number | null }) => owner.clientId === row.clientId);
+            if (matches) Object.assign(row, data);
+            return { count: matches ? 1 : 0 };
+        });
+        eformsignDocModel.create.mockRejectedValue({ code: "P2002" });
+        eformsignDocModel.findFirst.mockImplementation(async () => row);
+
+        await expect(repository.upsertByDocumentId("branch-1", createEntity(), {
+            preserveExistingMirrorProjection: true, expectedOwnerClientId: 55,
+        })).rejects.toBeInstanceOf(EformsignDocOwnershipConflictError);
+        expect(row.clientId).toBe(99);
+        expect(eformsignDocModel.updateMany).toHaveBeenCalledTimes(2);
+    });
+
     it("preserves stored document metadata when adopting without a name or number", async () => {
         eformsignDocModel.updateMany.mockResolvedValue({ count: 1 });
         eformsignDocModel.findFirst.mockResolvedValue({

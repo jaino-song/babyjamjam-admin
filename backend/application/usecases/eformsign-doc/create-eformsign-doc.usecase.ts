@@ -34,6 +34,8 @@ export interface CreateEformsignDocParams {
     templateId?: string | null;
     /** Internal adopt-path fence; ordinary document creation must leave this unset. */
     preserveExistingMirrorProjection?: boolean;
+    /** Inferred adoption only: do not overwrite a client linked since inference. */
+    expectedOwnerClientId?: number;
     /** Approval target hash used to prevent a stale post-provider client link. */
     clientTargetVersion?: string;
 }
@@ -99,11 +101,14 @@ export class CreateEformsignDocUsecase {
             employeeScheduleId: params.employeeScheduleId ?? null,
             templateId: params.templateId ?? null,
         });
-        const createdDoc = params.preserveExistingMirrorProjection
+        const createdDoc = params.preserveExistingMirrorProjection || params.expectedOwnerClientId !== undefined
             ? await this.eformsignDocRepository.upsertByDocumentId(
                 branchid,
                 entity,
-                { preserveExistingMirrorProjection: true },
+                {
+                    ...(params.preserveExistingMirrorProjection ? { preserveExistingMirrorProjection: true } : {}),
+                    ...(params.expectedOwnerClientId === undefined ? {} : { expectedOwnerClientId: params.expectedOwnerClientId }),
+                },
             )
             : await this.eformsignDocRepository.upsertByDocumentId(branchid, entity);
         const warnings: CreateEformsignDocWarning[] = [];

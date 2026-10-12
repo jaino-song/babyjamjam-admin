@@ -118,6 +118,11 @@ export interface EformsignDocConditionalUpdateResult {
  * false to leave that column out of the UPDATE; the default (true) writes the entity's value.
  */
 export interface EformsignDocStepWriteOptions {
+    /**
+     * Set false to withhold clientId, documentKind, employeeScheduleId and templateId
+     * from a stale entity's write. Defaults to writing; only the update* methods honour it.
+     */
+    updateOwnershipIdentity?: boolean;
     updateStepType?: boolean;
     updateStepIndex?: boolean;
     /**
@@ -183,6 +188,8 @@ export interface UpsertUnassignedEformsignDocOptions extends EformsignDocStepWri
 }
 
 export interface UpsertEformsignDocByDocumentIdOptions {
+    /** Atomically accept only an unlinked row or one already owned by this client. */
+    expectedOwnerClientId?: number;
     /**
      * Adoption may assign branch/client ownership to a row whose detail/PDF
      * generation is already ready. Keep that existing vendor projection intact
