@@ -1,10 +1,14 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
+import { eformsignApi } from "@/services/api";
 import type { Client, DocumentStatus } from "@/lib/client/types";
+import type { EformsignDocument } from "@/lib/eformsign/types";
+import { isRejectedContractDocument } from "./contract-status-label";
 
 export interface ContractStatusResult {
     clientId: number;
@@ -13,6 +17,8 @@ export interface ContractStatusResult {
     serviceStatus: string | null;
     /** Step-aware signed flag from the selected client; documentStatus alone cannot tell 060 from 070. */
     hasSigned: boolean;
+    /** True when the client's contract document is rejected by the provider's reviewer (071); the summary above cannot say so. */
+    rejectedByReviewer: boolean;
 }
 
 interface ContractStatusWizardProps {
@@ -28,6 +34,20 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
         setSelectedClient(client);
     }, []);
 
+    // The contract document the summary was derived from. While it is loading, failed or absent the
+    // result falls back to the summary's own wording, so the wizard never waits on it.
+    const contractDocumentId = selectedClient?.latestContractDocumentId ?? selectedClient?.eDocId ?? null;
+    const { data: contractDocument } = useQuery<EformsignDocument>({
+        queryKey: ["eformsign-docs", "document", contractDocumentId],
+        queryFn: async () => {
+            if (!contractDocumentId) throw new Error("documentId is required");
+            return eformsignApi.getDocument(contractDocumentId);
+        },
+        enabled: Boolean(contractDocumentId),
+        staleTime: 1000 * 60,
+        retry: 1,
+    });
+
     const handleSubmit = useCallback(() => {
         if (!selectedClient) return;
 
@@ -37,8 +57,9 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
             documentStatus: selectedClient.documentStatus,
             serviceStatus: selectedClient.serviceStatus,
             hasSigned: selectedClient.hasSigned,
+            rejectedByReviewer: isRejectedContractDocument(contractDocument),
         });
-    }, [selectedClient, onCheck]);
+    }, [selectedClient, contractDocument, onCheck]);
 
     return (
         <div data-component="desktop_chat_page_wizard-contract-status" className="flex flex-col">
