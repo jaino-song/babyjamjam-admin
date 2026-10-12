@@ -87,7 +87,7 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         });
     });
 
-    it("resolves a branch member into a masked human-verifiable approval snapshot and summary", async () => {
+    it("resolves a branch member into an ID-only contact snapshot and summary", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(member) },
             branch: { findUnique: jest.fn().mockResolvedValue(branchOwner) },
@@ -100,14 +100,15 @@ describe("NotificationAgentCapabilitiesProvider", () => {
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
         const serialized = JSON.stringify(inspection);
 
-        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "홍길동", maskedContact: "010-****-5678" });
-        expect(inspection.summary).toContain("홍길동");
-        expect(inspection.summary).toContain("010-****-5678");
+        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "홍길동" });
+        expect(inspection.summary).toBe("홍길동 사용자에게 테스트 알림을 발송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d[\d -]{7,}\d/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
         expect(serialized).not.toContain("010-1234-5678");
         expect(serialized).not.toContain("member@example.com");
     });
 
-    it("resolves a branch owner with a masked email when no member row exists", async () => {
+    it("resolves a branch owner without exposing email when no member row exists", async () => {
         const prisma = {
             user_branch: { findFirst: jest.fn().mockResolvedValue(null) },
             branch: { findUnique: jest.fn().mockResolvedValue({ ...branchOwner, ownerId: targetUserId }) },
@@ -119,9 +120,10 @@ describe("NotificationAgentCapabilitiesProvider", () => {
 
         const inspection = await capability.inspect!(context, { userId: targetUserId, title: "테스트", body: "본문" });
 
-        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "김대표", maskedContact: "o***@example.com" });
-        expect(inspection.summary).toContain("김대표");
-        expect(inspection.summary).toContain("o***@example.com");
+        expect(inspection.targetSnapshot).toEqual({ userId: targetUserId, name: "김대표" });
+        expect(inspection.summary).toBe("김대표 사용자에게 테스트 알림을 발송합니다.");
+        expect(inspection.summary).not.toMatch(/[•*]|\d[\d -]{7,}\d/);
+        expect(JSON.stringify(inspection.targetSnapshot)).not.toMatch(/[•*]|@|010[-\d]+/);
     });
 
     it("rejects a user who is neither a member nor the branch owner", async () => {
