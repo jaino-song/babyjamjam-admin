@@ -66,6 +66,7 @@ import {
 import { useSystemTemplate } from "@/features/system-templates/hooks";
 import { serviceInfoMsgTemplate } from "@/components/app/messages/templates/messageTemplate/serviceInfoMsg";
 import { MessageApprovalRequiredNotice } from "@/components/app/messages/MessageApprovalRequiredNotice";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { MessagePhonePreview } from "./MessagePhonePreview";
 import type {
   MessageTriggerRule,
@@ -411,40 +412,62 @@ export function TriggerRulesManager({
   const copy = CHANNEL_COPY[channel];
 
   const {
-    data: rulesData = [],
-    isLoading,
+    data: rulesQueryData,
+    isLoading: isRulesQueryLoading,
+    isPaused: isRulesQueryPaused,
+    isError: isRulesQueryError,
+    isFetching: isRulesQueryFetching,
     refetch: refetchMessageTriggerRules,
   } = useMessageTriggerRules();
+  // A paused load with no data has not started: it reads as loading, never as "no rules".
+  const isLoading = isRulesQueryLoading || (isRulesQueryPaused && rulesQueryData === undefined);
+  const isRulesLoadFailed = isRulesQueryError && rulesQueryData === undefined;
+  const isRulesRefreshFailed = isRulesQueryError && rulesQueryData !== undefined;
   const createMutation = useCreateMessageTriggerRule();
   const updateMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
   const parentActivationMutation = useActivateMessageTriggerRuleWithParent();
   const deleteMutation = useDeleteMessageTriggerRule();
 
-  const rules = useMemo(() => (Array.isArray(rulesData) ? rulesData : []), [rulesData]);
+  const rules = useMemo(
+    () => (Array.isArray(rulesQueryData) ? rulesQueryData : []),
+    [rulesQueryData],
+  );
 
-  const { data: senderApproval, isLoading: isSenderApprovalLoading } = useQuery({
+  const {
+    data: senderApproval,
+    isLoading: isSenderApprovalLoading,
+    isError: isSenderApprovalError,
+  } = useQuery({
     queryKey: ["settings", "message-sender-approval"],
     queryFn: settingsApi.getMessageSenderApproval,
   });
   const {
     data: messageAutomationPolicies,
-    isLoading: isMessageAutomationPoliciesLoading,
+    isLoading: isMessageAutomationPoliciesQueryLoading,
+    isPaused: isMessageAutomationPoliciesPaused,
     isError: isMessageAutomationPoliciesError,
     refetch: refetchMessageAutomationPolicies,
   } = useQuery<MessageAutomationPoliciesResponse>({
     queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     queryFn: settingsApi.getMessageAutomationPolicies,
   });
+  const isMessageAutomationPoliciesLoading =
+    isMessageAutomationPoliciesQueryLoading ||
+    (isMessageAutomationPoliciesPaused && messageAutomationPolicies === undefined);
   const {
     data: clientRegistrationPolicy,
-    isLoading: isClientRegistrationPolicyLoading,
+    isLoading: isClientRegistrationPolicyQueryLoading,
+    isPaused: isClientRegistrationPolicyPaused,
     isError: isClientRegistrationPolicyError,
     refetch: refetchClientRegistrationPolicy,
   } = useQuery<ClientRegistrationPolicy>({
     queryKey: CLIENT_REGISTRATION_POLICY_QUERY_KEY,
     queryFn: settingsApi.getClientRegistrationPolicy,
   });
+  const isClientRegistrationPolicyLoading =
+    isClientRegistrationPolicyQueryLoading ||
+    (isClientRegistrationPolicyPaused && clientRegistrationPolicy === undefined);
   const updateClientRegistrationPolicyMutation = useMutation({
     mutationFn: settingsApi.updateClientRegistrationPolicy,
     onMutate: async (patch: ClientRegistrationPolicyPatch) => {
@@ -474,6 +497,10 @@ export function TriggerRulesManager({
     },
   });
   const isTriggerRulesLocked = !isSenderApprovalLoading && senderApproval?.isApproved === false;
+  // A failed approval load with no earlier answer is neither "approved" nor "not approved":
+  // keep editing closed until it is known. (MessageApprovalGate shows the failure itself.)
+  const isSenderApprovalUnknown = senderApproval === undefined && isSenderApprovalError;
+  const isRuleEditingBlocked = isTriggerRulesLocked || isSenderApprovalUnknown;
   const isAdminOrOwner = messageAutomationPolicies?.canManageActivation === true;
   const triggerDispatchPolicy = messageAutomationPolicies?.policies?.find(
     (policy) => policy.id === "trigger-dispatch",
@@ -509,6 +536,12 @@ export function TriggerRulesManager({
   // the event / recipient / template dropdowns from the catalog so future templates surface
   // automatically.
   const templateQuery = useMessageTriggerTemplates({});
+  // With no catalog data the screen cannot tell which templates exist or what they require, so it
+  // must not read as "no requirements". A paused first load reads as loading; a failure is retryable.
+  const hasTemplateCatalog = templateQuery.data !== undefined;
+  const isTemplateCatalogFailed = !hasTemplateCatalog && templateQuery.isError === true;
+  // Loading (isLoading, or paused before its first load) is every other no-data state.
+  const isTemplateCatalogLoading = !hasTemplateCatalog && !isTemplateCatalogFailed;
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
@@ -803,7 +836,7 @@ export function TriggerRulesManager({
   };
 
   const handleCreateNew = () => {
-    if (isTriggerRulesLocked) return;
+    if (isRuleEditingBlocked) return;
     if (!isTriggerDispatchAvailable) {
       void refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -823,7 +856,7 @@ export function TriggerRulesManager({
   };
 
   const handleRuleActiveToggle = async (rule: MessageTriggerRule, checked: boolean) => {
-    if (isTriggerRulesLocked || rule.isLockedByGlobal) return;
+    if (isRuleEditingBlocked || rule.isLockedByGlobal) return;
 
     if (checked && !isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
@@ -937,7 +970,7 @@ export function TriggerRulesManager({
   };
 
   const handleSave = async () => {
-    if (isTriggerRulesLocked || isSelectedSystemRule) return;
+    if (isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -999,7 +1032,7 @@ export function TriggerRulesManager({
   };
 
   const handleDelete = async () => {
-    if (isTriggerRulesLocked || isSelectedSystemRule) return;
+    if (isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!selectedRule) return;
     try {
       await deleteMutation.mutateAsync(selectedRule.id);
@@ -1063,7 +1096,7 @@ export function TriggerRulesManager({
             disabledOverlay={isTriggerRulesLocked ? (
               <MessageApprovalRequiredNotice dataComponent={component("trigger-rules-disabled-copy")} />
             ) : undefined}
-            headerActions={isLoading || isTriggerRulesLocked ? undefined : (
+            headerActions={isLoading || isRuleEditingBlocked ? undefined : (
               <HeaderActionButton
                 icon={Plus}
                 label="새 규칙"
@@ -1073,6 +1106,15 @@ export function TriggerRulesManager({
             )}
           >
             <>
+              {isRulesRefreshFailed && !isTriggerRulesLocked ? (
+                <QueryErrorState
+                  dataComponent={component("trigger-rules-refresh-error")}
+                  size="inline"
+                  title="최신 정보를 불러오지 못했습니다"
+                  onRetry={() => void refetchMessageTriggerRules()}
+                  isRetrying={isRulesQueryFetching}
+                />
+              ) : null}
               {(isLoading || listItems.length > 0) ? (
                 <div data-component={component("trigger-rules-list")} className="space-y-2 pb-2">
                   <AnimatedSlotList<RuleListItem>
@@ -1116,7 +1158,7 @@ export function TriggerRulesManager({
                               aria-label={`${item.title} 활성화`}
                               checked={item.active}
                               disabled={
-                                isTriggerRulesLocked ||
+                                isRuleEditingBlocked ||
                                 item.rule.isLockedByGlobal === true ||
                                 updateMutation.isPending ||
                                 branchActivationMutation.isPending ||
@@ -1137,11 +1179,18 @@ export function TriggerRulesManager({
                     }}
                   />
                 </div>
-              ) : !isTriggerRulesLocked ? (
+              ) : isTriggerRulesLocked ? null : isRulesLoadFailed ? (
+                <QueryErrorState
+                  dataComponent={component("trigger-rules-load-error")}
+                  size="panel"
+                  onRetry={() => void refetchMessageTriggerRules()}
+                  isRetrying={isRulesQueryFetching}
+                />
+              ) : (
                 <ListEmptyState
                   message={statusFilter === "active" ? "활성화된 발송 규칙이 없습니다." : "비활성화된 발송 규칙이 없습니다."}
                 />
-              ) : null}
+              )}
             </>
           </ListPanel>
 
@@ -1196,7 +1245,7 @@ export function TriggerRulesManager({
                       size="sm"
                       width="sm"
                       onClick={handleDelete}
-                      disabled={isDetailLoading || deleteMutation.isPending}
+                      disabled={isDetailLoading || isRuleEditingBlocked || deleteMutation.isPending}
                       data-component={component("trigger-rules-delete")}
                     >
                       삭제
@@ -1210,7 +1259,7 @@ export function TriggerRulesManager({
                     size="sm"
                     width="sm"
                     onClick={handleSave}
-                    disabled={!hasChanges || isSaving || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
+                    disabled={!hasChanges || isSaving || isRuleEditingBlocked || !hasTemplateCatalog || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
                     data-component={component("trigger-rules-save")}
                   >
                     {isSaving ? "저장 중..." : "저장"}
@@ -1247,32 +1296,34 @@ export function TriggerRulesManager({
                           dataComponent={component("trigger-rules-name")}
                         />
 
-                        <TitleSelectMolecule
-                          id="trigger-rule-event"
-                          label="이벤트 기준"
-                          value={formState.eventType}
-                          options={eventOptions.map((option) => ({
-                            label: option.label,
-                            value: option.value,
-                          }))}
-                          disabled={isSelectedDedicatedRule}
-                          onValueChange={(value) => {
-                            const nextEventType = value as TriggerEventType;
-                            const nextRecipient =
-                              getRecipientTypesForEvent(nextEventType)[0] ?? formState.recipientType;
-                            const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
+                        {hasTemplateCatalog ? (
+                          <TitleSelectMolecule
+                            id="trigger-rule-event"
+                            label="이벤트 기준"
+                            value={formState.eventType}
+                            options={eventOptions.map((option) => ({
+                              label: option.label,
+                              value: option.value,
+                            }))}
+                            disabled={isSelectedDedicatedRule}
+                            onValueChange={(value) => {
+                              const nextEventType = value as TriggerEventType;
+                              const nextRecipient =
+                                getRecipientTypesForEvent(nextEventType)[0] ?? formState.recipientType;
+                              const nextOffset = OFFSET_OPTIONS[nextEventType][0].value;
 
-                            setFormState((current) => ({
-                              ...current,
-                              eventType: nextEventType,
-                              recipientType: nextRecipient,
-                              offsetType: nextOffset,
-                              offsetDays: nextOffset === "BEFORE_DAYS" || nextOffset === "AFTER_DAYS" ? 1 : 0,
-                            }));
-                          }}
-                          dataComponent={component("trigger-rules-event")}
-                          triggerDataComponent={component("trigger-rules-event-select")}
-                        />
+                              setFormState((current) => ({
+                                ...current,
+                                eventType: nextEventType,
+                                recipientType: nextRecipient,
+                                offsetType: nextOffset,
+                                offsetDays: nextOffset === "BEFORE_DAYS" || nextOffset === "AFTER_DAYS" ? 1 : 0,
+                              }));
+                            }}
+                            dataComponent={component("trigger-rules-event")}
+                            triggerDataComponent={component("trigger-rules-event-select")}
+                          />
+                        ) : null}
 
                         <TitleSelectMolecule
                           id="trigger-rule-offset"
@@ -1310,21 +1361,23 @@ export function TriggerRulesManager({
                           />
                         )}
 
-                        <TitleSelectMolecule
-                          id="trigger-rule-recipient"
-                          label="수신 대상"
-                          value={formState.recipientType}
-                          options={recipientOptions}
-                          disabled={isSelectedDedicatedRule}
-                          onValueChange={(value) =>
-                            setFormState((current) => ({
-                              ...current,
-                              recipientType: value as TriggerRecipientType,
-                            }))
-                          }
-                          dataComponent={component("trigger-rules-recipient")}
-                          triggerDataComponent={component("trigger-rules-recipient-select")}
-                        />
+                        {hasTemplateCatalog ? (
+                          <TitleSelectMolecule
+                            id="trigger-rule-recipient"
+                            label="수신 대상"
+                            value={formState.recipientType}
+                            options={recipientOptions}
+                            disabled={isSelectedDedicatedRule}
+                            onValueChange={(value) =>
+                              setFormState((current) => ({
+                                ...current,
+                                recipientType: value as TriggerRecipientType,
+                              }))
+                            }
+                            dataComponent={component("trigger-rules-recipient")}
+                            triggerDataComponent={component("trigger-rules-recipient-select")}
+                          />
+                        ) : null}
 
                         {(formState.offsetType === "BEFORE_DAYS" ||
                           formState.offsetType === "AFTER_DAYS") && (
@@ -1344,28 +1397,45 @@ export function TriggerRulesManager({
                           />
                         )}
 
-                        <TitleSelectMolecule
-                          id="trigger-rule-template"
-                          label="발송 템플릿"
-                          value={formState.templateKey}
-                          options={visibleTemplates.map((template) => ({
-                            ...getTemplateOptionPresentation(
-                              template,
-                              formState.eventType,
-                              formState.recipientType,
-                            ),
-                            value: template.key,
-                          }))}
-                          disabled={isSelectedDedicatedRule}
-                          onValueChange={(value) =>
-                            setFormState((current) => ({
-                              ...current,
-                              templateKey: value as TriggerTemplateKey,
-                            }))
-                          }
-                          dataComponent={component("trigger-rules-template")}
-                          triggerDataComponent={component("trigger-rules-template-select")}
-                        />
+                        {isTemplateCatalogFailed ? (
+                          <QueryErrorState
+                            dataComponent={component("trigger-rules-template-catalog-error")}
+                            size="inline"
+                            title="템플릿 정보를 불러오지 못했습니다"
+                            onRetry={() => void templateQuery.refetch()}
+                            isRetrying={templateQuery.isFetching}
+                            className="md:col-span-2"
+                          />
+                        ) : isTemplateCatalogLoading ? (
+                          <InfoRow
+                            data-component={component("trigger-rules-template-catalog-loading")}
+                            label="발송 템플릿"
+                            value="템플릿 정보를 불러오는 중이에요."
+                          />
+                        ) : (
+                          <TitleSelectMolecule
+                            id="trigger-rule-template"
+                            label="발송 템플릿"
+                            value={formState.templateKey}
+                            options={visibleTemplates.map((template) => ({
+                              ...getTemplateOptionPresentation(
+                                template,
+                                formState.eventType,
+                                formState.recipientType,
+                              ),
+                              value: template.key,
+                            }))}
+                            disabled={isSelectedDedicatedRule}
+                            onValueChange={(value) =>
+                              setFormState((current) => ({
+                                ...current,
+                                templateKey: value as TriggerTemplateKey,
+                              }))
+                            }
+                            dataComponent={component("trigger-rules-template")}
+                            triggerDataComponent={component("trigger-rules-template-select")}
+                          />
+                        )}
 
                         {isClientGreetingRule ? (
                           <InfoCard
@@ -1426,61 +1496,63 @@ export function TriggerRulesManager({
                           </InfoCard>
                         ) : null}
 
-                        <InfoCard
-                          title="필수 자동 입력 정보"
-                          description={requiredTemplateVariables.length > 0
-                            ? "발송 전에 아래 정보가 준비되어 있는지 확인해 주세요."
-                            : "이 템플릿은 추가 정보 없이 발송할 수 있습니다."}
-                          data-component={component("trigger-rules-required-variables")}
-                          className="md:col-span-2"
-                        >
-                          <div
-                            data-component={component("trigger-rules-required-variables-content")}
-                            data-slot="required-variables-content"
-                            className="grid gap-[calc(12px*var(--glint-ui-scale,1))]"
+                        {hasTemplateCatalog ? (
+                          <InfoCard
+                            title="필수 자동 입력 정보"
+                            description={requiredTemplateVariables.length > 0
+                              ? "발송 전에 아래 정보가 준비되어 있는지 확인해 주세요."
+                              : "이 템플릿은 추가 정보 없이 발송할 수 있습니다."}
+                            data-component={component("trigger-rules-required-variables")}
+                            className="md:col-span-2"
                           >
-                            <p
-                              data-component={component("trigger-rules-required-variables-guidance")}
-                              data-slot="required-variables-guidance"
-                              className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-text-muted"
+                            <div
+                              data-component={component("trigger-rules-required-variables-content")}
+                              data-slot="required-variables-content"
+                              className="grid gap-[calc(12px*var(--glint-ui-scale,1))]"
                             >
-                              {requiredTemplateVariables.length > 0
-                                ? "고객 정보에서 자동으로 입력되며, 필수값이 비어 있으면 잘못된 메시지 대신 발송이 안전하게 중단돼요."
-                                : "추가 입력 없이 저장된 메시지 내용 그대로 발송됩니다."}
-                              {formState.templateKey === "PRICE_INFO"
-                                ? " 비용 안내는 고객의 관할 지역과 계좌 정보가 모두 필요합니다."
-                                : ""}
-                            </p>
-                            {requiredTemplateVariables.length > 0 ? (
-                              <div
-                                data-component={component("trigger-rules-required-variable-list")}
-                                data-slot="required-variable-list"
-                                className="flex flex-wrap gap-[calc(8px*var(--glint-ui-scale,1))]"
-                              >
-                                {requiredTemplateVariables.map((variable) => (
-                                  <Badge
-                                    key={variable.key}
-                                    variant="outline"
-                                    data-component={component(`trigger-rules-required-variable-${variable.key}`)}
-                                  >
-                                    {variable.label}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : null}
-                            {unsupportedRequiredCustomVariables.length > 0 ? (
                               <p
-                                data-component={component("trigger-rules-required-custom-variable-warning")}
-                                data-slot="required-custom-variable-warning"
-                                className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-burgundy"
+                                data-component={component("trigger-rules-required-variables-guidance")}
+                                data-slot="required-variables-guidance"
+                                className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-text-muted"
                               >
-                                자동 입력 출처가 없는 필수 변수(
-                                {unsupportedRequiredCustomVariables.map((variable) => variable.label).join(", ")}
-                                )가 있어 이 규칙을 저장할 수 없습니다. 템플릿 변수를 기본 고객 정보에 연결해 주세요.
+                                {requiredTemplateVariables.length > 0
+                                  ? "고객 정보에서 자동으로 입력되며, 필수값이 비어 있으면 잘못된 메시지 대신 발송이 안전하게 중단돼요."
+                                  : "추가 입력 없이 저장된 메시지 내용 그대로 발송됩니다."}
+                                {formState.templateKey === "PRICE_INFO"
+                                  ? " 비용 안내는 고객의 관할 지역과 계좌 정보가 모두 필요합니다."
+                                  : ""}
                               </p>
-                            ) : null}
-                          </div>
-                        </InfoCard>
+                              {requiredTemplateVariables.length > 0 ? (
+                                <div
+                                  data-component={component("trigger-rules-required-variable-list")}
+                                  data-slot="required-variable-list"
+                                  className="flex flex-wrap gap-[calc(8px*var(--glint-ui-scale,1))]"
+                                >
+                                  {requiredTemplateVariables.map((variable) => (
+                                    <Badge
+                                      key={variable.key}
+                                      variant="outline"
+                                      data-component={component(`trigger-rules-required-variable-${variable.key}`)}
+                                    >
+                                      {variable.label}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              ) : null}
+                              {unsupportedRequiredCustomVariables.length > 0 ? (
+                                <p
+                                  data-component={component("trigger-rules-required-custom-variable-warning")}
+                                  data-slot="required-custom-variable-warning"
+                                  className="text-[calc(12px*var(--glint-ui-scale,1))] leading-relaxed text-v3-burgundy"
+                                >
+                                  자동 입력 출처가 없는 필수 변수(
+                                  {unsupportedRequiredCustomVariables.map((variable) => variable.label).join(", ")}
+                                  )가 있어 이 규칙을 저장할 수 없습니다. 템플릿 변수를 기본 고객 정보에 연결해 주세요.
+                                </p>
+                              ) : null}
+                            </div>
+                          </InfoCard>
+                        ) : null}
                       </SteppedWizardPanelContent>
                     ),
                   },

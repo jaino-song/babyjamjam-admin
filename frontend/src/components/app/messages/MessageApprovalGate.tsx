@@ -27,9 +27,10 @@ export function MessageApprovalGate({
   dataComponent: string;
   enabled?: boolean;
 }) {
-  const { data: senderApproval, isLoading, isError, isFetching, refetch } = useMessageSenderApproval();
+  const { data: senderApproval, isLoading, isPaused, isError, isFetching, refetch } =
+    useMessageSenderApproval();
 
-  if (!enabled || isLoading || senderApproval?.isApproved) {
+  if (!enabled || isLoading || (isPaused && senderApproval === undefined) || senderApproval?.isApproved) {
     return <>{children}</>;
   }
 

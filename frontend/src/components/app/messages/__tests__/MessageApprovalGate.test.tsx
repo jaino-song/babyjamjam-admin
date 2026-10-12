@@ -176,4 +176,56 @@ describe("MessageApprovalGate", () => {
     expect(screen.getByText("approved content")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("renders children, with no notice and no alert, while the first load is paused (device offline)", () => {
+    mockedUseQuery.mockReturnValue({
+      data: undefined,
+      isPending: true,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPaused: true,
+      status: "pending",
+      fetchStatus: "paused",
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
+
+    render(
+      <MessageApprovalGate dataComponent="desktop_test_message-approval-gate">
+        <div>approved content</div>
+      </MessageApprovalGate>,
+    );
+
+    expect(screen.getByText("approved content")).toBeInTheDocument();
+    expect(screen.queryByText(APPROVAL_MESSAGE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the approval-required notice when a not-approved answer has a paused refetch", () => {
+    mockedUseQuery.mockReturnValue({
+      data: {
+        approvalStatus: "not_requested",
+        isApproved: false,
+        canRequest: true,
+        requestedAt: null,
+        approvedAt: null,
+      },
+      isPending: false,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      isPaused: true,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useQuery>);
+
+    render(
+      <MessageApprovalGate dataComponent="desktop_test_message-approval-gate">
+        <div>approved content</div>
+      </MessageApprovalGate>,
+    );
+
+    expect(screen.getByText(APPROVAL_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByText("approved content")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

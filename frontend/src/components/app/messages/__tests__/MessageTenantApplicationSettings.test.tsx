@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -40,6 +40,18 @@ const mockedUseMutation = jest.mocked(useMutation);
 const mockedUseQueryClient = jest.mocked(useQueryClient);
 const mockedUseGetAuthUser = jest.mocked(useGetAuthUser);
 const mockedSettingsApi = jest.mocked(settingsApi);
+
+// A query that is paused before its first load (device offline): not loading, not failed, no data.
+const PAUSED_QUERY_RESULT = {
+  data: undefined,
+  isPending: true,
+  isLoading: false,
+  isError: false,
+  isFetching: false,
+  isPaused: true,
+  status: "pending",
+  fetchStatus: "paused",
+};
 
 const mockInvalidateQueries = jest.fn();
 const mockSetQueryData = jest.fn();
@@ -203,12 +215,35 @@ function mockSettingsQueries(
   isApproved: boolean,
   automationPolicies: MessageAutomationPoliciesResponse = DEFAULT_AUTOMATION_POLICIES,
   triggerRules: MessageTriggerRule[] = DEFAULT_TRIGGER_RULES,
-  options: { automationPoliciesLoading?: boolean; automationPoliciesError?: boolean } = {},
+  options: {
+    automationPoliciesLoading?: boolean;
+    automationPoliciesError?: boolean;
+    automationPoliciesPaused?: boolean;
+    approval?: "failed" | "paused";
+    approvalRefetch?: jest.Mock;
+    rules?: "failed" | "paused" | "cached-failed";
+    rulesRefetch?: jest.Mock;
+  } = {},
 ) {
   mockedUseQuery.mockImplementation(((queryOptions: unknown) => {
     const queryKey = getQueryKey(queryOptions);
 
     if (queryKey?.[0] === "settings" && queryKey[1] === "message-sender-approval") {
+      if (options.approval === "paused") {
+        return { ...PAUSED_QUERY_RESULT, refetch: options.approvalRefetch ?? jest.fn() } as unknown as ReturnType<typeof useQuery>;
+      }
+
+      if (options.approval === "failed") {
+        return {
+          data: undefined,
+          isLoading: false,
+          isError: true,
+          isFetching: false,
+          isPaused: false,
+          refetch: options.approvalRefetch ?? jest.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return {
         data: {
           approvalStatus: isApproved ? "approved" : "not_requested",
@@ -222,6 +257,10 @@ function mockSettingsQueries(
     }
 
     if (queryKey?.[0] === "settings" && queryKey[1] === "message-automation-policies") {
+      if (options.automationPoliciesPaused) {
+        return { ...PAUSED_QUERY_RESULT, refetch: jest.fn() } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return {
         data: options.automationPoliciesLoading ? undefined : automationPolicies,
         isLoading: options.automationPoliciesLoading ?? false,
@@ -235,6 +274,21 @@ function mockSettingsQueries(
     }
 
     if (queryKey?.[0] === "message-triggers" && queryKey[1] === "list") {
+      if (options.rules === "paused") {
+        return { ...PAUSED_QUERY_RESULT, refetch: options.rulesRefetch ?? jest.fn() } as unknown as ReturnType<typeof useQuery>;
+      }
+
+      if (options.rules === "failed" || options.rules === "cached-failed") {
+        return {
+          data: options.rules === "cached-failed" ? triggerRules : undefined,
+          isLoading: false,
+          isError: true,
+          isFetching: false,
+          isPaused: false,
+          refetch: options.rulesRefetch ?? jest.fn(),
+        } as unknown as ReturnType<typeof useQuery>;
+      }
+
       return {
         data: triggerRules,
         isLoading: false,
@@ -711,5 +765,175 @@ describe("MessageTenantApplicationSettings", () => {
     expect(screen.getByText("현재 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).toBeDisabled();
     expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).not.toBeChecked();
+  });
+
+  describe("unknown sender approval and unknown rules (BJJ-434)", () => {
+    const ORDER_EMPTY_TEXT = "등록된 자동 전송 루틴 없음";
+    const ORDER_LOADING_TEXT = "자동 전송 루틴을 불러오는 중";
+    const APPROVAL_ERROR_TITLE = "발신 승인 상태를 불러오지 못했습니다";
+
+    it("failed approval with no data: one retryable alert, no application item, no switch derived from approval", () => {
+      const approvalRefetch = jest.fn();
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        approval: "failed",
+        approvalRefetch,
+      });
+
+      render(<MessageTenantApplicationSettings />);
+
+      const alerts = screen.getAllByRole("alert");
+      expect(alerts).toHaveLength(1);
+      expect(within(alerts[0]).getByText(APPROVAL_ERROR_TITLE)).toBeInTheDocument();
+      expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
+      expect(screen.queryByText("메시지 발송 신청하기")).not.toBeInTheDocument();
+      // Rows that require approval render no switch at all; the others are unchanged.
+      expect(screen.queryByRole("switch", { name: "지난 자동 전송 처리 규칙 활성화" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("switch", { name: "중복 전송 확인 활성화" })).not.toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: "SMS 재시도 규칙 활성화" })).toBeInTheDocument();
+      // The first automation policy is selected instead of the application panel.
+      expect(screen.getAllByText("지난 자동 전송 처리 규칙").length).toBeGreaterThan(0);
+
+      fireEvent.click(within(alerts[0]).getByRole("button", { name: "다시 시도" }));
+      expect(approvalRefetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("failed approval with no data: the trigger-dispatch switch does not depend on the approval answer", () => {
+      mockSettingsQueries(true, automationPoliciesWithTriggerDispatch(true), DEFAULT_TRIGGER_RULES, {
+        approval: "failed",
+      });
+
+      render(<MessageTenantApplicationSettings />);
+
+      expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).toBeChecked();
+    });
+
+    it("approved and not-approved answers render exactly as before, with no alert", () => {
+      mockSettingsQueries(true);
+      const approved = render(<MessageTenantApplicationSettings />);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
+      expect(screen.getByRole("switch", { name: "지난 자동 전송 처리 규칙 활성화" })).toHaveAttribute("aria-checked", "true");
+      approved.unmount();
+
+      mockSettingsQueries(false);
+      render(<MessageTenantApplicationSettings />);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getAllByText("메시지 발송 기능 신청").length).toBeGreaterThan(0);
+    });
+
+    it("paused approval with no data reads as loading: no application item, no 0개 pill, no alert", () => {
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        approval: "paused",
+      });
+
+      render(<MessageTenantApplicationSettings />);
+
+      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
+      expect(screen.queryByText("0개")).not.toBeInTheDocument();
+      expect(screen.queryByText("표시할 설정 항목이 없습니다.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("paused automation policies with no data read as loading", () => {
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        automationPoliciesPaused: true,
+      });
+
+      render(<MessageTenantApplicationSettings />);
+
+      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.queryByText("0개")).not.toBeInTheDocument();
+      expect(screen.queryByText("현재 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("loading settings do not print a 0개 pill", () => {
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        automationPoliciesLoading: true,
+      });
+
+      render(<MessageTenantApplicationSettings />);
+
+      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.queryByText("0개")).not.toBeInTheDocument();
+    });
+
+    it("order card, rules failed with no data: titled retryable failure, no empty text, save disabled", () => {
+      const rulesRefetch = jest.fn();
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        rules: "failed",
+        rulesRefetch,
+      });
+
+      render(<MessageTenantApplicationSettings />);
+      fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+      const alert = screen.getByRole("alert");
+      expect(within(alert).getByText("자동 전송 루틴을 불러오지 못했습니다")).toBeInTheDocument();
+      expect(screen.queryByText(ORDER_EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByText(ORDER_LOADING_TEXT)).not.toBeInTheDocument();
+
+      // A dirty form must still not be saveable: the order would be built from zero rules.
+      fireEvent.change(screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" }), {
+        target: { value: "2" },
+      });
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+
+      fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+      expect(rulesRefetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("order card, rules paused with no data: loading row, not the empty text or an alert", () => {
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        rules: "paused",
+      });
+
+      render(<MessageTenantApplicationSettings />);
+      fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+      expect(screen.getByText(ORDER_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.queryByText(ORDER_EMPTY_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("order card, rules loaded and empty: the empty text, no alert, save still works", () => {
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, []);
+
+      render(<MessageTenantApplicationSettings />);
+      fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+      expect(screen.getByText(ORDER_EMPTY_TEXT)).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+      fireEvent.change(screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" }), {
+        target: { value: "2" },
+      });
+      expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    });
+
+    it("order card, cached rules and a failed refetch: rows stay with one inline notice that retries", () => {
+      const rulesRefetch = jest.fn();
+      mockSettingsQueries(true, DEFAULT_AUTOMATION_POLICIES, DEFAULT_TRIGGER_RULES, {
+        rules: "cached-failed",
+        rulesRefetch,
+      });
+
+      render(<MessageTenantApplicationSettings />);
+      fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
+
+      expect(screen.getByText(DEFAULT_TRIGGER_RULES[0].name)).toBeInTheDocument();
+      expect(screen.queryByText(ORDER_EMPTY_TEXT)).not.toBeInTheDocument();
+      const alert = screen.getByRole("alert");
+      expect(within(alert).getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
+
+      fireEvent.change(screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" }), {
+        target: { value: "2" },
+      });
+      expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+
+      fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
+      expect(rulesRefetch).toHaveBeenCalledTimes(1);
+    });
   });
 });
