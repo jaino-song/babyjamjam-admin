@@ -8,6 +8,8 @@ interface QueryState {
   isError: boolean;
   isFetching: boolean;
   error: unknown;
+  status?: "pending" | "success" | "error";
+  fetchStatus?: "idle" | "fetching" | "paused";
   refetch: jest.Mock;
 }
 
@@ -73,6 +75,25 @@ describe("AllMenuPage employee count load failures", () => {
 
     fireEvent.click(within(alert as HTMLElement).getByRole("button", { name: "다시 시도" }));
     expect(mockRefetchEmployees).toHaveBeenCalledTimes(1);
+  });
+
+  it("never prints 0명 while a retry is paused offline with nothing cached", () => {
+    // react-query state for a retry started offline: pending + paused, so neither isLoading nor isError.
+    mockEmployees = {
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+      error: null,
+      status: "pending",
+      fetchStatus: "paused",
+    };
+
+    render(<AllMenuPage />);
+
+    expect(within(employeesRow()).queryByText("0명")).not.toBeInTheDocument();
+    expect(within(employeesRow()).queryByText(/명$/)).not.toBeInTheDocument();
+    expect(employeesRow().querySelector(".menu-value-skeleton")).not.toBeNull();
   });
 
   it("never prints 0명 on a failed load even when the normalised error is suppressed", () => {

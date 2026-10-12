@@ -301,6 +301,7 @@ export default function NotificationPage() {
                         || !accountEmail
                         || !emailNotificationUserId
                         || notificationPreferencesQuery.isFetching
+                        || !hasEmailPreference
                         || (isEmailPreferenceLoadFailed && !hasEmailPreference)
                         || updateNotificationPreferencesMutation.isPending
                       }
