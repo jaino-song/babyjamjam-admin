@@ -2,6 +2,14 @@ import { AxiosError } from "axios";
 
 type ApiModule = typeof import("./api");
 
+it("loads link confirmations with the numeric clientId", async () => {
+    const { apiModule, mockGet } = await loadApiModule();
+    const entries = [{ documentId: "doc-1" }];
+    mockGet.mockResolvedValue({ data: entries });
+    expect(await apiModule.eformsignApi.getLinkConfirmations(7)).toEqual(entries);
+    expect(mockGet).toHaveBeenCalledWith("/eformsign-docs/link-confirmations", { params: { clientId: 7 } });
+});
+
 function createAxiosServerError(status: number): AxiosError {
     return new AxiosError(
         `Request failed with status code ${status}`,
