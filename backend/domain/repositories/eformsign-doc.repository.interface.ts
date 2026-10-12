@@ -235,7 +235,7 @@ export interface ReviewStageContract {
 }
 
 export interface IEformsignDocRepository {
-    /** Unlinked contract-or-unclassified documents owned by the branch or unassigned. */
+    /** Unlinked contract-or-unclassified documents owned by the branch. */
     findLinkConfirmationCandidates(branchId: string, normalizedPhone?: string): Promise<EformsignLinkConfirmationCandidate[]>;
     findById(branchid: string, id: number): Promise<EformsignDocEntity | null>;
     findByDocumentId(branchid: string, documentId: string): Promise<EformsignDocEntity | null>;

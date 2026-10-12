@@ -60,9 +60,9 @@ export class MockClientRepository implements IClientRepository {
         return this.clients.get(id) ?? null;
     }
 
-    async findPhoneMatches(phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
+    async findPhoneMatches(branchId: string, phoneSuffixes: string[]): Promise<ClientPhoneMatch[]> {
         return Array.from(this.clients.values())
-            .filter(client => client.branchId !== null
+            .filter(client => client.branchId === branchId
                 && phoneSuffixes.some(suffix => client.phone?.endsWith(suffix)))
             .map(({ id, branchId, name, phone, birthday }) => ({ id, branchId, name, phone, birthday }));
     }

@@ -130,11 +130,12 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     ): Promise<EformsignLinkConfirmationCandidate[]> {
         return this.prismaService.eformsign_doc.findMany({
             where: {
+                // 무지점 문서는 system scope 전사 고객 조회가 필요하므로 소유자 승인 전까지 제외한다 (BJJ-432).
+                branchId,
                 clientId: null,
                 permanentPurgeRequestedAt: null,
                 statusType: { in: [...EFORMSIGN_AUTO_LINK_ELIGIBLE_STATUS_CODES] },
                 AND: [
-                    { OR: [{ branchId }, { branchId: null }] },
                     { OR: [{ documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT }, { documentKind: null }] },
                     ...(normalizedPhone === undefined ? [] : [{ OR: [
                         { customerPhone: normalizedPhone },

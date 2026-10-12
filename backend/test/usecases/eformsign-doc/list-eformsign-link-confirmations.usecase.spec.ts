@@ -56,7 +56,7 @@ describe("ListEformsignLinkConfirmationsUsecase", () => {
             client: { id: 1, name: "다른산모", phone: "01012345678", birthday: "1990-01-01" },
             differences: ["name"],
         }]);
-        expect(findPhoneMatches).toHaveBeenCalledWith(["5678"]);
+        expect(findPhoneMatches).toHaveBeenCalledWith("B", ["5678"]);
         expect(findLinkConfirmationCandidates).toHaveBeenCalledWith("B", undefined);
     });
 
@@ -136,16 +136,21 @@ describe("ListEformsignLinkConfirmationsUsecase", () => {
         clients = [client(), client({ id: 2, branchId: "OTHER" })];
         expect(await usecase.execute("B")).toHaveLength(1);
     });
-    it("never reveals a branchless document to either branch when phone is ambiguous company-wide", async () => {
+    it("excludes a branch-owned document when only another branch's client matches", async () => {
+        clients = [client({ branchId: "OTHER" })];
+        expect(await usecase.execute("B")).toEqual([]);
+    });
+    it("never lists branchless documents even with matches in multiple branches", async () => {
         rows = [doc({ branchId: null })];
         clients = [client(), client({ id: 2, branchId: "OTHER" })];
         expect(await usecase.execute("B")).toEqual([]);
         expect(await usecase.execute("OTHER")).toEqual([]);
     });
-    it("lists branchless document only for its unique client's branch", async () => {
+    it("excludes a branchless document even when its phone uniquely matches a branch client", async () => {
         rows = [doc({ branchId: null })];
-        expect(await usecase.execute("B")).toHaveLength(1);
+        expect(await usecase.execute("B")).toEqual([]);
         expect(await usecase.execute("OTHER")).toEqual([]);
+        expect(findPhoneMatches).not.toHaveBeenCalled();
     });
     it("falls back to candidate phone only when customerPhone is absent", async () => {
         rows = [doc({ customerPhone: null })];

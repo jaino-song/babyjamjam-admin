@@ -46,7 +46,7 @@ export class ListEformsignLinkConfirmationsUsecase {
         const serviceRecordTemplateIds = configuredServiceRecordTemplateIds(this.configService);
         const candidates = rows.flatMap(row => {
             if (row.clientId !== null || row.permanentPurgeRequestedAt !== null
-                || (row.branchId !== branchId && row.branchId !== null)
+                || row.branchId !== branchId
                 || (row.documentKind !== EFORMSIGN_DOCUMENT_KIND.CONTRACT && row.documentKind !== null)
                 || !isEformsignAutoLinkEligibleStatus(row.statusType)
                 || (row.documentKind === null && isServiceRecordEformsignDocument(row, serviceRecordTemplateIds))) return [];
@@ -60,11 +60,11 @@ export class ListEformsignLinkConfirmationsUsecase {
         if (candidates.length === 0) return [];
 
         const phoneSuffixes = [...new Set(candidates.map(({ phone }) => phone.slice(-PHONE_LOOKUP_SUFFIX_LENGTH)))];
-        const phoneMatches = await this.clients.findPhoneMatches(phoneSuffixes);
+        const phoneMatches = await this.clients.findPhoneMatches(branchId, phoneSuffixes);
         const matchesByPhone = new Map<string, ClientPhoneMatch[]>();
         for (const client of phoneMatches) {
             const phone = normalizePhone(client.phone);
-            if (!phone || client.branchId === null) continue;
+            if (!phone || client.branchId !== branchId) continue;
             const matches = matchesByPhone.get(phone) ?? [];
             matches.push(client);
             matchesByPhone.set(phone, matches);
@@ -72,8 +72,7 @@ export class ListEformsignLinkConfirmationsUsecase {
         const now = new Date();
         const result: EformsignLinkConfirmation[] = [];
         for (const { row, candidate, phone } of candidates) {
-            const matches = (matchesByPhone.get(phone) ?? [])
-                .filter(client => row.branchId === null || client.branchId === branchId);
+            const matches = matchesByPhone.get(phone) ?? [];
             if (matches.length !== 1) continue;
             const client = matches[0];
             if (!client || client.branchId !== branchId || (clientId !== undefined && client.id !== clientId)) continue;
