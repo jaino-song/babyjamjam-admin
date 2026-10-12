@@ -77,6 +77,7 @@ describe("useInfiniteClients", () => {
 
     expect(result.current.clients).toHaveLength(6);
     expect(result.current.hasNextPage).toBe(false);
+    expect(result.current.isPaused).toBe(false);
   });
 
   it("keeps visible clients clamped when load more is invoked after the final page", async () => {
@@ -292,6 +293,7 @@ describe("useInfiniteClients", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.hasData).toBe(false);
+    expect(result.current.isPaused).toBe(false);
   });
 
   it("mirrors the query's paused state while offline with no data", async () => {
