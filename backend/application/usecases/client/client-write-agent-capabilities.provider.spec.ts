@@ -1346,7 +1346,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         }
 
         it.each(entryPoints)("%s schedules the link for the active schedule once the update has resolved", async (entry) => {
-            const { run, prisma, updateClient, transaction, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            const { run, prisma, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
             prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
 
             await expect(run(entry)).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
@@ -1357,10 +1357,48 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             }));
             expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
             expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
-            const writeOrder = entry === "execute"
-                ? updateClient.execute.mock.invocationCallOrder[0]!
-                : transaction.agent_action.updateMany.mock.invocationCallOrder[0]!;
-            expect(serviceRecordLinkService.scheduleForServiceStart.mock.invocationCallOrder[0]!).toBeGreaterThan(writeOrder);
+        });
+
+        // The schedule read and the scheduling call must wait for the write to
+        // COMMIT: from outside the transaction the client still reads as 예약 전,
+        // so `scheduleForServiceStart` would refuse and the provider would get no
+        // link. The write is held unresolved after its work has run; nothing may
+        // be scheduled (or even read) until it is released.
+        it.each(entryPoints)("%s schedules only after the write has resolved, never inside it", async (entry) => {
+            const { run, prisma, updateClient, existingClient, serviceRecordLinkService } = arrange({ serviceStatus: "waiting" });
+            prisma.employee_schedule.findMany.mockResolvedValue([{ id: 7 }]);
+            let release!: () => void;
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            let writeBodyDone = false;
+            if (entry === "execute") {
+                // `execute` writes through the update use case, whose own transaction
+                // commits when its promise resolves.
+                updateClient.execute.mockImplementation(async () => {
+                    writeBodyDone = true;
+                    await held;
+                    return { ...existingClient, serviceStatus: "waiting" };
+                });
+            } else {
+                const callback = prisma.$transaction.getMockImplementation()!;
+                prisma.$transaction.mockImplementation(async (operation) => {
+                    const result = await callback(operation);
+                    writeBodyDone = true;
+                    await held;
+                    return result;
+                });
+            }
+
+            const running = run(entry);
+            for (let turn = 0; turn < 50 && !writeBodyDone; turn += 1) await new Promise((resolve) => setImmediate(resolve));
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(writeBodyDone).toBe(true);
+            expect(prisma.employee_schedule.findMany).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+            release();
+            await expect(running).resolves.toEqual({ id: 1, name: "홍길동", status: "updated" });
+
+            expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
         });
 
         it.each(entryPoints)("%s schedules every active schedule", async (entry) => {

@@ -5873,6 +5873,78 @@ describe("ClientService", () => {
             });
         });
 
+        describe("given a stored 예약 전 client that completeReplacement takes out of 예약 전 (service-record link SMS)", () => {
+            const futureStart = new Date("2026-11-02T00:00:00.000Z");
+            const futureEnd = new Date("2026-11-30T00:00:00.000Z");
+
+            const arrange = (beforeStatus: string) => {
+                const beforeClient = Object.assign(createClientEntity(), {
+                    serviceStatus: beforeStatus,
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                const afterClient = Object.assign(createClientEntity(), {
+                    serviceStatus: "waiting",
+                    startDate: futureStart,
+                    endDate: futureEnd,
+                });
+                findClientByIdUsecase.execute.mockResolvedValue(beforeClient);
+                clientRepository.findByIdForUpdate.mockResolvedValue(beforeClient);
+                updateClientUsecase.execute.mockResolvedValue(afterClient);
+                prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                    where["terminatedAt"] === null ? [{ id: 7 }] : []);
+                return { afterClient };
+            };
+
+            it("schedules the link for the active schedule once, only after the transaction has resolved", async () => {
+                arrange("pre_booking");
+                let release!: () => void;
+                const held = new Promise<void>((resolve) => { release = resolve; });
+                let transactionBodyDone = false;
+                prismaService.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) => {
+                    const result = await callback(prismaService);
+                    transactionBodyDone = true;
+                    await held;
+                    return result;
+                });
+
+                const running = service.completeReplacement(branchId, 1);
+                for (let turn = 0; turn < 50 && !transactionBodyDone; turn += 1) {
+                    await new Promise((resolve) => setImmediate(resolve));
+                }
+                await new Promise((resolve) => setImmediate(resolve));
+                expect(transactionBodyDone).toBe(true);
+                expect(prismaService.employee_schedule.findMany).not.toHaveBeenCalledWith(
+                    expect.objectContaining({ where: expect.objectContaining({ terminatedAt: null }) }),
+                );
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+
+                release();
+                await running;
+
+                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
+            });
+
+            it("does not schedule when the client was not stored as 예약 전 (replacement_requested)", async () => {
+                arrange("replacement_requested");
+
+                await service.completeReplacement(branchId, 1);
+
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+            });
+
+            it("still resolves and logs when scheduling the link rejects", async () => {
+                const { afterClient } = arrange("pre_booking");
+                serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
+                const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                    .mockImplementation(() => undefined);
+
+                await expect(service.completeReplacement(branchId, 1)).resolves.toBe(afterClient);
+
+                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
+            });
+        });
+
         describe("given non-existent client", () => {
             it("should throw NotFoundException", async () => {
                 // Arrange

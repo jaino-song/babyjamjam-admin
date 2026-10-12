@@ -2687,7 +2687,7 @@ export class ClientService {
         // SAVED computation: loaded before the transaction opens (see
         // terminateService).
         const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
-        const updatedClient = await this.prismaService.$transaction(async (transaction) => {
+        const { updatedClient, priorStatusInputs } = await this.prismaService.$transaction(async (transaction) => {
             const existingCase = transaction.service_record_case?.findUnique
                 ? await transaction.service_record_case.findUnique({
                     where: { clientId },
@@ -2738,8 +2738,25 @@ export class ClientService {
                 serviceStatus: computedStatus,
             }, transaction, calendar);
             await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
-            return updated;
+            return {
+                updatedClient: updated,
+                priorStatusInputs: {
+                    serviceStatus: lockedClient.serviceStatus ?? null,
+                    startDate: lockedClient.startDate ?? null,
+                    endDate: lockedClient.endDate ?? null,
+                },
+            };
         });
+        // A stored 예약 전 client leaves that status here (the status is
+        // recomputed from its dates), so the provider link SMS the gates
+        // skipped while it was 예약 전 is scheduled now, after the commit.
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            clientId,
+            priorStatusInputs,
+            updatedClient,
+            null,
+        );
         return updatedClient;
     }
 
