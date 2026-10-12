@@ -149,6 +149,26 @@ describe("ClientServiceRecordsTab", () => {
         jest.restoreAllMocks();
     });
 
+    it.each([
+        ["2026-07-05T00:00:00.000Z", "2026.07.06 00:00"],
+        ["2026-12-31", "2027.01.01 00:00"],
+    ])("shows next-day midnight KST for a tokenless schedule ending %s", (endDate, expected) => {
+        const assignment = createAssignment(1, "none");
+        assignment.endDate = endDate;
+        assignment.link.token = null;
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [assignment] }} />);
+        expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("uses the issued token expiry instead of the end-date fallback", () => {
+        render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
+            layout="mobile" clientId={100} isLoading={false} isError={false}
+            overview={{ assignments: [createAssignment(1, "sent")] }} />);
+        expect(screen.getByText("2026.07.05 20:00")).toBeInTheDocument();
+    });
+
     it("presents mobile link controls before basic information and sessions without sending on render", () => {
         render(<ClientServiceRecordsTab data-component={TEST_COMPONENT}
             layout="mobile" clientId={100} isLoading={false} isError={false}

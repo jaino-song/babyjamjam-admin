@@ -4,6 +4,7 @@ import { ServiceRecordLinkService } from "application/services/service-record-li
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
     SERVICE_RECORD_LINK_SMS_TITLE,
@@ -1573,6 +1574,14 @@ describe("ServiceRecordLinkService", () => {
                 (value) => value === SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
             );
             expect(occurrences).toHaveLength(2);
+            expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(2);
+            for (const reason of [
+                "Service record access revoked",
+                "Service record link reset without resend",
+                "Service record link schedule ended or replaced",
+            ]) {
+                expect(sql.values).not.toContain(reason);
+            }
         });
 
         it("still allows a manual send for an opted-out branch (manual sends bypass the automatic-scheduling gate entirely)", async () => {

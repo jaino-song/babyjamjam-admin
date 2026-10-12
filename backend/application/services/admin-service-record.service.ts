@@ -615,7 +615,7 @@ export class AdminServiceRecordService {
 
     private getTokenState(token: ScheduleForOverview["serviceRecordTokens"][number]): AdminServiceRecordTokenState {
         if (token.revokedAt) return "revoked";
-        if (token.expiresAt.getTime() < Date.now()) return "expired";
+        if (token.expiresAt.getTime() <= Date.now()) return "expired";
         if (token.active) return "active";
         return "revoked";
     }

@@ -82,6 +82,34 @@ describe("AdminServiceRecordService", () => {
         serviceRecordTokens: [],
     });
 
+    it.each([
+        ["2026-07-12T14:59:59.999Z", "active"],
+        ["2026-07-12T15:00:00.000Z", "expired"],
+    ])("reports token state at the next-day midnight boundary %s", async (now, state) => {
+        jest.useFakeTimers().setSystemTime(new Date(now));
+        try {
+            const prisma = createPrisma();
+            const schedule = createSchedule(1, "2026-07-01");
+            Object.assign(schedule, { serviceRecordTokens: [{
+                createdAt: new Date("2026-07-01T00:00:00.000Z"),
+                verifiedAt: null, revokedAt: null, active: true,
+                expiresAt: new Date("2026-07-12T15:00:00.000Z"),
+            }] });
+            prisma.employee_schedule.findMany.mockResolvedValue([schedule]);
+            prisma.message_trigger_job.findMany.mockResolvedValue([]);
+            prisma.message_log.findMany.mockResolvedValue([]);
+            const service = new AdminServiceRecordService(
+                prisma as unknown as PrismaService,
+                createLinkService() as unknown as ServiceRecordLinkService,
+                createTriggerService() as unknown as MessageTriggerService, createHolidayCalendarStub(),
+            );
+            const overview = await service.getClientOverview("branch-1", 100);
+            expect(overview.assignments[0]?.link.token?.state).toBe(state);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     // A stored N is shown as is (the lifecycle ensure path caps it when the
     // period itself changes); only a case with no stored N derives it from the period.
     it.each([

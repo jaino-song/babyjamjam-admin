@@ -7,6 +7,7 @@ export const SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE = "service_start_at_15";
 export const SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON =
     "제공기록지 링크 발송 작업 생성 재시도 대기";
 export const SERVICE_RECORD_LINK_RESCHEDULED_REASON = "Service record link rescheduled";
+export const SERVICE_RECORD_LINK_ENDED_REASON = "Service record link schedule ended";
 export const SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON = "Service record link branch disabled";
 
 /** Exact key shape emitted by ServiceRecordLinkService.sendNow manual jobs. */

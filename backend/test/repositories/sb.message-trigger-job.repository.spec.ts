@@ -13,6 +13,7 @@ import { ordinaryAutomationJobWhere } from "application/utils/message-automation
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_ENDED_REASON,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerJobEntity,
@@ -22,7 +23,30 @@ import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+
+describe("serviceRecordScheduleBlockerSql", () => {
+    it("allows only the ended-only cancellation alongside existing reclaim reasons", () => {
+        const sql = serviceRecordScheduleBlockerSql({
+            status: Prisma.sql`blocker.status`,
+            cancelReason: Prisma.sql`blocker.cancel_reason`,
+            canceledByUser: Prisma.sql`blocker.canceled_by_user`,
+        });
+        expect(sql.values.filter((value) => value === SERVICE_RECORD_LINK_ENDED_REASON)).toHaveLength(1);
+        for (const reason of [
+            "Service record access revoked",
+            "Service record link reset without resend",
+            "Service record link schedule ended or replaced",
+        ]) {
+            expect(sql.values).not.toContain(reason);
+        }
+        expect(sql.sql).toContain("NOT IN");
+        expect(sql.sql).toContain("IN ('pending', 'processing', 'dispatching', 'sent')");
+        expect(sql.sql).toContain("= 'failed'");
+        expect(sql.sql).toContain("IS DISTINCT FROM");
+        expect(sql.sql).toContain("blocker.canceled_by_user = true");
+    });
+});
 
 describe("MessageTriggerJobEntity", () => {
     const now = new Date("2026-07-09T00:00:00.000Z");

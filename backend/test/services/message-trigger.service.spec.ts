@@ -31,6 +31,7 @@ import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.e
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "application/services/sms-trigger-delivery.service";
@@ -2928,12 +2929,16 @@ describe("MessageTriggerService", () => {
         ["late link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: false, terminatedAt: null }, true],
         ["link on end date", "system:service_record_link", { endDate: new Date("2026-11-05T00:00:00.000Z"), replaced: false, terminatedAt: null }, true],
         ["expired link", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: false, terminatedAt: null }, false],
+        ["expired link at midnight", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: false, terminatedAt: null }, false, "2026-11-04T15:00:00.000Z"],
+        ["link one millisecond before midnight", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: false, terminatedAt: null }, true, "2026-11-04T14:59:59.999Z"],
         ["replaced link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: true, terminatedAt: null }, false],
         ["terminated link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: false, terminatedAt: new Date() }, false],
+        ["replaced past-end link", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: true, terminatedAt: null }, false],
+        ["terminated past-end link", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: false, terminatedAt: new Date() }, false],
         ["deleted link schedule", "system:service_record_link", null, false],
         ["another rule", "rule-1", null, false],
-    ])("dispatches three-day-old jobs only for an eligible automatic link: %s", async (_name, ruleId, schedule, sends) => {
-        jest.useFakeTimers().setSystemTime(new Date("2026-11-05T03:00:00.000Z"));
+    ])("dispatches three-day-old jobs only for an eligible automatic link: %s", async (_name, ruleId, schedule, sends, now = "2026-11-05T03:00:00.000Z") => {
+        jest.useFakeTimers().setSystemTime(new Date(now));
         try {
             const dispatcher = createDispatchService();
             const job = createJob({ ruleId, employeeScheduleId: 10,
@@ -2945,6 +2950,11 @@ describe("MessageTriggerService", () => {
 
             expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(sends ? 1 : 0);
             expect(job.status).toBe(sends ? "sent" : "canceled");
+            if (!sends && ruleId === "system:service_record_link") {
+                expect(job.cancelReason).toBe(_name.startsWith("expired link")
+                    ? SERVICE_RECORD_LINK_ENDED_REASON
+                    : "Service record link schedule ended or replaced");
+            }
             if (ruleId === "rule-1") expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
             else {
                 expect(job.cancelReason).not.toBe("기존 발송 예정 24시간 경과");
