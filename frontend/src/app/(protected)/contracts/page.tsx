@@ -80,6 +80,7 @@ import { ContractAutomationsManager } from "@/components/app/contracts/ContractA
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { ClientFormDialog } from "@/components/app/clients/ClientFormDialog";
 import { ReceiptSendConfirmDialog } from "@/components/app/contracts/ReceiptSendConfirmDialog";
 import { Button } from "@/components/ui/button";
@@ -553,7 +554,9 @@ export default function ContractsPage() {
     isFetching: isFetchingDocuments,
     hasNextPage,
     fetchNextPage,
-    error,
+    isError: isDocumentsError,
+    isFetchNextPageError,
+    refetch,
   } = useInfiniteContracts({
     enabled: canFetchDocuments,
     filterType,
@@ -585,6 +588,13 @@ export default function ContractsPage() {
   // server returns is what renders — total_rows/hasNextPage describe the
   // searched set and pagination stops when the matches run out.
   const documents = infiniteDocuments;
+  const retryDocuments = () => {
+    if (isFetchNextPageError) {
+      void fetchNextPage();
+    } else {
+      void refetch();
+    }
+  };
 
   const serviceRecordDocuments = useMemo(
     () => infiniteDocuments.filter(
@@ -704,7 +714,7 @@ export default function ContractsPage() {
       });
     }
   };
-  if (authError || error) {
+  if (authError) {
     return (
       <div data-component="desktop_contracts_error" className="p-[calc(24px*var(--glint-ui-scale,1))]">
         <div data-component="desktop_contracts_error_banner" className="rounded-[18px] bg-v3-burgundy-light p-[calc(24px*var(--glint-ui-scale,1))] text-center text-v3-burgundy">
@@ -795,11 +805,26 @@ export default function ContractsPage() {
               />
             }
             emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
-              <ListEmptyState
+              isDocumentsError ? <QueryErrorState
+                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                size="panel"
+                className="pointer-events-auto"
+                onRetry={retryDocuments}
+                isRetrying={isFetchingDocuments}
+              /> : <ListEmptyState
                 message={searchQuery.trim() ? "검색 결과가 없습니다" : "계약 문서가 없습니다"}
               />
             ) : undefined}
           >
+            {isDocumentsError && documents.length > 0 ? (
+              <QueryErrorState
+                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                size="inline"
+                title="최신 정보를 불러오지 못했습니다"
+                onRetry={retryDocuments}
+                isRetrying={isFetchingDocuments}
+              />
+            ) : null}
             <AnimatedSlotList<EformsignDocument>
                 data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list"
                 items={documents}
@@ -822,7 +847,7 @@ export default function ContractsPage() {
                   setSelectedDocId(doc.id);
                 }}
                 // Load more props
-                hasMore={hasNextPage}
+                hasMore={hasNextPage && !isFetchNextPageError}
                 onLoadMore={fetchNextPage}
                 isFetchingMore={isFetchingDocuments}
                 render={({ item: doc, isLoading }) => {
@@ -932,12 +957,27 @@ export default function ContractsPage() {
                   isContentLoading={isContentLoading}
                   emptyState={
                     serviceRecordDocuments.length === 0 && !isServiceRecordListLoading && !isContentLoading ? (
-                      <ListEmptyState
+                      isDocumentsError ? <QueryErrorState
+                        dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                        size="panel"
+                        className="pointer-events-auto"
+                        onRetry={retryDocuments}
+                        isRetrying={isFetchingDocuments}
+                      /> : <ListEmptyState
                         message={serviceRecordSearchQuery.trim() ? "검색 결과가 없습니다" : "아직 제공기록지가 없습니다"}
                       />
                     ) : undefined
                   }
                 >
+                  {isDocumentsError && serviceRecordDocuments.length > 0 ? (
+                    <QueryErrorState
+                      dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                      size="inline"
+                      title="최신 정보를 불러오지 못했습니다"
+                      onRetry={retryDocuments}
+                      isRetrying={isFetchingDocuments}
+                    />
+                  ) : null}
                   <AnimatedSlotList<EformsignDocument>
                     data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_list"
                     items={serviceRecordDocuments}
@@ -956,7 +996,7 @@ export default function ContractsPage() {
                       };
                     }}
                     onSlotClick={(doc) => setSelectedServiceRecordDocId(doc.id)}
-                    hasMore={hasNextPage}
+                    hasMore={hasNextPage && !isFetchNextPageError}
                     onLoadMore={fetchNextPage}
                     isFetchingMore={isFetchingDocuments}
                     render={({ item: doc, isLoading }) => (
