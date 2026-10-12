@@ -676,12 +676,29 @@ describe("ClientServiceRecords: loading, failed and empty are different states",
         expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
     });
 
-    it("keeps the cached data visible when a refetch failed, with no error panel", () => {
-        renderState({ overview: { assignments: [createAssignment(1, "sent")] }, isError: true });
+    it("keeps the cached data visible and shows a notice with retry when a refetch failed", async () => {
+        const onRefresh = jest.fn();
+        renderState({ overview: { assignments: [createAssignment(1, "sent")] }, isError: true, onRefresh });
 
         expect(screen.getByText("발송됨")).toBeInTheDocument();
-        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        // The notice sits above the cached rows.
+        expect(
+            alert.compareDocumentPosition(screen.getByText("발송됨")) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
         expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the notice, not only the empty text, when a refetch failed over a cached empty result", () => {
+        renderState({ overview: { assignments: [] }, isError: true, onRefresh: jest.fn() });
+
+        expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
     });
 
     it("shows the existing empty state, and no retry button, for a successful empty result", () => {

@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { Client } from "@/lib/client/types";
 import { fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
+import { shouldRetryQuery } from "@/lib/queryClient";
+import { eformsignApi } from "@/services/api";
 import { useClientDetailController } from "./client-detail-controller";
 
 jest.mock("next/navigation", () => ({
@@ -39,6 +41,7 @@ jest.mock("@/hooks/useClientMessageHistory", () => ({
     hasMore: mockHistoryHasMore,
     isLoading: false,
     isError: false,
+    isFetching: false,
     refetch: jest.fn(),
   }),
 }));
@@ -111,6 +114,16 @@ function makeClient(id: number): Client {
 
 function createWrapper() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
+
+// The app-wide retry policy (queryClient.ts) with no waiting between attempts.
+function createAppPolicyWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: shouldRetryQuery, retryDelay: 0 } },
+  });
   return function Wrapper({ children }: { children: ReactNode }) {
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
   };
@@ -212,6 +225,31 @@ describe("useClientDetailController", () => {
     );
 
     expect(findHasMoreNotificationLogs(result.current.detail)).toBe(hasMore);
+  });
+
+  it.each([
+    ["a 500 (4 calls)", { response: { status: 500 } }, 4],
+    ["a 404 (1 call)", { response: { status: 404 } }, 1],
+  ])("loads the contract document under the app-wide retry policy: %s", async (_name, error, calls) => {
+    const getDocument = jest.mocked(eformsignApi.getDocument);
+    getDocument.mockRejectedValue(error);
+    // The fresh detail response must keep the document id, or the document query is disabled mid-retry.
+    mockedFetchClient.mockResolvedValue({ ...makeClient(1), eDocId: "doc-1" });
+    const { result } = renderHook(
+      () => useClientDetailController({
+        client: { ...makeClient(1), eDocId: "doc-1" },
+        dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createAppPolicyWrapper() },
+    );
+
+    await waitFor(() => expect(getDocument).toHaveBeenCalledTimes(calls));
+    // Give any extra (non-policy) retry a chance to show up before asserting the exact count.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(getDocument).toHaveBeenCalledTimes(calls);
+    expect(result.current.detailClient?.id).toBe(1);
   });
 
   it("preserves the selected tab when a same-client fresh response completes", async () => {

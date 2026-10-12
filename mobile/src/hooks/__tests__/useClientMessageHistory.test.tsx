@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 
 import type { Client } from "@/lib/client/types";
+import { shouldRetryQuery } from "@/lib/queryClient";
 import { fetchAllMessageLogs, fetchClientMessageLogs } from "@/lib/messages/logs";
 
 import { useClientMessageHistory } from "../useClientMessageHistory";
@@ -17,6 +18,14 @@ const fetchBranchLogs = jest.mocked(fetchAllMessageLogs);
 
 function wrapper({ children }: { children: ReactNode }) {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+// The app-wide retry policy (queryClient.ts) with no waiting between attempts.
+function appPolicyWrapper({ children }: { children: ReactNode }) {
+    const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: shouldRetryQuery, retryDelay: 0 } },
+    });
     return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
@@ -79,6 +88,29 @@ describe("useClientMessageHistory", () => {
 
         await waitFor(() => expect(result.current.isError).toBe(true));
         expect(result.current.notificationLogs).toEqual([]);
+    });
+
+    it("inherits the app-wide retry policy: a 500 is tried 4 times, a 404 once", async () => {
+        fetchClientLogs.mockRejectedValue({ response: { status: 500 } });
+        const failing = renderHook(() => useClientMessageHistory(client), { wrapper: appPolicyWrapper });
+        await waitFor(() => expect(failing.result.current.isError).toBe(true));
+        expect(fetchClientLogs).toHaveBeenCalledTimes(4);
+        failing.unmount();
+
+        fetchClientLogs.mockReset();
+        fetchClientLogs.mockRejectedValue({ response: { status: 404 } });
+        const missing = renderHook(() => useClientMessageHistory(client), { wrapper: appPolicyWrapper });
+        await waitFor(() => expect(missing.result.current.isError).toBe(true));
+        expect(fetchClientLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it("exposes whether a fetch is in flight", async () => {
+        fetchClientLogs.mockResolvedValue({ logs: [] as never, hasMore: false });
+
+        const { result } = renderHook(() => useClientMessageHistory(client), { wrapper });
+
+        expect(result.current.isFetching).toBe(true);
+        await waitFor(() => expect(result.current.isFetching).toBe(false));
     });
 
     it("does not fetch without a client", () => {

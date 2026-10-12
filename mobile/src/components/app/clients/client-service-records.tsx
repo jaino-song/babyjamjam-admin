@@ -150,8 +150,8 @@ function ClientServiceRecordsContent({
         return <ServiceRecordsSkeleton />;
     }
 
-    // A failed load is not an empty result: show the error with a retry, but only when
-    // there is nothing cached to show (cached data stays visible through a failed refetch).
+    // A failed load is not an empty result: with nothing cached, show the error with a retry.
+    // With cached data, the data stays visible and a notice above it says the refresh failed.
     if (isError && !overview) {
         return (
             <QueryErrorState
@@ -163,15 +163,28 @@ function ClientServiceRecordsContent({
         );
     }
 
+    const staleNotice = isError ? (
+        <QueryErrorState
+            dataComponent={`${dataComponent}_stale-error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={() => onRefresh?.()}
+            isRetrying={isRefreshing}
+        />
+    ) : null;
+
     if (assignments.length === 0 && !record) {
         return (
-            <div
-                data-component={`${dataComponent}_empty`}
-                data-slot="client-service-records"
-                className="detail-empty-state"
-            >
-                제공기록지 배정 정보가 없습니다.
-            </div>
+            <>
+                {staleNotice}
+                <div
+                    data-component={`${dataComponent}_empty`}
+                    data-slot="client-service-records"
+                    className="detail-empty-state"
+                >
+                    제공기록지 배정 정보가 없습니다.
+                </div>
+            </>
         );
     }
 
@@ -184,6 +197,7 @@ function ClientServiceRecordsContent({
                 data-slot="client-service-records"
                 data-source-component="ClientServiceRecords"
             >
+                {staleNotice}
                 <ServiceRecordSessionDetail
                     record={selectedSession ?? null}
                     sessionIndex={selectedEntry.sessionIndex}
@@ -201,6 +215,7 @@ function ClientServiceRecordsContent({
             data-source-component="ClientServiceRecords"
             className="detail-column"
         >
+            {staleNotice}
             {record ? <RecordStatusCard record={record} /> : null}
             {assignments.map((assignment, assignmentIndex) => (
                 <div
