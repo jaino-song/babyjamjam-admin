@@ -1085,7 +1085,7 @@ export function ServiceRecordAdminWizard({
                     adminCommitActions: hasPending ? (
                         <>
                             <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_cancel`} type="button" variant="negative-outline"
-                                className="min-w-0 w-full sm:w-auto"
+                                className="min-w-0 w-full border-v3-burgundy! sm:w-auto"
                                 disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
                             <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
                                 className="min-w-0 w-full sm:w-auto"

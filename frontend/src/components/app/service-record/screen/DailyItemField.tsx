@@ -147,7 +147,7 @@ export function DailyItemField({
                                 id={stoolColorInputId(dataComponent)}
                                 data-component={`${dataComponent}_stool-color-input`}
                                 variant="v3"
-                                className="aria-[invalid=true]:border-v3-burgundy!"
+                                className="focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={STOOL_COLOR_PLACEHOLDER}
                                 value={(draft[`${item.key}_color`] as string | undefined) ?? ""}
                                 disabled={readOnly} // SRW:294
@@ -193,7 +193,7 @@ export function DailyItemField({
                 <Textarea
                     id={textareaInputId(dataComponent, item.key)}
                     data-component={`${dataComponent}_${item.key === "etcService" ? "etc-service" : "notes"}`}
-                    className="aria-[invalid=true]:border-v3-burgundy!"
+                    className="focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                     aria-label={item.label}
                     aria-describedby={slotId}
                     aria-invalid={hasError ? "true" : undefined}

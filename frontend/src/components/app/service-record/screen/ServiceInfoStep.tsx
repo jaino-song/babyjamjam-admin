@@ -141,7 +141,7 @@ export function ServiceInfoStep({
                     variant="ghost"
                     size="sm"
                     data-component={child("body_service-back")}
-                    className="-ml-3 self-start text-v3-text-muted"
+                    className="-ml-3 self-start border-transparent! text-v3-text-muted"
                     onClick={onBack}
                 >
                     {BACK_LABEL}
@@ -215,7 +215,7 @@ export function ServiceInfoStep({
                                     id={inputId}
                                     data-component={`${inputComponent}_control`}
                                     variant="v3"
-                                    className="aria-[invalid=true]:border-v3-burgundy!"
+                                    className="focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                     placeholder={field.ph}
                                     inputMode={field.inputMode}
                                     maxLength={HEADER_DATE_KEYS.includes(key) ? 10 : undefined}

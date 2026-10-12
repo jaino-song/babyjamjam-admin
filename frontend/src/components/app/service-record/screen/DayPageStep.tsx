@@ -88,7 +88,7 @@ export function DayPageHead({
                 variant="ghost"
                 size="sm"
                 data-component={child("body_day-back")}
-                className="-ml-3 self-start text-v3-text-muted"
+                className="-ml-3 self-start border-transparent! text-v3-text-muted"
                 onClick={onBack}
             >
                 {BACK_LABEL}
