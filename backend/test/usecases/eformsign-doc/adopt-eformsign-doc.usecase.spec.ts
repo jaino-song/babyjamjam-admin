@@ -57,12 +57,17 @@ describe("AdoptEformsignDocUsecase", () => {
         const CLIENT_PHONE = "01012345678";
 
         const remoteFor = (
-            overrides: { name?: string | null; birthday?: string | null; customerSms?: string } = {},
+            overrides: {
+                name?: string | null;
+                birthday?: string | null;
+                customerSms?: string;
+                statusType?: string;
+            } = {},
         ) => ({
             id: "doc-phone",
             document_name: "계약서",
             current_status: {
-                status_type: "060", expired_date: 0,
+                status_type: overrides.statusType ?? "060", expired_date: 0,
                 step_recipients: [{ id: CLIENT_PHONE, name: "고객", recipient_type: "02" }],
             },
             recipients: [{ recipient_type: "02", name: "김고객", sms: overrides.customerSms ?? "010-1234-5678" }],
@@ -222,6 +227,57 @@ describe("AdoptEformsignDocUsecase", () => {
             expect(docs.findByDocumentId).not.toHaveBeenCalled();
         });
 
+        it.each(["080", "001", "011", "042"])(
+            "refuses a full match when the document is in status %s",
+            async (statusType) => {
+                const { usecase, create, mirror, clients, docs } = setup({
+                    remote: remoteFor({ statusType }),
+                });
+
+                await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                    .rejects.toThrow("clientId가 필요합니다.");
+                expect(clients.findByPhone).not.toHaveBeenCalled();
+                expect(docs.findByDocumentId).not.toHaveBeenCalled();
+                expect(create.execute).not.toHaveBeenCalled();
+                expect(mirror.syncDocumentWithToken).not.toHaveBeenCalled();
+            },
+        );
+
+        it.each(["060", "040", "045", "071"])(
+            "adopts a full match when the document is in status %s",
+            async (statusType) => {
+                const { usecase, create } = setup({ remote: remoteFor({ statusType }) });
+
+                await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+                expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                    clientId: 7, statusType,
+                }));
+            },
+        );
+
+        it.each([
+            ["doc_request_participant", "060"],
+            ["50", "050"],
+        ])("judges the normalized form of vendor status %s", async (rawStatus, expectedStatus) => {
+            const { usecase, create } = setup({ remote: remoteFor({ statusType: rawStatus }) });
+
+            await usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL);
+
+            expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+                clientId: 7, statusType: expectedStatus,
+            }));
+        });
+
+        it("refuses a full match whose vendor status name normalizes to an ineligible code", async () => {
+            const { usecase, create, clients } = setup({ remote: remoteFor({ statusType: "doc_expired" }) });
+
+            await expect(usecase.execute("branch-1", { documentId: "doc-phone" }, TEST_PRINCIPAL))
+                .rejects.toThrow("clientId가 필요합니다.");
+            expect(clients.findByPhone).not.toHaveBeenCalled();
+            expect(create.execute).not.toHaveBeenCalled();
+        });
+
         it("refuses when no client has the recipient phone", async () => {
             const { usecase, create, docs } = setup({ client: null });
 
@@ -275,6 +331,27 @@ describe("AdoptEformsignDocUsecase", () => {
         create.execute.mockRejectedValueOnce(conflict);
         await expect(usecase.execute("branch-1", { documentId: "doc-chosen", clientId: 7 }, TEST_PRINCIPAL))
             .rejects.toBe(conflict);
+    });
+
+    it("adopts an explicitly chosen client whatever the document status", async () => {
+        const create = { execute: jest.fn().mockResolvedValue({ documentId: "doc-expired" }) };
+        const usecase = new AdoptEformsignDocUsecase(
+            createCredentialBoundary() as never,
+            { execute: jest.fn().mockResolvedValue({
+                id: "doc-expired",
+                current_status: { status_type: "080", expired_date: 0, step_recipients: [] },
+            }) } as never,
+            create as never,
+            { findById: jest.fn().mockResolvedValue({ id: 7 }), findByPhone: jest.fn() } as never,
+            { syncDocumentWithToken: jest.fn() } as never,
+            { findByDocumentId: jest.fn() } as never,
+        );
+
+        await usecase.execute("branch-1", { documentId: "doc-expired", clientId: 7 }, TEST_PRINCIPAL);
+
+        expect(create.execute).toHaveBeenCalledWith("branch-1", expect.objectContaining({
+            clientId: 7, statusType: "080",
+        }));
     });
 
     it("uses document-id upsert semantics on repeated adoption", async () => {

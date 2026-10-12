@@ -5,6 +5,7 @@ import { documentCustomerNameValue } from "application/utils/eformsign-document-
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { compareEformsignClientIdentity } from "application/utils/eformsign-client-identity";
 import { extractEformsignContractClientCandidate } from "application/utils/eformsign-contract-client-candidate";
+import { isEformsignAutoLinkEligibleStatus } from "domain/constants/eformsign-auto-link-status";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { EFORMSIGN_DOC_REPOSITORY, EformsignDocOwnershipConflictError, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
@@ -133,7 +134,8 @@ export class AdoptEformsignDocUsecase {
     /**
      * Picks a client for an adoption nobody chose a client for. A phone match is only a
      * candidate: the document's own customer phone, name and birthday must all agree with
-     * the client, and a document already linked to another client is never moved (business rule 계약-05). Any rejection
+     * the client, and a document already linked to another client is never moved (business rule 계약-05).
+     * The document must also be in a status that may be linked automatically. Any rejection
      * returns undefined, so the caller reports the usual "clientId required" error.
      */
     private async inferClientId(
@@ -142,6 +144,11 @@ export class AdoptEformsignDocUsecase {
         requestedDocumentId: string,
         recipientPhone: string | undefined,
     ): Promise<number | undefined> {
+        if (!isEformsignAutoLinkEligibleStatus(
+            normalizeEformsignStatusCode(remote.current_status.status_type),
+        )) {
+            return undefined;
+        }
         if (!recipientPhone) return undefined;
         const client = await this.clientRepository.findByPhone(branchId, recipientPhone);
         if (!client) return undefined;
