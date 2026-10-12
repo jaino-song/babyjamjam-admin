@@ -77,6 +77,19 @@ describe("BranchUserController owner invisibility (BJJ-436)", () => {
             });
         });
 
+        it("hands an owner caller's role to the service for an owner target and returns the public user", async () => {
+            userService.update.mockResolvedValue(entity("owner-1", "owner"));
+
+            const result = await controller.update(branchId, "owner-1", tenant("owner"), { branchRole: "admin" } as never);
+
+            expect(userService.update).toHaveBeenCalledWith("owner-1", {
+                branchRole: "admin",
+                callerRole: "owner",
+                branchId,
+            });
+            expect(result).toMatchObject({ id: "owner-1", role: "owner" });
+        });
+
         it("propagates the service's not-found for an owner target (no body of the owner is returned)", async () => {
             userService.update.mockRejectedValue(new NotFoundException());
 

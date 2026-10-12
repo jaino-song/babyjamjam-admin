@@ -1917,6 +1917,24 @@ describe("UserService", () => {
             expect(membershipUpdateMany).not.toHaveBeenCalled();
         });
 
+        it("lets an owner caller update an owner target's branch membership with the permitted admin role", async () => {
+            const membershipFindUnique = jest.fn().mockResolvedValue({ userId: "owner-1", branchId: "branch-1", role: "admin" });
+            Object.assign(prismaService.user_branch, { findUnique: membershipFindUnique });
+            membershipUpdateMany.mockResolvedValue({ count: 1 });
+
+            const result = await service.update("owner-1", { branchId: "branch-1", branchRole: "admin", callerRole: "owner" });
+
+            expect(membershipFindUnique).toHaveBeenCalledWith({
+                where: { userId_branchId: { userId: "owner-1", branchId: "branch-1" } },
+            });
+            expect(membershipUpdateMany).toHaveBeenCalledTimes(1);
+            expect(membershipUpdateMany).toHaveBeenCalledWith({
+                where: { userId: "owner-1", branchId: "branch-1" },
+                data: { role: "admin" },
+            });
+            expect(result).toMatchObject({ id: "owner-1", role: "owner", name: "대표" });
+        });
+
         it("does not hide the owner target from an owner caller (reaches the owner-role guard instead)", async () => {
             await expect(
                 service.update("owner-1", { branchId: "branch-1", branchRole: "manager", callerRole: "owner" }),
