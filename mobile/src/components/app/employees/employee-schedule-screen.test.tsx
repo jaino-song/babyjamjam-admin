@@ -161,7 +161,8 @@ describe("EmployeeScheduleScreen", () => {
     });
     const { container } = render(<EmployeeScheduleScreen />);
 
-    expect(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')).toBeInTheDocument();
+    fireEvent.click(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')!);
+    expect(screen.getByRole("button", { name: /고객 1/ })).toBeInTheDocument();
     expect(screen.queryByText("일정을 불러오지 못했습니다")).not.toBeInTheDocument();
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
@@ -204,8 +205,10 @@ describe("EmployeeScheduleScreen", () => {
       isPaused: true,
       hasData: true,
     });
-    render(<EmployeeScheduleScreen />);
+    const { container } = render(<EmployeeScheduleScreen />);
 
+    fireEvent.click(container.querySelector('[data-slot="calendar-day"][data-date="2026-09-18"]')!);
+    expect(screen.getByRole("button", { name: /고객 1/ })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "일정 로딩 중" })).not.toBeInTheDocument();
   });
