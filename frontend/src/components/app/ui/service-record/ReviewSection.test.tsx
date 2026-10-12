@@ -16,6 +16,7 @@ describe("ReviewSection", () => {
     const region = screen.getByRole("region", { name: "산모" });
     const edit = within(region).getByRole("button", { name: "산모 수정" });
     expect(edit).toHaveTextContent("수정");
+    expect(edit).toHaveAttribute("data-slot", "sec-edit");
     expect(screen.getByText("산모")).toHaveAttribute("id", "review-mom");
 
     fireEvent.click(edit);

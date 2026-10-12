@@ -63,6 +63,7 @@ export function ReviewSection({
           <button
             type="button"
             data-component={`${dataComponent}_header_edit`}
+            data-slot="sec-edit"
             aria-label={`${title} 수정`}
             onClick={onEdit}
             className="min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] px-1 text-[calc(12px*var(--glint-ui-scale,1))] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
