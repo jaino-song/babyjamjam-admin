@@ -845,6 +845,7 @@ https://mobile.test/service-record/efl_token`;
         expect(logRepository.save.mock.calls[0]?.[0]).toMatchObject({
             status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null,
             errorMessage: `발송 실패: ${reason}`, attempts: 1,
+            variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }),
         });
         expect(job.payload.templateVariables["retrySafety"]).toBe("permanent-provider-rejected");
     });

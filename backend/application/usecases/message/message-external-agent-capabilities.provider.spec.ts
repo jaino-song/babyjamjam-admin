@@ -267,10 +267,10 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         }));
     });
 
-    it("returns a certain failed result for an explicit provider rejection", async () => {
+    it.each(["provider-rejected", "permanent-provider-rejected"])("returns a certain failed result for %s", async (retrySafety) => {
         const { delivery, capabilities } = setup();
         const failed = terminalJob({ id: "retry-job" });
-        failed.payload.templateVariables["retrySafety"] = "provider-rejected";
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
         delivery.dispatchPendingJobNow.mockResolvedValue(failed);
         const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
 
@@ -308,14 +308,69 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             .rejects.toMatchObject({ name: "AgentActionUncertainError" });
     });
 
-    it("reconciles an explicitly provider-rejected persisted job as failed", async () => {
+    it.each(["provider-rejected", "permanent-provider-rejected"])("reconciles a persisted %s job as failed", async (retrySafety) => {
         const { prisma, capabilities } = setup();
         const failed = terminalJob({ id: "job-a" });
-        failed.payload.templateVariables["retrySafety"] = "provider-rejected";
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
         prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
         const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
 
         await expect(send.reconcile!(context, {}, { jobId: failed.id }))
+            .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: failed.id } });
+    });
+
+    it("reports an Aligo permanent rejection as failed through send and later reconciliation, but refuses retry", async () => {
+        const { repository, delivery, prisma, smsDelivery, aligoService, capabilities } = setup();
+        aligoService.sendSms.mockResolvedValue({
+            request: { receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+            response: { result_code: -101, message: "인증오류입니다.", msg_id: 0, success_cnt: 0, error_cnt: 1 },
+        });
+        delivery.dispatchPendingJobNow.mockImplementation(async () => {
+            const job = repository.upsertPending.mock.calls[0][0] as MessageTriggerJobEntity;
+            expect(await smsDelivery.sendJob(job)).toBe(false);
+            job.status = "failed";
+            prisma.message_trigger_job.findFirst.mockResolvedValue(job as never);
+            repository.findByIdInBranch.mockResolvedValue(job);
+            return job;
+        });
+        const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const input = { receiver: "01012345678", message: "영구 거절 테스트" };
+
+        await expect(send.execute(context, input)).resolves.toEqual({ status: "failed", msgType: "LMS", jobId: "retry-job" });
+        await expect(send.reconcile!(context, input, { jobId: "retry-job" }))
+            .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: "retry-job" } });
+        await expect(retry.inspect!(context, { jobId: "retry-job" })).rejects.toThrow("not safely retryable");
+        expect(repository.claimProviderRejectedForRetry).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps reconciliation of a genuinely uncertain failed job uncertain", async () => {
+        const { prisma, capabilities } = setup();
+        const failed = terminalJob();
+        failed.payload.templateVariables["retrySafety"] = "uncertain";
+        prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
+        const send = capabilities.find((entry) => entry.meta.name === "messages.sendSms")!;
+
+        await expect(send.reconcile!(context, {}, { jobId: failed.id }))
+            .resolves.toEqual(expect.objectContaining({ status: "uncertain" }));
+    });
+
+    it.each(["provider-rejected", "permanent-provider-rejected"])("reports an agent retry answered with %s as failed and reconciles it", async (retrySafety) => {
+        const { delivery, prisma, capabilities } = setup();
+        const retry = capabilities.find((entry) => entry.meta.name === "messages.retrySms")!;
+        const inspection = await retry.inspect!(context, { jobId: "job-a" });
+        const failed = terminalJob({ id: "retry-job" });
+        failed.payload.templateVariables["retrySafety"] = retrySafety;
+        delivery.dispatchPendingJobNow.mockResolvedValue(failed);
+        prisma.message_trigger_job.findFirst.mockResolvedValue(failed as never);
+
+        await expect(retry.execute({
+            ...context,
+            approvedTargetVersion: inspection.targetVersion,
+            approvedTargetSnapshot: inspection.targetSnapshot,
+        }, { jobId: "job-a" })).resolves.toEqual({ status: "failed", jobId: failed.id });
+        await expect(retry.reconcile!(context, { jobId: "job-a" }, { jobId: failed.id }))
             .resolves.toEqual({ status: "failed", result: { status: "failed", jobId: failed.id } });
     });
 
