@@ -63,6 +63,7 @@ export function ReviewSection({
           <button
             type="button"
             data-component={`${dataComponent}_header_edit`}
+            data-slot="sec-edit"
             aria-label={`${title} 수정`}
             onClick={onEdit}
             className="min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] px-1 text-[calc(12px*var(--glint-ui-scale,1))] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
@@ -95,7 +96,7 @@ export function ReviewRowGrid({ "data-component": dataComponent, children, class
       data-component={dataComponent}
       data-source-component={ROW_GRID_SOURCE_COMPONENT}
       className={cn(
-        "grid grid-cols-1 gap-x-[calc(12px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] sm:grid-cols-2",
+        "grid grid-cols-1 gap-x-[calc(12px*var(--glint-ui-scale,1))] gap-y-[calc(6px*var(--glint-ui-scale,1))] sm:grid-cols-2 [&>*]:min-w-0",
         className,
       )}
     >
@@ -141,7 +142,7 @@ export function ReviewRow({
       data-component={dataComponent}
       data-source-component={ROW_SOURCE_COMPONENT}
       className={cn(
-        "rounded-[10px] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))]",
+        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))]",
         note ? "block" : "flex justify-between gap-[calc(12px*var(--glint-ui-scale,1))]",
         className,
       )}
@@ -157,6 +158,8 @@ export function ReviewRow({
         data-component={`${dataComponent}_value`}
         className={cn(
           VALUE_TONE_CLASS[tone],
+          // Long unbroken values (e.g. 80 characters in a note) wrap instead of widening the page.
+          "min-w-0 [overflow-wrap:anywhere]",
           note ? "block font-semibold leading-normal" : "break-keep text-right font-bold",
           tone === "empty" && "font-semibold",
         )}

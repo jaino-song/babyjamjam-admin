@@ -116,6 +116,18 @@ describe("ReviewRow", () => {
     expect(screen.getByRole("group")).not.toHaveClass("justify-between");
   });
 
+  it("lets a long unbroken value wrap and shrink in both layouts", () => {
+    const { rerender } = render(
+      <ReviewRow data-component={`${BASE}_row`} labelId="r" label="체온" value={"W".repeat(80)} />,
+    );
+    expect(screen.getByRole("group")).toHaveClass("min-w-0");
+    expect(screen.getByText("W".repeat(80))).toHaveClass("min-w-0", "[overflow-wrap:anywhere]", "break-keep");
+
+    rerender(<ReviewRow data-component={`${BASE}_row`} labelId="r" label="특이사항" value={"W".repeat(80)} layout="note" />);
+    expect(screen.getByRole("group")).toHaveClass("min-w-0");
+    expect(screen.getByText("W".repeat(80))).toHaveClass("min-w-0", "[overflow-wrap:anywhere]");
+  });
+
   it("styles the value by tone", () => {
     const { rerender } = render(
       <ReviewRow data-component={`${BASE}_row`} labelId="r" label="체온" value="미입력" tone="empty" />,
