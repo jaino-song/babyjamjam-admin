@@ -356,7 +356,7 @@ describe("ServiceRecordAdminWizard", () => {
         const dayButtons = container.querySelectorAll('[data-slot="day"]');
         expect(dayButtons).toHaveLength(3);
         expect([...dayButtons].every((button) => !(button as HTMLButtonElement).disabled)).toBe(true);
-        expect(container.querySelector('[data-slot="provider"]')).toHaveClass("org");
+        expect(container.querySelector('[data-slot="provider"]')).toBeInTheDocument();
         expect(container.querySelector('[data-slot="provider"]')).toHaveTextContent("관리자 편집");
         expect(container).toHaveTextContent("2025.01.15");
         expect(container).toHaveTextContent("같은 회차의 추가 기록");
@@ -396,7 +396,6 @@ describe("ServiceRecordAdminWizard", () => {
         expect(dateEdit?.parentElement).toBe(dateChip?.parentElement);
         expect(dateEdit?.parentElement).toHaveClass("date-row");
         expect(dateEdit).toHaveAttribute("data-slot", "sec-edit");
-        expect(dateEdit).toHaveAttribute("class", "sec-edit");
         expect(dateEdit).toHaveAttribute("type", "button");
     });
 });
@@ -599,14 +598,16 @@ describe("per-session administrator editing", () => {
         expect(commit).toBeEnabled();
         expect(cancel).toBeEnabled();
         expect(cancel).toHaveClass("text-v3-burgundy");
-        // Both sit in their own wrapper directly above the 기본정보 수정 actions.
+        // Both sit in their own wrapper after the 기본정보 수정 actions, in one sticky bar.
         const wrapper = container.querySelector('[data-slot="overview-commit"]')!;
         expect(wrapper).toHaveAttribute("data-component", "desktop_service-record-admin_wizard_body_overview-commit");
         expect(wrapper).toContainElement(commit);
         expect(wrapper).toContainElement(cancel);
-        expect(wrapper.nextElementSibling).toBe(container.querySelector('[data-slot="overview-actions"]'));
-        expect(wrapper.nextElementSibling).toContainElement(headerEdit);
-        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        const actions = container.querySelector('[data-slot="overview-actions"]')!;
+        expect(actions).toContainElement(headerEdit);
+        expect(actions.compareDocumentPosition(wrapper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(wrapper.closest('[data-source-component="StickyActionBar"]')).toBe(actions.closest('[data-source-component="StickyActionBar"]'));
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
         expect(container.querySelector('[data-component$="_save-error"]')).toBeNull();
         expect(container).not.toHaveTextContent("이전 수정사항이 있습니다");
     });
@@ -683,7 +684,7 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
         await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
         expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
-        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
     });
 
     it("reports a failed discard on preview close and lets it be retried, keeping the local edits", async () => {
@@ -701,7 +702,7 @@ describe("per-session administrator editing", () => {
         expect(screen.getByRole("button", { name: "다시 시도" })).toBeEnabled();
         expect(screen.getByRole("button", { name: "최신 기록 불러오기" })).toBeEnabled();
         expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
-        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
         expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledTimes(1);
 
         // The retry reads the draft's current version and discards only this tab's draft.
@@ -829,7 +830,7 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getByRole("button", { name: "수정 취소" }));
         fireEvent.click(within(screen.getByRole("dialog", { name: "모든 수정사항을 취소할까요?" })).getByRole("button", { name: "수정 취소" }));
         await waitFor(() => expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument());
-        expect(container.querySelectorAll('[data-slot="day"]')[0]).not.toHaveTextContent("초안 변경");
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).not.toHaveTextContent("수정됨");
         for (const call of [adminServiceRecordEditApi.getDraft, adminServiceRecordEditApi.startDraft, adminServiceRecordEditApi.updateDraft,
             adminServiceRecordEditApi.previewDraft, adminServiceRecordEditApi.confirmDraft, adminServiceRecordEditApi.discardDraft]) {
             expect(call).not.toHaveBeenCalled();
@@ -851,7 +852,7 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.previewDraft).not.toHaveBeenCalled();
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
         expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 1);
-        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+        expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
     });
 
     it("fails closed when the displayed source has no verified identity", async () => {
@@ -873,7 +874,7 @@ describe("per-session administrator editing", () => {
         expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
         expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeEnabled();
         expect(screen.queryByRole("button", { name: "기본정보 확인" })).not.toBeInTheDocument();
-        expect(container.querySelectorAll('[data-slot="day"]')[1]).not.toHaveTextContent("초안 변경");
+        expect(container.querySelectorAll('[data-slot="day"]')[1]).not.toHaveTextContent("수정됨");
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[1]);
         expect(container).not.toHaveTextContent("이전 수정 내용");
         expect(container.querySelector('[data-component$="_body_date-edit"]')).toBeEnabled();
@@ -924,7 +925,7 @@ describe("per-session administrator editing", () => {
         fireEvent.focus(birth);
         fireEvent.change(birth, { target: { value: "1999" } });
         expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveTextContent("예: 19940315");
-        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveClass("hint");
+        expect(document.getElementById(birth.getAttribute("aria-describedby")!)).toHaveAttribute("data-tone", "hint");
     });
 
     it("shows the date reason inline, preserves the formatted invalid value, and blocks confirmation", () => {
@@ -1294,7 +1295,7 @@ describe("per-session administrator editing", () => {
             await waitFor(() => expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument());
             expect(global.fetch).toHaveBeenCalledWith("/api/admin/service-records/client/42/editor", expect.objectContaining({ cache: "no-store" }));
             expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).not.toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).not.toHaveTextContent("수정됨");
         });
 
         it("stays blocked when a newer change is announced while an older refresh is loading", async () => {
@@ -1487,7 +1488,7 @@ describe("per-session administrator editing", () => {
             fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
             await screen.findByRole("dialog", { name: refreshModalTitle });
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
         });
 
         it("opens the modal when the confirm itself conflicts without a blockingOperation and the source changed", async () => {
@@ -1517,7 +1518,7 @@ describe("per-session administrator editing", () => {
             await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
             expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
             expect(screen.getByRole("alert")).toHaveTextContent(closedDraftMessage);
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
             expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
             expect(global.fetch).not.toHaveBeenCalled();
         });
@@ -1533,7 +1534,7 @@ describe("per-session administrator editing", () => {
             await screen.findByText(closedDraftMessage);
             expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
             expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument();
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
             await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled());
             expect(global.fetch).not.toHaveBeenCalled();
         });
@@ -1594,7 +1595,7 @@ describe("per-session administrator editing", () => {
             await screen.findByRole("dialog", { name: refreshModalTitle });
             expectNothingPreviewedOrDiscarded();
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
         });
 
         it("rejects a draft whose date overrides do not match the applied moves", async () => {
@@ -1683,7 +1684,7 @@ describe("per-session administrator editing", () => {
             await waitFor(() => expect(screen.queryByRole("dialog", { name: "페이지를 나가시겠어요?" })).not.toBeInTheDocument());
             expect(navigated).not.toHaveBeenCalledWith(expect.objectContaining({ target: link }));
             expect(screen.getByRole("button", { name: "수정 확정" })).toBeInTheDocument();
-            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("초안 변경");
+            expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
 
             fireEvent.click(link);
             fireEvent.click(within(await screen.findByRole("dialog", { name: "페이지를 나가시겠어요?" })).getByRole("button", { name: "나가기" }));

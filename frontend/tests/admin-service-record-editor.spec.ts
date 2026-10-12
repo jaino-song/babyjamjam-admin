@@ -623,7 +623,7 @@ async function editNoteAndAccept(page: Page, note: string): Promise<void> {
     await page.getByRole("button", { name: "다음" }).click();
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
 }
 
 async function stageNote(page: Page, note: string): Promise<void> {
@@ -670,7 +670,7 @@ test("session review retains all fields and dates and writes only after confirma
     const requestsBeforeAccept = evidence.requests.length;
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
     await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
     expect(evidence.requests).toHaveLength(requestsBeforeAccept);
     expect(evidence.writeSteps()).toEqual([]);
@@ -700,7 +700,7 @@ test("a durable previous draft is ignored at load and discarded before the new e
     await openEditor(page);
     await expect(page.getByRole("button", { name: "이전 수정사항 검토" })).toHaveCount(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
     await expect(commitButton(page)).toHaveCount(0);
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).not.toContainText("재개된 초안 메모");
@@ -732,7 +732,7 @@ test("closing the preview discards the server draft and keeps the local edits", 
     await expect(preview).toBeHidden();
     await expect.poll(() => evidence.writeSteps()).toEqual(["start", "preview", "discard"]);
     expect(evidence.state.draft).toBeNull();
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
     await expect(commitButton(page)).toBeEnabled();
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("닫아도 남는 메모");
@@ -748,7 +748,7 @@ test("a confirm conflict on an unchanged source keeps the edits and asks to conf
     await expect(preview).toBeHidden();
     await expect(page.locator('[data-slot="commit-error"]')).toContainText(CLOSED_DRAFT_MESSAGE);
     await expect(page.getByRole("dialog", { name: REFRESH_MODAL_TITLE })).toHaveCount(0);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
     await expect(commitButton(page)).toBeEnabled();
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("내 입력 보존");
@@ -781,7 +781,7 @@ test("a confirm conflict on a changed source requires a refresh that drops the l
     await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
     await expect(refreshModal).toBeHidden();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
     await expect(commitButton(page)).toHaveCount(0);
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).not.toContainText("곧 사라질 입력");
@@ -818,7 +818,7 @@ for (const [operation, message] of [
         await preview.getByRole("button", { name: "닫기", exact: true }).click();
         await expect(preview).toBeHidden();
         await expect(page.locator('[data-slot="commit-error"]')).toContainText(message);
-        await expect(page.locator('[data-slot="day"]').first()).toContainText("초안 변경");
+        await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
         await expect(commitButton(page)).toBeEnabled();
 
         // Once the earlier follow-up work is done, the same edits go through.
@@ -841,7 +841,7 @@ test("a case change announced on the event stream blocks the editor until it is 
     await expect(refreshModal).toBeVisible();
     await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
     await expect(refreshModal).toBeHidden();
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "초안 변경" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
     await expect(commitButton(page)).toHaveCount(0);
     expect(evidence.writeSteps()).toEqual([]);
     evidence.assertSafe();

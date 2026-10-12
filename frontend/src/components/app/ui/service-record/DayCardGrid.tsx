@@ -48,6 +48,8 @@ export interface DayCardProps {
    * already contains the date). An override must still include the date text.
    */
   accessibleName?: string;
+  /** A stable hook for a screen's own tests and specs; no styling hangs on it. */
+  "data-slot"?: string;
 }
 
 // Border colours carry `!` because globals.css has an unlayered
@@ -83,12 +85,14 @@ export function DayCard({
   onClick,
   disabled = false,
   accessibleName,
+  "data-slot": dataSlot,
 }: DayCardProps) {
   return (
     <button
       type="button"
       data-component={dataComponent}
       data-source-component={CARD_SOURCE_COMPONENT}
+      data-slot={dataSlot}
       data-state={state}
       aria-label={accessibleName}
       disabled={disabled}
