@@ -111,14 +111,20 @@ export default function PricesPage() {
     isLoading: isPricesLoading,
     isFetching: isPricesFetching,
     isError,
+    isDataComplete: isPricesComplete = false,
+    isRetryingFailed: isPricesRetryingFailed = false,
     refetch: refetchPrices,
   } = useAllVoucherPrices(activeYear);
-  const isLoading = isYearsLoading || (activeYear !== undefined && isPricesLoading);
+  // Rows on screen win: loaded rows, or a completely known (possibly empty) list, are never replaced
+  // by skeletons or a failure panel while some voucher type loads or fails.
+  const isPricesKnown = rawRows.length > 0 || isPricesComplete;
+  const isLoading = isYearsLoading || (activeYear !== undefined && isPricesLoading && !isPricesKnown);
   // A failed load is judged against the data itself: cached years / rows stay on screen.
   const isYearsFailedWithoutData = isYearsError && yearsData === undefined;
-  const isPricesFailedWithoutData = isError && rawRows.length === 0;
-  const isStaleNoticeVisible =
-    (isYearsError && yearsData !== undefined) || (isError && rawRows.length > 0);
+  const isPricesFailedWithoutData = isError && !isPricesKnown;
+  // The prices notice also stays while a voucher type that failed before is being retried.
+  const isPricesNoticeVisible = (isError || isPricesRetryingFailed) && isPricesKnown;
+  const isStaleNoticeVisible = (isYearsError && yearsData !== undefined) || isPricesNoticeVisible;
 
   const displayRows = useMemo<DisplayRow[]>(() => {
     if (activeYear === undefined) return [];
@@ -299,11 +305,11 @@ export default function PricesPage() {
                   title="최신 정보를 불러오지 못했습니다"
                   onRetry={() => {
                     if (isYearsError && yearsData !== undefined) void refetchYears();
-                    if (isError && rawRows.length > 0) void refetchPrices();
+                    if (isPricesNoticeVisible) void refetchPrices();
                   }}
                   isRetrying={
                     (isYearsError && yearsData !== undefined && isYearsFetching)
-                    || (isError && rawRows.length > 0 && isPricesFetching)
+                    || (isPricesNoticeVisible && isPricesFetching)
                   }
                 />
               )}

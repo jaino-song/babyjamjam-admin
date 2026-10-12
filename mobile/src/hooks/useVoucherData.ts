@@ -146,6 +146,10 @@ export function useAllVoucherPrices(year?: number) {
     isLoading: queries.some((q) => q.isLoading),
     isFetching: queries.some((q) => q.isFetching),
     isError: queries.some((q) => q.isError),
+    // True when every voucher type holds data, also when all of them are empty: the list is completely known.
+    isDataComplete: queries.every((q) => q.data !== undefined),
+    // True while a voucher type that has no data and failed before is being fetched again.
+    isRetryingFailed: queries.some((q) => q.data === undefined && q.isFetching && q.errorUpdateCount > 0),
     // Retries only the sub-queries that failed; the ones that loaded keep their cache.
     refetch: () => Promise.all(queries.filter((q) => q.isError).map((q) => q.refetch())),
   };
