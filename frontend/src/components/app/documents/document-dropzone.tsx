@@ -8,6 +8,7 @@ import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { TitleSelectMolecule } from "@/components/ui/title-select-molecule";
@@ -60,6 +61,7 @@ interface DocumentDropzoneProps {
     description?: string;
     categoryId: string;
     tags: string[];
+    visibilityScope: "branch" | "all_branches";
   }) => Promise<void>;
   isLoading?: boolean;
   uploadProgress?: number;
@@ -67,6 +69,9 @@ interface DocumentDropzoneProps {
   showInlineSubmitButton?: boolean;
   onUploadStateChange?: (state: DocumentDropzoneUploadState) => void;
   capabilities?: DocumentUploadCapabilities;
+  capabilitiesLoading?: boolean;
+  capabilitiesError?: boolean;
+  onRetryCapabilities?: () => void;
 }
 
 export function DocumentDropzone({
@@ -77,8 +82,18 @@ export function DocumentDropzone({
   formId,
   showInlineSubmitButton = true,
   onUploadStateChange,
-  capabilities = DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
+  capabilities,
+  capabilitiesLoading = false,
+  capabilitiesError = false,
+  onRetryCapabilities,
 }: DocumentDropzoneProps) {
+  // Defaults describe file formats only; they never authorize an upload.
+  const filePolicy = capabilities ?? DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES;
+  const capabilitiesReady = Boolean(capabilities && !capabilitiesLoading && !capabilitiesError
+    && typeof capabilities.canChooseVisibilityScope === "boolean");
+  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches" | "">("");
+  const visibilityScope = capabilities?.canChooseVisibilityScope ? chosenScope : "branch";
+  const selectionDisabled = isLoading || !capabilitiesReady;
   const [isDragOver, setIsDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -102,11 +117,12 @@ export function DocumentDropzone({
   }, [previewUrl]);
 
   const validateFile = useCallback((file: File): string | null => {
-    return validateDocumentUploadCandidate(file, capabilities);
-  }, [capabilities]);
+    return validateDocumentUploadCandidate(file, filePolicy);
+  }, [filePolicy]);
 
   const handleFile = useCallback(
     (file: File) => {
+      if (selectionDisabled) return;
       const error = validateFile(file);
       if (error) {
         setValidationError(error);
@@ -127,18 +143,18 @@ export function DocumentDropzone({
         setPreviewUrl(null);
       }
     },
-    [validateFile]
+    [validateFile, selectionDisabled]
   );
 
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLLabelElement>) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!isLoading) {
+      if (!selectionDisabled) {
         setIsDragOver(true);
       }
     },
-    [isLoading]
+    [selectionDisabled]
   );
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLLabelElement>) => {
@@ -153,14 +169,14 @@ export function DocumentDropzone({
       e.stopPropagation();
       setIsDragOver(false);
 
-      if (isLoading) return;
+      if (selectionDisabled) return;
 
       const files = e.dataTransfer.files;
       if (files.length > 0) {
         handleFile(files[0]);
       }
     },
-    [handleFile, isLoading]
+    [handleFile, selectionDisabled]
   );
 
   const handleFileInputChange = useCallback(
@@ -203,7 +219,7 @@ export function DocumentDropzone({
   };
 
   const hasSelectedFile = selectedFile !== null;
-  const canSubmit = Boolean(selectedFile && name && category && !isLoading);
+  const canSubmit = Boolean(selectedFile && name && category && !selectionDisabled && visibilityScope);
 
   useEffect(() => {
     onUploadStateChange?.({
@@ -214,15 +230,21 @@ export function DocumentDropzone({
 
   const handleSubmit = async (event?: React.FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
-    if (!selectedFile || !name || !category || isLoading) return;
+    if (!canSubmit || !selectedFile || !visibilityScope) return;
 
-    await onUpload({
-      file: selectedFile,
-      name,
-      description: description || undefined,
-      categoryId: category,
-      tags,
-    });
+    try {
+      await onUpload({
+        file: selectedFile,
+        name,
+        description: description || undefined,
+        categoryId: category,
+        tags,
+        visibilityScope,
+      });
+      setChosenScope("");
+    } catch {
+      setValidationError("문서를 업로드하지 못했어요");
+    }
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -307,9 +329,33 @@ export function DocumentDropzone({
         data-component={`${dataComponent}_visibility-notice`}
         className="rounded-[16px] border border-v3-border bg-v3-primary-light px-4 py-3 text-[0.76rem] font-semibold leading-5 text-v3-primary"
       >
-        {capabilities.uploadVisibilityScope === "all_branches"
-          ? "오너가 올리는 파일은 모든 지점에서 볼 수 있습니다."
-          : "이 파일은 현재 지점에서만 볼 수 있습니다."}
+        {capabilitiesError ? (
+          <>
+            <span data-component={`${dataComponent}_visibility-notice_error`}>불러오지 못했습니다</span>
+            <Button type="button" variant="outline" onClick={onRetryCapabilities}
+              data-component={`${dataComponent}_visibility-notice_retry`}>다시 시도</Button>
+          </>
+        ) : !capabilitiesReady ? (
+          <span role="status" aria-label="공개 범위 불러오는 중" data-component={`${dataComponent}_visibility-notice_loading`}>
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </span>
+        ) : capabilities?.canChooseVisibilityScope ? (
+          <>
+            <RadioGroup aria-label="파일 공개 범위" value={chosenScope} disabled={isLoading}
+              onValueChange={(value) => setChosenScope(value as "branch" | "all_branches")}
+              data-component={`${dataComponent}_visibility-notice_choice`}>
+              <label className="flex items-center gap-2" data-component={`${dataComponent}_visibility-notice_choice_branch`}>
+                <RadioGroupItem value="branch" data-component={`${dataComponent}_visibility-notice_choice_branch_radio`} />현재 지점
+              </label>
+              <label className="flex items-center gap-2" data-component={`${dataComponent}_visibility-notice_choice_all-branches`}>
+                <RadioGroupItem value="all_branches" data-component={`${dataComponent}_visibility-notice_choice_all-branches_radio`} />전 지점
+              </label>
+            </RadioGroup>
+            {chosenScope && <p data-component={`${dataComponent}_visibility-notice_helper`}>
+              {chosenScope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다."}
+            </p>}
+          </>
+        ) : "이 파일은 현재 지점에서만 볼 수 있습니다."}
       </div>
       {validationError && (
         <Alert
@@ -331,16 +377,16 @@ export function DocumentDropzone({
             isDragOver
               ? "border-v3-primary bg-white shadow-[0_16px_40px_hsla(214,50%,20%,0.08)]"
               : "border-v3-border bg-white",
-            isLoading ? "cursor-wait opacity-70" : "cursor-pointer",
-            !isLoading &&
+            selectionDisabled ? "cursor-wait opacity-70" : "cursor-pointer",
+            !selectionDisabled &&
               "hover:border-v3-primary/50 hover:bg-white"
           )}
         >
           <input
             type="file"
-            accept={documentUploadAcceptValue(capabilities)}
+            accept={documentUploadAcceptValue(filePolicy)}
             onChange={handleFileInputChange}
-            disabled={isLoading}
+            disabled={selectionDisabled}
             className="sr-only"
           />
 
@@ -352,7 +398,7 @@ export function DocumentDropzone({
               파일을 끌어다 놓거나 클릭해 선택하세요
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2">
-              {capabilities.formatGroups.map((group) => (
+              {filePolicy.formatGroups.map((group) => (
                 <Badge
                   key={group.label}
                   variant="outline"
@@ -368,25 +414,26 @@ export function DocumentDropzone({
               variant="outline"
               className="border-v3-border bg-white/90 px-3 py-1 text-[0.68rem] font-semibold text-v3-text-muted"
             >
-              최대 {formatFileSizeLimit(capabilities.maxFileSizeBytes)} · 한 번에 파일 1개
+              최대 {formatFileSizeLimit(filePolicy.maxFileSizeBytes)} · 한 번에 파일 1개
             </Badge>
           </div>
           <p className="max-w-xl text-[0.74rem] leading-5 text-v3-text-muted">
             PDF·이미지·한글은 화면에서 확인할 수 있고, 오피스·압축 파일은 안전하게 내려받아 확인합니다.
           </p>
-          <Badge
+          {capabilitiesReady && visibilityScope && <Badge
+            data-component={`${dataComponent}_empty_scope-badge`}
             variant="outline"
             className={cn(
               "border-v3-border bg-v3-dim-white px-3 py-1 text-[0.68rem] font-semibold",
-              capabilities.uploadVisibilityScope === "all_branches"
+              visibilityScope === "all_branches"
                 ? "text-v3-primary"
                 : "text-v3-text-muted"
             )}
           >
-            {capabilities.uploadVisibilityScope === "all_branches"
+            {visibilityScope === "all_branches"
               ? "오너 업로드 · 모든 지점에 공개"
               : "현재 지점에만 공개"}
-          </Badge>
+          </Badge>}
         </label>
       ) : (
         <div className="space-y-5">

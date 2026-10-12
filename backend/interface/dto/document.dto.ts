@@ -1,6 +1,7 @@
 import {
   IsString,
   IsOptional,
+  IsIn,
   IsArray,
   IsNumber,
   IsDateString,
@@ -114,6 +115,10 @@ export class DocumentResponseDto {
 }
 
 export class UploadDocumentDto {
+    @IsOptional()
+    @IsIn(["branch", "all_branches"])
+    visibilityScope?: "branch" | "all_branches";
+
     @IsOptional()
     @IsString()
     @MaxLength(255)
