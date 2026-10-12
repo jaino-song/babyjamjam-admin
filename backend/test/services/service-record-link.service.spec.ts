@@ -150,8 +150,99 @@ describe("ServiceRecordLinkService", () => {
         client: {
             id: 20,
             name: "김산모",
+            serviceStatus: "waiting",
+            startDate: new Date("2026-07-03T00:00:00.000Z"),
+            endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
         ...overrides,
+    });
+
+    it.each([
+        ["pre_booking", new Date("2026-07-12T00:00:00.000Z"), false],
+        ["waiting", null, false],
+        ["waiting", new Date("2026-07-12T00:00:00.000Z"), true],
+    ])("gates automatic pre_booking links for status %s and client end %s", async (serviceStatus, endDate, eligible) => {
+        const prisma = createPrisma();
+        const tokens = createTokenService();
+        const jobs = createJobRepository();
+        const logs = createLogRepository();
+        const lifecycle = { ensureForClient: jest.fn().mockResolvedValue(null) };
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokens as never,
+            createConfigService() as unknown as ConfigService,
+            jobs as unknown as IMessageTriggerJobRepository,
+            logs as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, lifecycle as never, createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            client: { ...createSchedule().client, serviceStatus, endDate },
+        }));
+        const logger = (service as unknown as { logger: { error: (message: string) => void } }).logger;
+        const errorLog = jest.spyOn(logger, "error");
+        expect(await service.scheduleForServiceStart(10)).toBe(eligible);
+        expect(jobs.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(eligible ? 1 : 0);
+        if (!eligible) {
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+            expect(tokens.issueLink).not.toHaveBeenCalled();
+            expect(tokens.activatePreparedLink).not.toHaveBeenCalled();
+            expect(lifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(logs.save).not.toHaveBeenCalled();
+            expect(errorLog).not.toHaveBeenCalled();
+            expect(jobs.upsertPending).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each([
+        ["sendNow", "pre_booking", false],
+        ["prepareLink", "pre_booking", false],
+        ["resetLink", "pre_booking", false],
+        ["sendNow", "waiting", true],
+        ["prepareLink", "waiting", true],
+        ["resetLink", "waiting", true],
+    ] as const)("%s refuses effective pre_booking (%s, missing end %s) before any write", async (entry, serviceStatus, missingEnd) => {
+        const prisma = createPrisma();
+        const tokens = createTokenService();
+        const jobs = createJobRepository();
+        const logs = createLogRepository();
+        const lifecycle = { ensureForClient: jest.fn().mockResolvedValue(null) };
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokens as never,
+            createConfigService() as unknown as ConfigService,
+            jobs as unknown as IMessageTriggerJobRepository,
+            logs as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, lifecycle as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            client: { ...createSchedule().client, serviceStatus,
+                endDate: missingEnd ? null : createSchedule().client.endDate },
+        }));
+        const result = entry === "sendNow" ? service.sendNow(10, "efl_prepared") : service[entry](10);
+        await expect(result).rejects.toMatchObject({
+            response: {
+                code: "VALIDATION_FAILED",
+                errors: expect.arrayContaining([expect.objectContaining({
+                    pointer: "/scheduleId", code: "INVALID_VALUE",
+                    detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                })]),
+            },
+        });
+        if (entry !== "sendNow") {
+            expect(prisma.employee_schedule.findUnique).toHaveBeenCalledWith({
+                where: { id: 10 },
+                include: { primaryEmployee: true,
+                    client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+            });
+        }
+        expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
+        expect(prisma.$executeRaw).not.toHaveBeenCalled();
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        expect(lifecycle.ensureForClient).not.toHaveBeenCalled();
+        for (const mock of Object.values(tokens)) expect(mock).not.toHaveBeenCalled();
+        for (const mock of Object.values(jobs)) expect(mock).not.toHaveBeenCalled();
+        for (const mock of Object.values(logs)) expect(mock).not.toHaveBeenCalled();
     });
 
     it("issues a token expiring at next-day midnight and schedules SMS for previous-day noon KST", async () => {
@@ -277,6 +368,28 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-17T15:00:00.000Z"));
     });
 
+    it("keeps expiry extension and revoke available when the pre_booking lifecycle returns null", async () => {
+        const prisma = createPrisma();
+        const tokens = createTokenService();
+        const lifecycle = { ensureForSchedule: jest.fn().mockResolvedValue(null) };
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokens as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, lifecycle as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            client: { ...createSchedule().client, serviceStatus: "pre_booking" },
+        }));
+        await expect(service.extendExpiryForEndDate(10, new Date("2026-11-17"))).resolves.toBeUndefined();
+        await expect(service.revoke(10)).resolves.toBeUndefined();
+        expect(lifecycle.ensureForSchedule).toHaveBeenCalledWith(10);
+        expect(tokens.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-17T15:00:00.000Z"));
+        expect(tokens.revokeForSchedule).toHaveBeenCalledWith(10, FENCE_TRANSACTION);
+    });
+
     it.each(["completed", "terminated"])("preserves manual late reissue for a %s client", async (serviceStatus) => {
         jest.setSystemTime(new Date("2026-11-15T00:00:00.000Z"));
         const prisma = createPrisma();
@@ -291,7 +404,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
             endDate: new Date("2026-11-14T00:00:00.000Z"), terminatedAt: new Date(),
-            client: { id: 20, name: "김산모", serviceStatus },
+            client: { ...createSchedule().client, serviceStatus },
         }));
         expect(await service.sendNow(10)).toMatchObject({ jobId: "job-1", scheduledFor: new Date() });
         expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({

@@ -63,6 +63,67 @@ async function expectConflict(promise: Promise<unknown>, code: string): Promise<
 }
 
 describe("ServiceRecordLifecycleService", () => {
+    it.each([
+        ["pre_booking", date("2026-09-03"), false, false],
+        ["waiting", null, false, false],
+        ["pre_booking", date("2026-09-03"), true, true],
+        ["waiting", date("2026-09-03"), false, true],
+        [null, date("2026-09-03"), false, true],
+    ])("gates new cases using client status %s, end %s, existing %s", async (serviceStatus, endDate, hasCase, creates) => {
+        const record = { id: rawQueryCaseId, branchId: rawQueryBranchId, clientId: 1 };
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+            client: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: 1, branchId: rawQueryBranchId, startDate: date("2026-08-10"),
+                    endDate, serviceStatus, duration: null, employeeSchedules: [],
+                }),
+                updateMany: jest.fn(),
+            },
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(hasCase ? record : null),
+                upsert: jest.fn().mockResolvedValue(record),
+            },
+            service_record_token: { updateMany: jest.fn() },
+        };
+        const calendar = createHolidayCalendarStub();
+        const service = new ServiceRecordLifecycleService(tx as unknown as PrismaService, calendar);
+        jest.spyOn(service, "recompute").mockResolvedValue(record as never);
+        const result = await service.ensureForClient(1, tx as never);
+        expect(result).toEqual(creates ? record : null);
+        expect(tx.service_record_case.upsert).toHaveBeenCalledTimes(creates ? 1 : 0);
+        if (!creates) {
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(calendar.forBranch).not.toHaveBeenCalled();
+            expect(tx.service_record_token.updateMany).not.toHaveBeenCalled();
+        }
+    });
+
+    it("uses the under-lock client reread for the pre_booking case gate", async () => {
+        const client = {
+            id: 1, branchId: rawQueryBranchId, startDate: date("2026-08-10"),
+            endDate: date("2026-09-03"), serviceStatus: "waiting", duration: null, employeeSchedules: [],
+        };
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+            client: {
+                findUnique: jest.fn().mockResolvedValueOnce(client).mockResolvedValue({ ...client, serviceStatus: "pre_booking" }),
+                updateMany: jest.fn(),
+            },
+            service_record_case: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({ id: rawQueryCaseId }) },
+            service_record_token: { updateMany: jest.fn() },
+        };
+        const calendar = createHolidayCalendarStub();
+        const service = new ServiceRecordLifecycleService(tx as unknown as PrismaService, calendar);
+        jest.spyOn(service, "recompute").mockResolvedValue({ id: rawQueryCaseId } as never);
+        await expect(service.ensureForClient(1, tx as never)).resolves.toBeNull();
+        expect(tx.client.findUnique).toHaveBeenCalledTimes(2);
+        expect(tx.$queryRaw).toHaveBeenCalled();
+        expect(tx.service_record_case.upsert).not.toHaveBeenCalled();
+        expect(tx.client.updateMany).not.toHaveBeenCalled();
+        expect(calendar.forBranch).not.toHaveBeenCalled();
+    });
+
     afterEach(() => {
         jest.useRealTimers();
     });

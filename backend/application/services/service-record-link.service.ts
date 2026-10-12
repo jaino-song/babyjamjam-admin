@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
@@ -181,12 +182,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone, recipientPhone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -225,12 +230,16 @@ export class ServiceRecordLinkService {
     }> {
         const schedule = await this.prisma.employee_schedule.findUnique({
             where: { id: scheduleId },
-            include: { primaryEmployee: true },
+            include: {
+                primaryEmployee: true,
+                client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+            },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        this.assertClientCanReceiveLink(schedule.client);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(employee.phone);
         if (!resolvedRecipientPhone || !this.resolveRecipientPhone(employee.phone)) {
@@ -347,6 +356,21 @@ export class ServiceRecordLinkService {
         }
     }
 
+    private assertClientCanReceiveLink(client: {
+        serviceStatus: string | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    }): void {
+        if (getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking") {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/scheduleId",
+                code: "INVALID_VALUE",
+                detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다",
+                location: "body",
+            }));
+        }
+    }
+
     private async issueServiceRecordLinkJob(
         scheduleId: number,
         options: {
@@ -372,6 +396,7 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
         const resolvedRecipientPhone = this.resolveRecipientPhone(
@@ -386,6 +411,11 @@ export class ServiceRecordLinkService {
             // 종료일은 KST 자정까지 유효하므로 종료일 당일의 늦은 등록도 발송한다.
             if (
                 schedule.terminatedAt
+                || getEffectiveClientServiceStatus(
+                    schedule.client.serviceStatus,
+                    schedule.client.startDate,
+                    schedule.client.endDate,
+                ) === "pre_booking"
                 || schedule.client?.serviceStatus === "completed"
                 || schedule.client?.serviceStatus === "terminated"
                 || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()

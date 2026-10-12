@@ -64,7 +64,8 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
-import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
@@ -2861,12 +2862,16 @@ export class MessageTriggerService {
             return;
         }
 
+        let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null } | null = null;
         if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) {
             // 늦게 등록한 링크 문자는 명목 예약 시각을 유지하고 종료일까지 발송한다.
             const schedule = job.employeeScheduleId && job.branchId
                 ? await this.prisma.employee_schedule.findFirst({
                     where: { id: job.employeeScheduleId, branchId: job.branchId },
-                    select: { endDate: true, replaced: true, terminatedAt: true },
+                    select: {
+                        endDate: true, replaced: true, terminatedAt: true,
+                        client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+                    },
                 })
                 : null;
             if (!schedule || schedule.replaced || schedule.terminatedAt) {
@@ -2879,10 +2884,29 @@ export class MessageTriggerService {
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
                 return;
             }
+            linkClient = schedule.client;
         } else if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
             job.cancel(EXPIRED_PENDING_JOB_CANCEL_REASON);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
             return;
+        }
+
+        if (job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+            if (!(automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) && job.employeeScheduleId) {
+                const schedule = await this.prisma.employee_schedule.findFirst({
+                    where: { id: job.employeeScheduleId, branchId: job.branchId },
+                    select: { client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+                });
+                linkClient = schedule?.client ?? null;
+            }
+            if (
+                linkClient
+                && getEffectiveClientServiceStatus(linkClient.serviceStatus, linkClient.startDate, linkClient.endDate) === "pre_booking"
+            ) {
+                job.cancel(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+                await this.persistTriggerJobStatus(job, "persist pre-booking service record link job");
+                return;
+            }
         }
 
         if (!job.branchId || !approvedBranchIds.has(job.branchId)) {

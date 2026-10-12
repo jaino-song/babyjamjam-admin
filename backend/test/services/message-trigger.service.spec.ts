@@ -2942,9 +2942,16 @@ describe("MessageTriggerService", () => {
         try {
             const dispatcher = createDispatchService();
             const job = createJob({ ruleId, employeeScheduleId: 10,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
+                    buttonUrl: "https://mobile.test/service-record/efl_link",
+                    templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
                 scheduledFor: new Date("2026-11-02T03:00:00.000Z") });
             dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
-            dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+            dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule && {
+                ...schedule,
+                client: { serviceStatus: "waiting", startDate: new Date("2026-11-03T00:00:00.000Z"), endDate: new Date("2026-11-14T00:00:00.000Z") },
+            });
 
             await dispatcher.service.dispatchDueJobs();
 
@@ -2960,12 +2967,116 @@ describe("MessageTriggerService", () => {
                 expect(job.cancelReason).not.toBe("기존 발송 예정 24시간 경과");
                 expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
                     where: { id: 10, branchId },
-                    select: { endDate: true, replaced: true, terminatedAt: true },
+                    select: { endDate: true, replaced: true, terminatedAt: true,
+                        client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
                 });
             }
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it.each([
+        ["automatic", "pre_booking", true],
+        ["automatic", "waiting", false],
+        ["automatic", "active", false],
+        ["manual", "pre_booking", true],
+        ["manual", "waiting", false],
+        ["retry", "pre_booking", true],
+        ["retry", "waiting", false],
+        ["automatic", "waiting", true, "end"],
+        ["manual", "waiting", true, "start"],
+        ["retry", "waiting", true, "end"],
+        ["manual", "waiting", false, "client"],
+    ])("dispatch gates %s link jobs for %s clients (missing %s)", async (kind, serviceStatus, cancels, missing = "none") => {
+        const dispatcher = createDispatchService();
+        const job = createJob({
+            ruleId: "system:service_record_link", employeeScheduleId: 10,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: kind === "automatic" ? "system:service_record_link:schedule:10:primary"
+                : kind === "manual" ? "system:service_record_link:schedule:10:primary:manual:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+                    : "agent-sms-retry:synthetic-copy",
+            payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
+                buttonUrl: "https://mobile.test/service-record/efl_link",
+                templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue({
+            endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
+            client: missing === "client" ? null : {
+                serviceStatus,
+                startDate: missing === "start" ? null : new Date(),
+                endDate: missing === "end" ? null : new Date(Date.now() + 86400000),
+            },
+        });
+        await dispatcher.service.dispatchDueJobs();
+        expect(job.status).toBe(cancels ? "canceled" : "sent");
+        expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(cancels ? 0 : 1);
+        if (cancels) {
+            expect(job.cancelReason).toBe("예약 전 고객이라 제공기록지 링크를 발송하지 않았습니다");
+            expect(dispatcher.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(job.nextAttemptAt).toBeNull();
+            expect(dispatcher.jobRepository.update).toHaveBeenCalledWith(job);
+        }
+    });
+
+    it("does not apply the pre_booking gate to a link job without a schedule id", async () => {
+        const dispatcher = createDispatchService();
+        const job = createJob({ templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: "agent-sms-retry:synthetic-no-schedule",
+            payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
+                buttonUrl: "https://mobile.test/service-record/efl_link",
+                templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } } });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        await dispatcher.service.dispatchDueJobs();
+        expect(job.cancelReason).toBe("제공기록지 링크가 철회되어 발송하지 않았습니다");
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        expect(dispatcher.prisma.employee_schedule.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["replaced", { replaced: true }, "Service record link schedule ended or replaced"],
+        ["terminated", { terminatedAt: new Date() }, "Service record link schedule ended or replaced"],
+        ["expired", { endDate: new Date("2026-01-01") }, SERVICE_RECORD_LINK_ENDED_REASON],
+        ["missing", null, "Service record link schedule ended or replaced"],
+    ])("keeps %s cancellation ahead of pre_booking", async (_name, overrides, reason) => {
+        const dispatcher = createDispatchService();
+        const job = createJob({ ruleId: "system:service_record_link", employeeScheduleId: 10,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: "system:service_record_link:schedule:10:primary" });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(overrides && {
+            endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
+            client: { serviceStatus: "pre_booking", startDate: new Date(), endDate: new Date() },
+            ...overrides,
+        });
+        await dispatcher.service.dispatchDueJobs();
+        expect(job.cancelReason).toBe(reason);
+        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+    });
+
+    it.each(["manual", "retry"])("does not apply automatic schedule/expiry cancels to a %s link", async (kind) => {
+        const dispatcher = createDispatchService();
+        const job = createJob({ ruleId: "system:service_record_link", employeeScheduleId: 10,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: kind === "manual" ? "system:service_record_link:schedule:10:primary:manual:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" : "agent-sms-retry:synthetic-copy",
+            payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
+                buttonUrl: "https://mobile.test/service-record/efl_link",
+                templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
+        });
+        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue({
+            replaced: true, terminatedAt: new Date(), endDate: new Date("2026-01-01"),
+            client: { serviceStatus: "waiting", startDate: new Date(), endDate: new Date() },
+        });
+        await dispatcher.service.dispatchDueJobs();
+        expect(job.status).toBe("sent");
+        expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledWith(job);
+        expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledTimes(1);
+        expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
+            where: { id: 10, branchId },
+            select: { client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+        });
     });
 
     it("cancels an existing pending job once its scheduled time is at least 24 hours old", async () => {

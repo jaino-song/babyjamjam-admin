@@ -6,6 +6,7 @@ import {
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
+import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
@@ -422,6 +423,12 @@ export class ServiceRecordLifecycleService {
             if (existing && (existing.branchId !== branchId || existing.clientId !== clientId)) {
                 throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
             }
+        }
+        if (
+            !existing
+            && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking"
+        ) {
+            return null;
         }
         // The derived session count is persisted, so any calendar used for it
         // is read fresh (or handed in by a caller that read it before opening
