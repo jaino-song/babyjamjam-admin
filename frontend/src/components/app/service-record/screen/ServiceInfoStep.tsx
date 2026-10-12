@@ -243,7 +243,6 @@ export function ServiceInfoStep({
                     <Button
                         type="button"
                         variant="positive"
-                        size="md"
                         data-component={child("body_service-save")}
                         disabled={readOnly || busy || (ADMIN_MODE && !isHeaderComplete)}
                         onClick={handleSaveHeader}
