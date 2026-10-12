@@ -51,7 +51,8 @@ export function FileStoragePage() {
   const [uploadDropzoneState, setUploadDropzoneState] = useState(EMPTY_UPLOAD_STATE);
 
   const { data: documents = [], isLoading, error } = useDocuments();
-  const { data: uploadCapabilities } = useDocumentUploadCapabilities();
+  const uploadCapabilitiesQuery = useDocumentUploadCapabilities();
+  const { data: uploadCapabilities } = uploadCapabilitiesQuery;
   const { data: categories = [] } = useDocumentCategories();
   const uploadMutation = useUploadDocument();
   const updateMutation = useUpdateDocument();
@@ -97,15 +98,16 @@ export function FileStoragePage() {
     return doc.categoryLabel ?? categories.find(c => c.id === doc.categoryId)?.label ?? "미분류";
   }
 
-  const handleUpload = async (params: { file: File; name: string; description?: string; categoryId: string; tags: string[] }) => {
+  const handleUpload = async (params: { file: File; name: string; description?: string; categoryId: string; tags: string[]; visibilityScope: "branch" | "all_branches" }) => {
     try {
       setUploadProgress(0);
       await uploadMutation.mutateAsync({ ...params, onProgress: (p: number) => setUploadProgress(p) });
       setIsUploadOpen(false);
       setUploadDropzoneState(EMPTY_UPLOAD_STATE);
       toast({ description: "문서를 업로드했어요", variant: "success" });
-    } catch {
+    } catch (error) {
       toast({ description: "문서를 업로드하지 못했어요", variant: "destructive" });
+      throw error;
     }
   };
 
@@ -300,6 +302,9 @@ export function FileStoragePage() {
               isLoading={uploadMutation.isPending}
               uploadProgress={uploadProgress}
               capabilities={uploadCapabilities}
+              capabilitiesLoading={uploadCapabilitiesQuery.isPending}
+              capabilitiesError={uploadCapabilitiesQuery.isError}
+              onRetryCapabilities={() => { void uploadCapabilitiesQuery.refetch(); }}
             />
           </div>
           <DialogFooter className="shrink-0 border-t border-v3-border bg-white px-6 py-4 sm:justify-between">
