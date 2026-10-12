@@ -442,6 +442,26 @@ describe("ContractsPage service-record template lookup failure (S5)", () => {
     expect(headerCount()).toBe("2건");
   });
 
+  it("cached rows + template lookup pending + no counts yet: rows stay and the pills are skeletons, never 0", async () => {
+    mockServiceRecordTemplateId.mockReturnValue(new Promise(() => undefined));
+    mockUseInfiniteContracts.mockReturnValue(listState(SUCCESS_ROWS()));
+    mountPage();
+    await settle();
+    // The 제공기록지 section's counts query stays idle until the template lookup resolves.
+    fireEvent.click(screen.getByRole("button", { name: /제공기록지/ }));
+    await flushQueryNotifications();
+
+    expect(listRows()).toHaveLength(2);
+    expect(headerCount()).toBe("2건");
+    expect(screen.queryByRole("alert")).toBeNull();
+    const items = pills();
+    expect(items).toHaveLength(8);
+    for (const pill of items) {
+      expect(pill).toHaveAttribute("data-loading", "true");
+      expect(pill.querySelector(".count")).toBeNull();
+    }
+  });
+
   it("no cached rows + failed template lookup: the panel error stays, retry re-runs the template lookup and is disabled while in flight", async () => {
     // Like the real hook: the maternal list loaded (empty); the disabled 제공기록지 query has not run.
     const list = listState();

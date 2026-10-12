@@ -2545,22 +2545,28 @@ export default function ContractsPage() {
 
   // 이전에 성공한 목록 데이터가 남아 있으면 템플릿 조회가 끝나지 않았거나 실패해도 행을 지우지 않는다.
   const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
+  const isSectionQueryPending =
+    isAuthenticated
+    && sectionFilterReady
+    && (
+      isDocumentsLoading
+      || (!isDocumentsSuccess && !isDocumentsError)
+      || (
+        Boolean(branchId)
+        && !isStatusCountsSuccess
+        && !isStatusCountsError
+      )
+    );
   const isContractsLoading =
     isAuthLoading ||
     (isAuthenticated && !isServiceRecordTemplateResolved && !hasListData) ||
-    (
-      isAuthenticated
-      && sectionFilterReady
-      && (
-        isDocumentsLoading
-        || (!isDocumentsSuccess && !isDocumentsError)
-        || (
-          Boolean(branchId)
-          && !isStatusCountsSuccess
-          && !isStatusCountsError
-        )
-      )
-    );
+    isSectionQueryPending;
+  // 건수 알약의 로딩 표시는 캐시된 행 유무와 무관하다. 행이 남아 있어도 건수는 아직 모르므로
+  // 템플릿 조회가 끝나기 전에는 "0"이 아니라 스켈레톤을 보여준다(규칙 S5).
+  const isStatusCountsPending =
+    isAuthLoading ||
+    (isAuthenticated && !isServiceRecordTemplateResolved) ||
+    isSectionQueryPending;
   // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
   // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지·템플릿 조회)는 행을
   // 그대로 두고 목록 위에 안내만 얹는다.
@@ -2745,7 +2751,7 @@ export default function ContractsPage() {
   const filteredDocuments = displayDocuments;
 
   const filterItems = useMemo(() => {
-    if (isContractsLoading && !isStatusCountsSuccess && !isStatusCountsError) {
+    if (isStatusCountsPending && !isStatusCountsSuccess && !isStatusCountsError) {
       return FILTER_LABELS.map((label) => ({ label, count: "00", skeleton: true }));
     }
 
@@ -2759,7 +2765,7 @@ export default function ContractsPage() {
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
   }, [
     calendar,
-    isContractsLoading,
+    isStatusCountsPending,
     isStatusCountsError,
     isStatusCountsSuccess,
     isStatusCountsUnavailable,
