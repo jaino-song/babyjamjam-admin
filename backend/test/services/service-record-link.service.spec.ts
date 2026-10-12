@@ -238,6 +238,31 @@ describe("ServiceRecordLinkService", () => {
         }
     });
 
+    it("refuses automatic scheduling exactly at next-day midnight expiry", async () => {
+        jest.setSystemTime(new Date("2026-11-14T15:00:00.000Z"));
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, undefined, createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            startDate: new Date("2026-11-03T00:00:00.000Z"),
+            endDate: new Date("2026-11-14T00:00:00.000Z"),
+        }));
+
+        expect(await service.scheduleForServiceStart(10)).toBe(false);
+        expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        expect(tokenService.issueLink).not.toHaveBeenCalled();
+        expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+    });
+
     it("extends the stored token expiry to midnight after the extended end date", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
