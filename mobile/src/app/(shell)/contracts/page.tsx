@@ -147,6 +147,7 @@ import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   beginContractOperation,
   cancelContractOperation,
@@ -2449,6 +2450,7 @@ export default function ContractsPage() {
   const {
     data: serviceRecordTemplateData,
     isError: isServiceRecordTemplateError,
+    refetch: refetchServiceRecordTemplate,
   } = useQuery({
     queryKey: ["eformsign-docs", "service-record-template-id"],
     queryFn: eformsignApi.getServiceRecordTemplateId,
@@ -2485,12 +2487,15 @@ export default function ContractsPage() {
     : null;
 
   const {
+    data: documentsData,
     documents: paginatedDocuments,
     totalRows,
     branchId,
     isLoading: isDocumentsLoading,
     isSuccess: isDocumentsSuccess,
     isError: isDocumentsError,
+    isRefetching: isDocumentsRefetching,
+    refetch: refetchDocuments,
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
@@ -2508,6 +2513,8 @@ export default function ContractsPage() {
     data: statusCountsData,
     isSuccess: isStatusCountsSuccess,
     isError: isStatusCountsError,
+    isRefetching: isStatusCountsRefetching,
+    refetch: refetchStatusCounts,
   } = useQuery({
     // "eformsign-documents" 아래에 중첩 — 문서 변이가 광역 prefix 무효화만 해도
     // (삭제 훅, 생성 플로우, 지점 전환 removeQueries) 카운터가 함께 갱신된다.
@@ -2544,6 +2551,20 @@ export default function ContractsPage() {
         )
       )
     );
+  // 불러오기 실패는 "없음"이 아니다(규칙 S5). 이전에 성공한 데이터가 없는 실패는 목록 영역을
+  // 오류 상태로 바꾸고, 데이터가 남아 있는 실패(재조회·다음 페이지)는 행을 그대로 두고
+  // 목록 위에 안내만 얹는다.
+  const hasListData = documentsData !== undefined || paginatedDocuments.length > 0;
+  const isTemplateIdLoadFailed =
+    activeSection === "service-records"
+    && isServiceRecordTemplateError
+    && serviceRecordTemplateData === undefined;
+  const isListLoadFailed =
+    activeSection !== "automations"
+    && (isTemplateIdLoadFailed || (isDocumentsError && !hasListData));
+  const isListStale = activeSection !== "automations" && isDocumentsError && hasListData;
+  const isStatusCountsUnavailable = isStatusCountsError && statusCountsData === undefined;
+  const isStatusCountsStale = isStatusCountsError && statusCountsData !== undefined;
   const { data: documentClientSummaries = [] } = useQuery({
     queryKey: ["eformsign-doc-client-names"],
     queryFn: eformsignApi.getDocumentClientNames,
@@ -2709,9 +2730,21 @@ export default function ContractsPage() {
     }
 
     // 목록과 동일한 선(先)필터가 적용된 신호를 문서와 같은 규칙으로 접는다.
+    // 건수 조회가 실패했고 보여줄 이전 값이 없으면 "0"이 아니라 알 수 없는 값으로 표시한다.
+    if (isStatusCountsUnavailable) {
+      return FILTER_LABELS.map((label) => ({ label, count: "—" }));
+    }
+
     const counts = countSignalsByFilter(statusCountsData?.documents ?? [], calendar);
     return FILTER_LABELS.map((label) => ({ label, count: String(counts[label]) }));
-  }, [calendar, isContractsLoading, isStatusCountsError, isStatusCountsSuccess, statusCountsData]);
+  }, [
+    calendar,
+    isContractsLoading,
+    isStatusCountsError,
+    isStatusCountsSuccess,
+    isStatusCountsUnavailable,
+    statusCountsData,
+  ]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -2780,6 +2813,8 @@ export default function ContractsPage() {
   const activeSectionLabel = activeSection === "maternal-contracts" ? "산모 계약서" : activeSection === "service-records" ? "제공기록지" : "자동화";
   const listCount = activeSection === "automations" ? undefined : isContractsLoading ? (
     <span className="contracts-count-placeholder skeleton-base" aria-label="계약서 불러오는 중" />
+  ) : isListLoadFailed ? (
+    "—"
   ) : (
     `${totalDocs}건`
   );
@@ -2834,6 +2869,30 @@ export default function ContractsPage() {
             }
             onLoadMore={loadMore}
             isLoadingMore={isFetchingNextPage}
+            beforeScroll={activeSection === "automations" ? undefined : (
+              <>
+                {isStatusCountsUnavailable || isStatusCountsStale ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_counts-error"
+                    size="inline"
+                    title={isStatusCountsUnavailable
+                      ? "상태별 건수 정보를 불러오지 못했습니다"
+                      : "최신 건수 정보를 불러오지 못했습니다"}
+                    isRetrying={isStatusCountsRefetching}
+                    onRetry={() => void refetchStatusCounts()}
+                  />
+                ) : null}
+                {isListStale ? (
+                  <QueryErrorState
+                    dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_stale-error"
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    isRetrying={isLoadMoreError ? isFetchingNextPage : isDocumentsRefetching}
+                    onRetry={() => void (isLoadMoreError ? fetchNextPage() : refetchDocuments())}
+                  />
+                ) : null}
+              </>
+            )}
             beforeFilters={activeSection === "automations" ? undefined : (
               <MobileSearchBar
                 data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"
@@ -2851,6 +2910,14 @@ export default function ContractsPage() {
               />
             ) : isContractsLoading ? (
               <ContractListLoadingRows />
+            ) : isListLoadFailed ? (
+              <QueryErrorState
+                dataComponent="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_load-error"
+                size="panel"
+                title={`${activeSectionLabel} 정보를 불러오지 못했습니다`}
+                isRetrying={isTemplateIdLoadFailed ? false : isDocumentsRefetching}
+                onRetry={() => void (isTemplateIdLoadFailed ? refetchServiceRecordTemplate() : refetchDocuments())}
+              />
             ) : visibleSections.length === 0 ? (
               <div
                 style={{
