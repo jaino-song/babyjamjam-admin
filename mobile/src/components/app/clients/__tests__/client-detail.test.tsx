@@ -925,6 +925,133 @@ describe("ClientDetailContent", () => {
     expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
   });
 
+  describe("failed history refetch over cached logs", () => {
+    const cachedLog: ClientNotificationLogRecord = {
+      id: 902, provider: "aligo_sms", templateKey: "service_record_link_sms", status: "sent",
+      receiver: "01012345678", messageBody: "내용", variables: {},
+      recipientName: null, clientId: null, errorMessage: null, ruleName: "제공기록지 작성 링크",
+      createdAt: "2026-10-12T00:00:00Z",
+    };
+    const renderMessageTab = (props: Record<string, unknown>) =>
+      render(
+        <ClientDetailContent
+          data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+          client={client}
+          contractDocument={null}
+          activeTab="message"
+          onTabChange={jest.fn()}
+          onMessage={jest.fn()}
+          onIssueContract={jest.fn()}
+          onEdit={jest.fn()}
+          onDelete={jest.fn()}
+          onClientUpdated={jest.fn()}
+          {...props}
+        />,
+      );
+
+    it("keeps the cached logs and shows a notice whose retry refetches", async () => {
+      const onRetryNotificationLogs = jest.fn();
+      renderMessageTab({ notificationLogs: [cachedLog], isNotificationLogsError: true, onRetryNotificationLogs });
+
+      const row = screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ });
+      const alert = screen.getByRole("alert");
+      expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+      expect(alert).toHaveAttribute("data-size", "inline");
+      // The notice sits above the cached rows, and the no-data error UI is not used.
+      expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.queryByText("발송 내역을 불러오지 못했습니다.")).not.toBeInTheDocument();
+
+      await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+      expect(onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the notice's retry while a refetch is in flight", () => {
+      renderMessageTab({
+        notificationLogs: [cachedLog],
+        isNotificationLogsError: true,
+        isNotificationLogsRetrying: true,
+        onRetryNotificationLogs: jest.fn(),
+      });
+
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("shows no notice over cached logs when the load succeeded", () => {
+      renderMessageTab({ notificationLogs: [cachedLog] });
+
+      expect(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ })).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    describe("while a message detail is open", () => {
+      const detailProps = (extra: Record<string, unknown> = {}) => ({
+        notificationLogs: [{ ...cachedLog, messageBody: "열린 메시지 본문" }],
+        onRetryNotificationLogs: jest.fn(),
+        ...extra,
+      });
+      const renderOpenDetail = async (extra: Record<string, unknown> = {}) => {
+        const props = detailProps(extra);
+        const view = renderMessageTab(props);
+        await userEvent.setup().click(screen.getByRole("button", { name: /메시지 · 제공기록지 작성 링크/ }));
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        return { view, props };
+      };
+      const rerenderWith = (view: ReturnType<typeof renderMessageTab>, props: Record<string, unknown>) =>
+        view.rerender(
+          <ClientDetailContent
+            data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+            client={client}
+            contractDocument={null}
+            activeTab="message"
+            onTabChange={jest.fn()}
+            onMessage={jest.fn()}
+            onIssueContract={jest.fn()}
+            onEdit={jest.fn()}
+            onDelete={jest.fn()}
+            onClientUpdated={jest.fn()}
+            {...props}
+          />,
+        );
+
+      it("shows the notice above the kept message body after a failed refetch, and its retry refetches", async () => {
+        const { view, props } = await renderOpenDetail();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        const body = screen.getByText("열린 메시지 본문");
+        expect(alert.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+        await userEvent.setup().click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(props.onRetryNotificationLogs).toHaveBeenCalledTimes(1);
+      });
+
+      it("disables the notice's retry while a refetch is in flight", async () => {
+        const { view, props } = await renderOpenDetail();
+
+        rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
+
+        expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      });
+
+      it("shows no notice over the open detail when the load succeeded", async () => {
+        await renderOpenDetail();
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      });
+    });
+
+    it("keeps the truncation notice over cached logs after a failed refetch", () => {
+      renderMessageTab({ notificationLogs: [cachedLog], hasMoreNotificationLogs: true, isNotificationLogsError: true });
+
+      expect(screen.getByText("최근 발송 기록만 표시하고 있어요")).toBeInTheDocument();
+    });
+  });
+
   describe("detail-empty-state slot", () => {
     const baseProps = {
       "data-component": "mobile_clients_detail-sheet_stack_detail-page_content",

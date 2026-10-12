@@ -17,7 +17,6 @@ export function useClientMessageHistory(client: Client | null) {
     queryFn: () => fetchClientMessageLogs<ClientNotificationLogRecord>(clientId as number),
     enabled: clientId !== null,
     staleTime: 0,
-    retry: false,
   });
 
   const notificationLogs = useMemo(() => {
@@ -34,6 +33,7 @@ export function useClientMessageHistory(client: Client | null) {
     hasMore: query.data?.hasMore === true,
     isLoading: query.isLoading,
     isError: query.isError,
+    isFetching: query.isFetching,
     refetch: query.refetch,
   };
 }

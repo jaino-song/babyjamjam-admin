@@ -159,6 +159,7 @@ export function useClientDetailController({
     hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
+    isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(detailClient);
   const { data: detailContractDocument } = useQuery<EformsignDocument>({
@@ -169,7 +170,6 @@ export function useClientDetailController({
     },
     enabled: Boolean(detailClient?.eDocId && (detailSheetTab === "basic" || detailSheetTab === "contracts")),
     staleTime: 1000 * 60,
-    retry: 1,
   });
 
   // The client detail response is the canonical contract projection. The
@@ -278,6 +278,7 @@ export function useClientDetailController({
           hasMoreNotificationLogs={hasMoreNotificationLogs}
           isNotificationLogsLoading={isNotificationLogsLoading}
           isNotificationLogsError={isNotificationLogsError}
+          isNotificationLogsRetrying={isNotificationLogsFetching}
           onRetryNotificationLogs={() => {
             void refetchNotificationLogs();
           }}

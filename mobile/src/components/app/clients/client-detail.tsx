@@ -29,6 +29,7 @@ import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
   getMessageHistoryDetailStatusLabel,
@@ -631,6 +632,7 @@ export function ClientDetailContent({
   hasMoreNotificationLogs = false,
   isNotificationLogsLoading = false,
   isNotificationLogsError = false,
+  isNotificationLogsRetrying = false,
   onRetryNotificationLogs,
   isIssuingContract = false,
   onTabChange,
@@ -649,6 +651,8 @@ export function ClientDetailContent({
   hasMoreNotificationLogs?: boolean;
   isNotificationLogsLoading?: boolean;
   isNotificationLogsError?: boolean;
+  /** A refetch of the history is in flight (disables the retry of the cached-logs notice). */
+  isNotificationLogsRetrying?: boolean;
   onRetryNotificationLogs?: () => void;
   isIssuingContract?: boolean;
   onTabChange: (id: DetailTabId) => void;
@@ -1383,6 +1387,16 @@ export function ClientDetailContent({
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_message`} name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (
+          <>
+          {isNotificationLogsError && displayNotificationLogs.length > 0 ? (
+            <QueryErrorState
+              dataComponent={`${dataComponent}_tab-panel_message_history-detail_stale-error`}
+              size="inline"
+              title="최신 정보를 불러오지 못했습니다"
+              onRetry={() => onRetryNotificationLogs?.()}
+              isRetrying={isNotificationLogsRetrying}
+            />
+          ) : null}
           <ClientMessageHistoryDetail
             data-component={`${dataComponent}_tab-panel_message_history-detail`}
             view={{
@@ -1406,13 +1420,14 @@ export function ClientDetailContent({
             }}
             onBack={() => setSelectedEntry(null)}
           />
+          </>
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_message_history-card`} title="발송 내역">
             {isNotificationLogsLoading ? (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_loading`} data-slot="detail-empty-state">
                 발송 내역을 불러오는 중입니다.
               </div>
-            ) : isNotificationLogsError ? (
+            ) : isNotificationLogsError && displayNotificationLogs.length === 0 ? (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_error`} data-slot="detail-empty-state">
                 <p>발송 내역을 불러오지 못했습니다.</p>
                 {onRetryNotificationLogs ? (
@@ -1427,34 +1442,45 @@ export function ClientDetailContent({
                 ) : null}
               </div>
             ) : displayNotificationLogs.length > 0 ? (
-              displayNotificationLogs.map((log) => {
-                const tone = notificationStatusTone(log.status);
-                const channel = notificationChannelLabel(log);
-                return (
-                  <DetailDocRow
-                    data-component={`${dataComponent}_tab-panel_message_history-card_log-row`}
-                    key={`${channel}-${log.id}`}
-                    icon={
-                      tone === "burgundy" ? (
-                        <CircleAlert size={16} strokeWidth={2.5} />
-                      ) : (
-                        <MessageCircle size={16} strokeWidth={2.5} />
-                      )
-                    }
-                    title={`${channel} · ${notificationTitle(log)}`}
-                    meta={formatNotificationTime(log)}
-                    badge={notificationStatusLabel(log.status)}
-                    tone={tone}
-                    onClick={() => setSelectedEntry({ key: detailKey, log })}
+              <>
+                {isNotificationLogsError ? (
+                  <QueryErrorState
+                    dataComponent={`${dataComponent}_tab-panel_message_history-card_stale-error`}
+                    size="inline"
+                    title="최신 정보를 불러오지 못했습니다"
+                    onRetry={() => onRetryNotificationLogs?.()}
+                    isRetrying={isNotificationLogsRetrying}
                   />
-                );
-              })
+                ) : null}
+                {displayNotificationLogs.map((log) => {
+                  const tone = notificationStatusTone(log.status);
+                  const channel = notificationChannelLabel(log);
+                  return (
+                    <DetailDocRow
+                      data-component={`${dataComponent}_tab-panel_message_history-card_log-row`}
+                      key={`${channel}-${log.id}`}
+                      icon={
+                        tone === "burgundy" ? (
+                          <CircleAlert size={16} strokeWidth={2.5} />
+                        ) : (
+                          <MessageCircle size={16} strokeWidth={2.5} />
+                        )
+                      }
+                      title={`${channel} · ${notificationTitle(log)}`}
+                      meta={formatNotificationTime(log)}
+                      badge={notificationStatusLabel(log.status)}
+                      tone={tone}
+                      onClick={() => setSelectedEntry({ key: detailKey, log })}
+                    />
+                  );
+                })}
+              </>
             ) : (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_empty`} data-slot="detail-empty-state">
                 발송 내역이 없습니다.
               </div>
             )}
-            {hasMoreNotificationLogs && !isNotificationLogsLoading && !isNotificationLogsError ? (
+            {hasMoreNotificationLogs && !isNotificationLogsLoading && (!isNotificationLogsError || displayNotificationLogs.length > 0) ? (
               <p
                 className="detail-empty-state"
                 data-component={`${dataComponent}_tab-panel_message_history-card_truncated-notice`}
