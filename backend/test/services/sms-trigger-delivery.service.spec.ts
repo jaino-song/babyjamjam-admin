@@ -804,7 +804,7 @@ https://mobile.test/service-record/efl_token`;
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
                 request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
-                response: { result_code: -1, message: "잔액 부족", msg_id: null, success_cnt: 0, error_cnt: 1 },
+                response: { result_code: -1, message: "일시적인 서버 장애", msg_id: null, success_cnt: 0, error_cnt: 1 },
             }),
         };
         const systemTemplateService = {
@@ -815,13 +815,96 @@ https://mobile.test/service-record/efl_token`;
         const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
         const service = buildService({ aligoService, logRepository, systemTemplateService });
 
+        const beforeSend = Date.now();
         await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(false);
 
         const savedLog = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
         expect(savedLog.templateKey).toBe("service_record_link_sms");
         expect(savedLog.status).toBe("failed");
-        expect(savedLog.errorMessage).toBe("잔액 부족");
+        expect(savedLog.errorMessage).toBe("일시적인 서버 장애");
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
+        expect(savedLog.nextRetryAt?.getTime()).toBeGreaterThanOrEqual(beforeSend + 300000);
+        expect(savedLog.nextRetryAt?.getTime()).toBeLessThanOrEqual(Date.now() + 300000);
+    });
+
+    it.each([
+        [-101, "인증오류입니다.", "인증 오류"],
+        [-999, "잔액 부족", "잔액 부족"],
+    ])("parks permanent first-send rejection %s without job retry authorization", async (result_code, message, reason) => {
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = buildService({
+            aligoService: { sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01011112222" },
+                response: { result_code, message, success_cnt: 0, error_cnt: 1 },
+            }) },
+            systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+            logRepository,
+        });
+        const job = createServiceRecordJob();
+        await expect(service.sendJob(job)).resolves.toBe(false);
+        expect(logRepository.save.mock.calls[0]?.[0]).toMatchObject({
+            status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null,
+            errorMessage: `발송 실패: ${reason}`, attempts: 1,
+            variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }),
+        });
+        expect(job.payload.templateVariables["retrySafety"]).toBe("permanent-provider-rejected");
+    });
+
+    it("preserves the existing failed/retryable first-send partial path", async () => {
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = buildService({
+            aligoService: { sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01011112222,01033334444" },
+                response: { result_code: 1, message: "부분 성공", success_cnt: 1, error_cnt: 1 },
+            }) },
+            systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+            logRepository,
+        });
+        const job = createServiceRecordJob();
+        job.payload.recipientPhone = "01011112222,01033334444";
+        await expect(service.sendJob(job)).resolves.toBe(false);
+        expect(logRepository.save.mock.calls[0]?.[0]).toMatchObject({ status: "failed", providerAcceptanceState: "rejected" });
+        expect(logRepository.save.mock.calls[0]?.[0].nextRetryAt).toBeInstanceOf(Date);
+        expect(job.payload.templateVariables["retrySafety"]).toBe("provider-rejected");
+    });
+
+    it("does not schedule past the third attempt for a prepared first-send row", async () => {
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => {
+            if (log.providerAcceptanceState === "prepared") log.attempts = 2;
+            return log;
+        }) };
+        const service = buildService({
+            aligoService: { sendSms: jest.fn().mockResolvedValue({
+                request: { receiver: "01011112222" },
+                response: { result_code: -999, message: "일시적인 서버 장애" },
+            }) },
+            systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+            logRepository,
+        });
+        await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(false);
+        expect(logRepository.save.mock.calls[0]?.[0]).toMatchObject({ status: "failed", attempts: 3, nextRetryAt: null });
+    });
+
+    it.each([
+        { result_code: 0, message: "응답", msg_id: 123, success_cnt: 0, error_cnt: 0 },
+        { result_code: 1, message: "성공", msg_id: 123 },
+        { result_code: -101, message: "인증오류입니다.", msg_id: 123, success_cnt: 1, error_cnt: 0 },
+        {},
+        null,
+    ])("fences unclassifiable first-send response %j using the exception path", async (response) => {
+        const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+        const service = buildService({
+            aligoService: { sendSms: jest.fn().mockResolvedValue({ request: { receiver: "01011112222" }, response }) },
+            systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+            logRepository,
+        });
+        const job = createServiceRecordJob();
+        await expect(service.sendJob(job)).rejects.toThrow();
+        expect(logRepository.save.mock.calls[0]?.[0]).toMatchObject({
+            status: "pending", providerAcceptanceState: "uncertain", nextRetryAt: null,
+            aligoMid: response && "msg_id" in response ? "123" : null,
+        });
+        expect(job.payload.templateVariables["retrySafety"]).toBe("uncertain");
     });
 
     it("does not send a registry default when branch template resolution fails", async () => {

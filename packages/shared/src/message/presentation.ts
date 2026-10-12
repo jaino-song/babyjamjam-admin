@@ -273,11 +273,13 @@ export function formatMessageDateTimeDetail(dateString: string | null): string {
 export function formatMessageFailureReason(reason: string | null | undefined): string {
   if (!reason) return "";
 
-  return reason
+  const permanentFailure = reason.trim().startsWith("발송 실패:");
+  const sanitizedReason = (permanentFailure ? reason.trim().slice("발송 실패:".length) : reason)
     .replace(/[^\uAC00-\uD7A3\u3131-\u318E\s.]/g, "")
     .replace(/\s+/g, " ")
     .replace(/\s+\./g, ".")
     .trim();
+  return permanentFailure && sanitizedReason ? `발송 실패: ${sanitizedReason}` : sanitizedReason;
 }
 
 export interface NormalizeMessageHistoryPresentationOptions {

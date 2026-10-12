@@ -734,7 +734,8 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             variables
             && typeof variables === "object"
             && !Array.isArray(variables)
-            && (variables as Record<string, unknown>)["retrySafety"] === "provider-rejected",
+            && ((variables as Record<string, unknown>)["retrySafety"] === "provider-rejected"
+                || (variables as Record<string, unknown>)["retrySafety"] === "permanent-provider-rejected"),
         );
     }
 

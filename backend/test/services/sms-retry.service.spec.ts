@@ -341,6 +341,24 @@ describe("SmsRetryService", () => {
         );
     });
 
+    it("parks a manual retry with a permanent-class response as manual-provider-rejected", async () => {
+        aligoService.sendSms.mockResolvedValue({
+            request: { receiver: "01012345678" },
+            response: { result_code: -101, message: "인증오류입니다." },
+        });
+
+        const retry = await service.retry(createSmsRetryLog(), "manual");
+
+        expect(retry).toMatchObject({
+            status: "failed", attempts: 2, nextRetryAt: null,
+            variables: expect.objectContaining({ retrySafety: "manual-provider-rejected" }),
+        });
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledWith(
+            expect.any(MessageLogEntity), expect.any(MessageLogEntity), "manual",
+        );
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
     it("retains the bounded schedule for an automated trigger rejection", async () => {
         nowSpy.mockReturnValue(new Date("2026-06-05T10:20:00.000Z").getTime());
         const log = createSmsRetryLog();
@@ -352,7 +370,7 @@ describe("SmsRetryService", () => {
                 testModeYn: "N",
             },
             response: {
-                result_code: -101,
+                result_code: -999,
                 message: "등록되지 않은 IP 입니다.",
                 msg_id: 0,
                 success_cnt: 0,
@@ -371,6 +389,34 @@ describe("SmsRetryService", () => {
                 variables: expect.objectContaining({ retrySafety: "provider-rejected" }),
             }),
         );
+    });
+
+    it.each([
+        [-101, "인증오류입니다.", "인증 오류"],
+        [-999, "잔액을 충전해주세요", "잔액 부족"],
+    ])("stops automatic retries for permanent rejection %s although attempts remain", async (result_code, message, reason) => {
+        aligoService.sendSms.mockResolvedValue({
+            request: { receiver: "01012345678" },
+            response: { result_code, message },
+        });
+        const retry = await service.retry(createSmsRetryLog(), "automatic");
+        expect(retry).toMatchObject({
+            status: "failed", attempts: 2, nextRetryAt: null, errorMessage: `발송 실패: ${reason}`,
+            variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }),
+        });
+        expect(retry?.canRetry()).toBe(true);
+    });
+
+    it("does not schedule a fourth attempt after a third transient rejection", async () => {
+        const log = createSmsRetryLog();
+        log.attempts = 2;
+        aligoService.sendSms.mockResolvedValue({
+            request: { receiver: "01012345678" },
+            response: { result_code: -999, message: "일시적인 서버 장애" },
+        });
+        const retry = await service.retry(log, "automatic");
+        expect(retry).toMatchObject({ status: "failed", attempts: 3, nextRetryAt: null });
+        expect(retry?.canRetry()).toBe(false);
     });
 
     it("treats a result-code-one response without counters as uncertain", async () => {
