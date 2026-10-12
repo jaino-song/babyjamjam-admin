@@ -284,7 +284,9 @@ export function eformsignDocumentFieldValue(
 }
 
 function hasNonCustomerBirthdayFieldMarker(token: string): boolean {
-    const normalizedToken = normalizeFieldId(token);
+    // 서비스명에 포함된 신생아는 고객 생년월일 제외 표식이 아니다.
+    const normalizedToken = normalizeFieldId(token)
+        .split(normalizeFieldId("산모신생아")).join("");
     return hasNonCustomerNameFieldMarker(token)
         || NON_CUSTOMER_BIRTHDAY_FIELD_MARKERS.some((marker) =>
             normalizedToken.includes(normalizeFieldId(marker)),

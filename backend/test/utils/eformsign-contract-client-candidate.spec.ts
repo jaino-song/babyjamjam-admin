@@ -61,6 +61,55 @@ describe("extractEformsignContractClientCandidate", () => {
         ["identity", extractEformsignContractClientCandidate],
     ] as const)("customer-safe birthday (%s)", (_kind, extract) => {
         it.each([
+            "산모신생아 이용자 생년월일",
+            "산모 신생아 이용자 생년월일",
+            "산모_신생아 이용자 생년월일",
+            "산모신생아 산모신생아 이용자 생년월일",
+        ])("preserves a service-prefixed id-token birthday (%s)", (id) => {
+            const detail = documentDetail({
+                fields: [
+                    { id: "이용자 성명", value: "김고객", type: "text" },
+                    { id, value: "1992-03-04", type: "text" },
+                ],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+
+        it.each([
+            "산모신생아 건강관리 계약",
+            "산모 신생아 건강관리 계약",
+        ])("preserves a keyed birthday below a service container (%s)", (parent) => {
+            const detail = documentDetail({
+                fields: [],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        [parent]: { "이용자 생년월일": "1992-03-04" },
+                    },
+                }],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+
+        it.each([
+            "산모신생아 신생아 주민번호 앞자리",
+            "산모신생아 신생아 생년월일",
+            "산모신생아 providerBirthday",
+            "산모·신생아 이용자 생년월일",
+        ])("rejects a still-marked service-prefixed birthday (%s)", (id) => {
+            const detail = documentDetail({
+                fields: [
+                    { id: "이용자 성명", value: "김고객", type: "text" },
+                    { id, value: "900101", type: "text" },
+                ],
+            });
+
+            expect(extract(detail)?.birthday).toBeNull();
+        });
+
+        it.each([
             "제공인력 주민번호 앞자리",
             "providerBirthday",
             "신생아 주민번호 앞자리",
