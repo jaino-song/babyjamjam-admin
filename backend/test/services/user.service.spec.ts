@@ -1269,13 +1269,17 @@ describe("UserService", () => {
             expectNoAssignmentWrites();
         });
 
-        it("refuses a non-owner caller before opening a transaction", async () => {
+        it("decides on the caller row re-read in the transaction, not on callerRole: a database non-owner is refused even when callerRole says owner", async () => {
+            prismaService.user.findUnique.mockReset();
+            prismaService.user.findUnique.mockResolvedValue(approvedTarget());
+            prismaService.user.findUnique.mockResolvedValueOnce({ role: "admin" });
+
             const rejection = service.updateAccountAssignment(
                 "u1",
                 assignmentParams({
                     role: "user",
                     branchIds: [branchIds[0]],
-                    callerRole: "admin",
+                    callerRole: "owner",
                 }),
             );
             await expect(rejection).rejects.toBeInstanceOf(ForbiddenException);
@@ -1289,8 +1293,22 @@ describe("UserService", () => {
                 }),
             });
 
-            expect(prismaService.$transaction).not.toHaveBeenCalled();
-            expect(prismaService.user.findUnique).not.toHaveBeenCalled();
+            expect(prismaService.user.findUnique).toHaveBeenCalledTimes(1);
+            expect(prismaService.user.findUnique).toHaveBeenCalledWith({
+                where: { id: "owner-1" },
+                select: { role: true },
+            });
+            expectNoAssignmentWrites();
+        });
+
+        it("ignores callerRole: a database owner is allowed even when callerRole says user", async () => {
+            const result = await service.updateAccountAssignment(
+                "u1",
+                assignmentParams({ callerRole: "user" }),
+            );
+
+            expect(result.id).toBe("u1");
+            expect(prismaService.user.update).toHaveBeenCalledTimes(1);
         });
 
         it("answers a missing assignment target with a registered RESOURCE_NOT_FOUND body", async () => {
@@ -2103,6 +2121,17 @@ describe("UserService", () => {
                 await expectForbidden(change("user"));
             });
 
+            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the ownership 409", async () => {
+                arrange({
+                    callerMembership: "admin",
+                    targetMembership: null,
+                    targetGlobal: "user",
+                    branchOwnerId: "target-1",
+                });
+
+                await expectForbidden(change("manager"));
+            });
+
             it("refuses 지점장 changing a member whose GLOBAL role is 지점장 even if the branch row says 매니저", async () => {
                 arrange({ callerMembership: "admin", targetMembership: "manager", targetGlobal: "admin" });
 
@@ -2294,6 +2323,17 @@ describe("UserService", () => {
                 await expectForbidden(remove());
             });
 
+            it("ranks the branch's appointed 지점장 as admin even without a membership row: 403, not the ownership 409", async () => {
+                arrange({
+                    callerMembership: "admin",
+                    targetMembership: null,
+                    targetGlobal: "user",
+                    branchOwnerId: "target-1",
+                });
+
+                await expectForbidden(remove());
+            });
+
             it("refuses 매니저 removing a 매니저", async () => {
                 arrange({ callerMembership: "manager", targetMembership: "manager", targetGlobal: "manager" });
 
@@ -2460,6 +2500,185 @@ describe("UserService", () => {
             })).rejects.toMatchObject(forbidden);
 
             expect(prismaService.user.update).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
+    // The caller is re-read with the TRANSACTION client -- 권한-04 / BJJ-435 (M3)
+    //
+    // The shared fixture hands the root Prisma mock to the transaction callback, so a read
+    // that wrongly goes through the root client looks identical to a correct one. Here the
+    // transaction gets its OWN client; the root client is told the opposite story.
+    // ============================================
+    describe("caller authority comes from the transaction client, not the root client (권한-04, BJJ-435)", () => {
+        const BRANCH = "branch-1";
+        const callerActor: AdminAuditActor = { userId: "caller-1", globalRole: "owner", branchRole: "admin" };
+        const forbidden = { status: 403, response: expect.objectContaining({ code: "ACCESS_DENIED" }) };
+        const goodAssignment = {
+            role: "user" as const,
+            branchIds: ["11111111-1111-4111-8111-111111111111"],
+            expectedRole: "manager" as const,
+            expectedBranchIds: ["11111111-1111-4111-8111-111111111111"],
+        };
+
+        let txClient: ReturnType<typeof createMockPrismaService>;
+
+        interface Authority {
+            /** Global role of the caller row; null = no row at all. */
+            global: string | null;
+            /** Caller's membership role in the branch; null = no row. */
+            membership?: string | null;
+        }
+
+        /** Wires `client` so that caller-1 / owner-1 resolve to `caller`, and the target is an ordinary member. */
+        const arrangeClient = (
+            client: ReturnType<typeof createMockPrismaService>,
+            caller: Authority,
+        ) => {
+            client.branch.findUnique.mockResolvedValue({ id: BRANCH, ownerId: null });
+            client.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
+                if (where.id === "caller-1" || where.id === "owner-1") {
+                    return caller.global === null ? null : { id: where.id, role: caller.global };
+                }
+                return { id: where.id, name: "대상", role: "user", approvalStatus: "approved" };
+            });
+            client.user_branch.findUnique.mockImplementation(
+                async ({ where }: { where: { userId_branchId: { userId: string } } }) => {
+                    const role = where.userId_branchId.userId === "caller-1" ? caller.membership : "user";
+                    return role === null || role === undefined ? null : { role };
+                },
+            );
+            client.user_branch.updateMany.mockResolvedValue({ count: 1 });
+            client.user_branch.deleteMany.mockResolvedValue({ count: 1 });
+        };
+
+        /** The root client says `root`; the transaction client says `tx`. */
+        const arrange = (root: Authority, tx: Authority) => {
+            txClient = createMockPrismaService();
+            arrangeClient(prismaService, root);
+            arrangeClient(txClient, tx);
+            prismaService.$transaction.mockImplementation(async (callback) => callback(txClient));
+        };
+
+        const expectNothingWrittenAnywhere = () => {
+            for (const client of [prismaService, txClient]) {
+                expect(client.user.update).not.toHaveBeenCalled();
+                expect(client.branch.updateMany).not.toHaveBeenCalled();
+                expect(client.user_branch.updateMany).not.toHaveBeenCalled();
+                expect(client.user_branch.upsert).not.toHaveBeenCalled();
+                expect(client.user_branch.deleteMany).not.toHaveBeenCalled();
+                expect(client.auth_session.updateMany).not.toHaveBeenCalled();
+            }
+        };
+
+        const changeRole = () =>
+            service.update("target-1", { branchId: BRANCH, branchRole: "manager", actor: callerActor });
+        const removeMember = () => service.delete("target-1", BRANCH, callerActor);
+        const approveUser = () =>
+            service.approve("u1", { role: "manager", approvedBy: "owner-1", actor: ownerActor, branchId: BRANCH });
+        const rejectUser = () => service.reject("u1", ownerActor);
+        const assign = () =>
+            service.updateAccountAssignment("u1", { ...goodAssignment, callerRole: "owner", actor: ownerActor });
+
+        describe("root client says the caller is an owner or 지점장; the transaction says a plain 회원", () => {
+            const rootSaysPowerful: Authority = { global: "owner", membership: "admin" };
+            const txSaysPlain: Authority = { global: "user", membership: "user" };
+
+            it("branch role change: refused, nothing written", async () => {
+                arrange(rootSaysPowerful, txSaysPlain);
+
+                await expect(changeRole()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("branch role change: a 회원 membership read through the root client alone does not authorize it", async () => {
+                arrange({ global: "user", membership: "admin" }, { global: "user", membership: "user" });
+
+                await expect(changeRole()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("branch member removal: refused, nothing written", async () => {
+                arrange(rootSaysPowerful, txSaysPlain);
+
+                await expect(removeMember()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("branch member removal: a 회원 membership read through the root client alone does not authorize it", async () => {
+                arrange({ global: "user", membership: "admin" }, { global: "user", membership: "user" });
+
+                await expect(removeMember()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("approve: refused, nothing written", async () => {
+                arrange({ global: "owner" }, { global: "admin" });
+
+                await expect(approveUser()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("reject: refused, nothing written", async () => {
+                arrange({ global: "owner" }, { global: "admin" });
+
+                await expect(rejectUser()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("updateAccountAssignment: refused, nothing written", async () => {
+                arrange({ global: "owner" }, { global: "admin" });
+
+                await expect(assign()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+        });
+
+        describe("root client says a plain 회원; the transaction says 지점장", () => {
+            it("branch role change: allowed, and the write goes through the transaction client", async () => {
+                arrange({ global: "user", membership: "user" }, { global: "user", membership: "admin" });
+
+                await changeRole();
+
+                expect(txClient.user_branch.updateMany).toHaveBeenCalledWith({
+                    where: { userId: "target-1", branchId: BRANCH },
+                    data: { role: "manager" },
+                });
+                expect(prismaService.user_branch.updateMany).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("the transaction returns no row for the caller account", () => {
+            it("branch role change: refused with 403 and nothing written (even though the root client has an owner)", async () => {
+                arrange({ global: "owner", membership: "admin" }, { global: null });
+
+                await expect(changeRole()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("branch member removal: refused with 403 and nothing written", async () => {
+                arrange({ global: "owner", membership: "admin" }, { global: null });
+
+                await expect(removeMember()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
+
+            it("approve: refused with 403 and nothing written", async () => {
+                arrange({ global: "owner" }, { global: null });
+
+                await expect(approveUser()).rejects.toMatchObject(forbidden);
+
+                expectNothingWrittenAnywhere();
+            });
         });
     });
 });

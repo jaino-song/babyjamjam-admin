@@ -205,9 +205,8 @@ export class UserService {
             actor?: AdminAuditActor;
         },
     ): Promise<UserApprovalSummary> {
-        if (params.callerRole !== "owner") {
-            throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
-        }
+        // Authorization is decided on the caller row re-read inside the transaction
+        // (assertCallerStillOwner); the callerRole parameter is deliberately not trusted.
         if (
             !Array.isArray(params.branchIds)
             || params.branchIds.length === 0
