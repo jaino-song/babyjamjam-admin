@@ -8,12 +8,14 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { agentAutomationConcreteJobDigest } from "application/services/agent-automation-job-binding";
 import { buildAutomationRetrySealVariables, readAutomationRetrySeal } from "application/services/automation-retry-seal";
+import { SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-record-link-message";
 
 describe("SmsRetryService", () => {
     const createMockLogRepository = () => ({
         startRetryAttempt: jest.fn(),
         findByIdInBranch: jest.fn(),
         update: jest.fn(),
+        findServiceRecordLinkClientState: jest.fn().mockResolvedValue(null),
     });
     const createMockAligoService = () => ({
         sendSms: jest.fn(),
@@ -98,6 +100,92 @@ describe("SmsRetryService", () => {
     afterEach(() => {
         nowSpy.mockRestore();
         jest.clearAllMocks();
+    });
+
+    describe("service-record link client status", () => {
+        const states = [
+            { serviceStatus: "pre_booking", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") },
+            { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: null },
+        ];
+        const createActivationHarness = (sourceLog: MessageLogEntity) => {
+            sourceLog.triggerJobId = "job-link";
+            // No seal: legacy authority permits retry; activation really runs the callback.
+            const findUnique = jest.fn().mockResolvedValue({
+                id: sourceLog.triggerJobId, branchId: sourceLog.branchId, payload: {},
+            });
+            const transaction = { message_trigger_job: { findUnique } };
+            const activation = {
+                runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (_branch, _job, work) => ({
+                    allowed: true, applies: true, value: await work(transaction),
+                })),
+            };
+            service = new SmsRetryService(
+                logRepository as unknown as IMessageLogRepository,
+                aligoService as unknown as AligoService,
+                messageSenderApprovalService as unknown as MessageSenderApprovalService,
+                undefined,
+                activation as never,
+            );
+            return { activation, findUnique };
+        };
+        it.each(states)("supersedes automatic retry before activation for effective pre_booking: %j", async (state) => {
+            const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+            const { activation, findUnique } = createActivationHarness(source);
+            logRepository.findServiceRecordLinkClientState.mockResolvedValue(state);
+
+            await expect(service.retry(source, "automatic")).resolves.toBe(source);
+
+            expect(logRepository.findServiceRecordLinkClientState).toHaveBeenCalledWith(source);
+            expect(activation.runAutomaticRetryIfEnabled).not.toHaveBeenCalled();
+            expect(findUnique).not.toHaveBeenCalled();
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(logRepository.update).toHaveBeenCalledTimes(1);
+            expect(logRepository.update).toHaveBeenCalledWith(source);
+            expect(source.errorMessage).toBe(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            expect(source.nextRetryAt).toBeNull();
+        });
+        it.each(states)("refuses manual retryById without writes for effective pre_booking: %j", async (state) => {
+            const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            logRepository.findServiceRecordLinkClientState.mockResolvedValue(state);
+
+            await expect(service.retryById(source.branchId!, source.id)).rejects.toMatchObject({
+                status: 400,
+                response: {
+                    code: "VALIDATION_FAILED",
+                    errors: [{ pointer: "/id", code: "INVALID_VALUE", detail: "예약 전 고객에게는 제공기록지 링크를 보낼 수 없습니다", location: "path" }],
+                },
+            });
+            expect(logRepository.update).not.toHaveBeenCalled();
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        });
+        it.each(["automatic", "manual"] as const)("still sends %s retry for waiting, unresolved and non-link logs", async (invocation) => {
+            for (const kind of ["waiting", "unresolved", "non-link"]) {
+                jest.clearAllMocks();
+                const source = createSmsRetryLog(kind === "non-link" ? "client_greeting_sms" : SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
+                const { activation } = createActivationHarness(source);
+                logRepository.findByIdInBranch.mockResolvedValue(source);
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue(kind === "waiting"
+                    ? { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") }
+                    : null);
+                aligoService.sendSms.mockResolvedValue({
+                    request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                    response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+                });
+
+                const result = invocation === "manual"
+                    ? await service.retryById(source.branchId!, source.id)
+                    : await service.retry(source, invocation);
+
+                expect(result?.status).toBe("sent");
+                expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+                expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+                expect(activation.runAutomaticRetryIfEnabled).toHaveBeenCalledTimes(invocation === "automatic" ? 1 : 0);
+                expect(logRepository.findServiceRecordLinkClientState).toHaveBeenCalledTimes(kind === "non-link" ? 0 : 1);
+            }
+        });
     });
 
     it("creates a new sent history item without overwriting the original failed item", async () => {

@@ -67,6 +67,30 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return run(this.prisma);
     }
 
+    async findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
+        serviceStatus: string | null;
+        startDate: Date | null;
+        endDate: Date | null;
+    } | null> {
+        if (!log.branchId) return null;
+        const select = { serviceStatus: true, startDate: true, endDate: true } as const;
+        if (log.triggerJobId) {
+            const job = await this.prisma.message_trigger_job.findFirst({
+                where: { id: log.triggerJobId, branchId: log.branchId },
+                select: { employeeSchedule: { select: { client: { select: { ...select, branchId: true } } } } },
+            });
+            const client = job?.employeeSchedule?.client;
+            if (client?.branchId === log.branchId) {
+                return { serviceStatus: client.serviceStatus, startDate: client.startDate, endDate: client.endDate };
+            }
+        }
+        if (log.clientId == null) return null;
+        return this.prisma.client.findFirst({
+            where: { id: log.clientId, branchId: log.branchId },
+            select,
+        });
+    }
+
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
         if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
