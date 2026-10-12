@@ -709,6 +709,38 @@ describe("ClientService", () => {
             return "other";
         };
 
+        it.each([false, true])("saves without linking a different-name contract through create (reuse=%s)", async (reuse) => {
+            const mockClient = createClientEntity();
+            if (reuse) clientRepository.findByPhone.mockResolvedValue(mockClient);
+            else createClientUsecase.execute.mockResolvedValue(mockClient);
+            prismaService.eformsign_doc.findMany
+                .mockResolvedValueOnce([{
+                    id: 11,
+                    documentId: "DOC-DIFFERENT-NAME",
+                    clientId: null,
+                    branchId,
+                    customerPhone: "01012345678",
+                    detailPayload: matchingContractDetail("Other Client"),
+                }])
+                .mockResolvedValue([]);
+
+            await expect(service.create(branchId, {
+                name: "Test Client",
+                phone: "010-1234-5678",
+                careCenter: false,
+                voucherClient: true,
+                breastPump: false,
+                reuseExistingClient: reuse,
+            })).resolves.toBe(mockClient);
+
+            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(linkMirroredDocumentByPhoneUsecase.execute).not.toHaveBeenCalled();
+            expect(mockClient.eDocId).toBeNull();
+            expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalled();
+        });
+
         it("links every matching contract by normalized phone after manual client creation", async () => {
             const branchId = "11111111-1111-1111-1111-111111111111";
             const mockClient = createClientEntity();
@@ -932,34 +964,42 @@ describe("ClientService", () => {
                 expect(mockClient.eDocId).toBe("DOC-LATEST");
             });
 
-            it("starts over, re-reading the owners, when a document moved to an unlocked client", async () => {
+            it.each([false, true])("preserves a newly owned document under the lock (lock-set retry=%s) and saves the client", async (retry) => {
                 const mockClient = arrangeCandidates();
-                // Attempt 1 locked [1, 99]; once the documents are locked 77 turns out to point at
-                // one of them. Attempt 2 reads the lock surface afresh, locks 77 too, and agrees.
-                arrangeQueries([[99], [99, 77], [99, 77], [99, 77]]);
+                const candidate = {
+                    id: 11,
+                    documentId: "DOC-LATEST",
+                    clientId: null,
+                    branchId,
+                    customerPhone: "01012345678",
+                    detailPayload: matchingContractDetail(),
+                    detailSourceUpdatedDate: new Date("2026-07-30T00:00:00Z"),
+                    detailSyncedAt: new Date("2026-07-30T00:01:00Z"),
+                };
+                prismaService.eformsign_doc.findMany
+                    .mockResolvedValueOnce([candidate])
+                    .mockResolvedValue([{ ...candidate, clientId: 77 }]);
+                prismaService.eformsign_doc.updateMany.mockResolvedValue({ count: 1 });
+                // A new owner forces a retry if it was absent from the initial client lock set.
+                arrangeQueries(retry ? [[99], [99, 77], [99, 77], [99, 77]] : [[99, 77]]);
 
-                await service.create(branchId, CREATE_DTO);
+                await expect(service.create(branchId, CREATE_DTO)).resolves.toBe(mockClient);
 
                 const queries = phoneLinkQueries();
-                expect(queries.map(phoneLinkQueryKind)).toEqual([
-                    "owners", "client-lock", "document-lock", "owners",
-                    "owners", "client-lock", "document-lock", "owners",
-                ]);
+                expect(queries.filter((query) => phoneLinkQueryKind(query) === "document-lock")).toHaveLength(retry ? 2 : 1);
                 const clientLocks = queries.filter((query) => phoneLinkQueryKind(query) === "client-lock");
-                expect(clientLocks.map((query) => query.values)).toEqual([
+                expect(clientLocks.map((query) => query.values)).toEqual(retry ? [
                     [mockClient.id, 99],
                     [mockClient.id, 77, 99],
-                ]);
-                // The aborted attempt wrote nothing; the retry wrote once.
-                expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
-                // the release of the locked clients (77, 99) + the target's pointer write, once each.
-                expect(prismaService.client.updateMany).toHaveBeenCalledTimes(2);
-                expect(prismaService.client.updateMany.mock.calls[0]![0]).toMatchObject({
-                    where: { id: { in: [77, 99] } },
-                    data: { eDocId: null },
-                });
-                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
-                expect(mockClient.eDocId).toBe("DOC-LATEST");
+                ] : [[mockClient.id, 77, 99]]);
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenNthCalledWith(
+                    2,
+                    expect.objectContaining({ select: expect.objectContaining({ clientId: true }) }),
+                );
+                expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(documentSnapshotService.bumpVersion).not.toHaveBeenCalled();
+                expect(mockClient.eDocId).toBeNull();
             });
 
             it("releases another client's pointer even when the latest document already belongs to the target", async () => {

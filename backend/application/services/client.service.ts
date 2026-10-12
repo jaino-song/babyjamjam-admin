@@ -532,6 +532,7 @@ export class ClientService {
                     where: { id: { in: documentIdsToLock } },
                     select: {
                         id: true,
+                        clientId: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -553,6 +554,7 @@ export class ClientService {
                     const locked = lockedCandidateById.get(id);
                     return !initial
                         || !locked
+                        || (locked.clientId !== null && locked.clientId !== client.id)
                         || !isMatchingContractPhoneCandidate(
                             locked,
                             normalizedPhone,
