@@ -132,6 +132,18 @@ const NON_CUSTOMER_NAME_FIELD_MARKERS = [
     "manager",
 ] as const;
 
+const NON_CUSTOMER_BIRTHDAY_FIELD_MARKERS = [
+    "신생아",
+    "아기",
+    "자녀",
+    "배우자",
+    "보호자",
+    "baby",
+    "child",
+    "spouse",
+    "guardian",
+] as const;
+
 function collectRecords(value: unknown, depth = 0): UnknownRecord[] {
     if (depth > 6 || value == null) return [];
     if (Array.isArray(value)) {
@@ -263,6 +275,71 @@ export function eformsignDocumentFieldValue(
                 .map((key) => stringFromUnknown(record[key]))
                 .filter((value): value is string => Boolean(value));
             if (tokens.some((token) => fieldIdMatches(token, aliases))) {
+                const value = valueFromFieldRecord(record);
+                if (value) return value;
+            }
+        }
+    }
+    return null;
+}
+
+function hasNonCustomerBirthdayFieldMarker(token: string): boolean {
+    const normalizedToken = normalizeFieldId(token);
+    return hasNonCustomerNameFieldMarker(token)
+        || NON_CUSTOMER_BIRTHDAY_FIELD_MARKERS.some((marker) =>
+            normalizedToken.includes(normalizeFieldId(marker)),
+        );
+}
+
+function customerKeyedBirthdayValue(
+    source: unknown,
+    aliases: readonly string[],
+    depth = 0,
+): string | null {
+    if (depth > 6 || source == null) return null;
+    if (Array.isArray(source)) {
+        for (const item of source) {
+            const value = customerKeyedBirthdayValue(item, aliases, depth + 1);
+            if (value) return value;
+        }
+        return null;
+    }
+    if (!isRecord(source)) return null;
+
+    const entries = Object.entries(source).filter(([key]) =>
+        !hasNonCustomerBirthdayFieldMarker(key),
+    );
+    for (const [key, rawValue] of entries) {
+        if (!keyedFieldIdMatches(key, aliases)) continue;
+        const value = stringFromUnknown(rawValue)
+            ?? (isRecord(rawValue) ? valueFromFieldRecord(rawValue) : null);
+        if (value) return value;
+    }
+    // Prune marked subtrees so every ancestor key remains customer-safe.
+    // Scan this record before its children, as keyedFieldValue does.
+    for (const [, rawValue] of entries) {
+        const value = customerKeyedBirthdayValue(rawValue, aliases, depth + 1);
+        if (value) return value;
+    }
+    return null;
+}
+
+function contractCustomerBirthdayValue(
+    document: EformsignApiDocumentResponse,
+    aliases: readonly string[],
+): string | null {
+    for (const source of [document.fields, document.detail_template_info]) {
+        const keyedValue = customerKeyedBirthdayValue(source, aliases);
+        if (keyedValue) return keyedValue;
+
+        for (const record of collectRecords(source)) {
+            const tokens = FIELD_ID_KEYS
+                .map((key) => stringFromUnknown(record[key]))
+                .filter((value): value is string => Boolean(value));
+            if (
+                !tokens.some(hasNonCustomerBirthdayFieldMarker)
+                && tokens.some((token) => fieldIdMatches(token, aliases))
+            ) {
                 const value = valueFromFieldRecord(record);
                 if (value) return value;
             }
@@ -526,7 +603,7 @@ export function extractEformsignContractClientPrefillCandidate(
             "customerAddress",
             "clientAddress",
         ]),
-        birthday: normalizeBirthdayIsoDate(eformsignDocumentFieldValue(document, [
+        birthday: normalizeBirthdayIsoDate(contractCustomerBirthdayValue(document, [
             "이용자 생년월일",
             "이용자생년월일",
             "고객 생년월일",

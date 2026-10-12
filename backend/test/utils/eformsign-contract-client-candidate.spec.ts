@@ -56,6 +56,153 @@ function documentDetail(
 }
 
 describe("extractEformsignContractClientCandidate", () => {
+    describe.each([
+        ["prefill", extractEformsignContractClientPrefillCandidate],
+        ["identity", extractEformsignContractClientCandidate],
+    ] as const)("customer-safe birthday (%s)", (_kind, extract) => {
+        it.each([
+            "제공인력 주민번호 앞자리",
+            "providerBirthday",
+            "신생아 주민번호 앞자리",
+            "babyBirthday",
+            "배우자 주민번호 앞자리",
+            "아기 주민번호 앞자리",
+            "자녀 주민번호 앞자리",
+            "보호자 주민번호 앞자리",
+            "childBirthday",
+            "spouseBirthday",
+            "guardianBirthday",
+            "PROVIDER_birthday",
+        ])("rejects a non-customer id-token birthday (%s)", (id) => {
+            const detail = documentDetail({
+                fields: [
+                    { id: "이용자 성명", value: "김고객", type: "text" },
+                    { id, value: id === "providerBirthday" ? "1990-01-01" : "900101", type: "text" },
+                ],
+            });
+
+            expect(extract(detail)?.birthday).toBeNull();
+        });
+
+        it.each(["제공인력", "provider", "신생아", "guardian"])(
+            "rejects a keyed birthday below a marked ancestor (%s)",
+            (parent) => {
+                const detail = documentDetail({
+                    fields: [],
+                    detail_template_info: [{
+                        field_values: {
+                            "이용자 성명": "김고객",
+                            [parent]: { "생년월일": "1990-01-01" },
+                        },
+                    }],
+                });
+
+                expect(extract(detail)?.birthday).toBeNull();
+            },
+        );
+
+        it("rejects a customer alias when another id token identifies a provider", () => {
+            const detail = documentDetail({
+                fields: [
+                    { id: "이용자 성명", value: "김고객", type: "text" },
+                    { id: "birthday", ...{ label: "provider" }, value: "900101", type: "text" },
+                ],
+            });
+
+            expect(extract(detail)?.birthday).toBeNull();
+        });
+
+        it("continues past a provider id-token to a customer birthday", () => {
+            const detail = documentDetail({
+                fields: [
+                    { id: "providerBirthday", value: "900101", type: "text" },
+                    ...(documentDetail().fields ?? []),
+                ],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+
+        it("continues from a provider id-token to a customer keyed in the next source", () => {
+            const detail = documentDetail({
+                fields: [{ id: "providerBirthday", value: "900101", type: "text" }],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        "이용자 생년월일": "1992-03-04",
+                    },
+                }],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+
+        it("continues past a marked keyed subtree to an unmarked customer value", () => {
+            const detail = documentDetail({
+                fields: [],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        provider: { birthday: { value: "900101" } },
+                        customer: { birthday: { value: "1992-03-04" } },
+                    },
+                }],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+
+        it("rejects a birthday through nested objects and arrays below a marked ancestor", () => {
+            const detail = documentDetail({
+                fields: [],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        provider: { nested: [{ birthday: { value: "900101" } }] },
+                    },
+                }],
+            });
+
+            expect(extract(detail)?.birthday).toBeNull();
+        });
+
+        it.each(["생년월일", "이용자 생년월일", "customerDOB", "birthday"])(
+            "preserves an unmarked id-token birthday (%s)",
+            (id) => {
+                const detail = documentDetail({
+                    fields: [
+                        { id: "이용자 성명", value: "김고객", type: "text" },
+                        { id, value: "1992-03-04", type: "text" },
+                    ],
+                });
+
+                expect(extract(detail)?.birthday).toBe("1992-03-04");
+            },
+        );
+
+        it("preserves keyed-before-id and fields-before-detail precedence", () => {
+            const detail = documentDetail({
+                fields: [{ id: "birthday", value: "900101", type: "text" }],
+                detail_template_info: [{
+                    field_values: {
+                        "이용자 성명": "김고객",
+                        birthday: "1992-03-04",
+                    },
+                }],
+            });
+
+            expect(extract(detail)?.birthday).toBe("1990-01-01");
+
+            detail.detail_template_info = {
+                "이용자 성명": "김고객",
+                record: { id: "birthday", value: "900101" },
+                nested: { birthday: { value: "1992-03-04" } },
+            };
+            detail.fields = [];
+            expect(extract(detail)?.birthday).toBe("1992-03-04");
+        });
+    });
+
     it.each([
         ["1905-01-01", "1905-01-01"],
         ["580303", "1958-03-03"],
