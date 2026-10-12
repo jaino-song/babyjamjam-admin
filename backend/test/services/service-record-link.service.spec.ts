@@ -24,6 +24,10 @@ import { SbMessageTriggerJobRepository } from "infrastructure/database/repositor
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 describe("ServiceRecordLinkService", () => {
+    beforeEach(() => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-07-01T00:00:00.000Z"));
+    });
+    afterEach(() => jest.useRealTimers());
     /** Stands in for the interactive transaction the repository's schedule fence hands to its callback. */
     const FENCE_TRANSACTION = { fence: "transaction" };
     /** Stand-in for the interactive transaction the repository hands its in-transaction hook. */
@@ -149,7 +153,7 @@ describe("ServiceRecordLinkService", () => {
         ...overrides,
     });
 
-    it("issues a token that expires 7 days after end-date at 20:00 KST and schedules SMS for start-date 15:00 KST", async () => {
+    it("issues a token expiring at next-day midnight and schedules SMS for previous-day noon KST", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -174,14 +178,14 @@ describe("ServiceRecordLinkService", () => {
             scheduleId: 10,
             employeeId: 30,
             expectedPhone: "010-1111-2222",
-            expiresAt: new Date("2026-07-19T11:00:00.000Z"),
+            expiresAt: new Date("2026-07-12T15:00:00.000Z"),
         });
         const job = jobRepository.promoteAutomaticSchedulingClaim.mock.calls[0]?.[2] as MessageTriggerJobEntity;
         expect(job.ruleId).toBe(SERVICE_RECORD_LINK_RULE_ID);
         expect(job.dedupeKey).toBe(`${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`);
         expect(job.templateKey).toBe(MessageTriggerTemplateKey.SERVICE_RECORD_LINK);
         expect(job.recipientType).toBe(MessageTriggerRecipientType.PRIMARY_EMPLOYEE);
-        expect(job.scheduledFor).toEqual(new Date("2026-07-03T15:00:00+09:00"));
+        expect(job.scheduledFor).toEqual(new Date("2026-07-02T12:00:00+09:00"));
         expect(job.payload.messageBody).toContain("https://mobile.test/service-record/efl_token");
         expect(job.payload.messageBody).toContain("휴대폰 번호로 본인확인");
         expect(job.payload.templateVariables).toEqual(expect.objectContaining({
@@ -189,6 +193,85 @@ describe("ServiceRecordLinkService", () => {
             employeeName: "홍제공",
             serviceRecordUrl: "https://mobile.test/service-record/efl_token",
         }));
+    });
+
+    it.each([
+        ["late registration", {}, true],
+        ["end date today", { endDate: new Date("2026-11-02T00:00:00.000Z") }, true],
+        ["end date passed", { endDate: new Date("2026-11-01T00:00:00.000Z") }, false],
+        ["terminated schedule", { terminatedAt: new Date() }, false],
+        ["replaced schedule", { replaced: true }, false],
+        ["completed client", { client: { id: 20, name: "김산모", serviceStatus: "completed" } }, false],
+        ["terminated client", { client: { id: 20, name: "김산모", serviceStatus: "terminated" } }, false],
+    ])("gates automatic scheduling for %s", async (_name, overrides, eligible) => {
+        jest.setSystemTime(new Date("2026-11-02T06:00:00.000Z"));
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            undefined, undefined, createBranchLock(prisma) as never,
+            createAutomationActivationService() as never,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            startDate: new Date("2026-11-03T00:00:00.000Z"),
+            endDate: new Date("2026-11-14T00:00:00.000Z"), ...overrides,
+        }));
+        expect(await service.scheduleForServiceStart(10)).toBe(eligible);
+        if (eligible) {
+            const job = jobRepository.promoteAutomaticSchedulingClaim.mock.calls[0]?.[2] as MessageTriggerJobEntity;
+            expect(job.scheduledFor).toEqual(new Date("2026-11-02T03:00:00.000Z"));
+            expect(job.scheduledFor.getTime()).toBeLessThanOrEqual(Date.now());
+            // The existing SQL claim's blocker represents the already pending current-link job.
+            prisma.$queryRaw.mockResolvedValueOnce([]);
+            expect(await service.scheduleForServiceStart(10)).toBe(false);
+            expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
+        } else {
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+            expect(tokenService.issueLink).not.toHaveBeenCalled();
+            expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+        }
+    });
+
+    it("extends the stored token expiry to midnight after the extended end date", async () => {
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            createJobRepository() as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+        );
+        await service.extendExpiryForEndDate(10, new Date("2026-11-17T00:00:00.000Z"));
+        expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-17T15:00:00.000Z"));
+    });
+
+    it.each(["completed", "terminated"])("preserves manual late reissue for a %s client", async (serviceStatus) => {
+        jest.setSystemTime(new Date("2026-11-15T00:00:00.000Z"));
+        const prisma = createPrisma();
+        const tokenService = createTokenService();
+        const jobRepository = createJobRepository();
+        const service = new ServiceRecordLinkService(
+            prisma as unknown as PrismaService, tokenService as never,
+            createConfigService() as unknown as ConfigService,
+            jobRepository as unknown as IMessageTriggerJobRepository,
+            createLogRepository() as unknown as IMessageLogRepository,
+            createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+        );
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
+            endDate: new Date("2026-11-14T00:00:00.000Z"), terminatedAt: new Date(),
+            client: { id: 20, name: "김산모", serviceStatus },
+        }));
+        expect(await service.sendNow(10)).toMatchObject({ jobId: "job-1", scheduledFor: new Date() });
+        expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({
+            expiresAt: new Date("2026-11-16T00:00:00.000Z"),
+        }));
+        expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
     });
 
     it("preserves the task commit reference on an automatic service-record link job", async () => {
@@ -227,6 +310,7 @@ describe("ServiceRecordLinkService", () => {
     });
 
     it("sendNow grants a 24-hour late token and atomically replaces pending jobs with an immediate one", async () => {
+        jest.setSystemTime(new Date("2026-07-20T00:00:00.000Z"));
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -1327,7 +1411,7 @@ describe("ServiceRecordLinkService", () => {
         await expect(service.scheduleForServiceStart(10)).rejects.toThrow("token unavailable");
     });
 
-    it("extends an existing token to 7 days after end-date at 20:00 KST", async () => {
+    it("extends an existing token to midnight KST after the end date", async () => {
         const tokenService = createTokenService();
         const service = new ServiceRecordLinkService(
             createPrisma() as unknown as PrismaService,
@@ -1342,7 +1426,7 @@ describe("ServiceRecordLinkService", () => {
 
         expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(
             10,
-            new Date("2026-07-19T11:00:00.000Z"),
+            new Date("2026-07-12T15:00:00.000Z"),
         );
     });
 

@@ -852,16 +852,14 @@ function assignmentCalendarYears(assignments: ServiceRecordAssignment[]): number
     return [...years];
 }
 
-// Mirrors SERVICE_RECORD_LINK_GRACE_DAYS in backend/domain/constants/service-record-link-message.ts
-const SERVICE_RECORD_LINK_GRACE_DAYS = 7;
-
+// Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
 function endDateExpiry(endDate: string): string | null {
     const datePart = datePartOf(endDate);
     if (!datePart) return null;
-    const graceDate = new Date(`${datePart}T00:00:00.000Z`);
-    graceDate.setUTCDate(graceDate.getUTCDate() + SERVICE_RECORD_LINK_GRACE_DAYS);
-    const graceDatePart = graceDate.toISOString().slice(0, 10);
-    return `${graceDatePart}T20:00:00+09:00`;
+    const nextDate = new Date(`${datePart}T00:00:00.000Z`);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    const nextDatePart = nextDate.toISOString().slice(0, 10);
+    return `${nextDatePart}T00:00:00+09:00`;
 }
 
 function isPastDate(value: string | null): boolean {

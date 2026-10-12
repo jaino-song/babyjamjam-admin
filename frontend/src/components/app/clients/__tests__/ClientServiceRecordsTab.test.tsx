@@ -363,7 +363,7 @@ describe("ClientServiceRecordsTab", () => {
             "자동 발송 예약이 취소되었습니다. 다시 보내려면 수동 전송하세요.",
         );
         expect(linkCard).not.toHaveTextContent(
-            "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
+            "서비스 시작 하루 전 12:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요.",
         );
         expect(linkCard).not.toHaveTextContent("발송 취소");
         expect(screen.getByRole("button", { name: "링크 수동 전송" })).toBeEnabled();
@@ -737,7 +737,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(sendingButton).toBeDisabled();
         expect(sendingButton).toHaveAttribute("aria-busy", "true");
         expect(sendingButton).not.toHaveAttribute("data-width", "lg");
-        const hint = screen.getByText(/서비스 시작일 15:00에 자동 발송됩니다/);
+        const hint = screen.getByText(/서비스 시작 하루 전 12:00에 자동 발송됩니다/);
         expect(hint.parentElement).not.toHaveAttribute("aria-hidden", "true");
 
         resolveSend({
@@ -767,7 +767,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(resendButton).toHaveAttribute("data-width", "lg");
         expect(resendButton).not.toHaveAttribute("aria-busy", "true");
         // The hint stays mounted so its collapse can animate; it is hidden, not removed.
-        const collapsedHint = screen.getByText(/서비스 시작일 15:00에 자동 발송됩니다/);
+        const collapsedHint = screen.getByText(/서비스 시작 하루 전 12:00에 자동 발송됩니다/);
         expect(collapsedHint.parentElement).toHaveAttribute("aria-hidden", "true");
     });
 

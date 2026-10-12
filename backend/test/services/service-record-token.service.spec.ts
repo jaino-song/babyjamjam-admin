@@ -127,6 +127,30 @@ describe("ServiceRecordTokenService", () => {
         return { prisma, svc };
     }
 
+    it.each([
+        ["2026-11-14T14:59:59.999Z", true],
+        ["2026-11-14T15:00:00.000Z", false],
+        ["2026-11-14T15:00:00.001Z", false],
+    ])("enforces the midnight expiry boundary at %s on all token entry points", async (now, valid) => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-14T00:00:00.000Z"));
+        try {
+            const { svc } = setup();
+            const params = { branchId: "b1", scheduleId: 10, employeeId: 7,
+                expectedPhone: "01011112222", expiresAt: new Date("2026-11-14T15:00:00.000Z") };
+            const { linkToken } = await svc.issueLink(params);
+            const auth = await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone);
+            if (!auth.ok) throw new Error("fixture verification failed");
+            jest.setSystemTime(new Date(now));
+
+            expect(Boolean(await svc.resolveLink(linkToken))).toBe(valid);
+            expect(Boolean(await svc.resolveAccess(auth.accessToken))).toBe(valid);
+            expect((await svc.verifyPhoneAndMintAccess(linkToken, params.expectedPhone)).ok).toBe(valid);
+            expect(await svc.activatePreparedLink({ ...params, linkToken })).toBe(valid);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("issues a link, then a correct phone number mints an access token that resolves to the assignment context", async () => {
         const { prisma, svc } = setup();
         const { linkToken } = await svc.issueLink({

@@ -2924,6 +2924,40 @@ describe("MessageTriggerService", () => {
         expect(dispatcher.jobRepository.update).toHaveBeenCalledWith(job);
     });
 
+    it.each([
+        ["late link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: false, terminatedAt: null }, true],
+        ["link on end date", "system:service_record_link", { endDate: new Date("2026-11-05T00:00:00.000Z"), replaced: false, terminatedAt: null }, true],
+        ["expired link", "system:service_record_link", { endDate: new Date("2026-11-04T00:00:00.000Z"), replaced: false, terminatedAt: null }, false],
+        ["replaced link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: true, terminatedAt: null }, false],
+        ["terminated link", "system:service_record_link", { endDate: new Date("2026-11-14T00:00:00.000Z"), replaced: false, terminatedAt: new Date() }, false],
+        ["deleted link schedule", "system:service_record_link", null, false],
+        ["another rule", "rule-1", null, false],
+    ])("dispatches three-day-old jobs only for an eligible automatic link: %s", async (_name, ruleId, schedule, sends) => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-05T03:00:00.000Z"));
+        try {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId, employeeScheduleId: 10,
+                scheduledFor: new Date("2026-11-02T03:00:00.000Z") });
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+
+            await dispatcher.service.dispatchDueJobs();
+
+            expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(sends ? 1 : 0);
+            expect(job.status).toBe(sends ? "sent" : "canceled");
+            if (ruleId === "rule-1") expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
+            else {
+                expect(job.cancelReason).not.toBe("기존 발송 예정 24시간 경과");
+                expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
+                    where: { id: 10, branchId },
+                    select: { endDate: true, replaced: true, terminatedAt: true },
+                });
+            }
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("cancels an existing pending job once its scheduled time is at least 24 hours old", async () => {
         jest.useFakeTimers().setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
         try {
@@ -2944,6 +2978,26 @@ describe("MessageTriggerService", () => {
             expect(job.status).toBe("canceled");
             expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
             expect(jobRepository.update).toHaveBeenCalledWith(job);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("does not exempt a three-day-old manual service-record link job from the generic expiry", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-05T03:00:00.000Z"));
+        try {
+            const dispatcher = createDispatchService();
+            const job = createJob({
+                ruleId: "system:service_record_link", employeeScheduleId: 10,
+                templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                dedupeKey: "system:service_record_link:schedule:10:primary:manual:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                scheduledFor: new Date("2026-11-02T03:00:00.000Z"),
+            });
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            await dispatcher.service.dispatchDueJobs();
+            expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
+            expect(dispatcher.prisma.employee_schedule.findFirst).not.toHaveBeenCalled();
         } finally {
             jest.useRealTimers();
         }

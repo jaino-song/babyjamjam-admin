@@ -158,6 +158,20 @@ describe("MessageTriggerList", () => {
     ).toHaveTextContent(`${monthLabel()} 2건 · 서비스 시작 1일 전 14:37 (한국 시간) · 고객 · SMS`);
   });
 
+  it("displays the computed service-record timing instead of its carrier rule timing", () => {
+    mockUseMessageTriggerRules.mockReturnValue({
+      data: [createRule({
+        id: "system:service_record_link", branchId: null,
+        name: "제공기록지 작성 링크", offsetType: "SAME_DAY", offsetDays: 0,
+        sendTime: "15:00", recipientType: "PRIMARY_EMPLOYEE", templateKey: "SERVICE_RECORD_LINK",
+      }), createRule({ id: "other-start", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "15:00" })],
+      isError: false, isLoading: false,
+    });
+    renderPage();
+    expect(screen.getByText(/서비스 시작 1일 전 12:00 \(한국 시간\) · 늦게 등록되면 즉시 발송 · 주 담당 직원 · SMS/)).toBeInTheDocument();
+    expect(screen.getByText(/서비스 시작 당일 15:00 \(한국 시간\) · 고객 · SMS/)).toBeInTheDocument();
+  });
+
   it("updates the selected real rule when the toggle row is pressed", async () => {
     mockUseMessageTriggerRules.mockReturnValue({
       data: [createRule({ isActive: true })],

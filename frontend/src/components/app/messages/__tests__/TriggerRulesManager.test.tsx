@@ -1215,7 +1215,7 @@ describe("TriggerRulesManager", () => {
     render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
 
     expect(screen.getByText("제공기록지 작성 링크")).toBeInTheDocument();
-    expect(screen.getByText("시스템 자동화 · 서비스 시작 · 시작 당일 09:00 (한국 시간) · 주 담당 직원")).toBeInTheDocument();
+    expect(screen.getByText("시스템 자동화 · 서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송 · 주 담당 직원")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" })).toBeEnabled();
     fireEvent.click(screen.getByRole("switch", { name: "제공기록지 작성 링크 활성화" }));
     expect(branchActivationMutation).toHaveBeenCalledWith({

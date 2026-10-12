@@ -1050,7 +1050,7 @@ function LinkStatusCard({
                             ? SEND_LINK_BLOCKED_HINT
                             : link.status === "canceled"
                             ? CANCELED_LINK_HINT
-                            : "서비스 시작일 15:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
+                            : "서비스 시작 하루 전 12:00에 자동 발송됩니다. 지금 바로 보내려면 수동 전송하세요."}
                     </p>
                 </div>
                 <Button

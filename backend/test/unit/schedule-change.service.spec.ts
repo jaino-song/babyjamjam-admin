@@ -532,7 +532,7 @@ describe("ScheduleChangeService", () => {
             );
             expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
                 "case-1",
-                new Date("2026-08-10T11:00:00.000Z"),
+                new Date("2026-08-03T15:00:00.000Z"),
                 txPrismaService,
                 { onlyRaise: true },
             );
@@ -1047,7 +1047,7 @@ describe("ScheduleChangeService", () => {
             });
             expect(tokenService.extendExpiryForCase).toHaveBeenCalledWith(
                 "case-1",
-                new Date("2026-07-22T11:00:00.000Z"),
+                new Date("2026-07-15T15:00:00.000Z"),
                 txPrismaService,
                 { onlyRaise: true },
             );

@@ -122,7 +122,7 @@ export class ServiceRecordLinkReconciliationService {
                             // 5-minute cron keeps re-issuing a 제공기록지 링크 and a provider
                             // SMS for a client whose service was already terminated.
                             terminatedAt: null,
-                            startDate: { gte: today },
+                            endDate: { gte: today },
                             messageTriggerJobs: {
                                 none: {
                                     ruleId: SERVICE_RECORD_LINK_RULE_ID,
