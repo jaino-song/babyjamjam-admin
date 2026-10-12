@@ -1,4 +1,5 @@
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
+import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 
 const detail = {
@@ -199,6 +200,46 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase", () => {
                 detailSyncedAt: new Date("2026-07-30T01:03:00.000Z"),
             }),
         );
+    });
+
+    it("passes needs_confirmation through without linking or completing a snapshot", async () => {
+        linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue("needs_confirmation");
+        const validDetail = {
+            ...detail,
+            fields: [
+                { id: "계약 종료 년도", value: "2026", type: "text" },
+                { id: "계약 종료 월", value: "08", type: "text" },
+                { id: "계약 종료 일", value: "14", type: "text" },
+            ],
+        };
+        mirrorRepository.findState.mockResolvedValue(readyState({ detailPayload: validDetail }));
+        const documentRepository = { findByDocumentId: jest.fn().mockResolvedValue({ clientId: null }) };
+        const clientRepository = { findById: jest.fn(), update: jest.fn() };
+        const holidayCalendar = { forBranch: jest.fn() };
+        const realSync = new SyncClientEndDateUsecase(
+            {} as never,
+            documentRepository as never,
+            clientRepository as never,
+            holidayCalendar as never,
+        );
+        usecase = new ReconcileCompletedMirroredEformsignDocUsecase(
+            linkMirroredDocumentByPhoneUsecase as never,
+            realSync,
+            mirrorRepository as never,
+            serviceRecordLifecycle as never,
+        );
+
+        await expect(usecase.execute({
+            documentId: "doc-1", detail: validDetail, throwOnCompletionReconciliationError: true,
+        })).resolves.toBe("needs_confirmation");
+
+        expect(linkMirroredDocumentByPhoneUsecase.execute).toHaveBeenCalledTimes(1);
+        expect(documentRepository.findByDocumentId).toHaveBeenCalledWith("branch-1", "doc-1");
+        expect(clientRepository.findById).not.toHaveBeenCalled();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.syncEndDateFromMirroredContract).not.toHaveBeenCalled();
+        expect(serviceRecordLifecycle.completeServiceRecordSnapshotIfReady).not.toHaveBeenCalled();
     });
 
     it("stops all completion effects when the atomic link fence loses", async () => {
