@@ -2401,4 +2401,104 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         await expect(usecase.execute("doc-1")).resolves.toBe("skipped");
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
+
+    describe("계약-05: an existing client is linked only to a document in an allowed status", () => {
+        const identityMatchingDocument = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({
+                branchId: "branch-1",
+                customerPhone: "01012345678",
+                detailPayload: contractDetail(),
+                ...overrides,
+            });
+
+        /** The complete service-record lock surface, so the locked path runs. */
+        const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
+            const tx = transaction as typeof transaction & {
+                employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+                service_record_case: { findUnique: jest.Mock };
+            };
+            tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+        };
+
+        const expectNothingWritten = (
+            { transaction, serviceRecordLifecycle }: Pick<ReturnType<typeof setup>, "transaction" | "serviceRecordLifecycle">,
+        ) => {
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        };
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("%s", (_label, lockSurface) => {
+            it.each(["080", "001", "011", "042"])(
+                "returns not_completed and writes nothing for a matching identity in status %s",
+                async (statusType) => {
+                    const arranged = setup(identityMatchingDocument({ statusType }));
+                    if (lockSurface) withLockSurface(arranged.transaction);
+
+                    await expect(arranged.usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+                    expectNothingWritten(arranged);
+                },
+            );
+
+            it("still reports needs_confirmation for an identity mismatch in a non-linkable status", async () => {
+                const arranged = setup(identityMatchingDocument({ statusType: "080" }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([{
+                    id: 21, branchId: "branch-1", phone: "010-1234-5678", eDocId: null,
+                    name: "다른고객", birthday: "1992-03-04",
+                }]);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("needs_confirmation");
+
+                expectNothingWritten(arranged);
+            });
+
+            it.each(["060", "040", "045", "071"])(
+                "links a matching identity in status %s",
+                async (statusType) => {
+                    const arranged = setup(identityMatchingDocument({ statusType }));
+                    if (lockSurface) withLockSurface(arranged.transaction);
+
+                    await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                    expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+                    expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                        where: { id: 21, branchId: "branch-1", eDocId: null },
+                        data: { eDocId: "doc-1" },
+                    });
+                },
+            );
+
+            it("returns already_linked for a document already linked to the client in status 080", async () => {
+                const arranged = setup(identityMatchingDocument({ statusType: "080", clientId: 21 }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findUnique.mockResolvedValue({
+                    id: 21, branchId: "branch-1", eDocId: "doc-1",
+                });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("already_linked");
+            });
+        });
+
+        it("writes nothing when the status is not linkable in the re-read under the lock", async () => {
+            const arranged = setup(identityMatchingDocument({ statusType: "060" }));
+            withLockSurface(arranged.transaction);
+            const unlocked = arranged.document;
+            // First in-transaction read is the unlocked one (060); the `current` re-read
+            // under the lock sees the status moved to 080.
+            arranged.transaction.eformsign_doc.findUnique
+                .mockResolvedValueOnce(unlocked)
+                .mockResolvedValue({ ...unlocked, statusType: "080" });
+
+            await expect(arranged.usecase.execute("doc-1")).resolves.toBe("not_completed");
+
+            expectNothingWritten(arranged);
+        });
+    });
 });

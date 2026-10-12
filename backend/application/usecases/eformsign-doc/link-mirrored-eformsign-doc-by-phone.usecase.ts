@@ -30,6 +30,10 @@ import {
 } from "application/utils/eformsign-document-kind";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { DEFAULT_EMPLOYEE_GRADE } from "domain/constants/employee-grade.constants";
+import {
+    AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES,
+    isEformsignAutoLinkEligibleStatus,
+} from "domain/constants/eformsign-auto-link-status";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { normalizeClientPricing } from "domain/services/client-pricing";
 import { computeServiceStatus } from "domain/value-objects/service-status.vo";
@@ -63,28 +67,6 @@ function isEmployeeScheduleOverlapError(error: unknown): boolean {
         && (response as { code?: unknown }).code === EMPLOYEE_SCHEDULE_OVERLAP_CODE;
 }
 
-const AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES = new Set([
-    // 001 is only a temporary save. Start from the first durable document state.
-    "002",
-    "003",
-    "010",
-    "012",
-    "020",
-    "022",
-    "030",
-    "032",
-    // 041 (doc_refuse_revoke): the revoke was refused, the document continues like 060.
-    "041",
-    "043",
-    "050",
-    "060",
-    "062",
-    "063",
-    "064",
-    "070",
-    "072",
-    "092",
-]);
 const PHONE_LOOKUP_SUFFIX_LENGTH = 4;
 const MAX_TRANSACTION_ATTEMPTS = 3;
 
@@ -694,6 +676,13 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     matchedClientBranchId: matches[0]!.branchId ?? undefined,
                                 };
                             }
+                            // 계약-05: the identity matches, but a document is linked
+                            // automatically only in an allowed status. This is the point
+                            // both the lock-surface and the plain path pass through; the
+                            // lock-surface path re-checks the status re-read under the lock.
+                            if (!isEformsignAutoLinkEligibleStatus(document.statusType)) {
+                                return { status: "not_completed" };
+                            }
                             if (completeLockSurface) {
                                 const matched = matches[0]!;
                                 // `client.e_doc_id` is unique, so a different client that still points
@@ -732,6 +721,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                         branchId: true,
                                         clientId: true,
                                         createdDate: true,
+                                        statusType: true,
                                     },
                                 });
                                 if (
@@ -741,6 +731,11 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     || current.clientId !== null
                                 ) {
                                     throw new MirrorGenerationConflict();
+                                }
+                                // The status may have moved to a non-linkable one between
+                                // the unlocked read and the document lock: nothing written.
+                                if (!isEformsignAutoLinkEligibleStatus(current.statusType)) {
+                                    return { status: "not_completed" };
                                 }
                                 const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
                                     branchId: locked.branchId,
