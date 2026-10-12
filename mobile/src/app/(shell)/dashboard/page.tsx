@@ -227,6 +227,7 @@ export default function DashboardPage() {
     hasMore: hasMoreNotificationLogs,
     isLoading: isNotificationLogsLoading,
     isError: isNotificationLogsError,
+    isFetching: isNotificationLogsFetching,
     refetch: refetchNotificationLogs,
   } = useClientMessageHistory(selectedClient);
 
@@ -491,8 +492,10 @@ export default function DashboardPage() {
             onFilterChange={setActiveFilter}
             analyticsLoading={(analyticsLoading || clientsLoading) && !analytics}
             loading={dashboardData.loading}
-            isError={clientsError}
-            isAnalyticsError={analyticsError}
+            isError={clientsError && allClients.length === 0}
+            isStale={clientsError && allClients.length > 0}
+            isAnalyticsError={analyticsError && !analytics}
+            isAnalyticsStale={analyticsError && Boolean(analytics)}
             isRetrying={clientsFetching}
             isRetryingAnalytics={analyticsFetching}
             onRetry={() => { void refetchClients(); }}
@@ -520,6 +523,7 @@ export default function DashboardPage() {
               hasMoreNotificationLogs={hasMoreNotificationLogs}
               isNotificationLogsLoading={isNotificationLogsLoading}
               isNotificationLogsError={isNotificationLogsError}
+              isNotificationLogsRetrying={isNotificationLogsFetching}
               onRetryNotificationLogs={() => {
                 void refetchNotificationLogs();
               }}
