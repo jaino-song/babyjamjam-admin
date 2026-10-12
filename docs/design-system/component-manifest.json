@@ -563,6 +563,22 @@
         ]
       },
       {
+        "name": "QueryErrorState",
+        "layer": "molecule",
+        "import": "@/components/app/ui/QueryErrorState",
+        "file": "frontend/src/components/app/ui/QueryErrorState.tsx",
+        "exports": [
+          "QueryErrorState"
+        ],
+        "replaces": [
+          "inline 'failed to load' text without retry",
+          "hand-written Alert + retry Button for a failed query"
+        ],
+        "requiredFor": [
+          "in-area failed-to-load state with a retry button (a query that failed after its automatic retries)"
+        ]
+      },
+      {
         "name": "TwoButtonModal",
         "layer": "organism",
         "import": "@/components/app/ui/TwoButtonModal",
@@ -1714,6 +1730,22 @@
         "status": "deprecated",
         "deprecatedBy": "@/components/app/v3 InfoRow",
         "deprecationReason": "duplicate of v3 InfoRow"
+      },
+      {
+        "name": "QueryErrorState",
+        "layer": "molecule",
+        "import": "@/components/app/ui/QueryErrorState",
+        "file": "mobile/src/components/app/ui/QueryErrorState.tsx",
+        "exports": [
+          "QueryErrorState"
+        ],
+        "replaces": [
+          "inline 'failed to load' text without retry",
+          "in-component ErrorFallback used for a failed query"
+        ],
+        "requiredFor": [
+          "in-area failed-to-load state with a retry button (a query that failed after its automatic retries)"
+        ]
       },
       {
         "name": "StatusBadge",

@@ -606,3 +606,89 @@ describe("ClientServiceRecords", () => {
         expect(mockUseBusinessDayCalendar).toHaveBeenCalledWith({ extraYears: expect.arrayContaining([2026, 2027]) });
     });
 });
+
+describe("ClientServiceRecords: loading, failed and empty are different states", () => {
+    const ERROR_TITLE = "제공기록지 정보를 불러오지 못했습니다";
+    const EMPTY_TEXT = "제공기록지 배정 정보가 없습니다.";
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockResendModalRenders.length = 0;
+        mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
+        mockMutateAsync.mockResolvedValue(undefined);
+        mockUseGetAuthUser.mockReturnValue({
+            data: { role: "user", branchRole: "manager" },
+            isPending: false,
+            isLoading: false,
+            isFetching: false,
+            isError: false,
+        });
+    });
+
+    function renderState(props: {
+        overview?: ServiceRecordOverview;
+        isLoading?: boolean;
+        isError?: boolean;
+        isRefreshing?: boolean;
+        onRefresh?: () => void;
+    }) {
+        return render(
+            <ClientServiceRecords
+                data-component={TEST_COMPONENT}
+                client={client}
+                activeTab="serviceRecords"
+                overview={props.overview}
+                isLoading={props.isLoading ?? false}
+                isError={props.isError ?? false}
+                isRefreshing={props.isRefreshing}
+                onRefresh={props.onRefresh}
+            />,
+        );
+    }
+
+    it("shows the skeleton while loading, and neither the error panel nor the empty state", () => {
+        renderState({ isLoading: true });
+
+        expect(document.querySelector(`[data-component="${TEST_COMPONENT}_skeleton"]`)).not.toBeNull();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+    });
+
+    it("shows the error panel with a retry button when the load failed with no data, and retry calls onRefresh", async () => {
+        const onRefresh = jest.fn();
+        renderState({ isError: true, onRefresh });
+
+        const alert = screen.getByRole("alert");
+        expect(alert).toHaveTextContent(ERROR_TITLE);
+        expect(alert).toHaveAttribute("data-component", `${TEST_COMPONENT}_error`);
+        // The error must not wear the empty state's class or text.
+        expect(alert).not.toHaveClass("detail-empty-state");
+        expect(screen.queryByText(EMPTY_TEXT)).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables the retry button while a refresh is in flight", () => {
+        renderState({ isError: true, isRefreshing: true, onRefresh: jest.fn() });
+
+        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    });
+
+    it("keeps the cached data visible when a refetch failed, with no error panel", () => {
+        renderState({ overview: { assignments: [createAssignment(1, "sent")] }, isError: true });
+
+        expect(screen.getByText("발송됨")).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByText(ERROR_TITLE)).not.toBeInTheDocument();
+    });
+
+    it("shows the existing empty state, and no retry button, for a successful empty result", () => {
+        renderState({ overview: { assignments: [] } });
+
+        expect(screen.getByText(EMPTY_TEXT)).toBeInTheDocument();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+    });
+});
