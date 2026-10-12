@@ -87,3 +87,50 @@ export const textareaPlaceholder = (itemKey: string): string => (
 export const countPlaceholder = (count: { k: string; unit?: string }): string => (
     count.k === "temp" ? "36.5" : count.unit === "ml" ? "60" : "0"
 );
+
+/* ---- root screen, 기본정보 and overview (SRW lines in the comments) ---- */
+
+/** SRW:679 */
+export const SCREEN_TITLE = "산모·신생아 건강관리 서비스 제공기록지";
+/** SRW:705-706 (shown on any screen once a planned-date vector is provided but invalid) */
+export const PLANNED_DATE_ERROR_COPY = "서버 일정 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.";
+
+/** SRW:56 - not exported by the package. The suffix of each header field's data-component. */
+export const HEADER_FIELD_COMPONENT_SUFFIX = {
+    momName: "mom-name", momBirth: "mom-birth", babyName: "baby-name",
+    babyBirth: "baby-birth", deliveryType: "delivery-type",
+} as const;
+
+/** SRW:752 */
+export const SERVICE_TITLE = "서비스 기본정보";
+/** SRW:753 */
+export const PROVIDER_EMPLOYEE_LABEL = "제공인력";
+export const EMPLOYEE_FALLBACK_NAME = "정보 없음";
+/** SRW:754 */
+export const PROVIDER_ORG_LABEL = "제공기관";
+export const ORG_FALLBACK_NAME = "인천 아이미래로";
+/** SRW:763, :767 */
+export const DELIVERY_TYPE_LABEL = "분만형태";
+export const DELIVERY_TYPE_OPTIONS = ["자연분만", "제왕절개"] as const;
+/** SRW:808 - the fallback save button when the caller passes no `adminHeaderAction`. */
+export const HEADER_SAVE_LABEL = "초안 저장";
+export const HEADER_SAVE_BUSY_LABEL = "저장 중…";
+
+/** SRW:766, :790 - the DOM ids the header controls and their message slots use. */
+export const headerInputId = (key: string): string => `service-record-header-${key}`;
+export const headerSlotId = (key: string): string => `${headerInputId(key)}-error`;
+export const headerLabelId = (key: string): string => `${headerSlotId(key)}-label`;
+
+/** SRW:815 */
+export const OVERVIEW_TITLE = "제공기록표";
+/** SRW:816 */
+export const OVERVIEW_HELP_READONLY_COPY = "조회 전용 기록입니다. 회차를 선택해 내용을 확인하세요.";
+export const OVERVIEW_HELP_COPY = "제출된 기록은 눌러서 수정할 수 있습니다.";
+/**
+ * SRW:846 in admin. User-approved change: a session with a pending edit reads "수정됨"
+ * (SRW says "초안 변경"); every other label is unchanged.
+ */
+export const DAY_STATUS_CHANGED = "수정됨";
+export const DAY_STATUS_DONE = "제출완료";
+export const DAY_STATUS_EDITABLE = "편집 가능";
+export const DAY_STATUS_READONLY = "조회 가능";

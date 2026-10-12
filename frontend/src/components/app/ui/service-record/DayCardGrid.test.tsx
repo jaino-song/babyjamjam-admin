@@ -108,6 +108,14 @@ describe("DayCard", () => {
     );
   });
 
+  it("puts an optional data-slot on its button, and none when not given", () => {
+    const { rerender } = render(card({ "data-slot": "day" }));
+    expect(screen.getByRole("button")).toHaveAttribute("data-slot", "day");
+
+    rerender(card());
+    expect(screen.getByRole("button")).not.toHaveAttribute("data-slot");
+  });
+
   it("names its children from the root data-component", () => {
     const { container } = render(card());
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "DayCard");

@@ -1,11 +1,9 @@
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import {
     DAY_PAGES,
-    ServiceRecordWizard,
     formatShortDate,
     getServiceRecordHeaderErrors,
     hasInvalidServiceRecordNumericAnswers,
@@ -19,6 +17,7 @@ import type {
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { ReadOnlySignature as ReadOnlySignaturePart } from "@/components/app/ui/service-record";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
@@ -49,6 +48,7 @@ import {
 
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
+import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import type {
@@ -368,6 +368,7 @@ function dateYears(values: ReadonlyArray<unknown>): number[] {
     return [...years];
 }
 
+/** Adapts the package's signature slot props to the admin design-system part. */
 function ReadOnlySignature({
     "data-component": dataComponent,
     value,
@@ -378,34 +379,12 @@ function ReadOnlySignature({
         ? `${formatShortDate(signedAt)} 서명`
         : value ? "서명 원본이에요" : "저장된 서명이 없어요";
     return (
-        <div data-component={dataComponent} data-slot="signature" className="sign-fld locked">
-            <div data-component={`${dataComponent}_label-row`} data-slot="lab-row" className="lab-row">
-                <span data-slot="lab" className="lab">산모 서명</span>
-                <span
-                    id={`${dataComponent}_message`}
-                    data-component={`${dataComponent}_helper`}
-                    data-slot="lab-msg"
-                    className="lab-msg hint"
-                    aria-live="polite"
-                    title={message}
-                >
-                    {message}
-                </span>
-            </div>
-            <div data-slot="signature-image-wrap" className="padwrap locked">
-                {value ? (
-                    <img
-                        data-slot="signature-image"
-                        className="admin-signature-image"
-                        src={value}
-                        alt="산모 서명"
-                        aria-describedby={`${dataComponent}_message`}
-                    />
-                ) : (
-                    <canvas data-slot="signature-empty" className="pad" aria-hidden="true" />
-                )}
-            </div>
-        </div>
+        <ReadOnlySignaturePart
+            data-component={dataComponent}
+            value={value}
+            message={message}
+            messageId={`${dataComponent}_message`}
+        />
     );
 }
 
@@ -1066,7 +1045,8 @@ export function ServiceRecordAdminWizard({
                     dataComponent={`${ADMIN_WIZARD_COMPONENT}_calendar-load-notice`}
                 />
             ) : null}
-            <ServiceRecordWizard
+            {/* Rollback: add `ServiceRecordWizard` to the "@babyjamjam/service-record-ui" import and render <ServiceRecordWizard …> instead of <AdminServiceRecordScreen …> (same props). */}
+            <AdminServiceRecordScreen
                 data-component={ADMIN_WIZARD_COMPONENT}
                 screen={screen} phone="" phoneError={null}
                 context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
@@ -1100,61 +1080,66 @@ export function ServiceRecordAdminWizard({
                 onNextPage={() => setPageIdx(DAY_PAGES.length - 1)}
                 onOpenSubmitModal={() => void accept()} onEditSection={setPageIdx}
                 slots={{
-                    provider: ({ "data-component": component }) => <span data-component={component} data-slot="provider" className="org">관리자 {supplemental ? "조회" : "편집"}</span>,
+                    provider: ({ "data-component": component }) => <span data-component={component} data-slot="provider" className="font-semibold">관리자 {supplemental ? "조회" : "편집"}</span>,
                     signature: (props) => <ReadOnlySignature {...props} />,
-                    adminCommitActions: hasPending || error || needsReload ? (
+                    adminCommitActions: hasPending ? (
                         <>
-                            {hasPending ? (
-                                <>
-                                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
-                                        disabled={busy || needsReload} onClick={() => void startCommit()}>수정 확정</Button>
-                                    <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_cancel`} type="button" variant="outline"
-                                        className="text-v3-burgundy hover:text-v3-burgundy"
-                                        disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
-                                </>
-                            ) : null}
-                            {screen === "overview" ? errorLine : null}
+                            <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_cancel`} type="button" variant="negative-outline"
+                                className="min-w-0 w-full sm:w-auto"
+                                disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
+                            <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
+                                className="min-w-0 w-full sm:w-auto"
+                                disabled={busy || needsReload} onClick={() => void startCommit()}>수정 확정</Button>
                         </>
                     ) : null,
                     adminConfirmAction: (
                         <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} type="button" variant="outline" disabled={busy}
+                            className="min-w-0 w-full sm:w-auto"
                             onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
                             기본정보 수정
                         </Button>
                     ),
                     adminHeaderAction: ({ isHeaderComplete, headerErrors: slotHeaderErrors }) => (
-                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" className="btn submit"
+                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" variant="positive"
                             disabled={busy || (changed && (needsReload || !isHeaderComplete || Object.keys(slotHeaderErrors).length > 0))} onClick={() => !changed ? resetLocal() : void accept()}>
                             {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                         </Button>
                     ),
+                    // Inline in the date chip and in each day card, so it stays a plain span (the ServiceDateDisplay part is a block with its own chip).
                     serviceDateDisplay: ({ "data-component": component, sessionIndex, serviceDate }) => {
                         const original = baseView.plannedSessions.find((item) => item.sessionIndex === sessionIndex)?.originalDate;
-                        return <span data-component={component} data-slot="date-display" className="admin-date-display">
-                            <span data-slot="revised-date" className="admin-date-display-revised">{formatShortDate(dateOnly(serviceDate))}</span>
-                            {original && original !== dateOnly(serviceDate) ? <span data-slot="original-date" className="admin-date-display-original">원본 {formatShortDate(original)}</span> : null}
+                        return <span data-component={component} data-slot="date-display" className="inline-flex flex-wrap items-baseline justify-center gap-x-1 gap-y-px align-baseline">
+                            <span data-slot="revised-date" className="whitespace-nowrap">{formatShortDate(dateOnly(serviceDate))}</span>
+                            {original && original !== dateOnly(serviceDate) ? <span data-slot="original-date" className="whitespace-nowrap font-medium text-v3-text-muted">원본 {formatShortDate(original)}</span> : null}
                         </span>;
                     },
                     serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                        <button data-component={component} data-slot="sec-edit" type="button" className="sec-edit" disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} aria-label="제공일 수정" onClick={onOpen}>수정</button>
+                        <Button data-component={component} data-slot="sec-edit" type="button" variant="outline" size="sm"
+                            disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} aria-label="제공일 수정" onClick={onOpen}>수정</Button>
                     ),
                     adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
-                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" className="btn submit"
+                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" variant="positive"
                             disabled={busy || slotHasInvalidNumericAnswers || (!calendarReady && changed) || (needsReload && changed)}
                             onClick={() => supplemental ? resetLocal() : void accept()}>
                             {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                         </Button>
                     ),
-                    overviewSupplemental: baseView.supplementalSessions.length ? (
-                        <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental`} data-slot="supplemental" className="overview-supplemental">
-                            <p data-slot="supplemental-title" className="supplemental-title">같은 회차의 추가 기록</p>
-                            {baseView.supplementalSessions.map((item) => (
-                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental_item`} key={item.key} type="button" variant="outline"
-                                    onClick={() => { setDay(item.sessionIndex); setSupplementalKey(item.key); setDraft(draftForSession(item.session)); setPageIdx(DAY_PAGES.length - 1); setScreen("day"); }}>
-                                    {item.sessionIndex}회차 · {item.sourceLabel} · {formatShortDate(item.session.serviceDate)}
-                                </Button>
-                            ))}
-                        </div>
+                    // The commit error sits in the body, above the bar: as a bar child it would be clipped.
+                    overviewSupplemental: baseView.supplementalSessions.length || (screen === "overview" && errorLine) ? (
+                        <>
+                            {baseView.supplementalSessions.length ? (
+                                <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental`} data-slot="supplemental" className="flex flex-col gap-2">
+                                    <p data-slot="supplemental-title" className="text-sm font-semibold text-v3-dark">같은 회차의 추가 기록</p>
+                                    {baseView.supplementalSessions.map((item) => (
+                                        <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_supplemental_item`} key={item.key} type="button" variant="outline"
+                                            onClick={() => { setDay(item.sessionIndex); setSupplementalKey(item.key); setDraft(draftForSession(item.session)); setPageIdx(DAY_PAGES.length - 1); setScreen("day"); }}>
+                                            {item.sessionIndex}회차 · {item.sourceLabel} · {formatShortDate(item.session.serviceDate)}
+                                        </Button>
+                                    ))}
+                                </div>
+                            ) : null}
+                            {screen === "overview" ? errorLine : null}
+                        </>
                     ) : null,
                 }}
             />

@@ -244,7 +244,6 @@ export function DayPageStep({
                 <Button
                     type="button"
                     variant="positive"
-                    size="md"
                     disabled={!readOnly && hasInvalidNumericAnswersOnCurrentPage} // SRW:1031 with adminMode
                     onClick={() => onNextPage()} // SRW:663-666 (called without the click event, as handleNextPage does)
                 >
