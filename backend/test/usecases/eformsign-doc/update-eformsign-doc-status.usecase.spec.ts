@@ -87,6 +87,79 @@ describe("UpdateEformsignDocStatusUsecase", () => {
         expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
     });
 
+    /**
+     * 계약-04: 071 (the provider's reviewer rejected the document) is not terminal. A linked row
+     * moves 070 -> 071 -> 070 (resubmitted) and 071 -> 072 (accepted); a truly terminal stored
+     * status (080, 072, 042) still refuses a later non-terminal one, including 071 itself.
+     */
+    describe("071 (reviewer rejection) is not terminal", () => {
+        const echo = (_branchid: string, doc: EformsignDocEntity) => Promise.resolve({ document: doc, applied: true });
+        const newer = new Date("2026-05-03T00:00:00.000Z");
+
+        beforeEach(() => {
+            eformsignDocRepository.updateWithOutcome.mockImplementation(echo);
+            eformsignDocRepository.updateIfSourceNewer.mockImplementation(echo);
+        });
+
+        it.each([
+            ["070", "071", "검토 반려"],
+            ["071", "070", "검토 요청"],
+            ["071", "072", "검토 완료"],
+        ])("applies stored %s -> %s", async (stored, incoming, statusDetail) => {
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity(stored));
+
+            const result = await usecase.executeWithOutcome(branchId, {
+                documentId,
+                statusType: incoming,
+                statusDetail,
+                sourceUpdatedDate: newer,
+            });
+
+            expect(result.applied).toBe(true);
+            expect(result.document.statusType).toBe(incoming);
+            expect(result.document.statusDetail).toBe(statusDetail);
+            expect(eformsignDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([
+            ["080", "070"],
+            ["080", "071"],
+            ["072", "071"],
+            ["072", "070"],
+            ["042", "070"],
+        ])("still refuses a stored terminal %s -> non-terminal %s (never downgraded)", async (stored, incoming) => {
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity(stored));
+
+            const result = await usecase.executeWithOutcome(branchId, {
+                documentId,
+                statusType: incoming,
+                statusDetail: "검토",
+                sourceUpdatedDate: newer,
+            });
+
+            expect(result.applied).toBe(false);
+            expect(result.document.statusType).toBe(stored);
+            expect(eformsignDocRepository.updateIfSourceNewer).not.toHaveBeenCalled();
+            expect(eformsignDocRepository.updateWithOutcome).not.toHaveBeenCalled();
+        });
+
+        it("ignores a 070 event that is not newer than the stored 071", async () => {
+            const existing = createDocEntity("071");
+            eformsignDocRepository.findByDocumentId.mockResolvedValue(existing);
+
+            const result = await usecase.executeWithOutcome(branchId, {
+                documentId,
+                statusType: "070",
+                statusDetail: "검토 요청",
+                sourceUpdatedDate: new Date(existing.updatedDate.getTime() - 1000),
+            });
+
+            expect(result.applied).toBe(false);
+            expect(result.document.statusType).toBe("071");
+            expect(eformsignDocRepository.updateIfSourceNewer).not.toHaveBeenCalled();
+        });
+    });
+
     it("allows a normal non-terminal -> non-terminal transition", async () => {
         eformsignDocRepository.findByDocumentId.mockResolvedValue(createDocEntity("060"));
         eformsignDocRepository.updateWithOutcome.mockImplementation(

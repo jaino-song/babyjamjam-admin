@@ -121,6 +121,8 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     "철회 요청됨": "review",
     // eformsign 042/090: revoked, terminal — danger tone (the expired token), distinct label.
     "철회됨": "expired",
+    // eformsign 071: rejected by the provider's reviewer, not terminal — the solid burgundy badge.
+    "반려됨": "rejected_by_reviewer",
     "기간 만료": "expired",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 

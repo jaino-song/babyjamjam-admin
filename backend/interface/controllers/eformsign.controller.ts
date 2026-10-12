@@ -54,6 +54,7 @@ import {
     resolveEformsignDocDisplayStatus,
     type EformsignDocDisplayStatus,
 } from "application/utils/eformsign-doc-display-status";
+import { MIRROR_UNASSIGNED_KEY } from "application/utils/eformsign-list-doc-from-mirror";
 import {
     normalizeEformsignStatusCode,
     normalizeEformsignStepType,
@@ -149,11 +150,11 @@ function parseTemplateMatch(value: string | undefined): TemplateMatch {
 
 function parseDisplayStatus(value: string | undefined): EformsignDocDisplayStatus | undefined {
     if (value === undefined || value === "") return undefined;
-    if (value === "signed" || value === "review") return value;
+    if (value === "signed" || value === "review" || value === "rejected_by_reviewer") return value;
     throw new BadRequestException(problemBody("VALIDATION_FAILED", {
         pointer: "/displayStatus",
         code: "INVALID_VALUE",
-        detail: "표시 상태는 서명 완료 또는 검토로 선택해 주세요.",
+        detail: "표시 상태는 서명 완료, 검토 또는 반려됨으로 선택해 주세요.",
         location: "query",
     }));
 }
@@ -188,6 +189,12 @@ type EformsignStatusSignal = {
     contract_end_date: string | null;
     /** Authoritative display status, stamped at serve time. */
     display_status: EformsignDocDisplayStatus;
+    /**
+     * True when the mirrored row is not claimed by any client. Carried apart from display_status
+     * because 071 (rejected_by_reviewer) resolves before the unassigned check and so loses that
+     * distinction; the stats fold needs it to count 071 where it counts the matching 070.
+     */
+    unassigned: boolean;
 };
 
 function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): EformsignStatusSignal {
@@ -217,6 +224,7 @@ function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): Eformsig
                 : null),
         contract_end_date: stringFromUnknown(contractEndDate),
         display_status: resolveEformsignDocDisplayStatus(doc as EformsignListDoc, new Date(), calendar),
+        unassigned: (doc as EformsignListDoc)[MIRROR_UNASSIGNED_KEY] === true,
     };
 }
 

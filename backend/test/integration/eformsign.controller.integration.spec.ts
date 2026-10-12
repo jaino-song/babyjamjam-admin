@@ -2046,6 +2046,41 @@ describe("EformsignController (Integration)", () => {
             mirrorRepository.findContractEndDatesByDocumentIds.mockResolvedValue(new Map());
         });
 
+        it("lists only 071 contracts for displayStatus=rejected_by_reviewer, before slicing the page", async () => {
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({
+                    documentId: "newer-pending",
+                    createdDate: "2026-07-04T00:00:00.000Z",
+                    statusType: "060",
+                }),
+                createMirrorRow({
+                    documentId: "newer-review",
+                    createdDate: "2026-07-03T00:00:00.000Z",
+                    statusType: "070",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+                createMirrorRow({
+                    documentId: "older-reviewer-rejected",
+                    createdDate: "2026-07-02T00:00:00.000Z",
+                    statusType: "071",
+                    stepType: "06",
+                    stepName: "제공기관 확인",
+                }),
+            ]);
+
+            const response = await request(mirrorApp.getHttpServer())
+                .get("/api/documents?displayStatus=rejected_by_reviewer&limit=1&skip=0");
+
+            expect(response.status).toBe(200);
+            expect(response.body.documents.map((doc: { id: string }) => doc.id)).toEqual([
+                "older-reviewer-rejected",
+            ]);
+            expect(response.body.documents[0].display_status).toBe("rejected_by_reviewer");
+            expect(response.body.total_rows).toBe(1);
+            expect(response.body.has_more).toBe(false);
+        });
+
         it("rejects unsupported display-status filters", async () => {
             const response = await request(mirrorApp.getHttpServer())
                 .get("/api/documents?displayStatus=unexpected");
@@ -2192,6 +2227,33 @@ describe("EformsignController (Integration)", () => {
                 expect.objectContaining({ status_type: expect.any(String) }),
             );
             expect(eformsignService.getAllDocuments).not.toHaveBeenCalled();
+        });
+
+        it("carries the unclaimed flag on every status signal, 071 included (display_status loses it for 071)", async () => {
+            const reviewStep = { stepType: "06", stepName: "제공기관 확인" };
+            mirrorRepository.findAllVisibleInMirror.mockResolvedValue([
+                createMirrorRow({ documentId: "070-linked", statusType: "070", ...reviewStep }),
+                createMirrorRow({ documentId: "070-unclaimed", statusType: "070", ...reviewStep, clientId: null }),
+                createMirrorRow({ documentId: "071-linked", statusType: "071", ...reviewStep }),
+                createMirrorRow({ documentId: "071-unclaimed", statusType: "071", ...reviewStep, clientId: null }),
+            ]);
+
+            const response = await request(mirrorApp.getHttpServer())
+                .get("/api/documents/status-counts?accessToken=access-token");
+
+            expect(response.status).toBe(200);
+            const byStatus = (response.body.documents as Array<{
+                status_type: string;
+                display_status: string;
+                unassigned: boolean;
+            }>).map((signal) => [signal.status_type, signal.display_status, signal.unassigned]);
+            expect(byStatus).toEqual(expect.arrayContaining([
+                ["070", "review", false],
+                ["070", "unassigned", true],
+                ["071", "rejected_by_reviewer", false],
+                ["071", "rejected_by_reviewer", true],
+            ]));
+            expect(byStatus).toHaveLength(4);
         });
 
         it.each([

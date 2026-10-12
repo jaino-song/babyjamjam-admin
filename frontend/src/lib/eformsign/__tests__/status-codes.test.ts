@@ -164,6 +164,38 @@ describe("042 (doc_revoke) / 090 (withdrawal) 철회됨", () => {
   });
 });
 
+describe("071 (doc_reject_reviewer) 반려됨, 계약-04", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 반려됨 from display_status, and from the status code when display_status is absent", () => {
+    expect(mapDocStatusLabel({ status_type: "071" }, null, "rejected_by_reviewer")).toBe("반려됨");
+    for (const code of ["071", "doc_reject_reviewer"]) {
+      expect(mapDocStatusLabel({ status_type: code })).toBe("반려됨");
+      expect(resolveDocDisplayStatus({ status_type: code })).toBe("rejected_by_reviewer");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2027-12-31")).toBe("반려됨");
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, "2025-01-01")).toBe("반려됨");
+    }
+  });
+
+  it("is in progress (the 대기 tab), never expired or unknown; 080 stays 기간 만료", () => {
+    expect(getStatusCategory("071")).toBe("in-progress");
+    expect(getStatusCategory("080")).toBe("expired");
+    expect(mapDocStatusLabel({ status_type: "080" })).toBe("기간 만료");
+    expect(mapDocStatusLabel({ status_type: "061" })).toBe("기간 만료");
+  });
+
+  it("uses its own solid badge status, distinct from the soft danger of 기간 만료 / 철회됨", () => {
+    expect(contractStatusBadgeType("반려됨")).toBe("rejected_by_reviewer");
+    expect(contractStatusBadgeType("기간 만료")).toBe("expired");
+    expect(contractStatusBadgeType("철회됨")).toBe("expired");
+    expect(getStatusColor("반려됨")).toBe("destructive");
+  });
+
+  it("counts as a customer signature (the signature stays valid)", () => {
+    expect(isCustomerSignedDisplayStatus("rejected_by_reviewer")).toBe(true);
+  });
+});
+
 describe("045 (doc_request_reject) is treated exactly like 040", () => {
   it("is labelled 철회 요청됨 with the warning tone and keeps the expired category", () => {
     expect(mapDocStatusLabel({ status_type: "045" })).toBe("철회 요청됨");

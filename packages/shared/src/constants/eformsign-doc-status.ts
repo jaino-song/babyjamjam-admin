@@ -1,5 +1,6 @@
 import {
     isProviderReviewWorkflowStep,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
     isRevokedEformsignStatus,
 } from "./eformsign-status-codes";
@@ -19,7 +20,7 @@ export { KR_HOLIDAYS } from "../utils/business-days";
  * 1 business day before the contract end date, so until then the document is
  * surfaced as 서명 완료 and flips to 검토 필요 when the window opens.
  */
-export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "철회됨" | "기간 만료";
+export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "철회됨" | "반려됨" | "기간 만료";
 
 export type ContractDocStatusCategory = "completed" | "expired" | "in-progress";
 
@@ -56,6 +57,13 @@ export type ContractDocDisplayStatus =
      * the "expired" category for tabs/filters/stats — only the label and tone differ.
      */
     | "revoked"
+    /**
+     * eformsign 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document.
+     * Shown "반려됨" (solid burgundy). NOT terminal: a later 070 returns it to 서명 완료/검토 필요,
+     * a later 072 completes it, and the customer's signature stays valid (receipt link and
+     * service-end notice may be sent). Its category is in-progress, not expired.
+     */
+    | "rejected_by_reviewer"
     | "expired"
     | "unknown";
 
@@ -67,6 +75,7 @@ export const CONTRACT_DOC_DISPLAY_STATUS_LABELS = {
     completed: "계약 완료",
     revoke_requested: "철회 요청됨",
     revoked: "철회됨",
+    rejected_by_reviewer: "반려됨",
     expired: "기간 만료",
     unknown: "알 수 없음",
 } as const satisfies Record<ContractDocDisplayStatus, string>;
@@ -162,6 +171,8 @@ export function resolveContractDocDisplayStatus(params: {
 }): Exclude<ContractDocDisplayStatus, "unknown" | "unassigned"> {
     if (isRevokeRequestedEformsignStatus(params.statusType)) return "revoke_requested";
     if (isRevokedEformsignStatus(params.statusType)) return "revoked";
+    // 071 is in the in-progress category (not terminal), but it is neither 서명 대기 nor 서명 완료.
+    if (isReviewerRejectedEformsignStatus(params.statusType)) return "rejected_by_reviewer";
     if (params.category === "completed") return "completed";
     if (params.category === "expired") return "expired";
     if (!isProviderReviewWorkflowStep(params.currentStatus)) return "pending";
@@ -179,13 +190,15 @@ const RECEIPT_SENDABLE_DISPLAY_STATUSES: ReadonlySet<ContractDocDisplayStatus> =
     "signed",
     "review",
     "completed",
+    // 071: the reviewer rejected the document, but the customer's signature is still valid.
+    "rejected_by_reviewer",
 ]);
 
 /**
  * Gate for the receipt-link send action, shared by mobile and desktop.
  *
  * The backend's serve-time `display_status` is authoritative when present:
- * only a customer-signed document (서명 완료 / 검토 필요 / 계약 완료) may send.
+ * only a customer-signed document (서명 완료 / 검토 필요 / 계약 완료 / 반려됨) may send.
  * For payloads predating the field, fall back to the shared resolver —
  * in-progress/unknown categories resolve like an in-progress document, so the
  * gate matches the status label the UI already renders (parity with the
@@ -222,7 +235,7 @@ export function resolveContractDocStatusLabel(params: {
     category: ContractDocStatusCategory;
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
-    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨 and 042/090 to 철회됨 before the category. */
+    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨, 042/090 to 철회됨 and 071 to 반려됨 before the category. */
     statusType?: string | number | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;

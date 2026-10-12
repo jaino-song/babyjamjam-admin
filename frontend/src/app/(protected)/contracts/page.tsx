@@ -1804,6 +1804,15 @@ export function ContractDetail({
       text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
+  } else if (statusLabel === "반려됨") {
+    // 071 is in the "in-progress" category (tabs/stats) and the customer's signature stays valid; the
+    // provider's reviewer sent the document back, and a new review request (070) continues it.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
   } else if (statusLabel === "철회됨") {
     // 042/090 share the "expired" category (tabs/filters) but the document was revoked, not timed out.
     activityItems.push({

@@ -90,7 +90,7 @@ describe("selectCurrentContractDocument", () => {
     });
 });
 
-describe("requested-state contract signals (060 / 063 / 064)", () => {
+describe("requested-state contract signals (060 / 063 / 064 / 070 / 071)", () => {
     // Start date inside the send window, no other reason to skip: only the contract signal decides.
     const calendar = { diffBusinessDays: () => 0 } as unknown as Parameters<typeof isContractSendRequired>[1];
     const sendRequiredFor = (statusType: string | null) =>
@@ -107,7 +107,7 @@ describe("requested-state contract signals (060 / 063 / 064)", () => {
             calendar,
         );
 
-    it.each(["060", "063", "064"])("treats a current %s document as active, incomplete and not 발송 필요", (statusType) => {
+    it.each(["060", "063", "064", "070", "071"])("treats a current %s document as active, incomplete and not 발송 필요", (statusType) => {
         const contract = { statusType, permanentPurgeRequestedAt: null };
         expect(isActiveContractSignal(contract)).toBe(true);
         expect(isIncompleteContractSignal(contract)).toBe(true);

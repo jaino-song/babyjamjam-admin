@@ -95,7 +95,9 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 import { getKstCalendarDate } from "application/services/message-trigger-recipes";
 
 const FILTER_DAYS_THRESHOLD = 7;
-const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "071", "080"]);
+// 071 (a reviewer rejection, 계약-04) is deliberately absent: the document is live — a later 070/072
+// follows and the customer's signature is valid — so it reads "requested" like 070.
+const REJECTED_DOCUMENT_STATUS_TYPES = new Set(["011", "021", "031", "061", "080"]);
 // 040/045 (cancellation REQUESTED, not done) are deliberately absent: they are their own
 // non-terminal "revoke_requested" status (see isRevokeRequestedStatus).
 const REVOKED_DOCUMENT_STATUS_TYPES = new Set(["042", "090"]);

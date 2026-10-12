@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 
@@ -7,12 +8,16 @@ import {
   getStatusCategory,
   isContractReviewWindowOpen,
   isProviderReviewWorkflowStep,
+  isReviewerRejectedEformsignStatus,
   isRevokeRequestedEformsignStatus,
   isRevokedEformsignStatus,
   normalizeStatusCode,
 } from "@/lib/eformsign/status-codes";
 import type { EformsignDocument } from "@/lib/eformsign/types";
-import { isContractDocDisplayStatus } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  isContractDocDisplayStatus,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -26,6 +31,11 @@ const HELPER_CONSTANTS = new Set([
   "CONTRACT_SEND_EVENT_KEYWORDS",
   "CONTRACT_EVENT_TYPE_KEYS",
   "CATEGORY_BY_DISPLAY_STATUS",
+  "FILTER_LABELS",
+  "FILTER_TO_STATUS_CATEGORY",
+  "FILTER_TO_DISPLAY_STATUS",
+  "FILTER_BY_CATEGORY",
+  "SERVICE_RECORD_REVIEWER_REJECTED_LABEL",
 ]);
 const parsedPage = ts.createSourceFile("page.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const helperSource = parsedPage.statements
@@ -40,23 +50,33 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
 interface StageItem {
   text: string;
+}
+interface StatusSignal {
+  status_type: string | null;
+  step_type: string | null;
+  step_name: string | null;
+  step_recipient_types: Array<string | null>;
+  contract_end_date?: string | null;
+  display_status?: string | null;
 }
 const helpers = vm.runInNewContext(
   ts.transpileModule(helperSource, {
     fileName: "helpers.tsx",
     compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React },
-  }).outputText + "\n({ categorize, progressLabel, contractStageItems });",
+  }).outputText + "\n({ categorize, progressLabel, contractStageItems, countSignalsByFilter, detailHeaderStatusBadge, FILTER_LABELS, FILTER_TO_STATUS_CATEGORY, FILTER_TO_DISPLAY_STATUS, FILTER_BY_CATEGORY });",
   {
     getStatusCategory,
     isContractReviewWindowOpen,
     isProviderReviewWorkflowStep,
+    isReviewerRejectedEformsignStatus,
     isRevokeRequestedEformsignStatus,
     isRevokedEformsignStatus,
     normalizeStatusCode,
     isContractDocDisplayStatus,
+    CONTRACT_DOC_DISPLAY_STATUS_LABELS,
     KR_BUILTIN_CALENDAR,
     ...Object.fromEntries(
       ["FileText", "Send", "X", "Eye", "FileSignature", "CheckCircle2", "AlertTriangle"].map((name) => [name, name]),
@@ -66,6 +86,12 @@ const helpers = vm.runInNewContext(
   categorize: (doc: EformsignDocument, calendar: typeof KR_BUILTIN_CALENDAR) => Category;
   progressLabel: (doc: EformsignDocument, calendar: typeof KR_BUILTIN_CALENDAR) => string;
   contractStageItems: (doc: EformsignDocument, category: Category, calendar: typeof KR_BUILTIN_CALENDAR) => StageItem[];
+  countSignalsByFilter: (signals: StatusSignal[], calendar: typeof KR_BUILTIN_CALENDAR) => Record<string, number>;
+  detailHeaderStatusBadge: (category: Category, isServiceRecord: boolean) => { label: string; tone: string };
+  FILTER_LABELS: string[];
+  FILTER_TO_STATUS_CATEGORY: Record<string, string | null>;
+  FILTER_TO_DISPLAY_STATUS: Record<string, string>;
+  FILTER_BY_CATEGORY: Record<Category, string | null>;
 };
 
 const SIGNED_PROGRESS = "4/6 - 이용자 서명 완료";
@@ -278,6 +304,109 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
     // FILTER_BY_CATEGORY / categoryTones live beside the helpers in page.tsx; pin them in source.
     expect(/"revoke-requested": "기간 만료"/.test(source)).toBe(true);
     expect(/case "revoke-requested":\s*return \{\s*badge: "철회 요청됨",\s*badgeTone: "orange"/.test(source)).toBe(true);
+  });
+
+  it.each([
+    ["with display_status", "rejected_by_reviewer"],
+    ["without display_status (legacy payload)", undefined],
+  ])("files 071 (반려됨, 계약-04) as its own category, not expired, not 검토 필요 — %s", (_label, displayStatus) => {
+    for (const [stepType, stepName] of [
+      ["06", "제공기관 검토"],
+      ["05", "이용자"],
+    ] as const) {
+      const doc = makeDoc({ statusType: "071", stepType, stepName, displayStatus });
+      const { category, progress, stages } = view(doc);
+
+      expect(category).toBe("rejected-by-reviewer");
+      expect(progress).toBe("반려됨 - 제공기관 재검토 대기");
+      expect(progress).not.toBe("5/6 - 제공기관 검토 필요");
+      // The customer's signature stays valid, and the rejection is stated.
+      expect(stages).toContain(SIGNED_STAGE);
+      expect(stages).toContain("제공기관 검토에서 반려됐어요 — 다시 검토가 요청되면 이어서 진행돼요");
+      expect(stages).not.toContain("문서 기간이 만료됐어요");
+    }
+  });
+
+  it("returns a document to a signed reading after a later 070, and completes it on 072", () => {
+    expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
+    expect(view(makeDoc({ statusType: "072", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");
+  });
+
+  it("gives 반려됨 its own pill that the server displayStatus filter can select", () => {
+    expect(helpers.FILTER_LABELS).toContain("반려됨");
+    // Placed with the in-progress pills, before 계약 완료.
+    expect(helpers.FILTER_LABELS.indexOf("반려됨")).toBe(helpers.FILTER_LABELS.indexOf("검토 필요") + 1);
+    expect(helpers.FILTER_BY_CATEGORY["rejected-by-reviewer"]).toBe("반려됨");
+    expect(helpers.FILTER_TO_DISPLAY_STATUS["반려됨"]).toBe("rejected_by_reviewer");
+    expect(helpers.FILTER_TO_STATUS_CATEGORY["반려됨"]).toBeNull();
+    // The pill label is the shared canonical one, not a hand-written copy.
+    expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer).toBe("반려됨");
+    expect(/badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS\.rejected_by_reviewer/.test(source)).toBe(true);
+    expect(/badge: "반려됨"/.test(source)).toBe(false);
+    expect(/rejected_by_reviewer: "rejected-by-reviewer"/.test(source)).toBe(true);
+  });
+
+  const signalOf = (statusType: string, displayStatus?: string): StatusSignal => ({
+    status_type: statusType,
+    step_type: "06",
+    step_name: "제공기관 검토",
+    step_recipient_types: [],
+    display_status: displayStatus,
+  });
+
+  it.each([
+    ["with display_status", "rejected_by_reviewer"],
+    ["without display_status (legacy payload)", undefined],
+  ])("counts a 071 contract once, under 반려됨 only, and keeps it in 전체 — %s", (_label, displayStatus) => {
+    const counts = helpers.countSignalsByFilter([signalOf("071", displayStatus)], KR_BUILTIN_CALENDAR);
+
+    expect(counts["반려됨"]).toBe(1);
+    expect(counts["전체"]).toBe(1);
+    for (const label of helpers.FILTER_LABELS.filter((l) => l !== "전체" && l !== "반려됨")) {
+      expect(counts[label]).toBe(0);
+    }
+  });
+
+  it("leaves a 070 contract out of the 반려됨 pill", () => {
+    const counts = helpers.countSignalsByFilter(
+      [signalOf("070", "signed"), signalOf("071", "rejected_by_reviewer")],
+      KR_BUILTIN_CALENDAR,
+    );
+
+    expect(counts["반려됨"]).toBe(1);
+    expect(counts["서명 완료"]).toBe(1);
+    expect(counts["전체"]).toBe(2);
+  });
+
+  it("shows the solid 반려됨 chip in the detail header of a contract at 071", () => {
+    const badge = helpers.detailHeaderStatusBadge("rejected-by-reviewer", false);
+
+    expect(badge).toEqual({ label: "반려됨", tone: "burgundy-solid" });
+    // The solid tone exists in the closed badge union and has a CSS rule.
+    const css = fs.readFileSync(
+      path.join(process.cwd(), "src/components/app/mobile-redesign/redesign.css"),
+      "utf8",
+    );
+    expect(/\.badge-mini\.burgundy-solid\s*\{[^}]*status-danger-solid-fg/.test(css)).toBe(true);
+  });
+
+  it("shows a 제공기록지 at 071 in the detail header exactly as its list row reads, never 반려됨", () => {
+    const badge = helpers.detailHeaderStatusBadge("rejected-by-reviewer", true);
+
+    expect(badge.label).toBe("거부·만료");
+    expect(badge.label).not.toBe("반려됨");
+    // Same tone the list row's Badge takes (tones.badgeTone).
+    expect(badge.tone).toBe("burgundy");
+    expect(/\? SERVICE_RECORD_REVIEWER_REJECTED_LABEL/.test(source)).toBe(true);
+    // The header and the list row both read the same constant, and the header renders through the helper.
+    expect(/detailHeaderStatusBadge\(category, isServiceRecord\),/.test(source)).toBe(true);
+    expect(/tones\.badgeMini as BadgeTone/.test(source)).toBe(false);
+  });
+
+  it("leaves the detail header of other statuses unchanged", () => {
+    expect(helpers.detailHeaderStatusBadge("signed", false)).toEqual({ label: "서명 완료", tone: "primary" });
+    expect(helpers.detailHeaderStatusBadge("signed", true)).toEqual({ label: "서명 완료", tone: "primary" });
+    expect(helpers.detailHeaderStatusBadge("revoked", false)).toEqual({ label: "철회됨", tone: "burgundy" });
   });
 
   it("no longer scans histories for signature keywords", () => {

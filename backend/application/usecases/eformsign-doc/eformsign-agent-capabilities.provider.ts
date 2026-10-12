@@ -12,7 +12,7 @@ import { DELETED_DOCUMENT_STATUS_TYPES } from "application/services/client.servi
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 
-const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "revoke_requested", "revoked", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
+const DISPLAY_STATUS_VALUES = ["pending", "signed", "review", "unassigned", "completed", "revoke_requested", "revoked", "rejected_by_reviewer", "expired", "unknown"] as const satisfies readonly EformsignDocDisplayStatus[];
 
 const InputSchema = z.object({
     clientId: z.number().int().positive().describe(

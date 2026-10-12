@@ -186,10 +186,12 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
         }
         expect(TERMINAL_STATUS_CODES.has("042")).toBe(true);
         expect(UNASSIGNED_TERMINAL_STATUS_CODES.has("042")).toBe(true);
-        // The remaining ended codes are unchanged.
-        for (const code of ["011", "021", "031", "047", "049", "061", "071", "080", "090", "099"]) {
+        // The remaining ended codes are unchanged. 071 (reviewer rejection) left this list in
+        // 계약-04: see eformsign-webhook-reviewer-rejection-sequence.spec.ts.
+        for (const code of ["011", "021", "031", "047", "049", "061", "080", "090", "099"]) {
             expect(TERMINAL_STATUS_CODES.has(code)).toBe(true);
         }
+        expect(TERMINAL_STATUS_CODES.has("071")).toBe(false);
     });
 
     it("keeps 042 (revoked) terminal: a later 060 cannot reopen the row", async () => {

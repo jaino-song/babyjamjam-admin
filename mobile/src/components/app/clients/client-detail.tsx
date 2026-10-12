@@ -7,6 +7,11 @@ import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, Rot
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  isContractDocDisplayStatus,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { isReviewerRejectedEformsignStatus } from "@babyjamjam/shared/constants/eformsign-status-codes";
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import {
@@ -357,6 +362,31 @@ function documentStatusTone(client: Pick<Client, "documentStatus" | "hasSigned">
   return DOCUMENT_STATUS_TONES[getClientDocumentStatusMeta(client.documentStatus, { hasSigned: client.hasSigned }).variant];
 }
 
+/**
+ * What the contract card and the "현재 단계" row show. The coarse client summary is a liveness
+ * summary: a rejected (071) contract still reads as signed there, so the document's own display
+ * status takes over for 반려됨 — the one status the summary cannot express. Every other status keeps
+ * the summary's wording, and so does a client with no contract document.
+ */
+function contractCardStatus(
+  client: Pick<Client, "documentStatus" | "hasSigned">,
+  contractDocument: EformsignDocument | null | undefined,
+): { label: string; tone: DetailDocRowTone; rowTone: "green" | "primary" | "orange" | "muted" | "burgundy" } {
+  const displayStatus = contractDocument?.display_status;
+  const isRejectedByReviewer = isContractDocDisplayStatus(displayStatus)
+    ? displayStatus === "rejected_by_reviewer"
+    : isReviewerRejectedEformsignStatus(contractDocument?.current_status?.status_type);
+  if (isRejectedByReviewer) {
+    return {
+      label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer,
+      tone: "burgundy-solid",
+      rowTone: "burgundy",
+    };
+  }
+  const tone = documentStatusTone(client);
+  return { label: documentStatusLabel(client), tone, rowTone: tone };
+}
+
 export interface ClientGroup {
   key: string;
   title: string;
@@ -449,6 +479,8 @@ export interface ClientNotificationLogRecord {
 }
 
 type DetailRowTone = "green" | "primary" | "orange" | "muted" | "burgundy" | "purple";
+/** The document row's badge also has a solid burgundy variant (반려됨); the icon and text rows do not. */
+type DetailDocRowTone = DetailRowTone | "burgundy-solid";
 const CLIENT_GREETING_SMS_TEMPLATE_KEY = "client_greeting_sms";
 
 function DetailDocRow({
@@ -465,7 +497,7 @@ function DetailDocRow({
   title: string;
   meta: ReactNode;
   badge: string;
-  tone: DetailRowTone;
+  tone: DetailDocRowTone;
   onClick?: () => void;
 }) {
   const interactive = Boolean(onClick);
@@ -487,7 +519,7 @@ function DetailDocRow({
           }
         : {})}
     >
-      <div className={`doc-icon doc-icon-${tone}`} data-component={`${dataComponent}_icon`}>
+      <div className={`doc-icon doc-icon-${tone === "burgundy-solid" ? "burgundy" : tone}`} data-component={`${dataComponent}_icon`}>
         {icon}
       </div>
       <div className="doc-info" data-component={`${dataComponent}_info`}>
@@ -820,7 +852,7 @@ export function ClientDetailContent({
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
   const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
-  const docTone = documentStatusTone(client);
+  const contractCard = contractCardStatus(client, contractDocument);
   const hasContractDocument = Boolean(client.eDocId);
   const displayNotificationLogs = visibleNotificationLogs(notificationLogs);
   const birthDate = firstValue(
@@ -1328,12 +1360,12 @@ export function ClientDetailContent({
                     <span className="doc-meta-line doc-meta-id">문서 ID {client.eDocId}</span>
                   </>
                 }
-                badge={documentStatusLabel(client)}
-                tone={docTone}
+                badge={contractCard.label}
+                tone={contractCard.tone}
               />
             </InfoCard>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
-              <InfoRow label="현재 단계" value={documentStatusLabel(client)} tone={docTone as never} />
+              <InfoRow label="현재 단계" value={contractCard.label} tone={contractCard.rowTone} />
               <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
               <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}

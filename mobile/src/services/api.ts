@@ -178,7 +178,7 @@ export type EformsignStatusCategoryParam =
  * configured 제공기록지 tiers), so clients never send templateId/templateMatch.
  */
 export type EformsignContractsSectionParam = "maternity" | "service-records";
-export type EformsignDisplayStatusParam = "signed" | "review";
+export type EformsignDisplayStatusParam = "signed" | "review" | "rejected_by_reviewer";
 
 export interface GetAllDocumentsParams {
     limit?: number;
