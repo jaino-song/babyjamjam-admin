@@ -49,8 +49,8 @@ describe("SbMessageLogRepository", () => {
     });
 
     describe("findServiceRecordLinkClientState", () => {
-        const state = { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") };
-        const select = { serviceStatus: true, startDate: true, endDate: true };
+        const state = { serviceStatus: "waiting", bookingConfirmedAt: new Date("2099-05-01"), startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") };
+        const select = { serviceStatus: true, bookingConfirmedAt: true, startDate: true, endDate: true };
         const linkLog = () => MessageLogEntity.create({
             provider: "aligo_sms", templateKey: "service_record_link_sms", receiver: "01012345678",
             messageBody: "link", variables: {}, branchId: "branch-1", clientId: 7, triggerJobId: "job-1",
