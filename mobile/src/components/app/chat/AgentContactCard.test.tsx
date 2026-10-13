@@ -65,11 +65,52 @@ it("shows 연락처 미등록 for a record without phone", async () => {
     expect(await screen.findByText("연락처 미등록")).toBeInTheDocument();
 });
 
+it.each(["••••5678", "010-****-5678"])("does not display a masked phone %s", async (phone) => {
+    mockClient.mockResolvedValue({ data: { ...contact, phone } });
+    const { container } = mount();
+    expect(await screen.findByText("연락처 미등록")).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="contact-line"]')).toHaveTextContent("김하늘 · 연락처 미등록");
+    expect(container.textContent).not.toMatch(/5678|•|\*/);
+});
+
 it.each(["", null, {}, { ...contact, id: 13 }])("hides a successful not-found response %j", async (data) => {
     mockClient.mockResolvedValue({ data });
     const { container } = mount();
     await waitFor(() => expect(queryClient.getQueryCache().getAll()[0].state.status).toBe("success"));
     await waitFor(() => expect(container).toBeEmptyDOMElement());
+});
+
+it.each([null, "", {}, { ...contact, id: 13 }])("shows a failed refetch after cached non-record %j and retries", async (data) => {
+    mockClient.mockResolvedValueOnce({ data });
+    const { container } = mount();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(mockClient).toHaveBeenCalledTimes(1);
+
+    mockClient.mockRejectedValueOnce({ response: { status: 500 } });
+    await queryClient.refetchQueries();
+    expect(await screen.findByRole("alert")).toHaveTextContent("연락처를 불러오지 못했습니다");
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+
+    mockClient.mockResolvedValueOnce({ data: contact });
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(await screen.findByText("김하늘")).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="contact-line"]')).toHaveTextContent("김하늘 · 010-1234-5678");
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(mockClient).toHaveBeenCalledTimes(3);
+});
+
+it.each([null, "", {}, { ...contact, id: 13 }])("hides a 404 refetch after cached non-record %j", async (data) => {
+    mockClient.mockResolvedValueOnce({ data });
+    const { container } = mount();
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(mockClient).toHaveBeenCalledTimes(1);
+
+    mockClient.mockRejectedValueOnce({ response: { status: 404 } });
+    await queryClient.refetchQueries();
+    await waitFor(() => expect(queryClient.getQueryCache().getAll()[0].state.status).toBe("error"));
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockClient).toHaveBeenCalledTimes(2);
 });
 
 it.each([403, 404])("hides denied/missing HTTP %s", async (status) => {

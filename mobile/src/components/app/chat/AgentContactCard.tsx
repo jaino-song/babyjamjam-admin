@@ -50,7 +50,7 @@ export function AgentContactCard({ "data-component": dataComponent, clientId, em
             {contact ? (
                 <p data-slot="contact-line">
                     <span data-slot="name">{contact.name}</span>{" · "}
-                    <span data-slot="phone">{contact.phone ? formatKoreanPhoneNumber(contact.phone) : "연락처 미등록"}</span>
+                    <span data-slot="phone">{contact.phone && !/[•*]/.test(contact.phone) ? formatKoreanPhoneNumber(contact.phone) : "연락처 미등록"}</span>
                 </p>
             ) : !query.isError ? (
                 <Skeleton data-component={`${dataComponent}_loading`} data-slot="contact-loading" className="h-4 w-48" />
