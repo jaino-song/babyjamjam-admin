@@ -165,6 +165,7 @@ export const MESSAGE_JOB_RESEND_COPY = {
   success: "재발송했습니다.",
   stillNeedsSetup: "아직 설정이 필요합니다. 사유를 확인해 주세요.",
   notSent: "재발송하지 않았습니다.",
+  conflict: "지금은 재발송할 수 없습니다. 자동 전송 설정을 확인해 주세요.",
   failure: "재발송하지 못했습니다. 잠시 후 다시 시도해 주세요.",
 } as const;
 
