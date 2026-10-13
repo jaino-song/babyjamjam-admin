@@ -22,6 +22,13 @@ export class LinkDocumentToClientUsecase {
             throw new NotFoundException(`Document ${documentId} not found`);
         }
 
+        // A voided (파기) contract is dead: it never becomes the client's current contract, so no
+        // client pointer (`e_doc_id`) is written for it. The status update itself is unaffected.
+        if (doc.isVoided) {
+            this.logger.debug(`Skipping client contract link for voided document ${documentId}`);
+            return;
+        }
+
         if (doc.documentKind === EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT) {
             this.logger.debug(`Skipping client contract link for service-record document ${documentId}`);
             return;

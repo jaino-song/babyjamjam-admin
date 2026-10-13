@@ -42,6 +42,7 @@ describe("LinkDocumentToClientUsecase", () => {
         documentNumber: string | null;
         documentKind: EformsignDocEntity["documentKind"];
         stepRecipientSms: string;
+        voidedAt: Date | null;
     }> = {}): EformsignDocEntity =>
         EformsignDocEntity.reconstitute({
             id: 1,
@@ -69,6 +70,7 @@ describe("LinkDocumentToClientUsecase", () => {
             documentKind: overrides.documentKind ?? EFORMSIGN_DOCUMENT_KIND.CONTRACT,
             employeeScheduleId: null,
             templateId: null,
+            voidedAt: overrides.voidedAt ?? null,
         });
 
     const eformsignDocRepository = {
@@ -168,6 +170,34 @@ describe("LinkDocumentToClientUsecase", () => {
 
         expect(clientRepository.findByPhone).not.toHaveBeenCalled();
         expect(eformsignDocRepository.linkClientIfActive).not.toHaveBeenCalled();
+    });
+
+    it("does not move the client pointer for a voided (파기) contract", async () => {
+        const documentClient = createClient(7, "01012345678");
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(createDoc({
+            clientId: 7,
+            voidedAt: new Date("2026-10-01T00:00:00.000Z"),
+        }));
+        clientRepository.findById.mockResolvedValue(documentClient);
+
+        await expect(usecase.execute(branchId, documentId)).resolves.toBeUndefined();
+
+        expect(clientRepository.findById).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.linkClientIfActive).not.toHaveBeenCalled();
+        expect(eformsignDocRepository.update).not.toHaveBeenCalled();
+        expect(clientRepository.update).not.toHaveBeenCalled();
+        expect(documentClient.eDocId).toBeNull();
+    });
+
+    it("links a contract whose void state is clear (control for the voided fence)", async () => {
+        const documentClient = createClient(7, "01012345678");
+        eformsignDocRepository.findByDocumentId.mockResolvedValue(createDoc({ clientId: 7, voidedAt: null }));
+        clientRepository.findById.mockResolvedValue(documentClient);
+
+        await usecase.execute(branchId, documentId);
+
+        expect(eformsignDocRepository.linkClientIfActive).toHaveBeenCalledWith(branchId, documentId, 7);
+        expect(documentClient.eDocId).toBe(documentId);
     });
 
     it("does not link service-record snapshot documents to the client contract pointer", async () => {

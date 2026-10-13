@@ -531,6 +531,9 @@ export class FinalizeDocumentHeadlessUsecase {
             // not finalized as if nothing happened (it was refused here while 040 was terminal).
             || isRevokeRequestedStatus(document.statusType)
             || document.expired
+            // A voided (파기) contract is dead: no finalize path, staff or queued, may reach the
+            // vendor/editor for it. Same denial shape as a terminal row.
+            || document.isVoided
             || document.clientId === null) {
             return { ok: false };
         }

@@ -964,6 +964,71 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         }
     });
 
+    describe("duplicate-send guard and voided (파기) contracts", () => {
+        const buildGuardUsecase = (rows: Array<Record<string, unknown>>) => {
+            const dispatchCreation = jest.fn().mockResolvedValue({ ok: false, reason: "stop", durationMs: 1 });
+            const repository = { findByClientId: jest.fn().mockResolvedValue(rows) };
+            const usecase = new DispatchDocumentHeadlessUsecase(
+                { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
+                { dispatchCreation } as never,
+                { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
+                createCredentialBoundary() as never,
+                { execute: jest.fn() } as never,
+                { execute: jest.fn() } as never,
+                { emit: jest.fn() } as never,
+                { findById: jest.fn() } as never,
+                { assertLiveAssignedProvider: jest.fn() } as never,
+                repository as never,
+                { execute: jest.fn() } as never,
+                createWorkflowClient() as never,
+            );
+            return { usecase, dispatchCreation };
+        };
+        const params = { clientId: 7, contractData: { area: "seoul" } as never };
+        const recentRow = (overrides: Record<string, unknown>) => ({
+            documentId: "existing-1",
+            templateId: "template-1",
+            statusType: "060",
+            createdDate: new Date(),
+            isVoided: false,
+            ...overrides,
+        });
+
+        it("lets a new contract go out right after a void: a recent voided row no longer blocks", async () => {
+            const { usecase, dispatchCreation } = buildGuardUsecase([
+                recentRow({ isVoided: true, voidedAt: new Date() }),
+            ]);
+
+            const result = await usecase.execute("branch-1", params, TEST_PRINCIPAL);
+
+            expect(result).not.toEqual(expect.objectContaining({ reason: "duplicate_pending_document" }));
+            expect(dispatchCreation).toHaveBeenCalledTimes(1);
+        });
+
+        it("still blocks on a recent non-voided row (control)", async () => {
+            const { usecase, dispatchCreation } = buildGuardUsecase([recentRow({ isVoided: false })]);
+
+            await expect(usecase.execute("branch-1", params, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+                reason: "duplicate_pending_document",
+                existingDocumentId: "existing-1",
+            }));
+            expect(dispatchCreation).not.toHaveBeenCalled();
+        });
+
+        it("names the live row when a voided row and a live row are both recent", async () => {
+            const { usecase, dispatchCreation } = buildGuardUsecase([
+                recentRow({ documentId: "voided-1", isVoided: true }),
+                recentRow({ documentId: "live-2", isVoided: false }),
+            ]);
+
+            await expect(usecase.execute("branch-1", params, TEST_PRINCIPAL)).resolves.toEqual(expect.objectContaining({
+                reason: "duplicate_pending_document",
+                existingDocumentId: "live-2",
+            }));
+            expect(dispatchCreation).not.toHaveBeenCalled();
+        });
+    });
+
     it.each([
         ["040", "철회 요청"],
         ["045", "철회 요청"],

@@ -120,6 +120,44 @@ describe("EformsignDocumentJobService", () => {
         }));
     });
 
+    it("refuses finalization of a voided (파기) document with a 409 before queueing anything", async () => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({
+            documentId: "voided-document",
+            clientId: 7,
+            isVoided: true,
+        });
+
+        await expect(service.enqueueFinalizeDocument({
+            branchId,
+            documentId: "voided-document",
+            requestKey: "request-1",
+            source: "staff",
+        })).rejects.toMatchObject({
+            status: 409,
+            response: { code: "REQUEST_CONFLICT" },
+        });
+        expect(repository.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("still queues finalization for a document whose void state is clear (control)", async () => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({
+            documentId: "owned-document",
+            clientId: 7,
+            isVoided: false,
+        });
+        repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
+
+        await expect(service.enqueueFinalizeDocument({
+            branchId,
+            documentId: "owned-document",
+            requestKey: "request-1",
+            source: "staff",
+        })).resolves.toEqual({ job: { id: "job-1" }, existing: false });
+        expect(repository.enqueue).toHaveBeenCalledTimes(1);
+    });
+
     it("refuses creation when the authenticated branch does not own the client", async () => {
         const { service, repository, clients } = buildService();
         clients.findById.mockResolvedValue(null);
