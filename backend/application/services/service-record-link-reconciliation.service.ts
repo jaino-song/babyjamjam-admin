@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { normalizePhone } from "application/utils/normalize-phone";
 import {
+    SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -105,9 +106,15 @@ export class ServiceRecordLinkReconciliationService {
                         },
                         {
                             status: "canceled",
+                            // An ended cancellation re-enters this window (endDate >= today)
+                            // only after the end date was extended, so it is safe to repair.
+                            // Branch-disabled / pre-booking cancellations are left out on
+                            // purpose: they sit inside the window in bulk, would eat the
+                            // per-run attempt limit, and have their own re-schedule hooks.
                             cancelReason: {
                                 in: [
                                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                                    SERVICE_RECORD_LINK_ENDED_REASON,
                                     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                 ],
                             },
@@ -148,6 +155,7 @@ export class ServiceRecordLinkReconciliationService {
                                                     cancelReason: {
                                                         notIn: [
                                                             SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                                                            SERVICE_RECORD_LINK_ENDED_REASON,
                                                             MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                                         ],
                                                     },

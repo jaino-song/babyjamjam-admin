@@ -1,5 +1,8 @@
 import { ServiceRecordLinkReconciliationService } from "application/services/service-record-link-reconciliation.service";
 import {
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+    SERVICE_RECORD_LINK_ENDED_REASON,
+    SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -70,6 +73,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
                         cancelReason: {
                             in: [
                                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+                                SERVICE_RECORD_LINK_ENDED_REASON,
                                 MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                             ],
                         },
@@ -94,6 +98,40 @@ describe("ServiceRecordLinkReconciliationService", () => {
             [10],
             [13],
         ]);
+    });
+
+    it("offers an ended-cancelled job again once its schedule is back in the window, and no other reason", async () => {
+        const prisma = createPrisma();
+        const linkService = createLinkService();
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        const service = new ServiceRecordLinkReconciliationService(
+            prisma as unknown as PrismaService,
+            linkService as never,
+            createSchedulerLeaseMock(),
+        );
+
+        await service.reconcileMissingJobs(new Date("2026-08-20T02:00:00.000Z"));
+
+        // findMany is mocked, so the query arguments are what this test can assert.
+        const where = prisma.message_trigger_job.findMany.mock.calls[0]?.[0].where;
+        const candidateReasons: string[] = where.OR[1].cancelReason.in;
+        const blockerClauses = where.employeeSchedule.is.messageTriggerJobs.none.OR;
+        const canceledBlocker = blockerClauses.find(
+            (clause: { status: string }) => clause.status === "canceled",
+        );
+        const nonBlockerReasons: string[] = canceledBlocker.OR[2].cancelReason.notIn;
+
+        for (const reasons of [candidateReasons, nonBlockerReasons]) {
+            expect(reasons).toContain(SERVICE_RECORD_LINK_ENDED_REASON);
+            expect(reasons).toContain(SERVICE_RECORD_LINK_RESCHEDULED_REASON);
+            expect(reasons).toContain(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+            // Left out on purpose: bulk rows that would eat the per-run attempt limit.
+            expect(reasons).not.toContain(SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON);
+            expect(reasons).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
+            // Replaced / terminated / revoked schedules must stay blockers.
+            expect(reasons).not.toContain("Service record access revoked");
+            expect(reasons).not.toContain("Service record link schedule ended or replaced");
+        }
     });
 
     it("retries a failed late-registration marker through the end date, not after it", async () => {

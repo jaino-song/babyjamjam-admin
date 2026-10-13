@@ -355,6 +355,55 @@ describe("ServiceRecordLinkService", () => {
         expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
     });
 
+    describe("expiry at the next-day midnight boundary", () => {
+        // Schedule end date 2026-07-12 (KST) -> normal expiry 2026-07-12T15:00:00.000Z.
+        const NORMAL_EXPIRY = new Date("2026-07-12T15:00:00.000Z");
+        const buildBoundaryService = () => {
+            const prisma = createPrisma();
+            const tokenService = createTokenService();
+            const jobRepository = createJobRepository();
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService, tokenService as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                createLogRepository() as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined, undefined, createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
+            );
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            return { service, tokenService };
+        };
+
+        it("late reissue at exactly the expiry instant gets a fresh 24-hour token, not the dead one", async () => {
+            jest.setSystemTime(NORMAL_EXPIRY);
+            const { service, tokenService } = buildBoundaryService();
+
+            await service.sendNow(10);
+
+            const issuedExpiry = tokenService.issueLink.mock.calls[0]?.[0].expiresAt as Date;
+            expect(issuedExpiry).toEqual(new Date(NORMAL_EXPIRY.getTime() + 24 * 60 * 60 * 1000));
+        });
+
+        it("late reissue one millisecond before the expiry keeps the normal expiry", async () => {
+            jest.setSystemTime(new Date(NORMAL_EXPIRY.getTime() - 1));
+            const { service, tokenService } = buildBoundaryService();
+
+            await service.sendNow(10);
+
+            expect(tokenService.issueLink.mock.calls[0]?.[0].expiresAt).toEqual(NORMAL_EXPIRY);
+        });
+
+        it("automatic scheduling one millisecond before the expiry issues the normal expiry", async () => {
+            jest.setSystemTime(new Date(NORMAL_EXPIRY.getTime() - 1));
+            const { service, tokenService } = buildBoundaryService();
+
+            expect(await service.scheduleForServiceStart(10)).toBe(true);
+
+            expect(tokenService.issueLink.mock.calls[0]?.[0].expiresAt).toEqual(NORMAL_EXPIRY);
+        });
+    });
+
     it("extends the stored token expiry to midnight after the extended end date", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
