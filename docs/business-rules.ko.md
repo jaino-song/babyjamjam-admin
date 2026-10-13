@@ -153,7 +153,7 @@
 
 | ID | 규칙 | 기준 코드 | 상태 |
 |---|---|---|---|
-| 개인정보-01 | **화면과 로그에서는 이름·전화번호·이메일·계좌번호를 가리지 않는다.** **외부 AI 모델로는 전화번호·이메일·주소를 보내지 않는다** — 모델에는 대상의 ID만 가고, AI 채팅 화면이 그 ID로 서버에 조회해(로그인한 사용자의 권한으로) 연락처를 보여 준다. 지점 입금 계좌번호는 공개 정보라 모델로 보낼 때도 가리지 않는다(AI-03). | `backend/application/agent/agent-model-redaction.ts`, `backend/application/utils/mask.ts` | 확정 (사용자 결정 2026-10-12) · 로그: BJJ-445 · AI 채팅 화면 조회 표시·계좌번호: BJJ-449 |
+| 개인정보-01 | **화면과 로그에서는 이름·전화번호·이메일·계좌번호를 가리지 않는다.** **외부 AI 모델로는 전화번호·이메일·주소를 보내지 않는다** — 모델에는 대상의 ID만 가고, AI 채팅 화면이 그 ID로 서버에 조회해(로그인한 사용자의 권한으로) 연락처를 보여 준다. 지점 입금 계좌번호는 공개 정보라 모델로 보낼 때도 가리지 않는다(AI-03). | `backend/application/agent/agent-model-redaction.ts`, `frontend/src/components/app/chat/parts/AgentContactCard.tsx`, `mobile/src/components/app/chat/AgentContactCard.tsx` | 확정 (사용자 결정 2026-10-12) · 로그: BJJ-445 · AI 채팅 화면 조회 표시: BJJ-449 1차 구현(승인 카드의 고객·직원 연락처) · 남은 것: 계좌번호, 등록·수정 제안의 전화번호 표시 |
 | 개인정보-02 | 외부 API 오류 객체(Axios 등)를 그대로 로그에 남기지 않는다(요청 헤더에 API 키 포함). 비밀번호·토큰·API 키는 로그에 남기지 않는다. 개인정보는 로그에서 가릴 필요가 없다. | — | 확정 (사용자 결정 2026-10-12) · 위반: P44 BJJ-414 (최우선) · BJJ-415는 불필요 |
 | 개인정보-03 | 오류 응답은 RFC 9457 형식과 등록된 공개 코드만. 서버 내부 오류는 `UNKNOWN` + 요청 번호만 노출. | `docs/error-management.md`, `packages/shared/src/errors/problem-details.ts` | 확정 |
 | 개인정보-04 | 시크릿·`.env*`는 커밋·출력 금지. | 플레이북 공통 계약 | 확정 |
