@@ -154,6 +154,8 @@ const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
 const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정을 확인해 주세요.";
+const RESEND_TARGET_CHANGED_REASON = "발송 대상 일정이 변경되어 재전송하지 않았습니다";
+const RESEND_NEWER_SIBLING_REASON = "새 예약 메시지가 있어 재전송하지 않았습니다";
 const CATCH_UP_PREDECESSOR_PENDING_REASON = "보충 발송 이전 순위 job이 아직 끝나지 않음";
 const MS_PER_MINUTE = 60 * 1000;
 // The authorization fence only validates the current claim/source and commits
@@ -3054,6 +3056,10 @@ export class MessageTriggerService {
         }
 
         job.markProcessing(claimToken);
+        if (resend && automaticJob && job.ruleId !== SERVICE_RECORD_LINK_RULE_ID
+            && !job.payload.agentAutomationSeal) {
+            if (!(await this.rebuildNeedsSetupJobForResend(job))) return true;
+        }
         // Keep narrow legacy test doubles and third-party in-process callers
         // on the established one-step path until they provide the new
         // preparation seam. The production MessageTriggerDeliveryService
@@ -3137,6 +3143,62 @@ export class MessageTriggerService {
         job.markDispatchAuthorized();
         if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored") return true;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+        return true;
+    }
+
+    private async rebuildNeedsSetupJobForResend(job: MessageTriggerJobEntity): Promise<boolean> {
+        const rule = job.branchId
+            ? await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId)
+            : null;
+        const now = new Date(job.payload.catchUp?.originalScheduledFor ?? job.scheduledFor);
+        let recipe: ReturnType<typeof buildClientMessageRecipe> = null;
+        if (rule && job.branchId && job.clientId !== null) {
+            if (job.employeeScheduleId === null) {
+                const client = await this.readClientAutomationSource(job.branchId, job.clientId);
+                if (client) recipe = buildClientMessageRecipe(rule, client, now);
+            } else {
+                const schedule = (await this.readClientAutomationSchedules(job.branchId, job.clientId))
+                    .find((source) => source.id === job.employeeScheduleId);
+                if (schedule) recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, now);
+            }
+        }
+        const identityMatches = recipe && (job.payload.catchUp
+            ? recipe.scheduledFor.toISOString() === job.payload.catchUp.originalScheduledFor
+            : recipe.dedupeKey === job.dedupeKey && (job.employeeScheduleId !== null
+                || recipe.scheduledFor.getTime() === job.scheduledFor.getTime()));
+        if (!recipe || !identityMatches) {
+            job.cancel(RESEND_TARGET_CHANGED_REASON);
+            await this.persistTriggerJobStatus(job, "persist changed resend target");
+            return false;
+        }
+        if (job.employeeScheduleId === null && job.branchId && job.clientId !== null) {
+            const siblings = await this.jobRepository.findForClientAutomationReview(job.branchId, job.clientId, [job.ruleId]);
+            if (siblings.some((sibling) => sibling.id !== job.id
+                && sibling.employeeScheduleId === null && sibling.recipientType === job.recipientType
+                && ["pending", "processing", "dispatching", "sent"].includes(sibling.status)
+                && sibling.createdAt.getTime() > job.createdAt.getTime())) {
+                job.cancel(RESEND_NEWER_SIBLING_REASON);
+                await this.persistTriggerJobStatus(job, "persist newer resend sibling");
+                return false;
+            }
+        }
+        job.payload = {
+            ...recipe.payload,
+            ...(job.payload.catchUp ? { catchUp: job.payload.catchUp } : {}),
+            ...(job.payload.taskAutomationReference ? { taskAutomationReference: job.payload.taskAutomationReference } : {}),
+        };
+        job.recipientPhone = recipe.recipientPhone ?? null;
+        // The gate binds the stored digest, so persist before either delivery path.
+        // Preserve processing + cancelReason as the durable resend recovery mark.
+        const setupReason = job.cancelReason;
+        try {
+            await this.jobRepository.update(job);
+        } catch {
+            // needs_setup carries its existing reason through the resend claim.
+            job.markNeedsSetup(setupReason!);
+            await this.persistTriggerJobStatus(job, "persist resend rebuild setup failure");
+            return false;
+        }
         return true;
     }
 
