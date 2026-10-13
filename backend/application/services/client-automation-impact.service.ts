@@ -273,7 +273,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                 noteUnavailable("source-unavailable"); complete = false; continue;
             }
             const terminalDedupe = newRecipe && scopeJobs.some((job) => job.dedupeKey === newRecipe.dedupeKey
-                && (["sent", "failed"].includes(job.status) || job.canceledByUser));
+                && (["sent", "failed", "needs_setup"].includes(job.status) || job.canceledByUser));
             const eligible = newRecipe && !terminalDedupe && (write.kind === "create"
                 ? !shouldSkipClientPreStartCatchUp(rule, after, now) && (settings.pastTriggerEnabled || newRecipe.scheduledFor > now)
                 : !processingImmediate && mutable.some((job) => job.status === "pending") && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE
@@ -396,7 +396,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                         continue;
                     }
                     const terminalDedupe = previousJobs.some((job) => job.dedupeKey === recipe.dedupeKey
-                        && (["sent", "failed"].includes(job.status) || job.canceledByUser));
+                        && (["sent", "failed", "needs_setup"].includes(job.status) || job.canceledByUser));
                     const eligible = !terminalDedupe && (settings.pastTriggerEnabled || recipe.scheduledFor > now);
                     if (!eligible && mutable.length === 0) continue;
                     const change: AgentAutomationEffect["change"] = !eligible ? "cancel" : mutable.length ? "refresh" : "create";

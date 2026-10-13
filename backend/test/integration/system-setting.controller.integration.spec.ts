@@ -18,7 +18,6 @@ import {
     SMS_DELIVERY_MAX_ATTEMPTS,
     SMS_DELIVERY_RETRY_DELAY_MS,
     TRIGGER_DISPATCH_CRON,
-    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
     TRIGGER_JOB_RETRY_DELAY_MS,
@@ -243,8 +242,8 @@ describe("SystemSettingController (Integration)", () => {
                 .toBe(`${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`);
             expect(getRowValue(response, "trigger-job-retry", "max-attempts"))
                 .toBe(`최대 ${TRIGGER_JOB_MAX_ATTEMPTS}회`);
-            expect(getRowValue(response, "trigger-job-retry", "config-retry-delay"))
-                .toBe(`${formatMinutes(TRIGGER_JOB_CONFIG_RETRY_DELAY_MS)} 후`);
+            expect(getPolicy(response, "trigger-job-retry").rows.some((row) => row.id === "config-retry-delay"))
+                .toBe(false);
             expect(getRowValue(response, "trigger-job-retry", "processing-reclaim"))
                 .toBe(`${formatMinutes(TRIGGER_JOB_PROCESSING_RECLAIM_MS)} 후`);
             expect(getRowValue(response, "sms-retry", "max-attempts"))

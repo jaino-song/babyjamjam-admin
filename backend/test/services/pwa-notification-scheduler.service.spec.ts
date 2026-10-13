@@ -229,6 +229,21 @@ describe("PwaNotificationSchedulerService", () => {
         ]);
     });
 
+    it("notifies managers about needs_setup with its reason", async () => {
+        messageTriggerJobRepository.findRecentUndeliveredByBranch.mockResolvedValue([{
+            id: "job-setup", status: "needs_setup", recipientType: MessageTriggerRecipientType.CLIENT,
+            payload: { recipientName: "김민지" }, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            cancelReason: "필수 정보 누락 (name)",
+        }]);
+        messageTriggerJobRepository.countRecentUndeliveredByBranch.mockResolvedValue(1);
+        await service.sendDailySummaryNotifications();
+        const section = digestCall()[2].find((item) => item.key === "undeliveredMessages");
+        expect(section?.details?.[0]).toContain("필수 정보 누락 (name)");
+        expect(section?.notificationItems?.[0]).toMatchObject({
+            title: "메시지 설정 필요", data: { jobId: "job-setup" },
+        });
+    });
+
     it("should not send anything when every query comes back empty", async () => {
         clientRepository.findStartingWithinDays.mockResolvedValue([]);
         clientRepository.findEndingWithinDays.mockResolvedValue([]);

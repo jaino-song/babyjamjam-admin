@@ -4,7 +4,6 @@ import {
     SMS_DELIVERY_MAX_ATTEMPTS,
     SMS_DELIVERY_RETRY_DELAY_MS,
     TRIGGER_DISPATCH_CRON,
-    TRIGGER_JOB_CONFIG_RETRY_DELAY_MS,
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
     TRIGGER_JOB_RETRY_DELAY_MS,
@@ -156,7 +155,7 @@ export class MessageAutomationPoliciesResponseDto {
             {
                 id: "trigger-job-retry",
                 title: "자동 전송 재시도",
-                description: "자동 전송 처리 중 일시 오류가 발생하면 정해진 간격으로 재시도하고, 발신 프로필 같은 설정 미비는 별도 간격으로 다시 확인합니다.",
+                description: "자동 전송 처리 중 일시 오류가 발생하면 정해진 간격으로 재시도합니다. 설정 미비는 설정 필요 상태로 남겨 관리자가 확인합니다.",
                 active: policyActivations["trigger-job-retry"],
                 requiresApproval: true,
                 rows: [
@@ -169,11 +168,6 @@ export class MessageAutomationPoliciesResponseDto {
                         id: "max-attempts",
                         label: "최대 시도 횟수",
                         value: `최대 ${TRIGGER_JOB_MAX_ATTEMPTS}회`,
-                    },
-                    {
-                        id: "config-retry-delay",
-                        label: "설정 미비 재확인",
-                        value: `${formatMinutes(TRIGGER_JOB_CONFIG_RETRY_DELAY_MS)} 후`,
                     },
                     {
                         id: "processing-reclaim",
