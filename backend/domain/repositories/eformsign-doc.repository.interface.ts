@@ -296,6 +296,8 @@ export interface IEformsignDocRepository {
      * simply absent from the map.
      */
     findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>>;
+
+    findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>>;
     /** All provider-review-stage (070) contracts, unscoped — the nightly auto-finalize pool and the dashboard card share this. */
     findReviewStageContracts(): Promise<ReviewStageContract[]>;
     /**

@@ -68,16 +68,41 @@ describe("SbEformsignDocRepository", () => {
 
     let eformsignDocModel: ReturnType<typeof createMockPrismaEformsignDoc>;
     let repository: SbEformsignDocRepository;
+    let userModel: { findMany: jest.Mock };
 
     beforeEach(() => {
         eformsignDocModel = createMockPrismaEformsignDoc();
+        userModel = { findMany: jest.fn() };
         repository = new SbEformsignDocRepository({
             eformsign_doc: eformsignDocModel,
+            user: userModel,
         } as unknown as PrismaService);
     });
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    it("findVoidedByNames queries distinct ids once and selects only id and name", async () => {
+        userModel.findMany.mockResolvedValue([
+            { id: "actor-1", name: "담당자" },
+            { id: "actor-2", name: null },
+        ]);
+
+        const names = await repository.findVoidedByNames(["actor-1", "actor-1", "actor-2", "missing"]);
+
+        expect(userModel.findMany).toHaveBeenCalledTimes(1);
+        expect(userModel.findMany).toHaveBeenCalledWith({
+            where: { id: { in: ["actor-1", "actor-2", "missing"] } },
+            select: { id: true, name: true },
+        });
+        expect(names).toEqual(new Map([["actor-1", "담당자"], ["actor-2", null]]));
+        expect(names.has("missing")).toBe(false);
+    });
+
+    it("findVoidedByNames returns an empty map without querying for empty input", async () => {
+        await expect(repository.findVoidedByNames([])).resolves.toEqual(new Map());
+        expect(userModel.findMany).not.toHaveBeenCalled();
     });
 
     it.each([1, 0])("markVoided returns count > 0 (%s) with the exact branch and audit fence", async (count) => {

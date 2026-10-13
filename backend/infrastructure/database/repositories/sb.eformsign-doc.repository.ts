@@ -488,6 +488,16 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         });
     }
 
+    async findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>> {
+        if (userIds.length === 0) return new Map();
+
+        const users = await this.prismaService.user.findMany({
+            where: { id: { in: [...new Set(userIds)] } },
+            select: { id: true, name: true },
+        });
+        return new Map(users.map((user) => [user.id, user.name]));
+    }
+
     async findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>> {
         if (documentIds.length === 0) return new Map();
 

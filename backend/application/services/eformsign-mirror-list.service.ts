@@ -32,7 +32,6 @@ import {
 } from "domain/repositories/eformsign-doc.repository.interface";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
-import { PrismaService } from "infrastructure/database/prisma.service";
 
 export interface MirrorListQuery {
     branchId: string;
@@ -70,7 +69,6 @@ export class EformsignMirrorListService {
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
         private readonly holidayCalendar: HolidayCalendarService,
-        private readonly prisma: PrismaService,
     ) {}
 
     /**
@@ -171,16 +169,13 @@ export class EformsignMirrorListService {
         const listDoc = eformsignListDocFromMirror(stored.document);
         const withEndDate = (await this.attachContractEndDates([listDoc]))[0] ?? listDoc;
         const contractEndDate = withEndDate["contract_end_date"];
-        const actor = stored.document.voidedBy
-            ? await this.prisma.user.findUnique({
-                where: { id: stored.document.voidedBy },
-                select: { name: true },
-            })
-            : null;
+        const actorNames = stored.document.voidedBy
+            ? await this.eformsignDocRepository.findVoidedByNames([stored.document.voidedBy])
+            : new Map<string, string | null>();
         return {
             display_status: resolveEformsignDocDisplayStatus(withEndDate, new Date(), calendar),
             voided_at: stored.document.voidedAt?.toISOString() ?? null,
-            voided_by_name: actor?.name ?? null,
+            voided_by_name: stored.document.voidedBy ? actorNames.get(stored.document.voidedBy) ?? null : null,
             ...(typeof contractEndDate === "string" ? { contract_end_date: contractEndDate } : {}),
         };
     }
