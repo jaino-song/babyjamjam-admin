@@ -1264,10 +1264,10 @@ describeWithDatabase("manual send vs dispatcher claim on real PostgreSQL", () =>
             });
             const service = Object.create(MessageTriggerService.prototype) as {
                 jobRepository: SbMessageTriggerJobRepository;
-                refreshPendingImmediateClientJobs: (rules: unknown[], clientId: number, client: unknown) => Promise<void>;
+                refreshPendingImmediateClientJobs: (branchId: string, rules: unknown[], clientId: number, client: unknown) => Promise<void>;
             };
             service.jobRepository = racing;
-            await service.refreshPendingImmediateClientJobs([{ id: RULE }], 20, {});
+            await service.refreshPendingImmediateClientJobs(BRANCH, [{ id: RULE }], 20, {});
         };
 
         it("the claim token does not change from processing to dispatching, so the stale entity's token still matches a dispatching row", async () => {

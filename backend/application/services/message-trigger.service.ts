@@ -3172,11 +3172,14 @@ export class MessageTriggerService {
             return false;
         }
         if (job.employeeScheduleId === null && job.branchId && job.clientId !== null) {
-            const siblings = await this.jobRepository.findForClientAutomationReview(job.branchId, job.clientId, [job.ruleId]);
-            if (siblings.some((sibling) => sibling.id !== job.id
-                && sibling.employeeScheduleId === null && sibling.recipientType === job.recipientType
-                && ["pending", "processing", "dispatching", "sent"].includes(sibling.status)
-                && sibling.createdAt.getTime() > job.createdAt.getTime())) {
+            if (await this.jobRepository.hasNewerClientRuleSibling({
+                branchId: job.branchId,
+                clientId: job.clientId,
+                ruleId: job.ruleId,
+                recipientType: job.recipientType,
+                excludeJobId: job.id,
+                createdAfter: job.createdAt,
+            })) {
                 job.cancel(RESEND_NEWER_SIBLING_REASON);
                 await this.persistTriggerJobStatus(job, "persist newer resend sibling");
                 return false;

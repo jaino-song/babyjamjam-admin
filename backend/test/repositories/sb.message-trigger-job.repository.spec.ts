@@ -494,6 +494,36 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
+    it("hasNewerClientRuleSibling asks the database the complete uncapped question and selects only the id", async () => {
+        messageTriggerJobModel.findFirst.mockResolvedValueOnce({ id: "job-2" }).mockResolvedValueOnce(null);
+        const params = {
+            branchId: "branch-1",
+            clientId: 7,
+            ruleId: "rule-1",
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            excludeJobId: "job-1",
+            createdAfter: now,
+        };
+
+        await expect(repository.hasNewerClientRuleSibling(params)).resolves.toBe(true);
+        await expect(repository.hasNewerClientRuleSibling(params)).resolves.toBe(false);
+        expect(messageTriggerJobModel.findFirst).toHaveBeenCalledTimes(2);
+        expect(messageTriggerJobModel.findFirst).toHaveBeenCalledWith({
+            where: { ...ordinaryAutomationJobWhere(),
+                branchId: "branch-1",
+                clientId: 7,
+                ruleId: "rule-1",
+                id: { not: "job-1" },
+                employeeScheduleId: null,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                status: { in: ["pending", "processing", "dispatching", "sent"] },
+                createdAt: { gt: now },
+            },
+            select: { id: true },
+        });
+        expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+    });
+
     it("findDuePendingSystemScope filters out jobs with future nextAttemptAt and includes null/past", async () => {
         messageTriggerJobModel.findMany.mockResolvedValue([]);
 

@@ -766,6 +766,30 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return row !== null;
     }
 
+    async hasNewerClientRuleSibling(params: {
+        branchId: string;
+        clientId: number;
+        ruleId: string;
+        recipientType: MessageTriggerRecipientType;
+        excludeJobId: string;
+        createdAfter: Date;
+    }): Promise<boolean> {
+        const row = await this.prisma.message_trigger_job.findFirst({
+            where: { ...ordinaryAutomationJobWhere(),
+                branchId: params.branchId,
+                clientId: params.clientId,
+                ruleId: params.ruleId,
+                id: { not: params.excludeJobId },
+                employeeScheduleId: null,
+                recipientType: params.recipientType,
+                status: { in: ["pending", "processing", "dispatching", "sent"] },
+                createdAt: { gt: params.createdAfter },
+            },
+            select: { id: true },
+        });
+        return row !== null;
+    }
+
     async findPendingByRuleIdsAndClientId(
         ruleIds: string[],
         clientId: number,
