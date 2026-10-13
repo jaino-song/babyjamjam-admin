@@ -83,6 +83,33 @@ describe("SbEformsignDocRepository", () => {
         jest.clearAllMocks();
     });
 
+    it("findVoidCandidate uses the exact branch-scoped projection and includes purge pending", async () => {
+        const row = { documentId: "doc-1", permanentPurgeRequestedAt: new Date() };
+        eformsignDocModel.findFirst.mockResolvedValue(row);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).resolves.toBe(row);
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledWith({
+            where: { documentId: "doc-1", branchId: "branch-1" },
+            select: {
+                documentId: true, clientId: true, documentKind: true, serviceRecordCaseId: true,
+                statusType: true, stepType: true, stepName: true, voidedAt: true, permanentPurgeRequestedAt: true,
+            },
+        });
+    });
+    it.each(["branch-2", null])("findVoidCandidate cannot return a row owned by %s", async (branchId) => {
+        const row = { documentId: "doc-1", branchId };
+        eformsignDocModel.findFirst.mockImplementation(async ({ where }) =>
+            row.documentId === where.documentId && row.branchId === where.branchId ? row : null);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).resolves.toBeNull();
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledTimes(1);
+        expect(eformsignDocModel.findUnique).not.toHaveBeenCalled();
+    });
+    it("findVoidCandidate requires voided_at without a deploy-window fallback", async () => {
+        const error = Object.assign(new Error("column voided_at missing"), { code: "P2022" });
+        eformsignDocModel.findFirst.mockRejectedValue(error);
+        await expect(repository.findVoidCandidate("branch-1", "doc-1")).rejects.toBe(error);
+        expect(eformsignDocModel.findFirst).toHaveBeenCalledTimes(1);
+    });
+
     it("findVoidedByNames queries distinct ids once and selects only id and name", async () => {
         userModel.findMany.mockResolvedValue([
             { id: "actor-1", name: "담당자" },

@@ -1,4 +1,6 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
+import { isDefinitiveVendorRefusal, successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
 import { AreaTemplateService } from "../../application/services/area-template.service";
@@ -247,6 +249,7 @@ export class EformsignController {
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly rasterizer: PdfPageRasterizerService,
         private readonly holidayCalendar: HolidayCalendarService,
+        private readonly voidContractDocumentUsecase: VoidContractDocumentUsecase,
     ) { }
 
     /**
@@ -818,6 +821,20 @@ export class EformsignController {
         }
     }
 
+    @Post("documents/:documentId/void")
+    @HttpCode(200)
+    async voidDocument(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Param("documentId") documentId: string,
+    ) {
+        if (!tenant.userId) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        const allowed = await this.filterDocumentsByBranch(
+            tenant.branchId ?? "", [{ id: documentId }], { includePermanentPurgePending: true },
+        );
+        if (allowed.length === 0) throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+        return this.voidContractDocumentUsecase.execute({ ...tenant, userId: tenant.userId }, documentId);
+    }
+
     /**
      * Cancel a contract that a re-issue replaced. Unlike a delete, this never
      * touches a signed or otherwise finished contract, and it refuses until the
@@ -1221,42 +1238,6 @@ export class EformsignController {
             throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
         }
     }
-}
-
-/**
- * A vendor HTTP refusal that settles the outcome: 4xx other than a request timeout, rate
- * limit or confirmed document absence. Everything else (timeouts, network errors, 5xx,
- * absence) is ambiguous, and the generation-fenced purge intent must be kept for
- * reconciliation, which can verify the vendor state before purging.
- */
-function isDefinitiveVendorRefusal(error: unknown): boolean {
-    if (!(error instanceof EformsignApiError)) return false;
-    const { status } = error;
-    return status >= 400
-        && status < 500
-        // A confirmed absence may mean the document is already gone at the vendor,
-        // so there is nothing left to cancel. Retain the intent until reconciliation can
-        // purge the local detail and PDFs safely.
-        && !isEformsignDocumentAbsentError(error)
-        && ![408, 429].includes(status);
-}
-
-function successfulDeletedDocumentIds(result: unknown): string[] {
-    if (typeof result !== "object" || result === null) {
-        return [];
-    }
-    const resultBody = (result as Record<string, unknown>)["result"];
-    if (typeof resultBody !== "object" || resultBody === null) {
-        return [];
-    }
-    const successResult = (resultBody as Record<string, unknown>)["success_result"];
-    if (!Array.isArray(successResult)) {
-        return [];
-    }
-    return successResult.filter(
-        (documentId): documentId is string =>
-            typeof documentId === "string" && documentId.trim().length > 0,
-    );
 }
 
 function failedDeletedDocumentIds(result: unknown, requestedDocumentIds: string[]): string[] {

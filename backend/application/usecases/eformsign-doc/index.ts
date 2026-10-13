@@ -33,3 +33,4 @@ export * from "./create-and-send-contract.usecase";
 // Headless dispatch (BJJ-90)
 export * from "./dispatch-document-headless.usecase";
 export * from "./finalize-document-headless.usecase";
+export * from "./void-contract-document.usecase";
