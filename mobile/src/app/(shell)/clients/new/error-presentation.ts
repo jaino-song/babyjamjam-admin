@@ -2,6 +2,7 @@ import { resolveProblemPresentation } from "@babyjamjam/shared";
 import type { ProblemError } from "@babyjamjam/shared/errors/problem-details";
 
 import { t, type Locale } from "@/lib/i18n/translations";
+import { SERVICE_STATUS_BOOKING_REFUSAL } from "@/lib/client/service-status-form-options";
 
 export const CLIENT_WIZARD_ERROR_SUMMARY_ID = "mobile_clients-new_screen_root_error-summary";
 
@@ -164,7 +165,8 @@ export function presentClientWizardErrors(
   return errors.map((problemError, index) => {
     const fieldId = getClientWizardFieldId(problemError);
     return {
-      detail: problemError.detail,
+      // 고객-04: the server's catalog text does not say what to do; the form shows its own sentence.
+      detail: fieldId === "serviceStatus" ? SERVICE_STATUS_BOOKING_REFUSAL : problemError.detail,
       fieldId,
       label: fieldId ? getClientWizardFieldLabel(fieldId, locale) : unmappedField,
       pointer: problemError.pointer || "/",

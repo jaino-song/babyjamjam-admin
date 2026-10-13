@@ -65,6 +65,11 @@ export interface Client {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
+    /**
+     * When an admin pressed [예약 확정] (rule 고객-04), ISO string; null while the client is still
+     * 예약 전. Until it is set, `serviceStatus` does not follow the service dates.
+     */
+    bookingConfirmedAt: string | null;
     eDocId: string | null;
     areaId?: string | null;
     hasSigned: boolean;
