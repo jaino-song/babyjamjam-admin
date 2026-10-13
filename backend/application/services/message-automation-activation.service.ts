@@ -86,6 +86,21 @@ export interface AutomaticRetryRulePolicy extends RuleSendPolicy {
     clientId: number | null;
 }
 
+/**
+ * Whether a rejected automatic send may be scheduled for another attempt, from
+ * the rule's CURRENT row: `on`, `off`, or `rule-missing` (the row is gone; only
+ * reachable where the log's job link was set null, treated as `on`). A failed
+ * READ is none of these: callers must not invent a permission for it.
+ */
+export type RuleRetryPermission = "on" | "off" | "rule-missing";
+
+export function resolveRuleRetryPermission(
+    rule: { targetClientStatus?: unknown; retryOnFailure?: unknown } | null | undefined,
+): RuleRetryPermission {
+    if (!rule) return "rule-missing";
+    return ruleSendPolicyFrom(rule).retryOnFailure ? "on" : "off";
+}
+
 interface ActivationOptions {
     actor?: AdminAuditActor;
 }
@@ -297,6 +312,20 @@ export class MessageAutomationActivationService {
             }
             return after;
         });
+    }
+
+    /**
+     * The rule's CURRENT 실패 시 재전송 for a job, read fresh (no lock) when a
+     * provider rejection is finalized, after the admission-time policy may have
+     * changed. Rejects when the read fails; never answers on a failure.
+     */
+    async readJobRuleRetryPermission(branchId: string, triggerJobId: string): Promise<RuleRetryPermission> {
+        const job = await this.prisma.message_trigger_job.findUnique({
+            where: { id: triggerJobId },
+            select: { branchId: true, rule: { select: { targetClientStatus: true, retryOnFailure: true } } },
+        });
+        if (!job || job.branchId !== branchId) return "rule-missing";
+        return resolveRuleRetryPermission(job.rule);
     }
 
     /**

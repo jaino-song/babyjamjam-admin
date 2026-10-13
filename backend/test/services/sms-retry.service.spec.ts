@@ -1116,6 +1116,8 @@ describe("SmsRetryService", () => {
                 runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (
                     _branch: string, _job: string, work: (tx: unknown, policy: Policy | undefined) => Promise<unknown>,
                 ) => ({ allowed: true, applies: true, value: await work(transaction, policy) })),
+                // The rule's CURRENT value when a rejection is finalized (defaults to the admission value).
+                readJobRuleRetryPermission: jest.fn().mockResolvedValue(policy?.retryOnFailure === false ? "off" : "on"),
             };
             service = new SmsRetryService(
                 logRepository as unknown as IMessageLogRepository,
@@ -1124,7 +1126,7 @@ describe("SmsRetryService", () => {
                 undefined,
                 activation as never,
             );
-            return { source, transaction, clientFindFirst };
+            return { source, transaction, clientFindFirst, activation };
         };
 
         it("retry on: a transient rejection of the automatic retry is rescheduled as today", async () => {
@@ -1136,6 +1138,48 @@ describe("SmsRetryService", () => {
             expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
             expect(retry).toMatchObject({ status: "failed", attempts: 2 });
             expect(retry?.nextRetryAt).toEqual(new Date(300_000));
+        });
+
+        it("retry switched off while the provider request is in flight: the rejection is final (nextRetryAt null)", async () => {
+            const { source, activation } = harness({ targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
+            aligoService.sendSms.mockImplementation(async () => {
+                activation.readJobRuleRetryPermission.mockResolvedValue("off");
+                return transientRejection;
+            });
+
+            const retry = await service.retry(source, "automatic");
+
+            expect(activation.readJobRuleRetryPermission).toHaveBeenCalledWith(source.branchId, "job-rule-policy");
+            expect(activation.readJobRuleRetryPermission.mock.invocationCallOrder[0]!)
+                .toBeGreaterThan(aligoService.sendSms.mock.invocationCallOrder[0]!);
+            expect(retry).toMatchObject({ status: "failed", attempts: 2, nextRetryAt: null, providerAcceptanceState: "rejected" });
+            expect(retry?.variables["retrySafety"]).toBe("provider-rejected");
+        });
+
+        it("rule row gone at finalization (missing) is treated as on: the rejection is still rescheduled", async () => {
+            const { source, activation } = harness({ targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
+            activation.readJobRuleRetryPermission.mockResolvedValue("rule-missing");
+            aligoService.sendSms.mockResolvedValue(transientRejection);
+
+            const retry = await service.retry(source, "automatic");
+
+            expect(retry?.nextRetryAt).toEqual(new Date(300_000));
+        });
+
+        it("a failed current-policy read at finalization is not permission: final, warned without content or phone numbers", async () => {
+            const { source, activation } = harness({ targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
+            activation.readJobRuleRetryPermission.mockRejectedValue(new Error("db down 01012345678 안녕하세요"));
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            aligoService.sendSms.mockResolvedValue(transientRejection);
+
+            const retry = await service.retry(source, "automatic");
+
+            expect(retry).toMatchObject({ status: "failed", attempts: 2, nextRetryAt: null, providerAcceptanceState: "rejected" });
+            const logged = warn.mock.calls.map((call) => String(call[0])).join("\n");
+            expect(logged).toContain("the rejection is final");
+            expect(logged).not.toContain("01012345678");
+            expect(logged).not.toContain("안녕하세요");
+            warn.mockRestore();
         });
 
         it("retry off (toggled after the retry was scheduled): the pending automatic retry is superseded, nothing is sent", async () => {

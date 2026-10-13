@@ -486,6 +486,11 @@ export class SmsRetryService {
                             ...providerAttempt.variables,
                             retrySafety: "permanent-provider-rejected",
                         };
+                    } else if (providerAttempt.nextRetryAt && !(await this.ruleStillPermitsAutomaticRetry(sourceLog))) {
+                        // 규칙 메시지-04: the toggle was read at admission, before the
+                        // provider call. Decide the next attempt from the rule's
+                        // CURRENT value, as for a rule that was off at first send.
+                        providerAttempt.nextRetryAt = null;
                     }
                 }
                 await this.logRepository.update(providerAttempt);
@@ -550,6 +555,28 @@ export class SmsRetryService {
                 `[Retry] SMS result uncertain for log ${providerAttempt.id}; automatic retry stopped: ${error}`,
             );
             return providerAttempt;
+        }
+    }
+
+    /**
+     * Whether the rule's CURRENT 실패 시 재전송 still allows scheduling another
+     * automatic attempt after a provider rejection (the provider call has
+     * already happened). Off means no; a missing rule row means yes. A failed
+     * read is not permission: the rejection is final. Never throws, so the
+     * caller's outcome handling cannot misread a lookup failure as uncertain.
+     */
+    private async ruleStillPermitsAutomaticRetry(sourceLog: MessageLogEntity): Promise<boolean> {
+        if (!this.messageAutomationActivationService || !sourceLog.branchId || !sourceLog.triggerJobId) return true;
+        try {
+            return await this.messageAutomationActivationService
+                .readJobRuleRetryPermission(sourceLog.branchId, sourceLog.triggerJobId) !== "off";
+        } catch (error) {
+            this.logger.warn(
+                `[Retry] Could not read the current retry policy for log ${sourceLog.id}; the rejection is final: ${
+                    error instanceof Error ? error.name : "unknown error"
+                }`,
+            );
+            return false;
         }
     }
 
@@ -715,9 +742,9 @@ export class SmsRetryService {
         // Trigger-delivery retries retain their existing bounded automatic
         // policy. Their provider-rejected marker remains distinct from the
         // manual marker above so a scheduler tick can continue that path.
-        // 규칙 메시지-04: this attempt was admitted by the retry boundary with the
-        // rule's 실패 시 재전송 on. If the admin switches it off afterwards, the
-        // next scheduler pick is superseded at that boundary before any send.
+        // 규칙 메시지-04: this attempt was admitted with the rule's 실패 시 재전송
+        // on; sendRetryAttempt re-checks the rule's CURRENT value before keeping
+        // this schedule, and the next pick is superseded at the boundary too.
         log.nextRetryAt = log.canRetry()
             ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
             : null;

@@ -31,7 +31,7 @@ import {
     MESSAGE_TRIGGER_RULE_REPOSITORY,
     IMessageTriggerRuleRepository,
 } from "domain/repositories/message-trigger-rule.repository.interface";
-import { ruleSendPolicyFrom } from "application/policies/message-trigger-target-client-status.policy";
+import { resolveRuleRetryPermission } from "application/services/message-automation-activation.service";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -213,21 +213,37 @@ export class SmsTriggerDeliveryService {
     ) {}
 
     /**
-     * 규칙 메시지-04: the rule's CURRENT 실패 시 재전송. Read before the provider
-     * call (a read failing after the call would be misread as an uncertain
-     * outcome). A missing rule, a missing repository or a failed read all mean
-     * "on", i.e. today's behaviour.
+     * 규칙 메시지-04: the rule's CURRENT 실패 시 재전송, read BEFORE any provider
+     * bookkeeping starts. The rule being off means a rejection is final; a
+     * missing rule row (or no repository) means on. A failed read is neither:
+     * nothing has been sent yet, so the job is deferred as a transient
+     * infrastructure failure instead of guessing a permission.
      */
-    private async readRuleRetryOnFailure(job: MessageTriggerJobEntity): Promise<boolean> {
+    private async readRuleRetryOnFailureOrDefer(job: MessageTriggerJobEntity): Promise<boolean> {
         if (!this.ruleRepository || !job.branchId) return true;
         try {
             const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
-            return ruleSendPolicyFrom(rule).retryOnFailure;
+            return resolveRuleRetryPermission(rule) !== "off";
         } catch (error) {
             this.logger.warn(
-                `Failed to read retryOnFailure for rule ${job.ruleId}; keeping automatic retry on: ${this.formatErrorMessage(error)}`,
+                `Failed to read retryOnFailure for rule ${job.ruleId}; deferring job ${job.id}: ${this.formatErrorMessage(error)}`,
             );
-            return true;
+            throw new TriggerJobDeferredError("transient", "Rule retry policy could not be read");
+        }
+    }
+
+    /**
+     * Same read for a job whose dispatch is already committed (the prepared
+     * path): deferring would re-queue a `dispatching` job for a second send, so a
+     * failed read here is final instead - the provider is still called once, but
+     * a rejection schedules nothing.
+     */
+    private async readRuleRetryOnFailureForDispatchedJob(job: MessageTriggerJobEntity): Promise<boolean> {
+        try {
+            return await this.readRuleRetryOnFailureOrDefer(job);
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) return false;
+            throw error;
         }
     }
 
@@ -445,6 +461,9 @@ export class SmsTriggerDeliveryService {
         if (!config) {
             return null;
         }
+        // Probe only: an unreadable policy defers the job here, before the
+        // irreversible dispatch marker. sendPreparedJob reads it again, fresh.
+        await this.readRuleRetryOnFailureOrDefer(job);
 
         const previousVariables = { ...job.payload.templateVariables };
         const previousButtonUrl = job.payload.buttonUrl;
@@ -548,6 +567,11 @@ export class SmsTriggerDeliveryService {
         preparedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<boolean> {
         const payload = job.payload;
+        // Before any attempt row or provider bookkeeping. A prepared send has
+        // already crossed the irreversible dispatch marker and cannot be deferred.
+        const retryOnFailure = preparedSnapshot
+            ? await this.readRuleRetryOnFailureForDispatchedJob(job)
+            : await this.readRuleRetryOnFailureOrDefer(job);
         const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
@@ -587,8 +611,6 @@ export class SmsTriggerDeliveryService {
         const attempt = (this.acceptanceService
             ? await this.acceptanceService.beginProviderCall(persistedAttempt)
             : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
-
-        const retryOnFailure = await this.readRuleRetryOnFailure(job);
 
         try {
             const result = await this.aligoService.sendSms({
