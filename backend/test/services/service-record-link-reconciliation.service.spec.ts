@@ -116,6 +116,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
         const where = prisma.message_trigger_job.findMany.mock.calls[0]?.[0].where;
         const candidateReasons: string[] = where.OR[1].cancelReason.in;
         const blockerClauses = where.employeeSchedule.is.messageTriggerJobs.none.OR;
+        expect(blockerClauses[0].status.in).toContain("needs_setup");
         const canceledBlocker = blockerClauses.find(
             (clause: { status: string }) => clause.status === "canceled",
         );

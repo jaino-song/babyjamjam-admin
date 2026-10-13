@@ -445,9 +445,10 @@ describe("SmsTriggerDeliveryService", () => {
             logRepository as unknown as IMessageLogRepository,
         undefined, undefined, createLegacyAutomationDeliveryGate());
 
-        const error = await captureError(service.sendJob(createServiceInfoJob()));
-
-        expect(error).toBeInstanceOf(BranchSystemTemplateSnapshotError);
+        const job = createServiceInfoJob();
+        await expect(service.sendJob(job)).resolves.toBe(false);
+        expect(job.status).toBe("needs_setup");
+        expect(job.cancelReason).toBe("템플릿을 찾을 수 없습니다");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
     });
@@ -1196,6 +1197,58 @@ describe("SMS system-template variable coverage", () => {
         return { aligoService, logRepository, service };
     };
 
+    it.each(["sendJob", "prepareJob"] as const)("%s marks automatic missing values needs_setup and retains the claim fence", async (method) => {
+        const { aligoService, logRepository, service } = createDeliveryHarness();
+        const job = createJob(MessageTriggerTemplateKey.SERVICE_INFO, MessageTriggerRecipientType.CLIENT, { ...allTemplateVariables, name: "" });
+        job.markProcessing("claim-setup");
+        job.nextAttemptAt = new Date();
+        await service[method](job);
+        expect(job.status).toBe("needs_setup");
+        expect(job.cancelReason).toBe("필수 정보 누락 (name)");
+        expect(job.claimToken).toBe("claim-setup");
+        expect(job.nextAttemptAt).toBeNull();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.save).not.toHaveBeenCalled();
+    });
+
+    it.each(["sendJob", "prepareJob"] as const)("%s preserves manual and agent-owned missing-value cancellations", async (method) => {
+        for (const ownership of [
+            { ruleId: "system:service_record_link", dedupeKey: "system:service_record_link:schedule:77:primary:manual:00000000-0000-0000-0000-000000000001" },
+            { ruleId: "agent-sms:scheduled", dedupeKey: "agent-scheduled-job" },
+        ]) {
+            const { aligoService, logRepository, service } = createDeliveryHarness();
+            const job = createJob(MessageTriggerTemplateKey.SERVICE_RECORD_LINK, MessageTriggerRecipientType.PRIMARY_EMPLOYEE, { ...allTemplateVariables, serviceRecordUrl: "" });
+            Object.assign(job, ownership);
+            job.payload.buttonUrl = "";
+            await service[method](job);
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toContain("메시지 발송 건너뜀: 필수 정보 누락");
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(logRepository.save).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(["sendJob", "prepareJob"] as const)("%s handles an unresolved frozen template only for automatic jobs", async (method) => {
+        for (const manual of [false, true]) {
+            const { aligoService, logRepository, service } = createDeliveryHarness();
+            const job = createJob(MessageTriggerTemplateKey.SERVICE_INFO, MessageTriggerRecipientType.CLIENT, { ...allTemplateVariables });
+            if (manual) job.ruleId = "agent-sms:scheduled";
+            const templates = (service as unknown as { systemTemplateService: { getByKeyForBranch: jest.Mock } }).systemTemplateService;
+            const error = new BranchSystemTemplateSnapshotError("branch-1", SystemTemplateKey.SERVICE_INFO);
+            templates.getByKeyForBranch.mockRejectedValue(error);
+            if (manual) {
+                await expect(service[method](job)).rejects.toBe(error);
+                expect(job.status).toBe("pending");
+            } else {
+                await service[method](job);
+                expect(job.status).toBe("needs_setup");
+                expect(job.cancelReason).toBe("템플릿을 찾을 수 없습니다");
+            }
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(logRepository.save).not.toHaveBeenCalled();
+        }
+    });
+
     it.each(smsTemplateCases)(
         "renders %s with every configured variable resolved before the provider call",
         async (templateKey, recipientType) => {
@@ -1215,7 +1268,7 @@ describe("SMS system-template variable coverage", () => {
             SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].requiredVariables.some((variable) => variable.required),
         ),
     )(
-        "cancels %s without a provider call when a required variable is blank",
+        "marks %s needs_setup without a provider call when a required variable is blank",
         async (templateKey, recipientType, systemTemplateKey) => {
             const requiredKey = SYSTEM_TEMPLATE_REGISTRY[systemTemplateKey].requiredVariables
                 .find((variable) => variable.required)?.key;
@@ -1228,7 +1281,7 @@ describe("SMS system-template variable coverage", () => {
 
             await expect(service.sendJob(job)).resolves.toBe(false);
 
-            expect(job.status).toBe("canceled");
+            expect(job.status).toBe("needs_setup");
             expect(job.cancelReason).toContain(requiredKey);
             expect(aligoService.sendSms).not.toHaveBeenCalled();
             expect(logRepository.save).not.toHaveBeenCalled();
@@ -1249,7 +1302,7 @@ describe("SMS system-template variable coverage", () => {
 
         await expect(service.sendJob(job)).resolves.toBe(false);
 
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(job.cancelReason).toContain("receiptUrl");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
@@ -1275,7 +1328,7 @@ describe("SMS system-template variable coverage", () => {
 
         await expect(service.sendJob(job)).resolves.toBe(false);
 
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(job.cancelReason).toContain("reservationCode");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
@@ -1326,7 +1379,7 @@ describe("SMS system-template variable coverage", () => {
 
         await expect(service.sendJob(job)).resolves.toBe(false);
 
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(job.cancelReason).toContain("name");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
@@ -1379,7 +1432,7 @@ describe("PRICE_INFO data guard", () => {
         const sent = await service.sendJob(job);
 
         expect(sent).toBe(false);
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).not.toHaveBeenCalled();
     });
@@ -1430,7 +1483,7 @@ describe("PRICE_INFO data guard", () => {
         const sent = await service.sendJob(job);
 
         expect(sent).toBe(false);
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
@@ -1452,7 +1505,7 @@ describe("PRICE_INFO data guard", () => {
         const sent = await service.sendJob(job);
 
         expect(sent).toBe(false);
-        expect(job.status).toBe("canceled");
+        expect(job.status).toBe("needs_setup");
         expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 });

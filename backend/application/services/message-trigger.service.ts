@@ -56,6 +56,8 @@ import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.e
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import {
     MESSAGE_TRIGGER_RULE_REPOSITORY,
     IMessageTriggerRuleRepository,
@@ -310,7 +312,7 @@ export interface MessageLogRecordView {
     recipientPhone: string | null;
     messageBody: string;
     variables: Record<string, string>;
-    status: MessageLogEntity["status"] | "canceled";
+    status: MessageLogEntity["status"] | "canceled" | "needs_setup";
     aligoMid: string | null;
     errorMessage: string | null;
     attempts: number;
@@ -845,7 +847,7 @@ export class MessageTriggerService {
                         recipientName: job.payload.recipientName,
                         historySource: "message_trigger_job",
                     },
-                    status: job.status === "canceled" ? "canceled" : "failed",
+                    status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                     aligoMid: null,
                     errorMessage: job.cancelReason,
                     attempts: job.attempts,
@@ -1013,7 +1015,7 @@ export class MessageTriggerService {
                         recipientName: job.payload.recipientName,
                         historySource: "message_trigger_job",
                     },
-                    status: job.status === "canceled" ? "canceled" : "failed",
+                    status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                     aligoMid: null,
                     errorMessage: job.cancelReason,
                     attempts: job.attempts,
@@ -1221,7 +1223,7 @@ export class MessageTriggerService {
                             recipientName: job.payload.recipientName,
                             historySource: "message_trigger_job",
                         },
-                        status: job.status === "canceled" ? "canceled" : "failed",
+                        status: job.status === "needs_setup" ? "needs_setup" : job.status === "canceled" ? "canceled" : "failed",
                         aligoMid: null,
                         errorMessage: job.cancelReason,
                         attempts: job.attempts,
@@ -1843,7 +1845,7 @@ export class MessageTriggerService {
                 );
             }
 
-            await this.refreshPendingImmediateClientJobs(immediateRules, clientId, client);
+            await this.refreshPendingImmediateClientJobs(branchId, immediateRules, clientId, client);
         }
 
         const candidateJobs: ClientRuleJobCandidate[] = [];
@@ -2398,6 +2400,7 @@ export class MessageTriggerService {
     }
 
     private async refreshPendingImmediateClientJobs(
+        branchId: string,
         rules: MessageTriggerRuleEntity[],
         clientId: number,
         client: ClientTriggerSource,
@@ -2431,12 +2434,29 @@ export class MessageTriggerService {
 
             const refreshedJob = this.buildClientJob(rule, client);
             if (!refreshedJob) continue;
-
-            job.recipientPhone = refreshedJob.recipientPhone;
-            job.payload = {
+            const refreshedPayload = {
                 ...refreshedJob.payload,
                 ...(job.payload.catchUp ? { catchUp: job.payload.catchUp } : {}),
+                ...(job.status === "needs_setup" && job.payload.taskAutomationReference ? { taskAutomationReference: job.payload.taskAutomationReference } : {}),
             };
+
+            // 고객 정보 수정은 설정 필요 작업도 새 payload로 재생성한다.
+            // 일반 resync/upsert는 이 상태를 복구하지 않는다.
+            if (job.status === "needs_setup") {
+                // 오래된 설정 필요 작업은 재생성해도 dispatch에서 만료되므로 보존한다.
+                if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) continue;
+                if (job.recipientPhone === refreshedJob.recipientPhone
+                    && agentBindingHash(agentAutomationSourcePayload(job.payload, job.templateKey))
+                        === agentBindingHash(agentAutomationSourcePayload(refreshedPayload, job.templateKey))) continue;
+                const canceled = await this.jobRepository.cancelPendingForRuleGeneration(
+                    branchId, rule.id, rule.updatedAt, false, "Client data changed", { clientId, needsSetup: "within_window" },
+                );
+                if (canceled === null || canceled === 0) continue;
+                job.status = "pending";
+            }
+
+            job.recipientPhone = refreshedJob.recipientPhone;
+            job.payload = refreshedPayload;
             await this.persistPendingJob(job, rule, true, false);
         }
     }
@@ -2725,6 +2745,7 @@ export class MessageTriggerService {
             rule.updatedAt,
             expectedJobsStale,
             reason,
+            { needsSetup: reason === "Rule deleted" || !rule.isActive ? "all" : undefined },
         );
         return canceled !== null;
     }
@@ -2839,7 +2860,8 @@ export class MessageTriggerService {
                 rule.updatedAt,
                 false,
                 reason,
-                { clientId },
+                { clientId, needsSetup: rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
+                    && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
             );
         }
     }
@@ -2858,7 +2880,7 @@ export class MessageTriggerService {
                 rule.updatedAt,
                 false,
                 reason,
-                { employeeScheduleId },
+                { employeeScheduleId, needsSetup: "all" },
             );
             if (canceled === null) succeeded = false;
         }
@@ -3022,7 +3044,7 @@ export class MessageTriggerService {
             if (job.status === "processing") {
                 job.markFailed("Provider disabled or delivery failed");
                 await this.persistTriggerJobStatus(job, "persist unsupported trigger delivery");
-            } else if (job.status === "canceled") {
+            } else if (job.status === "canceled" || job.status === "needs_setup") {
                 // Delivery policy skips can cancel in memory without writing
                 // the job. Persist through the claim-token fence so the row
                 // cannot remain processing or overwrite a newer claim.
@@ -3967,7 +3989,9 @@ export class MessageTriggerService {
                 readUpdatedAt,
                 true,
                 !parentEnabled ? MESSAGE_AUTOMATION_PARENT_DISABLED_REASON : rule.isActive ? "규칙 재생성" : "Rule deactivated",
-                {},
+                { needsSetup: !parentEnabled || !rule.isActive ? "all"
+                    : rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
+                        && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
                 transaction,
             );
             // Another worker may have already rebuilt and cleared this generation.

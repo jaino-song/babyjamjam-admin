@@ -22,6 +22,7 @@ import {
     SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
 } from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
@@ -434,10 +435,16 @@ export class SmsTriggerDeliveryService {
                 return false;
             }
             if (error instanceof MissingSmsTemplateVariablesError) {
-                job.cancel(`메시지 발송 건너뜀: 필수 정보 누락 (${error.variableKeys.join(", ")})`);
+                const reason = `필수 정보 누락 (${error.variableKeys.join(", ")})`;
+                if (isManualMessageTriggerJob(job)) job.cancel(`메시지 발송 건너뜀: ${reason}`);
+                else job.markNeedsSetup(reason);
                 this.logger.warn(
                     `[SMS Automation] ${job.templateKey} skipped for job ${job.id}: missing ${error.variableKeys.join(", ")}`,
                 );
+                return false;
+            }
+            if (error instanceof BranchSystemTemplateSnapshotError && !isManualMessageTriggerJob(job)) {
+                job.markNeedsSetup("템플릿을 찾을 수 없습니다");
                 return false;
             }
             throw error;
@@ -520,10 +527,16 @@ export class SmsTriggerDeliveryService {
                 return null;
             }
             if (error instanceof MissingSmsTemplateVariablesError) {
-                job.cancel(`메시지 발송 건너뜀: 필수 정보 누락 (${error.variableKeys.join(", ")})`);
+                const reason = `필수 정보 누락 (${error.variableKeys.join(", ")})`;
+                if (isManualMessageTriggerJob(job)) job.cancel(`메시지 발송 건너뜀: ${reason}`);
+                else job.markNeedsSetup(reason);
                 this.logger.warn(
                     `[SMS Automation] ${job.templateKey} skipped for job ${job.id}: missing ${error.variableKeys.join(", ")}`,
                 );
+                return null;
+            }
+            if (error instanceof BranchSystemTemplateSnapshotError && !isManualMessageTriggerJob(job)) {
+                job.markNeedsSetup("템플릿을 찾을 수 없습니다");
                 return null;
             }
             throw error;
