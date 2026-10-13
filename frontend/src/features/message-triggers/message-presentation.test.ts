@@ -131,6 +131,7 @@ describe("shared message presentation contract", () => {
       failed: "발송 실패",
       pending: "재시도 대기",
       canceled: "발송 취소",
+      needs_setup: "설정 필요",
     });
     // The past-status filter tabs must read exactly like the past-row badges.
     expect(MESSAGE_RECORD_STATUS_FILTER_LABELS).toEqual({
@@ -147,12 +148,14 @@ describe("shared message presentation contract", () => {
       sent: "발송 완료",
       failed: "발송 실패",
       canceled: "발송 취소",
+      needs_setup: "설정 필요",
     });
     expect(MESSAGE_LOG_STATUS_BADGE_VARIANT).toEqual({
       sent: "success",
       failed: "danger",
       pending: "warning",
       canceled: "neutral",
+      needs_setup: "warning",
     });
     expect(MESSAGE_JOB_STATUS_BADGE_VARIANT).toEqual({
       pending: "warning",
@@ -161,6 +164,7 @@ describe("shared message presentation contract", () => {
       sent: "success",
       failed: "danger",
       canceled: "neutral",
+      needs_setup: "warning",
     });
     // "scheduled" (발송 예정) is intentionally absent: its content is folding
     // into 발송 기록 via a follow-up task, so it's dropped from navigation in

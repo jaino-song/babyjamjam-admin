@@ -152,6 +152,22 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     expect(container.querySelector('[data-component$="_body_item_status"]')).toHaveTextContent("발송 실패");
   });
 
+  it("renders a needs_setup history row as 설정 필요 with the warning tone instead of throwing", async () => {
+    mockUseMessageHistory.mockReturnValue({
+      data: [{ ...sentRecord, status: "needs_setup", triggerJobId: "job-9", messageBody: "", errorMessage: "수신자 연락처가 필요합니다." }],
+      isLoading: false,
+      isError: false,
+    });
+    const { container } = render(<MessagesHistoryPage />);
+    const rowBadge = container.querySelector('[data-component$="_body_item_status"]');
+    expect(rowBadge).toHaveTextContent("설정 필요");
+    expect(rowBadge).toHaveClass("bg-status-warning");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: /김문자/ }));
+    const header = container.querySelector('[data-component$="_detail-pane_header_status"]');
+    expect(header).toHaveTextContent("설정 필요");
+  });
+
   it.each(["processing", "dispatching"] as const)(
     "labels a %s upcoming job 발송 중 with the info tone",
     (status) => {

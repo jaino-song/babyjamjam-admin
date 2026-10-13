@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import {
+  DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+  DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+  normalizeApiError,
+} from "@babyjamjam/shared";
 import { BellRing, Trash2 } from "lucide-react";
 
 import { InputField } from "@/components/app/v3/InputField";
@@ -66,6 +70,8 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
       sendTime: rule.sendTime ?? "09:00",
       recipientType: rule.recipientType,
       templateKey: rule.templateKey,
+      targetClientStatus: rule.targetClientStatus,
+      retryOnFailure: rule.retryOnFailure,
     };
   }
 
@@ -78,6 +84,8 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
     sendTime: "09:00",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
+    targetClientStatus: DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+    retryOnFailure: DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
   };
 }
 

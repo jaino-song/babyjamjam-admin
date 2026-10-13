@@ -56,6 +56,8 @@ describe("MessageTriggerEditor", () => {
       sendTime: "23:59",
       recipientType: "CLIENT",
       templateKey: "SERVICE_INFO",
+      targetClientStatus: "all",
+      retryOnFailure: true,
     }));
     expect(onClose).toHaveBeenCalled();
   });
@@ -84,6 +86,8 @@ describe("MessageTriggerEditor", () => {
         offsetDays: 3,
         recipientType: "CLIENT",
         templateKey: "SERVICE_INFO",
+        targetClientStatus: "waiting",
+        retryOnFailure: false,
         createdAt: "2026-07-01T00:00:00.000Z",
         updatedAt: "2026-07-01T00:00:00.000Z",
       }}
@@ -95,7 +99,13 @@ describe("MessageTriggerEditor", () => {
 
     await waitFor(() => expect(updateRule).toHaveBeenCalledWith({
       id: "rule-1",
-      dto: expect.objectContaining({ name: "수정 규칙", isActive: false, offsetDays: 3 }),
+      dto: expect.objectContaining({
+        name: "수정 규칙",
+        isActive: false,
+        offsetDays: 3,
+        targetClientStatus: "waiting",
+        retryOnFailure: false,
+      }),
     }));
 
     fireEvent.click(screen.getByRole("button", { name: "규칙 삭제" }));
