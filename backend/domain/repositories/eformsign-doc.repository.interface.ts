@@ -37,6 +37,18 @@ export interface EformsignDocUnscopedResult {
     branchId: string | null;
 }
 
+export interface EformsignVoidCandidate {
+    documentId: string;
+    clientId: number | null;
+    documentKind: string | null;
+    serviceRecordCaseId: string | null;
+    statusType: string;
+    stepType: string;
+    stepName: string;
+    voidedAt: Date | null;
+    permanentPurgeRequestedAt: Date | null;
+}
+
 /**
  * Projection for `contracts.recent` — a contract-or-unclassified document (never a
  * service-record snapshot), newest updated first, with the client name resolved by
@@ -308,6 +320,7 @@ export interface IEformsignDocRepository {
      */
     recordAutoFinalizeFailure(documentId: string, error: string): Promise<number>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    findVoidCandidate(branchid: string, documentId: string): Promise<EformsignVoidCandidate | null>;
     markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean>;
     update(
         branchid: string,

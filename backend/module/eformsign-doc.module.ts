@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
 import { ConfigService } from "@nestjs/config";
 import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
 import {
@@ -123,6 +124,7 @@ import { HolidayModule } from "./holiday.module";
     ],
     controllers: [EformsignDocController],
     providers: [
+        VoidContractDocumentUsecase,
         BranchManagerGuard,
         CreateEmployeeUsecase,
         // Use cases - Local DB
@@ -282,6 +284,7 @@ import { HolidayModule } from "./holiday.module";
         },
     ],
     exports: [
+        VoidContractDocumentUsecase,
         EformsignDocService,
         EformsignCredentialBoundary,
         SyncClientEndDateUsecase,

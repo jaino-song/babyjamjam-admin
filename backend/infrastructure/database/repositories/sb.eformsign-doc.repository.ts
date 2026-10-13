@@ -19,6 +19,7 @@ import {
     EformsignDocUnscopedResult,
     EformsignDocStepWriteOptions,
     EformsignContractCandidateRow,
+    EformsignVoidCandidate,
     IEformsignDocRepository,
     RecentEformsignDocRow,
     ReviewStageContract,
@@ -671,6 +672,17 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 }));
             return EformsignDocMapper.toDomain(toCompatDomainRow(created));
         }
+    }
+
+    findVoidCandidate(branchid: string, documentId: string): Promise<EformsignVoidCandidate | null> {
+        // voided_at is required: no deploy-window fallback for this mutation read.
+        return this.prismaService.eformsign_doc.findFirst({
+            where: { documentId, branchId: branchid },
+            select: {
+                documentId: true, clientId: true, documentKind: true, serviceRecordCaseId: true,
+                statusType: true, stepType: true, stepName: true, voidedAt: true, permanentPurgeRequestedAt: true,
+            },
+        });
     }
 
     async markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean> {
