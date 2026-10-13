@@ -231,4 +231,12 @@ export class ClientController {
     completeReplacement(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
         return this.clientService.completeReplacement(tenant.branchId ?? "", id);
     }
+
+    /**
+     * Confirm a booking: the only way a client leaves 예약 전 (rule 고객-04)
+     */
+    @Patch(":id/confirm-booking")
+    confirmBooking(@CurrentTenant() tenant: { branchId?: string }, @Param("id", ParseIntPipe) id: number) {
+        return this.clientService.confirmBooking(tenant.branchId ?? "", id);
+    }
 }

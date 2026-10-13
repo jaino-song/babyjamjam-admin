@@ -43,6 +43,8 @@ import {
     findClientByNormalizedPhone,
     mergeAndValidateClientServicePeriod,
     parseClientDate,
+    PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL,
+    resolveSavedServiceStatus,
 } from "application/usecases/client/client-write-validation";
 import {
     assertEmployeeAssignmentEligibility,
@@ -2086,6 +2088,16 @@ export class ClientService {
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
             });
+            // Rule 고객-04: a save cannot move the client into or out of 예약 전;
+            // judged on the locked row with the dates as they will be after this
+            // save. Throws (nothing is written yet) or yields what to store.
+            const savedServiceStatus = resolveSavedServiceStatus({
+                currentServiceStatus: currentClient.serviceStatus ?? null,
+                bookingConfirmedAt: currentClient.bookingConfirmedAt ?? null,
+                startDate: lockedMergedServicePeriod.startDate,
+                endDate: lockedMergedServicePeriod.endDate,
+                suppliedServiceStatus: params.serviceStatus,
+            });
             const lockedHasDateUpdate = params.startDate !== undefined || params.endDate !== undefined;
             const lockedDerivedDuration = deriveClientDuration(
                 lockedMergedServicePeriod.startDate,
@@ -2282,7 +2294,7 @@ export class ClientService {
                 birthday: params.birthday === undefined ? undefined : params.birthday,
                 dueDate: dueDateUpdate,
                 birthDate: birthDateUpdate,
-                serviceStatus: params.serviceStatus === undefined ? undefined : params.serviceStatus,
+                serviceStatus: savedServiceStatus,
                 breastPump: params.breastPump,
                 eDocId: params.eDocId === undefined ? undefined : params.eDocId,
                 areaId: params.areaId === undefined ? undefined : params.areaId,
@@ -2635,7 +2647,7 @@ export class ClientService {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/id",
                     code: "INVALID_VALUE",
-                    detail: "예약 전 고객은 제공인력 교체를 요청할 수 없습니다",
+                    detail: PRE_BOOKING_REPLACEMENT_REFUSAL_DETAIL,
                     location: "path",
                 }));
             }
@@ -2822,6 +2834,128 @@ export class ClientService {
         });
         // 예약확정 상태는 여기서 바뀌지 않으므로 예약 전 이탈 여부를 확인하는
         // 공통 후처리는 교체 완료만으로 제공인력 링크 SMS를 예약하지 않는다.
+        await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
+            branchid,
+            clientId,
+            priorStatusInputs,
+            updatedClient,
+            null,
+        );
+        return updatedClient;
+    }
+
+    /**
+     * Confirm a booking (rule 고객-04): the only way a client leaves 예약 전.
+     * Stores `bookingConfirmedAt` and the date-derived status in one direct
+     * write under the client row lock, then repairs the service-record
+     * lifecycle in the same transaction. A client that is already confirmed is
+     * returned untouched and no follow-up runs, so a double click is safe.
+     */
+    async confirmBooking(branchid: string, clientId: number): Promise<ClientEntity> {
+        const client = await this.findClientByIdUsecase.execute(branchid, clientId);
+        if (!client) {
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+        }
+
+        this.logger.log(`Confirming booking for client ${clientId}`);
+
+        // SAVED computation: loaded before the transaction opens (see
+        // completeReplacement).
+        const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
+        const refuse = (detail: string): never => {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/id",
+                code: "INVALID_VALUE",
+                detail,
+                location: "path",
+            }));
+        };
+        const priorStatusInputs = await this.prismaService.$transaction(async (transaction) => {
+            const existingCase = transaction.service_record_case?.findUnique
+                ? await transaction.service_record_case.findUnique({
+                    where: { clientId },
+                    select: { id: true, branchId: true, clientId: true },
+                })
+                : null;
+            const schedules = transaction.employee_schedule?.findMany
+                ? await transaction.employee_schedule.findMany({
+                    where: { clientId, branchId: branchid },
+                    select: {
+                        id: true,
+                        primaryEmployeeId: true,
+                        secondaryEmployeeId: true,
+                    },
+                    orderBy: { id: "asc" },
+                })
+                : [];
+            // Every outcome is judged on the locked row, never on the
+            // pre-transaction snapshot. The write-set helper takes the client
+            // row lock first, so locking the same row here keeps the lock
+            // order unchanged and lets a client deleted before the lock answer
+            // not-found instead of the helper's write-target-changed conflict.
+            const lockedClient = await this.clientRepository.findByIdForUpdate(
+                branchid,
+                clientId,
+                transaction,
+            );
+            if (!lockedClient) {
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
+            await lockServiceRecordWriteSet(transaction, {
+                branchId: branchid,
+                clientId,
+                caseId: existingCase?.branchId === branchid && existingCase.clientId === clientId
+                    ? existingCase.id
+                    : undefined,
+                expectedScheduleIds: schedules.map((schedule) => schedule.id),
+                scheduleIds: schedules.map((schedule) => schedule.id),
+                employeeIds: schedules.flatMap((schedule) => [
+                    schedule.primaryEmployeeId,
+                    schedule.secondaryEmployeeId,
+                ]),
+            });
+            if (
+                lockedClient.serviceStatus === SERVICE_STATUS.TERMINATED
+                || lockedClient.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED
+            ) {
+                return refuse("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+            }
+            if (lockedClient.bookingConfirmedAt) {
+                return null;
+            }
+            if (!lockedClient.startDate || !lockedClient.endDate) {
+                return refuse("서비스 시작일과 종료일을 먼저 입력해 주세요.");
+            }
+            const now = new Date();
+            const updateResult = await transaction.client.updateMany({
+                where: { id: clientId, branchId: branchid },
+                data: {
+                    bookingConfirmedAt: now,
+                    serviceStatus: computeServiceStatus(null, lockedClient.startDate, lockedClient.endDate, now, now),
+                },
+            });
+            if (updateResult.count === 0) {
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
+            await this.serviceRecordLifecycleService?.ensureForClient(clientId, transaction, calendar);
+            return {
+                serviceStatus: lockedClient.serviceStatus ?? null,
+                bookingConfirmedAt: lockedClient.bookingConfirmedAt ?? null,
+                startDate: lockedClient.startDate,
+                endDate: lockedClient.endDate,
+            };
+        });
+
+        const updatedClient = await this.findClientByIdUsecase.execute(branchid, clientId);
+        if (!updatedClient) {
+            throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+        }
+        // Already confirmed: nothing was written, so no follow-up may run.
+        if (!priorStatusInputs) return updatedClient;
+
+        await this.triggerService?.syncClientRulesForClient(branchid, clientId, false).catch((error) => {
+            this.logger.error(`Failed to sync client trigger rules: ${error}`);
+        });
         await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
             branchid,
             clientId,
