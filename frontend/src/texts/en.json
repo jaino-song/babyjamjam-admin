@@ -398,6 +398,7 @@
       "doc-revoked": "Revoked",
       "doc-revoke-requested": "Revocation requested",
       "doc-deleted": "Deleted",
+      "doc-voided": "Voided",
       "add-description": "Fill in the form to register a new client",
       "edit-description": "Modify the client information"
     },

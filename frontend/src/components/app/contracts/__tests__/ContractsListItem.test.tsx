@@ -52,6 +52,8 @@ describe("ContractsListItem", () => {
     ["revoked", "철회됨", "bg-v3-burgundy-light", "text-v3-burgundy"],
     ["rejected_by_reviewer", "반려됨", "bg-v3-burgundy-light", "text-v3-burgundy"],
     ["expired", "기간 만료", "bg-v3-burgundy-light", "text-v3-burgundy"],
+    // 계약 파기 (BJJ-439): neutral, the same avatar as the pending badge.
+    ["voided", "파기됨", "bg-v3-dim-white", "text-v3-text-muted"],
   ] as const)(
     "matches the avatar tone to the %s status badge",
     (displayStatus, statusLabel, avatarBackgroundClass, avatarIconClass) => {

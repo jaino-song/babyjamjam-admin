@@ -114,7 +114,9 @@ jest.mock("@/components/app/v3", () => ({
         <section data-testid="contract-card"><h4>{title}</h4>{children}</section>
     ),
     InfoRow: ({ label, value }: { label: string; value: ReactNode }) => <div><span>{label}</span><span>{value}</span></div>,
-    StatusBadge: () => null,
+    StatusBadge: ({ status, label }: { status: string; label: string }) => (
+        <span data-testid="status-badge" data-status={status}>{label}</span>
+    ),
 }));
 
 const getDocuments = eformsignApi.getDocumentsByClientId as jest.Mock;
@@ -462,5 +464,35 @@ describe("ClientDetailPanel contracts area: contracts waiting for link confirmat
 
         expect(await screen.findByText(EMPTY_TEXT)).toBeInTheDocument();
         await waitFor(() => expect(pendingRegion("error")).not.toBeNull());
+    });
+});
+
+describe("ClientDetailPanel contracts area: voided contract (계약 파기, BJJ-439)", () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        getLinkConfirmations.mockReset();
+        getLinkConfirmations.mockResolvedValue([]);
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it("shows 파기됨 with the neutral pending badge status, whatever eformsign code the document carries", async () => {
+        getDocuments.mockResolvedValue([{ ...contractDoc, statusType: "003", displayStatus: "voided" }]);
+        openContractsTab();
+
+        const badge = await screen.findByTestId("status-badge");
+        expect(badge).toHaveTextContent("파기됨");
+        expect(badge).toHaveAttribute("data-status", "pending");
+    });
+
+    it("keeps the badge of a live document unchanged (control)", async () => {
+        getDocuments.mockResolvedValue([{ ...contractDoc, statusType: "003", displayStatus: "completed" }]);
+        openContractsTab();
+
+        const badge = await screen.findByTestId("status-badge");
+        expect(badge).toHaveTextContent("계약 완료");
+        expect(badge).toHaveAttribute("data-status", "completed");
     });
 });

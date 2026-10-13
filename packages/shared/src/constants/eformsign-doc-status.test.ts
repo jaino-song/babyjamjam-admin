@@ -1,8 +1,12 @@
 import {
     CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+    CONTRACT_VOID_COPY,
+    CONTRACT_VOID_ROW_LABEL,
+    CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
     isContractDocDisplayStatus,
     isContractReceiptSendable,
     isContractReviewWindowOpen,
+    isContractVoidable,
     resolveContractDocDisplayStatus,
     resolveContractDocStatusLabel,
 } from "./eformsign-doc-status";
@@ -604,5 +608,117 @@ describe("unassigned display status (backend-stamped only)", () => {
                 }
             }
         }
+    });
+});
+
+/**
+ * 계약 파기 (BJJ-439): an app-only state. eformsign keeps reporting codes for a voided document, so
+ * `voidedAt` must win over every code and category. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("voided display status (BJJ-439 계약 파기)", () => {
+    const VOIDED_AT = "2026-10-13T01:02:03.000Z";
+    const base = { currentStatus: null, contractEndDate: null, now: kstNoon("2026-08-01") };
+
+    it("is a wire display status labelled 파기됨", () => {
+        expect(isContractDocDisplayStatus("voided")).toBe(true);
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided).toBe("파기됨");
+    });
+
+    it.each([
+        ["a completed code", "completed" as const, "003"],
+        ["an in-progress code", "in-progress" as const, "060"],
+        ["042 (revoked)", "expired" as const, "042"],
+        ["080 (expired)", "expired" as const, "080"],
+        ["040 (revoke requested)", "expired" as const, "040"],
+        ["071 (reviewer rejected)", "in-progress" as const, "071"],
+    ])("resolves to voided before %s", (_name, category, statusType) => {
+        const params = { ...base, category, statusType, voidedAt: VOIDED_AT };
+        expect(resolveContractDocDisplayStatus(params)).toBe("voided");
+        expect(resolveContractDocStatusLabel(params)).toBe("파기됨");
+    });
+
+    it("is also checked before the provider review step and end date", () => {
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "070",
+            voidedAt: VOIDED_AT,
+            now: kstNoon("2026-08-06"),
+        })).toBe("voided");
+    });
+
+    it("leaves every resolution unchanged when voidedAt is absent, null or empty", () => {
+        for (const voidedAt of [undefined, null, ""]) {
+            expect(resolveContractDocDisplayStatus({ ...base, category: "completed", statusType: "003", voidedAt })).toBe("completed");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "in-progress", statusType: "060", voidedAt })).toBe("pending");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "expired", statusType: "042", voidedAt })).toBe("revoked");
+            expect(resolveContractDocDisplayStatus({ ...base, category: "expired", statusType: "080", voidedAt })).toBe("expired");
+        }
+    });
+
+    it("is never receipt-sendable, by display status or by voidedAt", () => {
+        expect(isContractReceiptSendable({
+            category: "completed", displayStatus: "voided", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: null,
+        })).toBe(false);
+        // The fallback path (no display_status) sees the column too.
+        expect(isContractReceiptSendable({
+            category: "completed",
+            currentStatus: { status_type: "003", step_type: "06", step_name: "제공기관 확인" },
+            contractEndDate: null,
+            voidedAt: VOIDED_AT,
+        })).toBe(false);
+        // Control: the same completed document without voidedAt is sendable.
+        expect(isContractReceiptSendable({
+            category: "completed",
+            currentStatus: { status_type: "003", step_type: "06", step_name: "제공기관 확인" },
+            contractEndDate: null,
+        })).toBe(true);
+    });
+});
+
+describe("isContractVoidable (BJJ-439 D4, UI side)", () => {
+    it.each(["completed", "signed", "review", "pending", "revoke_requested", "rejected_by_reviewer", "unassigned", "unknown"])(
+        "is true for a %s document",
+        (displayStatus) => {
+            expect(isContractVoidable({ displayStatus })).toBe(true);
+            expect(isContractVoidable({ displayStatus, voidedAt: null })).toBe(true);
+        },
+    );
+
+    it.each(["voided", "revoked", "expired"])("is false for a %s document", (displayStatus) => {
+        expect(isContractVoidable({ displayStatus })).toBe(false);
+    });
+
+    it("is false once voidedAt is set, whatever the display status says", () => {
+        expect(isContractVoidable({ displayStatus: "completed", voidedAt: "2026-10-13T01:02:03.000Z" })).toBe(false);
+        expect(isContractVoidable({ displayStatus: "pending", voidedAt: "2026-10-13T01:02:03.000Z" })).toBe(false);
+    });
+
+    it("looks the refused members up by label, so the label map stays the single source", () => {
+        const refused = Object.entries(CONTRACT_DOC_DISPLAY_STATUS_LABELS)
+            .filter(([displayStatus]) => !isContractVoidable({ displayStatus }))
+            .map(([, label]) => label)
+            .sort();
+        expect(refused).toEqual(["기간 만료", "철회됨", "파기됨"].sort());
+    });
+});
+
+describe("contract void copy (BJJ-439)", () => {
+    it("pins the row labels and every copy key", () => {
+        expect(CONTRACT_VOID_ROW_LABEL).toBe("파기");
+        expect(CONTRACT_VOIDED_BY_UNKNOWN_LABEL).toBe("알 수 없음");
+        expect(CONTRACT_VOID_COPY).toEqual({
+            action: "계약 파기",
+            confirmTitle: "계약을 파기할까요?",
+            confirmDescription: "파기하면 되돌릴 수 없습니다. 서명 전 계약서는 서명 링크도 함께 취소됩니다.",
+            confirm: "파기",
+            cancel: "취소",
+            pending: "파기 중",
+            success: "계약을 파기했습니다.",
+            conflict: "이미 파기되었거나 파기할 수 없는 계약서입니다.",
+            failure: "계약을 파기하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        });
     });
 });

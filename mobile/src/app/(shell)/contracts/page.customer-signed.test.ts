@@ -51,7 +51,7 @@ const helperSource = parsedPage.statements
   .map((statement) => statement.getText(parsedPage))
   .join("\n");
 
-type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
+type Category = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "voided" | "unknown";
 interface StageItem {
   text: string;
 }
@@ -432,5 +432,49 @@ describe("contract message-history status helpers (설정 필요)", () => {
     expect(helpers.notificationStatusTone("pending")).toBe("orange");
     expect(helpers.notificationStatusLabel("sent")).toBe("완료");
     expect(helpers.notificationStatusTone("sent")).toBe("green");
+  });
+});
+
+describe("voided (계약 파기, BJJ-439): 파기됨 in the muted tone, filed under 기간 만료", () => {
+  const signalOf = (statusType: string, displayStatus?: string): StatusSignal => ({
+    status_type: statusType,
+    step_type: "06",
+    step_name: "제공기관 검토",
+    step_recipient_types: [],
+    display_status: displayStatus,
+  });
+
+  it.each(["003", "060", "070", "042", "080"])("gives a voided document the voided category over eformsign code %s", (statusType) => {
+    const doc = makeDoc({ statusType, stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("voided");
+    expect(progress).toBe("파기됨");
+    expect(stages).toContain("계약이 파기됐어요");
+    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages).not.toContain("문서 기간이 만료됐어요");
+    expect(stages).not.toContain("문서가 철회됐어요");
+  });
+
+  it("reads 파기됨 in the muted tone in the list row and the detail header", () => {
+    expect(helpers.detailHeaderStatusBadge("voided", false)).toEqual({ label: "파기됨", tone: "muted" });
+    expect(/case "voided":\s*return \{\s*badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS\.voided,\s*badgeTone: "muted"/.test(source)).toBe(true);
+  });
+
+  it("files voided under the 기간 만료 filter with no pill of its own", () => {
+    expect(helpers.FILTER_BY_CATEGORY.voided).toBe("기간 만료");
+    expect(helpers.FILTER_LABELS).not.toContain("파기됨");
+
+    const counts = helpers.countSignalsByFilter([signalOf("060", "voided"), signalOf("070", "voided")], KR_BUILTIN_CALENDAR);
+    expect(counts["기간 만료"]).toBe(2);
+    expect(counts["전체"]).toBe(2);
+    for (const label of helpers.FILTER_LABELS.filter((l) => l !== "전체" && l !== "기간 만료")) {
+      expect(counts[label]).toBe(0);
+    }
+  });
+
+  it("does not change how the same live codes are categorized without the void (control)", () => {
+    expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
+    expect(view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");
   });
 });

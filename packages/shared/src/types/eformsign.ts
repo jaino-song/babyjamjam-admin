@@ -173,6 +173,10 @@ export interface EformsignDocument {
    * resolver is only the fallback for payloads that predate the field.
    */
   display_status?: string | null;
+  /** ISO timestamp when the contract was voided (파기) in the app; null/absent when it was not. */
+  voided_at?: string | null;
+  /** Name of the user who voided it; null when unresolved (the UI shows 알 수 없음). Never an id or email. */
+  voided_by_name?: string | null;
   fields: unknown[];
   next_status: unknown[];
   previous_status: unknown[];
@@ -365,4 +369,15 @@ export interface ReviewNeededContract {
   autoFinalizeAttempts: number;
   autoFinalizeLastError: string | null;
   autoFinalizeLastAttemptAt: string | null;
+}
+
+/**
+ * Response of POST /api/documents/:documentId/void (BJJ-439 계약 파기). `voidedByName` is the
+ * acting user's name, or null when it cannot be resolved; the actor's id and email are never sent.
+ */
+export interface VoidContractDocumentResponse {
+  documentId: string;
+  voidedAt: string;
+  voidedByName: string | null;
+  displayStatus: "voided";
 }

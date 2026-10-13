@@ -15,7 +15,8 @@ export type ClientDocumentStatus =
     | "completed"
     | "rejected"
     | "revoked"
-    | "deleted";
+    | "deleted"
+    | "voided";
 
 export interface ClientDocumentStatusMeta {
     label: string;
@@ -33,6 +34,9 @@ export const CLIENT_DOCUMENT_STATUS_META = {
     revoke_requested: { label: "철회 요청됨", variant: "warning" },
     revoked: { label: "철회됨", variant: "danger" },
     deleted: { label: "삭제됨", variant: "danger" },
+    // BJJ-439 계약 파기: the client's newest contract document was voided in the app. Same neutral
+    // tone as the 미발급 / pending states — a voided contract is inactive, not an error.
+    voided: { label: "파기됨", variant: "neutral" },
 } as const satisfies Record<ClientDocumentStatus, ClientDocumentStatusMeta>;
 
 /** Meta for a client that has no contract document at all. */

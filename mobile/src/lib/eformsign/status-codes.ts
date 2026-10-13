@@ -151,6 +151,10 @@ export type BadgeVariant = "success" | "warning" | "destructive" | "info" | "sec
 export function getStatusColor(status: string): BadgeVariant {
   const lowerStatus = status.toLowerCase();
 
+  // 파기됨 (계약 파기) reads neutral; checked first so no keyword below can recolour it.
+  if (lowerStatus.includes("파기됨")) {
+    return "secondary";
+  }
   if (lowerStatus.includes("서명 완료")) {
     return "info";
   }

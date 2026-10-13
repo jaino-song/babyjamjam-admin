@@ -40,3 +40,16 @@ describe("contractStatusResultLabel", () => {
         expect(contractStatusResultLabel({ documentStatus: "completed", hasSigned: true, rejectedByReviewer: false })).toBe("계약 완료");
     });
 });
+
+describe("contractStatusResultLabel for a voided contract (계약 파기)", () => {
+    it("reads 파기됨 whether or not the customer had signed", () => {
+        expect(contractStatusResultLabel({ documentStatus: "voided", hasSigned: false })).toBe("파기됨");
+        expect(contractStatusResultLabel({ documentStatus: "voided", hasSigned: true })).toBe("파기됨");
+    });
+});
+
+describe("isRejectedContractDocument for a voided document", () => {
+    it("is false: a voided display status is not a reviewer rejection, even at code 071", () => {
+        expect(isRejectedContractDocument(doc("voided", "071"))).toBe(false);
+    });
+});
