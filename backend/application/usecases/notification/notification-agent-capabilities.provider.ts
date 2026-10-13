@@ -10,7 +10,6 @@ import { AgentActionCertainFailureError, AgentActionUncertainError } from "appli
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHash } from "node:crypto";
 import { recordAgentActionEffect } from "application/agent/agent-action-effect-receipt";
-import { maskEmail, maskPhone } from "application/utils/mask";
 import { USER_REPOSITORY, IUserRepository } from "domain/repositories/user.repository.interface";
 
 const TestSchema = z.object({ userId: z.string().uuid(), title: z.string().trim().min(1).max(120), body: z.string().trim().min(1).max(500) });
@@ -42,22 +41,7 @@ type NotificationTarget = NotificationIdentity & {
 type NotificationTargetSnapshot = {
     userId: string;
     name: string;
-    maskedContact: string;
 };
-
-function safeMaskedContact(phone: string | null | undefined, email: string | null | undefined): string {
-    const maskedPhone = maskPhone(phone);
-    if (typeof phone === "string" && phone.trim() && typeof maskedPhone === "string" && maskedPhone !== phone) {
-        return maskedPhone;
-    }
-
-    const maskedEmail = maskEmail(email);
-    if (typeof email === "string" && email.trim() && typeof maskedEmail === "string" && maskedEmail !== email) {
-        return maskedEmail;
-    }
-
-    return "연락처 미등록";
-}
 
 @Injectable()
 @AgentCapabilityProvider()
@@ -114,7 +98,7 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
                     targetVersion,
                     targetSnapshot,
                     title: "테스트 알림 발송",
-                    summary: `${targetSnapshot.name} (${targetSnapshot.maskedContact}) 사용자에게 테스트 알림을 발송합니다.`,
+                    summary: `${targetSnapshot.name} 사용자에게 테스트 알림을 발송합니다.`,
                     provider: "Web Push",
                 };
             },
@@ -274,7 +258,6 @@ export class NotificationAgentCapabilitiesProvider implements AgentCapabilityPro
         return {
             userId,
             name,
-            maskedContact: safeMaskedContact(target.phone, target.email),
         };
     }
 
