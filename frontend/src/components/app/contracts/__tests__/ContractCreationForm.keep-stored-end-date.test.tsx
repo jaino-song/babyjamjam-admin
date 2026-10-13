@@ -151,6 +151,7 @@ const STORED_CLIENT: Client = {
   voucherClient: true,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   areaId: "인천",
   hasSigned: false,

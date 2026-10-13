@@ -14,7 +14,15 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/hooks/useDashboardStats", () => ({ useDashboardOverview: jest.fn() }));
 jest.mock("@/providers/UserProvider", () => ({ useInitialUser: () => ({ id: "test" }) }));
 jest.mock("@/hooks/useBusinessDayCalendar", () => ({ useBusinessDayCalendar: () => ({}) }));
-jest.mock("@/components/app/clients/ClientDetailPanel", () => ({ ClientDetailPanel: () => null }));
+jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
+  ClientDetailPanel: ({ client: selected, onBookingConfirmed }: {
+    client: Client;
+    onBookingConfirmed: (booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => void;
+  }) => <div data-testid="selected-client" data-service-status={selected.serviceStatus} data-booking-confirmed-at={selected.bookingConfirmedAt}>
+    <span>{selected.name} 상세</span>
+    <button onClick={() => onBookingConfirmed({ id: selected.id, bookingConfirmedAt: "2026-10-13T00:00:00.000Z", serviceStatus: "waiting" })}>확정 응답 적용</button>
+  </div>,
+}));
 jest.mock("@/lib/dashboard/client-due", () => ({
   ...jest.requireActual("@/lib/dashboard/client-due"),
   isServiceEndingNextBusinessDay: () => true,
@@ -26,6 +34,7 @@ const client: Client = {
   type: null, duration: null, fullPrice: null, grant: null, actualPrice: null,
   startDate: null, endDate: null, careCenter: null, voucherClient: false,
   breastPump: false, serviceStatus: "active", eDocId: null, hasSigned: false,
+  bookingConfirmedAt: null,
   documentStatus: null,
 };
 
@@ -53,6 +62,15 @@ beforeEach(() => {
 });
 
 describe("DashboardPage load failure", () => {
+  it("patches the selected booking snapshot while cached list data remains unconfirmed", () => {
+    state = { ...state, data: overview([client]), isError: false };
+    mockSearchParams = new URLSearchParams("clientId=1");
+    render(<DashboardPage />);
+    fireEvent.click(screen.getByRole("button", { name: "확정 응답 적용" }));
+    expect(screen.getByTestId("selected-client")).toHaveAttribute("data-booking-confirmed-at", "2026-10-13T00:00:00.000Z");
+    expect(screen.getByTestId("selected-client")).toHaveAttribute("data-service-status", "waiting");
+    expect(screen.getByTestId("selected-client")).toHaveTextContent("캐시 고객 상세");
+  });
   it("keeps paused unknown data loading without stripping a client deep link", () => {
     state = { ...state, isError: false, isPaused: true, status: "pending", fetchStatus: "paused" };
     mockSearchParams = new URLSearchParams("clientId=1");

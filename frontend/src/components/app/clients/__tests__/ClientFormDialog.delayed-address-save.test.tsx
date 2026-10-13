@@ -78,6 +78,7 @@ const delayedClient: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: "pre_booking",
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,

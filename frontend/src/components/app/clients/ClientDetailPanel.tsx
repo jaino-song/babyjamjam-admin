@@ -14,11 +14,13 @@ import {
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 
 import { Button } from "@/components/ui/button";
+import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
     useApproveScheduleChange,
     useRejectScheduleChange,
+    useConfirmBooking,
 } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
@@ -948,6 +950,8 @@ export interface ClientDetailPanelProps {
     layout?: "desktop" | "mobile";
     /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
     onScheduleChangeDecided?: (clientId: number) => void;
+    /** Patch only booking fields into the caller's locally held client snapshot. */
+    onBookingConfirmed?: (client: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => void;
     /** When set, the empty contracts tab offers a button that runs this (same action as the menu's contract item). */
     onCreateContract?: () => void;
     /** Prefix applied to every `data-component` attribute rendered by this panel. */
@@ -969,11 +973,12 @@ export interface ClientDetailPanelProps {
 }
 
 function ClientDetailPanelBody({
-    client,
+    client: selectedClient,
     trailing,
     layout = "desktop",
     basicInfoColumns = layout === "mobile" ? 1 : 2,
     onScheduleChangeDecided,
+    onBookingConfirmed,
     onCreateContract,
     dataComponentPrefix = "desktop_clients-detail_panel",
     messageHistoryDataComponentPrefix = "desktop_clients-detail_panel_message-history",
@@ -991,6 +996,19 @@ function ClientDetailPanelBody({
     const { toast } = useToast();
     const approveScheduleChange = useApproveScheduleChange();
     const rejectScheduleChange = useRejectScheduleChange();
+    const confirmBooking = useConfirmBooking();
+    const [confirmedBooking, setConfirmedBooking] = useState<Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus"> | null>(null);
+    const client = useMemo(() => confirmedBooking && selectedClient.bookingConfirmedAt == null
+        ? { ...selectedClient, bookingConfirmedAt: confirmedBooking.bookingConfirmedAt, serviceStatus: confirmedBooking.serviceStatus }
+        : selectedClient, [selectedClient, confirmedBooking]);
+    const [isBookingConfirmationOpen, setIsBookingConfirmationOpen] = useState(false);
+    const [isConfirmingBooking, setIsConfirmingBooking] = useState(false);
+    const bookingConfirmationInFlightRef = useRef(false);
+    const hasBookingDates = Boolean(client.startDate && client.endDate);
+    const canConfirmBooking = client.bookingConfirmedAt == null
+        && client.serviceStatus !== "terminated"
+        && client.serviceStatus !== "replacement_requested";
+    const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
     const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
         key: "basic",
@@ -1275,6 +1293,53 @@ function ClientDetailPanelBody({
         }
     };
 
+    const handleConfirmBooking = async () => {
+        if (bookingConfirmationInFlightRef.current || !canConfirmBooking || !hasBookingDates) return;
+        bookingConfirmationInFlightRef.current = true;
+        setIsConfirmingBooking(true);
+        try {
+            const response = await confirmBooking.mutateAsync(client.id);
+            const booking = {
+                id: client.id,
+                bookingConfirmedAt: response.bookingConfirmedAt,
+                serviceStatus: response.serviceStatus,
+            };
+            // 확정 응답은 직원·배지가 없는 엔티티이므로 예약 필드만 병합한다.
+            setConfirmedBooking(booking);
+            onBookingConfirmed?.(booking);
+            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+            toast({ variant: "success", description: "예약을 확정했습니다." });
+        } catch {
+            toast({ variant: "destructive", description: "예약을 확정하지 못했습니다. 시작일·종료일과 고객 상태를 확인한 뒤 다시 시도해 주세요." });
+        } finally {
+            setIsBookingConfirmationOpen(false);
+            setIsConfirmingBooking(false);
+            bookingConfirmationInFlightRef.current = false;
+        }
+    };
+
+    const confirmButton = canConfirmBooking ? (
+        <>
+            <Button
+                data-component={`${dataComponentPrefix}_header_confirm-booking`}
+                type="button"
+                variant="positive"
+                size="sm"
+                disabled={!hasBookingDates || isConfirmingBooking}
+                title={!hasBookingDates ? "서비스 시작일과 종료일을 먼저 입력해 주세요." : undefined}
+                aria-describedby={!hasBookingDates ? bookingDatesHelpId : undefined}
+                onClick={() => setIsBookingConfirmationOpen(true)}
+            >
+                예약 확정
+            </Button>
+            {!hasBookingDates ? (
+                <span data-component={`${dataComponentPrefix}_header_confirm-booking_help`} id={bookingDatesHelpId} className="sr-only">
+                    서비스 시작일과 종료일을 먼저 입력해 주세요.
+                </span>
+            ) : null}
+        </>
+    ) : null;
+
     return (
         <ClientMessageDetailSlide
             isMessageDetailActive={isMessageHistoryDetailVisible && selectedClientMessageDetailRecord !== null}
@@ -1326,7 +1391,7 @@ function ClientDetailPanelBody({
                     </>
                 }
                 subtitle={getClientDetailSubtitle(client)}
-                trailing={trailing}
+                trailing={<>{confirmButton}{trailing}</>}
                 tabs={
                     <DetailTabs
                         tabs={activeClientDetailTabs}
@@ -1653,6 +1718,20 @@ function ClientDetailPanelBody({
                     ]}
                 />
             </DetailPanel>
+            <TwoButtonModal
+                data-component={`${dataComponentPrefix}_confirm-booking-modal`}
+                open={isBookingConfirmationOpen}
+                onOpenChange={setIsBookingConfirmationOpen}
+                title="예약을 확정할까요?"
+                description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
+                isDescriptionVisuallyHidden={false}
+                size="detail"
+                cancelLabel="취소"
+                approvalLabel="예약 확정"
+                pendingLabel="확정 중…"
+                isPending={isConfirmingBooking || confirmBooking.isPending}
+                onApprove={() => void handleConfirmBooking()}
+            />
         </ClientMessageDetailSlide>
     );
 }

@@ -85,6 +85,7 @@ const legacyClient: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: "completed",
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,

@@ -501,6 +501,20 @@ export function useCompleteReplacement() {
   });
 }
 
+/** Confirm booking and refresh the client and upcoming automation queries. */
+export function useConfirmBooking() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: number) => (await clientsApi.confirmBooking(id)).data,
+    onSuccess: async (_, id) => {
+      await queryClient.invalidateQueries({ queryKey: clientKeys.all });
+      await queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
+      await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+    },
+  });
+}
+
 /**
  * Approve a pending schedule change request
  */

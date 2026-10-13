@@ -126,6 +126,7 @@ const BASE_CLIENT: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   areaId: null,
   hasSigned: false,
