@@ -3835,6 +3835,117 @@ describe("ClientService", () => {
             });
         });
 
+        describe("voided (계약 파기) newest contract", () => {
+            const VOIDED_AT = new Date("2026-07-10T00:00:00.000Z");
+
+            // Service start 07-16 is inside the six-business-day send window from 07-13.
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-07-13T00:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            const waitingClient = () => {
+                const client = createClientEntity();
+                client.eDocId = "document-1";
+                client.serviceStatus = "waiting";
+                client.startDate = new Date("2026-07-16T00:00:00.000Z");
+                return client;
+            };
+            // Newest first, like the database order the helper relies on.
+            const seedDocs = (...docs: Record<string, unknown>[]) => {
+                listClientsUsecase.execute.mockResolvedValue([waitingClient()]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(
+                    docs.map((doc) => ({ clientId: 1, voidedAt: null, permanentPurgeRequestedAt: null, ...doc })),
+                );
+            };
+
+            it("selects the void column so the per-client status can read it", async () => {
+                seedDocs({ documentId: "doc", statusType: "003" });
+
+                await service.findAll(branchId);
+
+                expect(prismaService.eformsign_doc.findMany).toHaveBeenCalledWith(
+                    expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }),
+                );
+            });
+
+            it("reads a voided newest contract as voided, not signed, and needing a contract, even with an older signed one", async () => {
+                seedDocs(
+                    { documentId: "newest-voided", statusType: "003", voidedAt: VOIDED_AT },
+                    { documentId: "older-signed", statusType: "003" },
+                );
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("voided");
+                expect(result?.hasSigned).toBe(false);
+                expect(result?.latestContractDocumentId).toBe("newest-voided");
+                expect(result?.badges.some((badge) => badge.key === "contract_required")).toBe(true);
+                expect(result?.actionRequired).not.toBeNull();
+            });
+
+            it.each(["060", "041", "040", "070", "003", "042"])(
+                "reads a voided %s newest document as voided whatever its eformsign code says",
+                async (statusType) => {
+                    seedDocs({ documentId: "voided", statusType, stepType: "06", stepName: "제공기관 확인", voidedAt: VOIDED_AT });
+
+                    const [result] = await service.findAll(branchId);
+
+                    expect(result?.documentStatus).toBe("voided");
+                    expect(result?.hasSigned).toBe(false);
+                },
+            );
+
+            it("lets purge-requested win over voided: the status stays deleted", async () => {
+                seedDocs({
+                    documentId: "purged-voided",
+                    statusType: "003",
+                    voidedAt: VOIDED_AT,
+                    permanentPurgeRequestedAt: new Date("2026-07-11T00:00:00.000Z"),
+                });
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("deleted");
+                expect(result?.hasSigned).toBe(false);
+            });
+
+            it("control: the same newest documents without a void keep their previous status and hasSigned", async () => {
+                seedDocs({ documentId: "doc", statusType: "003" });
+                const [completed] = await service.findAll(branchId);
+                expect(completed?.documentStatus).toBe("completed");
+                expect(completed?.hasSigned).toBe(true);
+                expect(completed?.badges.some((badge) => badge.key === "contract_required")).toBe(false);
+                expect(completed?.actionRequired).toBeNull();
+
+                seedDocs({ documentId: "doc", statusType: "060", stepType: "05", stepName: "고객 서명" });
+                const [requested] = await service.findAll(branchId);
+                expect(requested?.documentStatus).toBe("requested");
+                expect(requested?.hasSigned).toBe(false);
+
+                seedDocs({ documentId: "doc", statusType: "042" });
+                const [revoked] = await service.findAll(branchId);
+                expect(revoked?.documentStatus).toBe("revoked");
+            });
+
+            it("control: a voided OLDER document does not affect a live newest one (no skipping either way)", async () => {
+                seedDocs(
+                    { documentId: "newest-live", statusType: "003" },
+                    { documentId: "older-voided", statusType: "003", voidedAt: VOIDED_AT },
+                );
+
+                const [result] = await service.findAll(branchId);
+
+                expect(result?.documentStatus).toBe("completed");
+                expect(result?.hasSigned).toBe(true);
+                expect(result?.latestContractDocumentId).toBe("newest-live");
+            });
+        });
+
         describe("contract required badge", () => {
             const createWaitingClient = (startDate: string, eDocId: string | null = null) =>
                 new ClientEntity(
@@ -4123,6 +4234,7 @@ describe("ClientService", () => {
                         stepName: true,
                         detailPayload: true,
                         permanentPurgeRequestedAt: true,
+                        voidedAt: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -4256,6 +4368,7 @@ describe("ClientService", () => {
                         stepName: true,
                         detailPayload: true,
                         permanentPurgeRequestedAt: true,
+                        voidedAt: true,
                         documentKind: true,
                         serviceRecordCaseId: true,
                         templateId: true,
@@ -6824,6 +6937,65 @@ describe("ClientService", () => {
             const result = await service.getStats(branchId);
 
             expect(result.contractsPendingSignature).toBe(1);
+        });
+
+        describe("voided (계약 파기) newest contract in the dashboard counts", () => {
+            const doc = (overrides: Record<string, unknown> = {}) => ({
+                clientId: 1,
+                documentId: "doc-1",
+                statusType: "070",
+                stepType: "06",
+                stepName: "제공기관 확인",
+                detailPayload: null,
+                permanentPurgeRequestedAt: null,
+                voidedAt: null,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                templateId: null,
+                ...overrides,
+            });
+            const seedStats = (docs: Record<string, unknown>[]) => {
+                prismaService.client.count.mockResolvedValue(0);
+                prismaService.client.findMany.mockResolvedValue([{
+                    id: 1,
+                    bookingConfirmedAt: new Date("2026-01-01"),
+                    eDocId: "doc-1",
+                    serviceStatus: "waiting",
+                    startDate: new Date("2026-03-20T00:00:00.000Z"),
+                    endDate: new Date("2026-04-04T00:00:00.000Z"),
+                }]);
+                prismaService.eformsign_doc.findMany.mockResolvedValue(docs);
+            };
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                jest.setSystemTime(new Date("2026-03-17T09:00:00.000Z"));
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            it("counts a voided newest document as not sent and never as awaiting review, even with an older signed one", async () => {
+                seedStats([
+                    doc({ documentId: "newest-voided", voidedAt: new Date("2026-03-10T00:00:00.000Z") }),
+                    doc({ documentId: "older-signed", statusType: "003" }),
+                ]);
+
+                const stats = await service.getStats(branchId);
+
+                expect(stats.contractsNotSent).toBe(1);
+                expect(stats.contractsPendingSignature).toBe(0);
+            });
+
+            it("control: the same newest document without a void is sent and counts as awaiting review", async () => {
+                seedStats([doc({ documentId: "newest" })]);
+
+                const stats = await service.getStats(branchId);
+
+                expect(stats.contractsNotSent).toBe(0);
+                expect(stats.contractsPendingSignature).toBe(1);
+            });
         });
 
         // contractsNotSent must equal the number of clients whose list row carries the

@@ -1305,11 +1305,13 @@ describe("SbClientRepository", () => {
             stepName: "이용자 서명",
             detailPayload: null,
             permanentPurgeRequestedAt: null,
+            voidedAt: null,
             documentKind: "contract",
             serviceRecordCaseId: null,
             templateId: null,
             ...overrides,
         });
+        const VOIDED_AT = new Date("2026-03-10T00:00:00.000Z");
         const row = (id: number, overrides: Record<string, unknown> = {}) => createClientRow({
             id,
             name: `Client ${id}`,
@@ -1364,6 +1366,33 @@ describe("SbClientRepository", () => {
                 expect(ids(result)).toEqual([1]);
             });
 
+            it("drops a client whose NEWEST contract is voided, even with an older live one, and keeps the non-voided control", async () => {
+                seedDb([row(1), row(2), row(3)], [
+                    // Client 1: newest voided (code still 060 = would be alive), older one is alive too.
+                    contractDoc(1, "060", { documentId: "voided-newest", voidedAt: VOIDED_AT }),
+                    contractDoc(1, "060", { documentId: "older-alive" }),
+                    // Client 2: control, the same newest contract without a void is still incomplete.
+                    contractDoc(2, "060", { documentId: "alive-newest" }),
+                    // Client 3: voided newest with a voided older one in front of an alive older one: still dead.
+                    contractDoc(3, "070", { documentId: "voided-070", voidedAt: VOIDED_AT }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([2]);
+            });
+
+            it("keeps a live newest contract incomplete when only an OLDER one is voided (no skipping either way)", async () => {
+                seedDb([row(1)], [
+                    contractDoc(1, "060", { documentId: "newest-alive" }),
+                    contractDoc(1, "060", { documentId: "older-voided", voidedAt: VOIDED_AT }),
+                ]);
+
+                const result = await repository.findWithIncompleteContractsStartingWithinDays(branchId, 7, NOW);
+
+                expect(ids(result)).toEqual([1]);
+            });
+
             it("ignores service-record documents and purge-requested contracts", async () => {
                 seedDb([row(1), row(2)], [
                     // Client 1: the only alive-looking document is a service record, so no contract.
@@ -1383,6 +1412,26 @@ describe("SbClientRepository", () => {
                 seedDb(clients, docs);
                 return repository.findWithoutContractSentStartingWithinDays(branchId, KR_BUILTIN_CALENDAR, now);
             };
+
+            it("lists a client whose newest contract is voided as 발송 필요, even with an older signed one, and not the live control", async () => {
+                const result = await find(
+                    [row(1), row(2), row(3), row(4)],
+                    [
+                        // Client 1: newest voided (completed code) over an older completed contract.
+                        contractDoc(1, "003", { documentId: "voided-newest", voidedAt: VOIDED_AT }),
+                        contractDoc(1, "003", { documentId: "older-signed" }),
+                        // Client 2: control, same code, not voided: contract alive, nothing to send.
+                        contractDoc(2, "003"),
+                        // Client 3: voided in-flight contract.
+                        contractDoc(3, "060", { voidedAt: VOIDED_AT }),
+                        // Client 4: live newest over an older voided one: nothing to send.
+                        contractDoc(4, "060", { documentId: "newest-alive" }),
+                        contractDoc(4, "060", { documentId: "older-voided", voidedAt: VOIDED_AT }),
+                    ],
+                );
+
+                expect(ids(result)).toEqual([1, 3]);
+            });
 
             it("does not treat a live 040/045 contract as not sent, even when eDocId is null", async () => {
                 const result = await find(
