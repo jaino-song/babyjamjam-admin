@@ -787,7 +787,7 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
             } as never,
             triggerDelivery,
             senderApproval as never,
-            {} as never,
+            { findByIdIncludingGlobal: jest.fn().mockResolvedValue(null) } as never,
             repository as never,
             { findSentTriggerJobIdsSystemScope: jest.fn().mockResolvedValue(new Set<string>()), save: jest.fn() } as never,
             systemTemplateService as never,
@@ -982,6 +982,28 @@ describe("MessageExternalAgentCapabilitiesProvider", () => {
         expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ sendTime: "14:37" }));
         rule.sendTime = "16:00";
         await expect(update.revalidate!(context, { id: "rule-a", sendTime: "15:42" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+    });
+
+    it("binds automation approval to the persisted target client status and retry-on-failure (규칙 메시지-04)", async () => {
+        const { delivery, capabilities } = setup();
+        const update = capabilities.find((entry) => entry.meta.name === "automation.update")!;
+        const list = capabilities.find((entry) => entry.meta.name === "automation.list")!;
+        const rule = await delivery.getRule(principal.branchId, "rule-a");
+        rule.targetClientStatus = "waiting";
+        rule.retryOnFailure = false;
+
+        const listed = await list.execute(context, {}) as { rules: Array<{ id: string; targetClientStatus: string; retryOnFailure: boolean }> };
+        expect(listed.rules.find((entry) => entry.id === "rule-a")).toEqual(expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }));
+
+        const inspection = await update.inspect!(context, { id: "rule-a", name: "새 이름" });
+        expect(inspection.targetSnapshot).toEqual(expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }));
+        rule.targetClientStatus = "active";
+        await expect(update.revalidate!(context, { id: "rule-a", name: "새 이름" }, inspection.targetVersion!))
+            .resolves.toEqual(expect.objectContaining({ valid: false }));
+        rule.targetClientStatus = "waiting";
+        rule.retryOnFailure = true;
+        await expect(update.revalidate!(context, { id: "rule-a", name: "새 이름" }, inspection.targetVersion!))
             .resolves.toEqual(expect.objectContaining({ valid: false }));
     });
 

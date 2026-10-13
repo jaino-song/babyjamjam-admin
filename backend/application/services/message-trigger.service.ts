@@ -32,11 +32,17 @@ import {
     getMessageTriggerTemplateCatalog,
     isConfigurableSmsTriggerTemplate,
     isCompatibleMessageTriggerTemplate,
+    isMessageTriggerTargetClientStatus,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
+import {
+    TARGET_CLIENT_STATUS_MISMATCH_REASON,
+    ruleSendPolicyFrom,
+    targetClientStatusAllowsSend,
+} from "application/policies/message-trigger-target-client-status.policy";
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -120,6 +126,7 @@ export interface MessageTriggerIntentSyncOptions {
 type MessageTriggerRuleValidationParams = Pick<
     UpsertRuleParams,
     "eventType" | "offsetType" | "offsetDays" | "sendTime" | "recipientType" | "templateKey"
+    | "targetClientStatus" | "retryOnFailure"
 >;
 
 export type { ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
@@ -159,6 +166,22 @@ export function validateMessageTriggerRule(
 ): void {
     if (params.sendTime !== undefined && (typeof params.sendTime !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(params.sendTime))) {
         throw new BadRequestException("발송 시각은 HH:mm 형식이어야 합니다 (한국 시간).");
+    }
+    if (params.targetClientStatus !== undefined && !isMessageTriggerTargetClientStatus(params.targetClientStatus)) {
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/targetClientStatus",
+            code: "INVALID_VALUE",
+            detail: "대상 고객 상태는 all, pre_booking, waiting, active 중 하나여야 합니다.",
+            location: "body",
+        }));
+    }
+    if (params.retryOnFailure !== undefined && typeof params.retryOnFailure !== "boolean") {
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/retryOnFailure",
+            code: "INVALID_VALUE",
+            detail: "실패 시 재전송은 true 또는 false여야 합니다.",
+            location: "body",
+        }));
     }
     const template = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
     if (!template) {
@@ -1406,6 +1429,8 @@ export class MessageTriggerService {
             sendTime: params.sendTime === undefined ? rule.sendTime : params.sendTime,
             recipientType: params.recipientType ?? rule.recipientType,
             templateKey: params.templateKey ?? rule.templateKey,
+            targetClientStatus: params.targetClientStatus ?? rule.targetClientStatus,
+            retryOnFailure: params.retryOnFailure ?? rule.retryOnFailure,
         };
 
         this.validateRule(effectiveState, rule.templateKey);
@@ -1444,6 +1469,8 @@ export class MessageTriggerService {
                     sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
                     recipientType: params.recipientType ?? current.recipientType,
                     templateKey,
+                    targetClientStatus: params.targetClientStatus ?? current.targetClientStatus,
+                    retryOnFailure: params.retryOnFailure ?? current.retryOnFailure,
                 };
                 this.validateRule(effectiveState, current.templateKey);
                 return effectiveState;
@@ -1492,6 +1519,8 @@ export class MessageTriggerService {
             sendTime: params.sendTime === undefined ? expected.sendTime : params.sendTime,
             recipientType: params.recipientType ?? expected.recipientType,
             templateKey: params.templateKey ?? expected.templateKey,
+            targetClientStatus: params.targetClientStatus ?? expected.targetClientStatus,
+            retryOnFailure: params.retryOnFailure ?? expected.retryOnFailure,
         };
         if (
             !isManualMessageTriggerRule({ id: expected.id, templateKey: nextState.templateKey })
@@ -1515,6 +1544,8 @@ export class MessageTriggerService {
             expected.isDefault,
             expected.jobsStale,
             expected.sendTime,
+            expected.targetClientStatus,
+            expected.retryOnFailure,
         );
         next.update({
             ...nextState,
@@ -1559,6 +1590,8 @@ export class MessageTriggerService {
                         sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
                         recipientType: params.recipientType ?? current.recipientType,
                         templateKey,
+                        targetClientStatus: params.targetClientStatus ?? current.targetClientStatus,
+                        retryOnFailure: params.retryOnFailure ?? current.retryOnFailure,
                     };
                     this.validateRule(resolvedState, current.templateKey);
                     nextForWrite.update({
@@ -2490,6 +2523,8 @@ export class MessageTriggerService {
             templateKey: rule.templateKey,
             isDefault: rule.isDefault,
             jobsStale: rule.jobsStale,
+            targetClientStatus: rule.targetClientStatus,
+            retryOnFailure: rule.retryOnFailure,
             updatedAt: rule.updatedAt.toISOString(),
         })).digest("hex");
     }
@@ -2508,6 +2543,8 @@ export class MessageTriggerService {
         const templateKey = snapshot["templateKey"];
         const isDefault = snapshot["isDefault"];
         const jobsStale = snapshot["jobsStale"];
+        const targetClientStatus = snapshot["targetClientStatus"];
+        const retryOnFailure = snapshot["retryOnFailure"];
         const createdAt = snapshot["createdAt"];
         const updatedAt = snapshot["updatedAt"];
         if (
@@ -2524,6 +2561,10 @@ export class MessageTriggerService {
             || typeof templateKey !== "string"
             || typeof isDefault !== "boolean"
             || typeof jobsStale !== "boolean"
+            // An approval issued before these fields existed lacks them; it is
+            // stale by definition and must never be defaulted into a write.
+            || !isMessageTriggerTargetClientStatus(targetClientStatus)
+            || typeof retryOnFailure !== "boolean"
             || typeof createdAt !== "string"
             || typeof updatedAt !== "string"
         ) {
@@ -2547,6 +2588,8 @@ export class MessageTriggerService {
             isDefault,
             jobsStale,
             sendTime,
+            targetClientStatus,
+            retryOnFailure,
         );
     }
 
@@ -2915,6 +2958,14 @@ export class MessageTriggerService {
             return;
         }
 
+        // Only ordinary automatic rule jobs are subject to the routine's 대상
+        // 고객 상태. Manual-owned jobs (agent-approved retries and scheduled
+        // sends, manual service-record-link / service-end-notice sends) are a
+        // human decision and never read the rule for this gate.
+        if (this.isAutomaticMessageJob(job) && await this.cancelJobOutsideRuleTargetClientStatus(job)) {
+            return;
+        }
+
         if (await this.postponeCatchUpJobUntilPredecessorCompletes(job)) {
             return;
         }
@@ -3003,6 +3054,34 @@ export class MessageTriggerService {
         job.markDispatchAuthorized();
         if (await this.deliverClaimedJob(job, preparation) === "preserve-stored") return;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+    }
+
+    /**
+     * 규칙 메시지-04 send-time gate. A routine whose 대상 고객 상태 is not 전체
+     * only sends while the job's client is in that EFFECTIVE status (the same
+     * derivation the rest of the code uses, read fresh now). The rule row is
+     * read now too, never copied at scheduling, so an admin's change applies to
+     * jobs that are already scheduled. A mismatch ends the job as a non-failure
+     * skip (canceled, no message log, no provider call, no retry); because it is
+     * a system cancel, a later resync revives it and this gate re-evaluates, so
+     * e.g. a 대기-only routine sends after [예약 확정] inside the 24-hour window.
+     * Jobs with no client are not subject to the gate.
+     */
+    private async cancelJobOutsideRuleTargetClientStatus(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (job.clientId === null || !job.branchId) return false;
+        // Global (branchless) rules are accepted by the claim, so the
+        // branch-scoped findById cannot be used here.
+        const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
+        const { targetClientStatus } = ruleSendPolicyFrom(rule);
+        if (targetClientStatus === "all") return false;
+        const client = await this.prisma.client.findFirst({
+            where: { id: job.clientId, branchId: job.branchId },
+            select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        if (targetClientStatusAllowsSend(targetClientStatus, client)) return false;
+        job.cancel(TARGET_CLIENT_STATUS_MISMATCH_REASON);
+        await this.persistTriggerJobStatus(job, "persist target client status skipped job");
+        return true;
     }
 
     /**
@@ -3982,6 +4061,8 @@ export class MessageTriggerService {
                     sendTime: rule.sendTime,
                     recipientType: rule.recipientType,
                     templateKey: rule.templateKey,
+                    targetClientStatus: rule.targetClientStatus,
+                    retryOnFailure: rule.retryOnFailure,
                 };
                 await this.runRuleTemplateMutation(rule.branchId!, nextState, async (transaction) => {
                     rule.update({ isActive: true });

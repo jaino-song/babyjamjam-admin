@@ -719,12 +719,13 @@ https://mobile.test/service-record/efl_token`;
         aligoService: unknown;
         logRepository: unknown;
         systemTemplateService?: unknown;
+        ruleRepository?: unknown;
     }) =>
         new SmsTriggerDeliveryService(
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? { getByKeyForBranch: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate());
+        undefined, undefined, createLegacyAutomationDeliveryGate(), overrides.ruleRepository as never);
 
     const createServiceRecordJob = () =>
         MessageTriggerJobEntity.reconstitute(
@@ -825,6 +826,173 @@ https://mobile.test/service-record/efl_token`;
         expect(savedLog.nextRetryAt).toBeInstanceOf(Date);
         expect(savedLog.nextRetryAt?.getTime()).toBeGreaterThanOrEqual(beforeSend + 300000);
         expect(savedLog.nextRetryAt?.getTime()).toBeLessThanOrEqual(Date.now() + 300000);
+    });
+
+    describe("rule 실패 시 재전송 (규칙 메시지-04)", () => {
+        const rejectionService = (ruleRepository: unknown) => {
+            const aligoService = {
+                sendSms: jest.fn().mockResolvedValue({
+                    request: { receiver: "01011112222", msgType: "LMS", testModeYn: "N" },
+                    response: { result_code: -1, message: "일시적인 서버 장애", msg_id: null, success_cnt: 0, error_cnt: 1 },
+                }),
+            };
+            const logRepository = { save: jest.fn().mockImplementation(async (log: MessageLogEntity) => log) };
+            const service = buildService({
+                aligoService, logRepository, ruleRepository,
+                systemTemplateService: { getByKeyForBranch: jest.fn().mockResolvedValue({ content: serviceRecordLinkTemplate }) },
+            });
+            return { service, aligoService, logRepository };
+        };
+        const ruleWith = (retryOnFailure: boolean) => ({
+            findByIdIncludingGlobal: jest.fn().mockResolvedValue({ retryOnFailure, targetClientStatus: "all" }),
+        });
+
+        it("retry on: a transient rejection is scheduled for the 5-minute retry as today", async () => {
+            const ruleRepository = ruleWith(true);
+            const { service, logRepository } = rejectionService(ruleRepository);
+
+            await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(false);
+
+            expect(ruleRepository.findByIdIncludingGlobal).toHaveBeenCalledWith("branch-1", "system:service_record_link");
+            const saved = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
+            expect(saved.status).toBe("failed");
+            expect(saved.nextRetryAt).toBeInstanceOf(Date);
+        });
+
+        it("retry off: the transient rejection is final (failed, nothing scheduled) and the rule is read before the provider call", async () => {
+            const ruleRepository = ruleWith(false);
+            const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+            await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(false);
+
+            const saved = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
+            expect(saved).toMatchObject({ status: "failed", providerAcceptanceState: "rejected", attempts: 1, nextRetryAt: null });
+            expect(saved.canRetry()).toBe(true);
+            expect(ruleRepository.findByIdIncludingGlobal.mock.invocationCallOrder[0]!)
+                .toBeLessThan(aligoService.sendSms.mock.invocationCallOrder[0]!);
+        });
+
+        it.each([
+            ["a missing rule row", { findByIdIncludingGlobal: jest.fn().mockResolvedValue(null) }],
+            ["no rule repository", undefined],
+        ])("treats %s as retry on", async (_name, ruleRepository) => {
+            const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+            await expect(service.sendJob(createServiceRecordJob())).resolves.toBe(false);
+
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            expect((logRepository.save.mock.calls[0]?.[0] as MessageLogEntity).nextRetryAt).toBeInstanceOf(Date);
+        });
+
+        it("a failed rule read is not permission: the job is deferred before any attempt row or provider call", async () => {
+            const ruleRepository = { findByIdIncludingGlobal: jest.fn().mockRejectedValue(new Error("db down")) };
+            const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+            await expect(service.sendJob(createServiceRecordJob())).rejects.toMatchObject({
+                name: "TriggerJobDeferredError",
+                kind: "transient",
+            });
+
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(logRepository.save).not.toHaveBeenCalled();
+        });
+
+        it("prepared path: a failed rule read before dispatch defers the job in prepareJob", async () => {
+            const ruleRepository = { findByIdIncludingGlobal: jest.fn().mockRejectedValue(new Error("db down")) };
+            const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+            await expect(service.prepareJob(createServiceRecordJob())).rejects.toBeInstanceOf(TriggerJobDeferredError);
+
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(logRepository.save).not.toHaveBeenCalled();
+        });
+
+        it("prepared path: dispatch is already committed, so a rule read that fails then is final, never a scheduled retry", async () => {
+            const ruleRepository = {
+                findByIdIncludingGlobal: jest.fn()
+                    .mockResolvedValueOnce({ retryOnFailure: true, targetClientStatus: "all" })
+                    .mockRejectedValueOnce(new Error("db down")),
+            };
+            const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+            const job = createServiceRecordJob();
+            const preparation = await service.prepareJob(job);
+
+            await expect(service.sendPreparedJob(job, preparation!)).resolves.toBe(false);
+
+            expect(ruleRepository.findByIdIncludingGlobal).toHaveBeenCalledTimes(2);
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            const saved = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
+            expect(saved).toMatchObject({ status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null });
+        });
+
+        describe("manual-owned jobs never read the automatic rule retry policy", () => {
+            const MANUAL_UUID = "0b9c1c1e-6d2a-4c53-9a6e-1f2b3c4d5e6f";
+            const manualKinds: ReadonlyArray<readonly [string, { ruleId: string; dedupeKey: string }]> = [
+                ["agent-scheduled send", { ruleId: "agent-sms:abc", dedupeKey: "agent-sms:abc:7" }],
+                ["agent-approved retry", { ruleId: "system:service_record_link", dedupeKey: "agent-sms-retry:job-1:2" }],
+                ["manual service-record-link send", {
+                    ruleId: "system:service_record_link",
+                    dedupeKey: `system:service_record_link:schedule:11:primary:manual:${MANUAL_UUID}`,
+                }],
+                ["manual service-end notice", {
+                    ruleId: "system:service_end_notice",
+                    dedupeKey: `system:service_end_notice:client:7:manual:${MANUAL_UUID}`,
+                }],
+            ];
+            const manualJob = (ownership: { ruleId: string; dedupeKey: string }) =>
+                Object.assign(createServiceRecordJob(), ownership);
+            const throwingRepository = () => ({
+                findByIdIncludingGlobal: jest.fn().mockRejectedValue(new Error("db down")),
+            });
+
+            it.each(manualKinds)("%s: sendJob sends once although the policy read would throw, and does not even attempt it", async (_name, ownership) => {
+                const ruleRepository = throwingRepository();
+                const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+                await expect(service.sendJob(manualJob(ownership))).resolves.toBe(false);
+
+                expect(ruleRepository.findByIdIncludingGlobal).not.toHaveBeenCalled();
+                expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+                const saved = logRepository.save.mock.calls[0]?.[0] as MessageLogEntity;
+                expect(saved).toMatchObject({ status: "failed", providerAcceptanceState: "rejected" });
+                expect(saved.nextRetryAt).toBeInstanceOf(Date);
+            });
+
+            it.each(manualKinds)("%s: prepareJob and sendPreparedJob send once with the policy read never attempted", async (_name, ownership) => {
+                const ruleRepository = throwingRepository();
+                const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+                const job = manualJob(ownership);
+
+                const preparation = await service.prepareJob(job);
+                await expect(service.sendPreparedJob(job, preparation!)).resolves.toBe(false);
+
+                expect(ruleRepository.findByIdIncludingGlobal).not.toHaveBeenCalled();
+                expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+                expect((logRepository.save.mock.calls[0]?.[0] as MessageLogEntity).nextRetryAt).toBeInstanceOf(Date);
+            });
+
+            it("an automatic job with a throwing policy read still defers with no provider call", async () => {
+                const ruleRepository = throwingRepository();
+                const { service, aligoService, logRepository } = rejectionService(ruleRepository);
+
+                await expect(service.sendJob(createServiceRecordJob())).rejects.toBeInstanceOf(TriggerJobDeferredError);
+
+                expect(ruleRepository.findByIdIncludingGlobal).toHaveBeenCalledTimes(1);
+                expect(aligoService.sendSms).not.toHaveBeenCalled();
+                expect(logRepository.save).not.toHaveBeenCalled();
+            });
+        });
+
+        it("prepared path: a readable rule that is on still schedules the retry", async () => {
+            const ruleRepository = ruleWith(true);
+            const { service, logRepository } = rejectionService(ruleRepository);
+            const job = createServiceRecordJob();
+            const preparation = await service.prepareJob(job);
+
+            await expect(service.sendPreparedJob(job, preparation!)).resolves.toBe(false);
+
+            expect((logRepository.save.mock.calls[0]?.[0] as MessageLogEntity).nextRetryAt).toBeInstanceOf(Date);
+        });
     });
 
     it.each([

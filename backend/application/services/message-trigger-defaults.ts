@@ -1,4 +1,4 @@
-import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTargetClientStatus, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 
 export interface MessageTriggerRuleDefaults {
@@ -10,6 +10,10 @@ export interface MessageTriggerRuleDefaults {
     sendTime?: string;
     recipientType: MessageTriggerRecipientType;
     templateKey: MessageTriggerTemplateKey;
+    /** 대상 고객 상태. Omitted on create → "all"; omitted on update → unchanged. */
+    targetClientStatus?: MessageTriggerTargetClientStatus;
+    /** 실패 시 재전송. Omitted on create → true; omitted on update → unchanged. */
+    retryOnFailure?: boolean;
 }
 
 

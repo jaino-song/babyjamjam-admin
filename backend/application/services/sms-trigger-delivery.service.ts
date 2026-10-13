@@ -24,9 +24,15 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
+import {
+    MESSAGE_TRIGGER_RULE_REPOSITORY,
+    IMessageTriggerRuleRepository,
+} from "domain/repositories/message-trigger-rule.repository.interface";
+import { resolveRuleRetryPermission } from "application/services/message-automation-activation.service";
 import {
     MessageLogEntity,
     MessageLogStatus,
@@ -202,7 +208,51 @@ export class SmsTriggerDeliveryService {
         private readonly enricherRegistry?: SmsTriggerPayloadEnricherRegistry,
         @Optional()
         private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
+        @Optional()
+        @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
+        private readonly ruleRepository?: IMessageTriggerRuleRepository,
     ) {}
+
+    /**
+     * 규칙 메시지-04: the rule's CURRENT 실패 시 재전송, read BEFORE any provider
+     * bookkeeping starts. The rule being off means a rejection is final; a
+     * missing rule row (or no repository) means on. A failed read is neither:
+     * nothing has been sent yet, so the job is deferred as a transient
+     * infrastructure failure instead of guessing a permission.
+     *
+     * Manual-owned jobs (agent-approved retries and scheduled sends, manual
+     * service-record-link and service-end sends) are not governed by the
+     * automatic rule retry policy: the read is skipped, so an unreadable policy
+     * can neither defer nor fail them.
+     */
+    private async readRuleRetryOnFailureOrDefer(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (isManualMessageTriggerJob(job)) return true;
+        if (!this.ruleRepository || !job.branchId) return true;
+        try {
+            const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
+            return resolveRuleRetryPermission(rule) !== "off";
+        } catch (error) {
+            this.logger.warn(
+                `Failed to read retryOnFailure for rule ${job.ruleId}; deferring job ${job.id}: ${this.formatErrorMessage(error)}`,
+            );
+            throw new TriggerJobDeferredError("transient", "Rule retry policy could not be read");
+        }
+    }
+
+    /**
+     * Same read for a job whose dispatch is already committed (the prepared
+     * path): deferring would re-queue a `dispatching` job for a second send, so a
+     * failed read here is final instead - the provider is still called once, but
+     * a rejection schedules nothing.
+     */
+    private async readRuleRetryOnFailureForDispatchedJob(job: MessageTriggerJobEntity): Promise<boolean> {
+        try {
+            return await this.readRuleRetryOnFailureOrDefer(job);
+        } catch (error) {
+            if (error instanceof TriggerJobDeferredError) return false;
+            throw error;
+        }
+    }
 
     canHandle(templateKey: MessageTriggerTemplateKey): boolean {
         return Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
@@ -418,6 +468,9 @@ export class SmsTriggerDeliveryService {
         if (!config) {
             return null;
         }
+        // Probe only: an unreadable policy defers the job here, before the
+        // irreversible dispatch marker. sendPreparedJob reads it again, fresh.
+        await this.readRuleRetryOnFailureOrDefer(job);
 
         const previousVariables = { ...job.payload.templateVariables };
         const previousButtonUrl = job.payload.buttonUrl;
@@ -521,6 +574,11 @@ export class SmsTriggerDeliveryService {
         preparedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<boolean> {
         const payload = job.payload;
+        // Before any attempt row or provider bookkeeping. A prepared send has
+        // already crossed the irreversible dispatch marker and cannot be deferred.
+        const retryOnFailure = preparedSnapshot
+            ? await this.readRuleRetryOnFailureForDispatchedJob(job)
+            : await this.readRuleRetryOnFailureOrDefer(job);
         const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
@@ -588,7 +646,7 @@ export class SmsTriggerDeliveryService {
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
-            attempt.nextRetryAt = !isAccepted && !isPermanent && attempt.canRetry()
+            attempt.nextRetryAt = !isAccepted && !isPermanent && retryOnFailure && attempt.canRetry()
                 ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
                 : null;
             attempt.updatedAt = new Date(Date.now());

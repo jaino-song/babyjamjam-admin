@@ -31,6 +31,8 @@ describe("SbMessageTriggerRuleRepository", () => {
         templateKey: string;
         isDefault: boolean;
         jobsStale: boolean;
+        targetClientStatus?: string;
+        retryOnFailure?: boolean;
         createdAt: Date;
         updatedAt: Date;
     };
@@ -298,6 +300,8 @@ describe("SbMessageTriggerRuleRepository", () => {
                 templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
                 isDefault: false,
                 jobsStale: false,
+                targetClientStatus: "all",
+                retryOnFailure: true,
             },
             update: {},
         });
@@ -472,4 +476,114 @@ describe("SbMessageTriggerRuleRepository", () => {
         expect(getSqlText(messageTriggerRuleModel.$queryRaw.mock.calls[1][0])).toContain("sent_at >=");
         expect(messageTriggerRuleModel.$executeRaw).toHaveBeenCalledTimes(1);
     });
+
+    describe("대상 고객 상태 / 실패 시 재전송 (규칙 메시지-04)", () => {
+        const entityFrom = (row: MockMessageTriggerRuleRow, extra: Partial<MessageTriggerRuleEntity> = {}) =>
+            Object.assign(MessageTriggerRuleEntity.reconstitute(
+                row.id, row.branchId, row.name, row.isActive,
+                row.eventType as MessageTriggerEventType, row.offsetType as MessageTriggerOffsetType, row.offsetDays,
+                row.recipientType as MessageTriggerRecipientType, row.templateKey as MessageTriggerTemplateKey,
+                row.createdAt, row.updatedAt, row.isDefault, row.jobsStale, row.sendTime,
+                (row.targetClientStatus ?? "all") as never, row.retryOnFailure ?? true,
+            ), extra);
+
+        it("reads both fields, defaulting a row without them to 전체 / 켬 and an unknown status to 전체", async () => {
+            messageTriggerRuleModel.findFirst
+                .mockResolvedValueOnce(createRow({ targetClientStatus: "waiting", retryOnFailure: false }))
+                .mockResolvedValueOnce(createRow())
+                .mockResolvedValueOnce(createRow({ targetClientStatus: "bogus" }));
+
+            await expect(repository.findById("branch-1", "rule-1")).resolves.toMatchObject({ targetClientStatus: "waiting", retryOnFailure: false });
+            await expect(repository.findById("branch-1", "rule-1")).resolves.toMatchObject({ targetClientStatus: "all", retryOnFailure: true });
+            await expect(repository.findById("branch-1", "rule-1")).resolves.toMatchObject({ targetClientStatus: "all" });
+        });
+
+        it("persists both fields on create and update", async () => {
+            const row = createRow({ targetClientStatus: "active", retryOnFailure: false });
+            messageTriggerRuleModel.create.mockResolvedValue(row);
+            messageTriggerRuleModel.update.mockResolvedValue(row);
+            const rule = entityFrom(row);
+
+            await repository.create("branch-1", rule);
+            await repository.update("branch-1", rule);
+
+            for (const call of [messageTriggerRuleModel.create.mock.calls[0], messageTriggerRuleModel.update.mock.calls[0]]) {
+                expect(call![0].data).toEqual(expect.objectContaining({ targetClientStatus: "active", retryOnFailure: false }));
+            }
+        });
+
+        it("findByIdIncludingGlobal matches the branch's rule OR a branchless global rule", async () => {
+            messageTriggerRuleModel.findFirst.mockResolvedValue(createRow({ branchId: null, targetClientStatus: "pre_booking" }));
+
+            const rule = await repository.findByIdIncludingGlobal("branch-1", "rule-global");
+
+            expect(messageTriggerRuleModel.findFirst).toHaveBeenCalledWith({
+                where: { id: "rule-global", OR: [{ branchId: "branch-1" }, { branchId: null }] },
+            });
+            expect(rule).toMatchObject({ branchId: null, targetClientStatus: "pre_booking" });
+            messageTriggerRuleModel.findFirst.mockResolvedValue(null);
+            await expect(repository.findByIdIncludingGlobal("branch-1", "gone")).resolves.toBeNull();
+        });
+
+        it("compares and writes both fields in the target-match updates and deletes", async () => {
+            const expected = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }));
+            const next = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
+            messageTriggerRuleModel.updateMany.mockResolvedValue({ count: 1 });
+            messageTriggerRuleModel.deleteMany.mockResolvedValue({ count: 1 });
+
+            await repository.updateIfTargetMatches("branch-1", expected, next);
+            await repository.deleteIfTargetMatches("branch-1", expected);
+
+            expect(messageTriggerRuleModel.updateMany.mock.calls[0]![0]).toEqual(expect.objectContaining({
+                where: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
+                data: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
+            }));
+            expect(messageTriggerRuleModel.deleteMany.mock.calls[0]![0]).toEqual(expect.objectContaining({
+                where: expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
+            }));
+        });
+
+        const rawRow = (rule: MessageTriggerRuleEntity) => ({
+            id: rule.id, branch_id: rule.branchId, name: rule.name, is_active: rule.isActive,
+            event_type: rule.eventType, offset_type: rule.offsetType, offset_days: rule.offsetDays,
+            send_time: rule.sendTime, recipient_type: rule.recipientType, template_key: rule.templateKey,
+            is_default: rule.isDefault, jobs_stale: rule.jobsStale,
+            target_client_status: rule.targetClientStatus, retry_on_failure: rule.retryOnFailure,
+            created_at: rule.createdAt, updated_at: rule.updatedAt,
+        });
+
+        it("the fenced update selects, compares and writes both fields, and refuses a snapshot whose fields drifted", async () => {
+            const expected = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }));
+            const next = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: false }), { name: "변경" });
+            messageTriggerRuleModel.$queryRaw
+                .mockResolvedValueOnce([rawRow(expected)])
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([rawRow(next)]);
+            messageTriggerRuleModel.$executeRaw.mockResolvedValue(1);
+
+            const updated = await repository.updateIfTargetMatchesAndFenceJobs("branch-1", expected, next, "Rule updated");
+
+            expect(updated).toMatchObject({ name: "변경", targetClientStatus: "waiting", retryOnFailure: false });
+            const selectSql = getSqlText(messageTriggerRuleModel.$queryRaw.mock.calls[0][0]);
+            expect(selectSql).toContain("target_client_status");
+            expect(selectSql).toContain("retry_on_failure");
+            const updateSql = getSqlText(messageTriggerRuleModel.$queryRaw.mock.calls[2][0]);
+            expect(updateSql).toContain("target_client_status =");
+            expect(updateSql).toContain("retry_on_failure =");
+            expect(updateSql).toContain("RETURNING");
+
+            // The locked row was changed by an admin after the approval snapshot.
+            messageTriggerRuleModel.$queryRaw.mockReset();
+            messageTriggerRuleModel.$executeRaw.mockReset();
+            const drifted = entityFrom(createRow({ targetClientStatus: "active", retryOnFailure: false }));
+            messageTriggerRuleModel.$queryRaw.mockResolvedValueOnce([rawRow(drifted)]);
+            await expect(repository.updateIfTargetMatchesAndFenceJobs("branch-1", expected, next, "Rule updated")).resolves.toBeNull();
+            const toggled = entityFrom(createRow({ targetClientStatus: "waiting", retryOnFailure: true }));
+            messageTriggerRuleModel.$queryRaw.mockResolvedValueOnce([rawRow(toggled)]);
+            await expect(repository.updateIfTargetMatchesAndFenceJobs("branch-1", expected, next, "Rule updated")).resolves.toBeNull();
+            expect(messageTriggerRuleModel.$queryRaw).toHaveBeenCalledTimes(2);
+            expect(messageTriggerRuleModel.$executeRaw).not.toHaveBeenCalled();
+        });
+    });
+
 });
