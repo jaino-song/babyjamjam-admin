@@ -151,6 +151,7 @@ export async function createAdminServiceRecordEditHttpFixture(
     const activeClient = await prisma.client.create({
         data: {
             name: "HTTP active client",
+            bookingConfirmedAt: new Date("2026-01-01"),
             voucherClient: true,
             duration: 15,
             branchId: activeBranch.id,
@@ -160,6 +161,7 @@ export async function createAdminServiceRecordEditHttpFixture(
     const otherClient = await prisma.client.create({
         data: {
             name: "HTTP other client",
+            bookingConfirmedAt: new Date("2026-01-01"),
             voucherClient: true,
             duration: 15,
             branchId: otherBranch.id,

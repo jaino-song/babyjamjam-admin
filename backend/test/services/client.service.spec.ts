@@ -26,8 +26,9 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
-import { findManyFrom } from "../utils/prisma-where-evaluator";
+import { findManyFrom, matchesWhere } from "../utils/prisma-where-evaluator";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
+import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
 import { isActiveContractSignal } from "application/utils/current-contract-document";
 import { legacyClientBadges } from "../../../packages/shared/src/client/badges";
@@ -249,6 +250,8 @@ describe("ClientService", () => {
         "pending",
         false,
         null,
+        null, null, null, null, false, null, undefined,
+        new Date("2024-01-01"),
     );
 
     const branchId = "org-1";
@@ -3187,14 +3190,14 @@ describe("ClientService", () => {
                     where["terminatedAt"] === null ? ids.map((id) => ({ id })) : []);
             };
 
-            const preBooking: StatusInputs = { serviceStatus: "pre_booking", startDate: futureStart, endDate: futureEnd };
+            const preBooking: StatusInputs = { serviceStatus: "pre_booking", startDate: futureStart, endDate: null };
             const waiting: StatusInputs = { serviceStatus: "waiting", startDate: futureStart, endDate: futureEnd };
 
             it("schedules the link for the one active schedule after the transaction commits", async () => {
                 const { events } = arrange(preBooking, waiting);
                 activeSchedulesAfterCommit([7]);
 
-                await service.update(branchId, 1, { serviceStatus: "waiting" });
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
 
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledTimes(1);
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
@@ -3214,7 +3217,7 @@ describe("ClientService", () => {
                 arrange(preBooking, waiting);
                 activeSchedulesAfterCommit([7, 9]);
 
-                await service.update(branchId, 1, { serviceStatus: "waiting" });
+                await service.update(branchId, 1, { endDate: "2026-11-30" });
 
                 expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7], [9]]);
             });
@@ -3274,7 +3277,7 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
                 activeSchedulesAfterCommit([20]);
 
-                await service.update(branchId, 1, { serviceStatus: "waiting", primaryEmployeeId: 7 });
+                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
 
                 expect(prismaService.employee_schedule.create).toHaveBeenCalled();
                 expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20]]);
@@ -3292,7 +3295,7 @@ describe("ClientService", () => {
                 prismaService.employee_schedule.create.mockResolvedValue({ id: 20, clientId: 1 });
                 activeSchedulesAfterCommit([20, 21]);
 
-                await service.update(branchId, 1, { serviceStatus: "waiting", primaryEmployeeId: 7 });
+                await service.update(branchId, 1, { endDate: "2026-11-30", primaryEmployeeId: 7 });
 
                 expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[20], [21]]);
             });
@@ -3304,7 +3307,7 @@ describe("ClientService", () => {
                 const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
                     .mockImplementation(() => undefined);
 
-                await expect(service.update(branchId, 1, { serviceStatus: "waiting" })).resolves.toBe(afterClient);
+                await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
 
                 expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
                 // The failure of one schedule does not stop the next one.
@@ -3320,7 +3323,7 @@ describe("ClientService", () => {
                 const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
                     .mockImplementation(() => undefined);
 
-                await expect(service.update(branchId, 1, { serviceStatus: "waiting" })).resolves.toBe(afterClient);
+                await expect(service.update(branchId, 1, { endDate: "2026-11-30" })).resolves.toBe(afterClient);
 
                 expect(logError).toHaveBeenCalledWith(expect.stringContaining("read unavailable"));
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
@@ -3851,6 +3854,7 @@ describe("ClientService", () => {
                     "waiting",
                     false,
                     eDocId,
+                    null, null, null, null, false, null, undefined, new Date("2026-01-01"),
                 );
 
             beforeEach(() => {
@@ -4324,6 +4328,8 @@ describe("ClientService", () => {
                     serviceStatus,
                     false,
                     eDocId,
+                    null, null, null, null, false, null, undefined,
+                    serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
                 );
                 return client;
             };
@@ -4492,6 +4498,7 @@ describe("ClientService", () => {
             endDate: new Date("2026-04-04T00:00:00.000Z"),
             serviceStatus: "active",
             eDocId: "doc-1",
+            bookingConfirmedAt: new Date("2026-01-01"),
             ...overrides,
         });
 
@@ -4638,6 +4645,49 @@ describe("ClientService", () => {
             ]);
         });
 
+        it.each(["pre_booking"])("scans confirmed dated clients with stale stored %s but excludes unconfirmed clients", async (serviceStatus) => {
+            const rows = [
+                alertClient({ id: 1, branchId, serviceStatus, eDocId: null }),
+                alertClient({ id: 2, branchId, serviceStatus: "waiting", bookingConfirmedAt: null, eDocId: null }),
+            ];
+            prismaService.client.findMany.mockImplementation(findManyFrom(rows));
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([
+                expect.objectContaining({ id: 1, reason: "발송 필요" }),
+            ]);
+        });
+
+        it("keeps finished clients from crowding a waiting client's alert out of the scan window", async () => {
+            const finishedClientCount = 12;
+            const waitingClientId = finishedClientCount + 1;
+            const rows = [
+                alertClient({ id: waitingClientId, branchId, serviceStatus: "waiting", eDocId: null }),
+                ...Array.from({ length: finishedClientCount }, (_, index) => alertClient({
+                    id: index + 1,
+                    branchId,
+                    serviceStatus: "completed",
+                    createdAt: new Date(`2026-03-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`),
+                    startDate: new Date("2026-02-02T00:00:00.000Z"),
+                    endDate: new Date("2026-02-20T00:00:00.000Z"),
+                    eDocId: null,
+                })),
+            ];
+            prismaService.client.findMany.mockImplementation(async (args: {
+                where: Record<string, unknown>;
+                orderBy: { createdAt: "asc" | "desc" };
+                take: number;
+            }) => rows
+                .filter((row) => matchesWhere(row, args.where))
+                .sort((left, right) => args.orderBy.createdAt === "desc"
+                    ? right.createdAt.getTime() - left.createdAt.getTime()
+                    : left.createdAt.getTime() - right.createdAt.getTime())
+                .slice(0, args.take));
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([
+                expect.objectContaining({ id: waitingClientId, reason: "발송 필요" }),
+            ]);
+        });
+
         it("sorts by priority and honours the limit", async () => {
             prismaService.client.findMany.mockResolvedValue([
                 alertClient({ id: 1, eDocId: null, startDate: new Date("2026-03-20T00:00:00.000Z") }),
@@ -4672,6 +4722,7 @@ describe("ClientService", () => {
             // so each is "waiting" on the Korean calendar of both instants.
             const waitingStartingOn = (id: number, startDate: string) => ({
                 id,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 serviceStatus: "waiting",
                 startDate: new Date(`${startDate}T00:00:00.000Z`),
                 endDate: new Date("2027-03-01T00:00:00.000Z"),
@@ -4704,6 +4755,7 @@ describe("ClientService", () => {
         const stored = (id: number, serviceStatus: string | null, startDate: string, endDate: string) => ({
             id,
             serviceStatus,
+            bookingConfirmedAt: serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
             startDate: new Date(`${startDate}T00:00:00.000Z`),
             endDate: new Date(`${endDate}T00:00:00.000Z`),
         });
@@ -4771,8 +4823,8 @@ describe("ClientService", () => {
 
         it("getStats skips the out-of-range client from contractsNotSent and logs its id only", async () => {
             prismaService.client.findMany.mockResolvedValue([
-                { id: 1, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z"), name: "Kim Minji" },
-                { id: 77, serviceStatus: "waiting", ...OUT_OF_RANGE, name: "Park Soyoung" },
+                { id: 1, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z"), name: "Kim Minji" },
+                { id: 77, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), ...OUT_OF_RANGE, name: "Park Soyoung" },
             ]);
 
             const stats = await service.getStats(branchId);
@@ -4804,8 +4856,8 @@ describe("ClientService", () => {
 
         it("getActionRequiredAlerts keeps serving the other clients", async () => {
             prismaService.client.findMany.mockResolvedValue([
-                { id: 1, name: "A", createdAt: null, serviceStatus: "waiting", startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z") },
-                { id: 77, name: "B", createdAt: null, serviceStatus: "waiting", ...OUT_OF_RANGE },
+                { id: 1, name: "A", createdAt: null, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-03-20T00:00:00.000Z"), endDate: new Date("2026-04-04T00:00:00.000Z") },
+                { id: 77, name: "B", createdAt: null, serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), ...OUT_OF_RANGE },
             ]);
 
             const alerts = await service.getActionRequiredAlerts(branchId);
@@ -4888,6 +4940,7 @@ describe("ClientService", () => {
             serviceStatus: "waiting",
             startDate: new Date("2026-03-20T00:00:00.000Z"),
             endDate: new Date("2026-04-04T00:00:00.000Z"),
+            bookingConfirmedAt: new Date("2026-01-01"),
             ...overrides,
         });
 
@@ -4988,7 +5041,7 @@ describe("ClientService", () => {
                 const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
                 try {
                     prismaService.client.findMany.mockResolvedValue([
-                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
+                        { id: 1, name: "A", createdAt: null, serviceStatus: "active", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2027-12-20T00:00:00.000Z"), endDate: new Date("2027-12-31T00:00:00.000Z") },
                     ]);
 
                     const alerts = await service.getActionRequiredAlerts(branchId);
@@ -5307,6 +5360,90 @@ describe("ClientService", () => {
         });
     });
 
+    describe("booking confirmation writes", () => {
+        const confirmation = new Date("2026-01-01");
+        const confirmedClient = (): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: confirmation,
+            startDate: new Date("2026-11-02"), endDate: new Date("2026-11-13"), duration: 10,
+        });
+        const realEntityUpdate = (client: ClientEntity) => {
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            clientRepository.findById.mockResolvedValue(client);
+            clientRepository.findByIdForUpdate.mockResolvedValue(client);
+            clientRepository.update.mockImplementation(async (_branch, updated) => {
+                expect(ClientMapper.toPrismaUpdate(updated)).not.toHaveProperty("bookingConfirmedAt");
+                return updated;
+            });
+            const realUpdate = new UpdateClientUsecase(clientRepository, holidayCalendar);
+            updateClientUsecase.execute.mockImplementation(realUpdate.execute.bind(realUpdate));
+            return realUpdate;
+        };
+
+        it.each(["add", "change", "remove"])("%s service dates leaves an unconfirmed client in 예약 전 without link scheduling", async (operation) => {
+            const client = Object.assign(confirmedClient(), { bookingConfirmedAt: null, serviceStatus: "pre_booking" });
+            if (operation === "add") { client.startDate = null; client.endDate = null; }
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            prismaService.client.updateMany.mockImplementation(async ({ data }) => {
+                if (data.startDate !== undefined) client.startDate = data.startDate as Date | null;
+                if (data.endDate !== undefined) client.endDate = data.endDate as Date | null;
+                return { count: 1 };
+            });
+            const result = await service.update(branchId, client.id, operation === "remove"
+                ? { endDate: null }
+                : { startDate: "2026-11-02", endDate: operation === "change" ? "2026-11-30" : "2026-11-13" });
+            expect(result.computeCurrentStatus()).toBe("pre_booking");
+            expect(result.bookingConfirmedAt).toBeNull();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("service create stores dated waiting input as unconfirmed 예약 전 in the shared create layer", async () => {
+            clientRepository.create.mockImplementation(async (_branch, client) => client);
+            const realCreate = new CreateClientUsecase(clientRepository, holidayCalendar);
+            createClientUsecase.execute.mockImplementation(realCreate.execute.bind(realCreate));
+            const result = await service.create(branchId, {
+                name: "상담 고객", phone: null, careCenter: false, voucherClient: false, breastPump: false,
+                startDate: "2026-11-02", endDate: "2026-11-13", serviceStatus: "waiting",
+            });
+            expect(ClientMapper.toPrismaCreate(result)).toMatchObject({ serviceStatus: "pre_booking", bookingConfirmedAt: null });
+            expect(clientRepository.create).toHaveBeenCalled();
+        });
+
+        it("client.service.update never writes the confirmation column", async () => {
+            const client = confirmedClient();
+            findClientByIdUsecase.execute.mockResolvedValue(client);
+            await service.update(branchId, client.id, { address: "변경 주소" });
+            expect(prismaService.client.updateMany).toHaveBeenCalled();
+            for (const [args] of prismaService.client.updateMany.mock.calls) {
+                expect(args.data).not.toHaveProperty("bookingConfirmedAt");
+            }
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("UpdateClientUsecase leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            await realEntityUpdate(client).execute(branchId, client.id, { address: "변경 주소" });
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("terminateService leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            realEntityUpdate(client);
+            await service.terminateService(branchId, client.id);
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+
+        it("completeReplacement leaves confirmation out of the whole-entity update payload", async () => {
+            const client = confirmedClient();
+            client.serviceStatus = "replacement_requested";
+            realEntityUpdate(client);
+            await service.completeReplacement(branchId, client.id);
+            expect(clientRepository.update).toHaveBeenCalled();
+            expect(client.bookingConfirmedAt).toEqual(confirmation);
+        });
+    });
+
     // ============================================
     // terminateService
     // ============================================
@@ -5522,9 +5659,16 @@ describe("ClientService", () => {
 
             it("refuses a stored pre_booking client that has both dates", async () => {
                 const client = createClientEntity();
+                Object.assign(client, { bookingConfirmedAt: null });
                 client.serviceStatus = "pre_booking";
                 findClientByIdUsecase.execute.mockResolvedValue(client);
 
+                await expectRefusedWithoutWrites();
+            });
+
+            it("refuses an unconfirmed stored waiting client with both dates", async () => {
+                const client = Object.assign(createClientEntity(), { bookingConfirmedAt: null, serviceStatus: "waiting" });
+                findClientByIdUsecase.execute.mockResolvedValue(client);
                 await expectRefusedWithoutWrites();
             });
 
@@ -5542,6 +5686,7 @@ describe("ClientService", () => {
                 preflight.serviceStatus = "waiting";
                 const locked = createClientEntity();
                 locked.serviceStatus = "pre_booking";
+                Object.assign(locked, { bookingConfirmedAt: null });
                 findClientByIdUsecase.execute.mockResolvedValue(preflight);
                 prismaService.client.findUnique.mockResolvedValue(locked);
 
@@ -5621,7 +5766,8 @@ describe("ClientService", () => {
                 const updatedClient = new ClientEntity(
                     1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
                     "100000", "50000", "50000", new Date(), new Date("2024-06-01"),
-                    false, true, "900101", "replacement_requested", false, null
+                    false, true, "900101", "replacement_requested", false, null,
+                    null, null, null, null, false, null, undefined, new Date("2024-01-01")
                 );
                 findClientByIdUsecase.execute
                     .mockResolvedValueOnce(mockClient)
@@ -6068,7 +6214,8 @@ describe("ClientService", () => {
                     "100000", "50000", "50000",
                     new Date("2024-01-01"), // start date in the past
                     new Date("2025-12-31"), // end date in the future
-                    false, true, "900101", "replacement_requested", false, null
+                    false, true, "900101", "replacement_requested", false, null,
+                    null, null, null, null, false, null, undefined, new Date("2024-01-01")
                 );
                 const completedClient = new ClientEntity(
                     1, "Test Client", "Test Address", "010-1234-5678", "A형", 15,
@@ -6114,7 +6261,7 @@ describe("ClientService", () => {
             });
         });
 
-        describe("given a stored 예약 전 client that completeReplacement takes out of 예약 전 (service-record link SMS)", () => {
+        describe("given a confirmed client whose stored 예약 전 is stale during completeReplacement", () => {
             const futureStart = new Date("2026-11-02T00:00:00.000Z");
             const futureEnd = new Date("2026-11-30T00:00:00.000Z");
 
@@ -6137,7 +6284,7 @@ describe("ClientService", () => {
                 return { afterClient };
             };
 
-            it("schedules the link for the active schedule once, only after the transaction has resolved", async () => {
+            it("does not schedule a link merely because the stored status was 예약 전", async () => {
                 arrange("pre_booking");
                 let release!: () => void;
                 const held = new Promise<void>((resolve) => { release = resolve; });
@@ -6163,7 +6310,7 @@ describe("ClientService", () => {
                 release();
                 await running;
 
-                expect(serviceRecordLinkService.scheduleForServiceStart.mock.calls).toEqual([[7]]);
+                expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
 
             it("does not schedule when the client was not stored as 예약 전 (replacement_requested)", async () => {
@@ -6174,7 +6321,7 @@ describe("ClientService", () => {
                 expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
             });
 
-            it("still resolves and logs when scheduling the link rejects", async () => {
+            it("still resolves without attempting a link for the already-confirmed dated client", async () => {
                 const { afterClient } = arrange("pre_booking");
                 serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("sms unavailable"));
                 const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
@@ -6182,7 +6329,7 @@ describe("ClientService", () => {
 
                 await expect(service.completeReplacement(branchId, 1)).resolves.toBe(afterClient);
 
-                expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms unavailable"));
+                expect(logError).not.toHaveBeenCalled();
             });
         });
 
@@ -6321,6 +6468,7 @@ describe("ClientService", () => {
         describe("contractsNotSent (계약서 발송 필요)", () => {
             type StoredClient = {
                 id: number;
+                bookingConfirmedAt: Date | null;
                 eDocId: string | null;
                 serviceStatus: string | null;
                 startDate: Date;
@@ -6328,6 +6476,7 @@ describe("ClientService", () => {
             };
             const storedClient = (overrides: Partial<StoredClient> = {}): StoredClient => ({
                 id: 1,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 eDocId: null,
                 serviceStatus: "waiting",
                 startDate: new Date("2026-03-20T00:00:00.000Z"),
@@ -6483,6 +6632,7 @@ describe("ClientService", () => {
         ): ClientEntity => {
             const client = createClientEntity();
             client.serviceStatus = storedStatus;
+            if (storedStatus === "pre_booking") Object.assign(client, { bookingConfirmedAt: null });
             client.startDate = startDate ? new Date(`${startDate}T00:00:00.000Z`) : null;
             client.endDate = endDate ? new Date(`${endDate}T00:00:00.000Z`) : null;
             return client;
@@ -6583,7 +6733,8 @@ describe("ClientService", () => {
                 "100000", "50000", "50000",
                 pastStartDate, futureEndDate,
                 false, true, "900101", "waiting", // Stored as waiting
-                false, null
+                false, null,
+                null, null, null, null, false, null, undefined, new Date("2024-01-01")
             );
             listClientsUsecase.execute.mockResolvedValue([mockClient]);
             // Mock the prismaService.client.update for background update

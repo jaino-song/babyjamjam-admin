@@ -2862,7 +2862,7 @@ export class MessageTriggerService {
             return;
         }
 
-        let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null } | null = null;
+        let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null = null;
         if (automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) {
             // 늦게 등록한 링크 문자는 명목 예약 시각을 유지하고 종료일까지 발송한다.
             const schedule = job.employeeScheduleId && job.branchId
@@ -2870,7 +2870,7 @@ export class MessageTriggerService {
                     where: { id: job.employeeScheduleId, branchId: job.branchId },
                     select: {
                         endDate: true, replaced: true, terminatedAt: true,
-                        client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+                        client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
                     },
                 })
                 : null;
@@ -2895,13 +2895,13 @@ export class MessageTriggerService {
             if (!(automaticJob && job.ruleId === SERVICE_RECORD_LINK_RULE_ID) && job.employeeScheduleId) {
                 const schedule = await this.prisma.employee_schedule.findFirst({
                     where: { id: job.employeeScheduleId, branchId: job.branchId },
-                    select: { client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+                    select: { client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
                 });
                 linkClient = schedule?.client ?? null;
             }
             if (
                 linkClient
-                && getEffectiveClientServiceStatus(linkClient.serviceStatus, linkClient.startDate, linkClient.endDate) === "pre_booking"
+                && getEffectiveClientServiceStatus(linkClient.serviceStatus, linkClient.startDate, linkClient.endDate, linkClient.bookingConfirmedAt) === "pre_booking"
             ) {
                 job.cancel(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
                 await this.persistTriggerJobStatus(job, "persist pre-booking service record link job");

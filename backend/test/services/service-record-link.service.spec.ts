@@ -152,6 +152,7 @@ describe("ServiceRecordLinkService", () => {
             id: 20,
             name: "김산모",
             serviceStatus: "waiting",
+            bookingConfirmedAt: new Date("2026-07-01T00:00:00Z"),
             startDate: new Date("2026-07-03T00:00:00.000Z"),
             endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
@@ -162,7 +163,8 @@ describe("ServiceRecordLinkService", () => {
         ["pre_booking", new Date("2026-07-12T00:00:00.000Z"), false],
         ["waiting", null, false],
         ["waiting", new Date("2026-07-12T00:00:00.000Z"), true],
-    ])("gates automatic pre_booking links for status %s and client end %s", async (serviceStatus, endDate, eligible) => {
+        ["waiting", new Date("2026-07-12T00:00:00.000Z"), false, null],
+    ])("gates automatic pre_booking links for status %s and client end %s", async (serviceStatus, endDate, eligible, confirmation = undefined) => {
         const prisma = createPrisma();
         const tokens = createTokenService();
         const jobs = createJobRepository();
@@ -178,7 +180,8 @@ describe("ServiceRecordLinkService", () => {
             createAutomationActivationService() as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
-            client: { ...createSchedule().client, serviceStatus, endDate },
+            client: { ...createSchedule().client, serviceStatus, endDate,
+                bookingConfirmedAt: confirmation === null || serviceStatus === "pre_booking" ? null : new Date("2026-07-01T00:00:00Z") },
         }));
         const logger = (service as unknown as { logger: { error: (message: string) => void } }).logger;
         const errorLog = jest.spyOn(logger, "error");
@@ -218,6 +221,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
             client: { ...createSchedule().client, serviceStatus,
+                bookingConfirmedAt: serviceStatus === "pre_booking" ? null : new Date("2026-07-01T00:00:00Z"),
                 endDate: missingEnd ? null : createSchedule().client.endDate },
         }));
         const result = entry === "sendNow" ? service.sendNow(10, "efl_prepared") : service[entry](10);
@@ -234,7 +238,7 @@ describe("ServiceRecordLinkService", () => {
             expect(prisma.employee_schedule.findUnique).toHaveBeenCalledWith({
                 where: { id: 10 },
                 include: { primaryEmployee: true,
-                    client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+                    client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
             });
         }
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
@@ -431,7 +435,7 @@ describe("ServiceRecordLinkService", () => {
             undefined, lifecycle as never,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({
-            client: { ...createSchedule().client, serviceStatus: "pre_booking" },
+            client: { ...createSchedule().client, serviceStatus: "pre_booking", bookingConfirmedAt: null },
         }));
         await expect(service.extendExpiryForEndDate(10, new Date("2026-11-17"))).resolves.toBeUndefined();
         await expect(service.revoke(10)).resolves.toBeUndefined();

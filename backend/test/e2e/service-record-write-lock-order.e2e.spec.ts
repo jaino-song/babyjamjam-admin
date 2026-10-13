@@ -87,6 +87,7 @@ describeE2E("service-record write-lock order (real PostgreSQL)", () => {
         const client = await prisma.client.create({
             data: {
                 name: "Task 3 Lock Client",
+                bookingConfirmedAt: new Date("2026-01-01"),
                 voucherClient: false,
                 branchId,
                 duration: 1,

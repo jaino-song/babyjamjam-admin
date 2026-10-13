@@ -191,6 +191,7 @@ export interface ClientWithEmployees {
     dueDate: Date | null;
     birthDate: Date | null;
     serviceStatus: string | null;
+    bookingConfirmedAt: string | null;
     breastPump: boolean;
     eDocId: string | null;
     areaId: string | null;
@@ -1651,6 +1652,7 @@ export class ClientService {
                 client.serviceStatus,
                 client.startDate,
                 client.endDate,
+                client.bookingConfirmedAt,
             );
 
             // Track clients that need status update in DB
@@ -1700,6 +1702,7 @@ export class ClientService {
                     dueDate: client.dueDate,
                     birthDate: client.birthDate,
                     serviceStatus: computedStatus, // Return computed status, not stored one
+                    bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
                     breastPump: client.breastPump,
                     eDocId: client.eDocId,
                     areaId: client.areaId,
@@ -1999,6 +2002,7 @@ export class ClientService {
         // after commit whether this save took the client out of 예약 전.
         let priorStatusInputs: {
             serviceStatus: string | null;
+            bookingConfirmedAt: Date | null;
             startDate: Date | null;
             endDate: Date | null;
         } | null = null;
@@ -2045,6 +2049,7 @@ export class ClientService {
                         dueDate: true,
                         birthDate: true,
                         serviceStatus: true,
+                        bookingConfirmedAt: true,
                         breastPump: true,
                         eDocId: true,
                         areaId: true,
@@ -2067,6 +2072,7 @@ export class ClientService {
             const currentClient = lockedClient ?? existingClient;
             priorStatusInputs = {
                 serviceStatus: currentClient.serviceStatus ?? null,
+                bookingConfirmedAt: currentClient.bookingConfirmedAt,
                 startDate: currentClient.startDate ?? null,
                 endDate: currentClient.endDate ?? null,
             };
@@ -2388,8 +2394,8 @@ export class ClientService {
     private async scheduleServiceRecordLinksAfterLeavingPreBooking(
         branchId: string,
         clientId: number,
-        before: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null } | null,
-        after: { serviceStatus?: string | null; startDate?: Date | null; endDate?: Date | null },
+        before: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null,
+        after: { serviceStatus?: string | null; startDate?: Date | null; endDate?: Date | null; bookingConfirmedAt: Date | null },
         alreadyScheduledScheduleId: number | null,
     ): Promise<void> {
         if (!before || !this.serviceRecordLinkService) return;
@@ -2397,12 +2403,14 @@ export class ClientService {
             before.serviceStatus,
             before.startDate,
             before.endDate,
+            before.bookingConfirmedAt,
         ) === SERVICE_STATUS.PRE_BOOKING;
         if (!wasPreBooking) return;
         const isPreBooking = getEffectiveClientServiceStatus(
             after.serviceStatus ?? null,
             after.startDate ?? null,
             after.endDate ?? null,
+            after.bookingConfirmedAt,
         ) === SERVICE_STATUS.PRE_BOOKING;
         if (isPreBooking) return;
 
@@ -2600,6 +2608,7 @@ export class ClientService {
                         endDate: true,
                         duration: true,
                         serviceStatus: true,
+                        bookingConfirmedAt: true,
                     },
                 })
                 : null;
@@ -2621,6 +2630,7 @@ export class ClientService {
                 currentClient.serviceStatus ?? null,
                 currentClient.startDate ?? null,
                 currentClient.endDate ?? null,
+                currentClient.bookingConfirmedAt,
             ) === SERVICE_STATUS.PRE_BOOKING) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                     pointer: "/id",
@@ -2794,6 +2804,7 @@ export class ClientService {
                 null,
                 lockedClient.startDate,
                 lockedClient.endDate,
+                lockedClient.bookingConfirmedAt,
             );
             const updated = await this.updateClientUsecase.execute(branchid, clientId, {
                 serviceStatus: computedStatus,
@@ -2803,14 +2814,14 @@ export class ClientService {
                 updatedClient: updated,
                 priorStatusInputs: {
                     serviceStatus: lockedClient.serviceStatus ?? null,
+                    bookingConfirmedAt: lockedClient.bookingConfirmedAt,
                     startDate: lockedClient.startDate ?? null,
                     endDate: lockedClient.endDate ?? null,
                 },
             };
         });
-        // A stored 예약 전 client leaves that status here (the status is
-        // recomputed from its dates), so the provider link SMS the gates
-        // skipped while it was 예약 전 is scheduled now, after the commit.
+        // 예약확정 상태는 여기서 바뀌지 않으므로 예약 전 이탈 여부를 확인하는
+        // 공통 후처리는 교체 완료만으로 제공인력 링크 SMS를 예약하지 않는다.
         await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
             branchid,
             clientId,
@@ -2845,7 +2856,7 @@ export class ClientService {
 
         const branchClients = await this.prismaService.client.findMany({
             where: { branchId: branchid },
-            select: { id: true, startDate: true, endDate: true, serviceStatus: true },
+            select: { id: true, startDate: true, endDate: true, serviceStatus: true, bookingConfirmedAt: true },
         });
 
         // Every figure below counts the DERIVED service status the client list shows
@@ -2860,6 +2871,7 @@ export class ClientService {
                 client.serviceStatus ?? null,
                 client.startDate ?? null,
                 client.endDate ?? null,
+                client.bookingConfirmedAt,
                 now,
             );
             effectiveStatusByClientId.set(client.id, effectiveStatus);
@@ -2978,8 +2990,9 @@ export class ClientService {
                     {
                         OR: [
                             { serviceStatus: null },
-                            { serviceStatus: { notIn: [SERVICE_STATUS.PRE_BOOKING, SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED] } },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED, SERVICE_STATUS.REPLACEMENT_REQUESTED] } },
                         ],
+                        bookingConfirmedAt: { not: null },
                         startDate: startDateBound,
                     },
                 ],
@@ -2991,6 +3004,7 @@ export class ClientService {
                 startDate: true,
                 endDate: true,
                 serviceStatus: true,
+                bookingConfirmedAt: true,
             },
             orderBy: { createdAt: "desc" },
             take: Math.max(limit * 4, 12),
@@ -3008,6 +3022,7 @@ export class ClientService {
                     client.serviceStatus,
                     client.startDate,
                     client.endDate,
+                    client.bookingConfirmedAt,
                 );
 
                 const actionRequired = this.computeActionRequired({

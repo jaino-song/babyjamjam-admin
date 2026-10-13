@@ -439,6 +439,7 @@ export interface ExistingClientRow {
     readonly startDate: string | null;
     readonly endDate: string | null;
     readonly serviceStatus: string | null;
+    readonly bookingConfirmedAt: string | null;
     readonly voucherClient: boolean;
     readonly suppressGreetingSms: boolean;
 }
@@ -524,6 +525,7 @@ function clientFieldChanges(spec: FixtureClientSpec, existing: ExistingClientRow
     if (existing.startDate !== spec.startDate) changed.push("startDate");
     if (existing.endDate !== spec.endDate) changed.push("endDate");
     if (existing.serviceStatus !== spec.serviceStatus) changed.push("serviceStatus");
+    if ((existing.bookingConfirmedAt !== null) !== (spec.serviceStatus !== "pre_booking" && spec.startDate !== null)) changed.push("bookingConfirmedAt");
     if (existing.voucherClient !== spec.voucherClient) changed.push("voucherClient");
     if (existing.suppressGreetingSms !== spec.suppressGreetingSms) changed.push("suppressGreetingSms");
     return changed;
@@ -772,7 +774,7 @@ async function loadExistingState(prisma: PrismaClient, plan: FixturePlan): Promi
     const [clientsWithFixtureNamesRaw, employeesWithFixtureNamesRaw, otherMarkerClientsRaw, otherMarkerEmployeesRaw, mustNotExistCount] = await Promise.all([
         prisma.client.findMany({
             where: { branchId: plan.branchId, name: { in: clientNames } },
-            select: { id: true, name: true, phone: true, phoneNormalized: true, address: true, type: true, startDate: true, endDate: true, serviceStatus: true, voucherClient: true, suppressGreetingSms: true },
+            select: { id: true, name: true, phone: true, phoneNormalized: true, address: true, type: true, startDate: true, endDate: true, serviceStatus: true, bookingConfirmedAt: true, voucherClient: true, suppressGreetingSms: true },
         }),
         prisma.employee.findMany({
             where: { branchId: plan.branchId, name: { in: employeeNames } },
@@ -795,6 +797,7 @@ async function loadExistingState(prisma: PrismaClient, plan: FixturePlan): Promi
         startDate: row.startDate ? row.startDate.toISOString().slice(0, 10) : null,
         endDate: row.endDate ? row.endDate.toISOString().slice(0, 10) : null,
         serviceStatus: row.serviceStatus, voucherClient: row.voucherClient, suppressGreetingSms: row.suppressGreetingSms,
+        bookingConfirmedAt: row.bookingConfirmedAt?.toISOString() ?? null,
     }));
     const employeesWithFixtureNames: ExistingEmployeeRow[] = employeesWithFixtureNamesRaw.map((row) => ({
         id: row.id, name: row.name, phone: row.phone, phoneNormalized: row.phoneNormalized,
@@ -855,6 +858,8 @@ async function applyPlan(prisma: PrismaClient, plan: FixturePlan, diff: FixtureD
                 startDate: spec.startDate ? new Date(`${spec.startDate}T00:00:00.000Z`) : null,
                 endDate: spec.endDate ? new Date(`${spec.endDate}T00:00:00.000Z`) : null,
                 serviceStatus: spec.serviceStatus, voucherClient: spec.voucherClient,
+                bookingConfirmedAt: spec.serviceStatus !== "pre_booking" && spec.startDate
+                    ? new Date(`${spec.startDate}T00:00:00.000Z`) : null,
                 suppressGreetingSms: spec.suppressGreetingSms, branchId: plan.branchId,
             };
             if (entry.kind === "create") {

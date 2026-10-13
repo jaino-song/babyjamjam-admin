@@ -30,7 +30,6 @@ export function isServiceStatus(value: string | null | undefined): value is Serv
 
 // Manual statuses that should NOT be auto-updated based on dates
 const MANUAL_STATUSES: ServiceStatusType[] = [
-    SERVICE_STATUS.PRE_BOOKING,
     SERVICE_STATUS.TERMINATED,
     SERVICE_STATUS.REPLACEMENT_REQUESTED,
 ];
@@ -57,7 +56,7 @@ export function clientCalendarDate(date: Date): ClientCalendarDate {
 }
 
 /**
- * Compute service status based on start_date and end_date
+ * Compute service status from booking confirmation and the service dates
  * Manual statuses (terminated, replacement_requested) are preserved
  *
  * "Today" is the Korean (Asia/Seoul) calendar date, regardless of the runtime
@@ -66,6 +65,7 @@ export function clientCalendarDate(date: Date): ClientCalendarDate {
  * @param currentStatus - Current stored status
  * @param startDate - Service start date
  * @param endDate - Service end date
+ * @param bookingConfirmedAt - Persisted admin booking confirmation, or null
  * @param now - Clock override for tests
  * @returns Computed status or current status if manual
  */
@@ -73,6 +73,7 @@ export function computeServiceStatus(
     currentStatus: string | null,
     startDate: Date | null,
     endDate: Date | null,
+    bookingConfirmedAt: Date | null,
     now = new Date(),
 ): ServiceStatusType {
     // Preserve manual statuses
@@ -80,8 +81,8 @@ export function computeServiceStatus(
         return currentStatus as ServiceStatusType;
     }
 
-    // 서비스 일정이 없으면 아직 예약이 확정되지 않은 고객이다.
-    if (!startDate || !endDate) {
+    // 날짜 입력만으로 예약을 확정하지 않는다.
+    if (!bookingConfirmedAt || !startDate || !endDate) {
         return SERVICE_STATUS.PRE_BOOKING;
     }
 

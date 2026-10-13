@@ -1204,6 +1204,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                 eDocId: "doc-1",
                 suppressGreetingSms: true,
                 voucherClient: true,
+                serviceStatus: "pre_booking",
+                bookingConfirmedAt: null,
             }),
             select: { id: true },
         });

@@ -45,6 +45,7 @@ describe("SbClientRepository", () => {
         voucherClient: false,
         birthday: "900101",
         serviceStatus: "completed",
+        bookingConfirmedAt: new Date("2024-01-01"),
         breastPump: true,
         eDocId: null,
         dueDate: null,
@@ -671,7 +672,8 @@ describe("SbClientRepository", () => {
                         careCenter: false,
                         voucherClient: true,
                         birthday: "950315",
-                        serviceStatus: "waiting",
+                        serviceStatus: "pre_booking",
+                        bookingConfirmedAt: null,
                         breastPump: false,
                         eDocId: null,
                         dueDate: null,
@@ -754,7 +756,8 @@ describe("SbClientRepository", () => {
                         phone: null,
                         type: null,
                         birthday: null,
-                        serviceStatus: null,
+                        serviceStatus: "pre_booking",
+                        bookingConfirmedAt: null,
                     }),
                     select: expect.any(Object),
                 }));
@@ -1033,6 +1036,14 @@ describe("SbClientRepository", () => {
     });
 
     describe("automatic service-status CAS", () => {
+        it("allows stored pre_booking to move after confirmation-derived recomputation", async () => {
+            clientModel.updateMany.mockResolvedValue({ count: 1 });
+            expect(await repository.updateServiceStatusIfCurrent(branchId, 1, "pre_booking", "waiting")).toBe("updated");
+            expect(clientModel.updateMany).toHaveBeenCalledWith({
+                where: { id: 1, branchId, serviceStatus: "pre_booking" },
+                data: { serviceStatus: "waiting" },
+            });
+        });
         it("updates only when the branch and observed status still match", async () => {
             clientModel.updateMany.mockResolvedValue({ count: 1 });
 
@@ -1067,7 +1078,7 @@ describe("SbClientRepository", () => {
             });
         });
 
-        it.each(["pre_booking", "terminated", "replacement_requested"])(
+        it.each(["terminated", "replacement_requested"])(
             "rejects automatic movement from manual %s before touching the database",
             async (manualStatus) => {
                 const result = await repository.updateServiceStatusIfCurrent(
@@ -1411,14 +1422,16 @@ describe("SbClientRepository", () => {
                         row(2, { serviceStatus: "active" }),
                         // Manual statuses never need a contract sent.
                         row(3, { serviceStatus: "terminated" }),
-                        row(4, { serviceStatus: "pre_booking" }),
+                        row(4, { serviceStatus: "pre_booking", bookingConfirmedAt: null }),
                         // 교체 요청 keeps its stored status and still needs a contract.
                         row(5, { serviceStatus: "replacement_requested" }),
+                        // Confirmed clients derive waiting even with a stale pre_booking value.
+                        row(6, { serviceStatus: "pre_booking" }),
                     ],
                     [],
                 );
 
-                expect(ids(result)).toEqual([2, 5]);
+                expect(ids(result)).toEqual([2, 5, 6]);
             });
 
             it("only returns clients inside the business-day send window", async () => {
@@ -1534,9 +1547,10 @@ describe("SbClientRepository", () => {
                             {
                                 OR: [
                                     { serviceStatus: null },
-                                    { serviceStatus: { notIn: ["pre_booking", "terminated", "replacement_requested"] } },
+                                    { serviceStatus: { notIn: ["terminated", "replacement_requested"] } },
                                 ],
                             },
+                            { bookingConfirmedAt: { not: null } },
                             { endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } },
                         ],
                     },
@@ -1549,7 +1563,7 @@ describe("SbClientRepository", () => {
 
                 const { where } = clientModel.findMany.mock.calls[0][0];
                 expect(where.startDate).toEqual({ lt: new Date("2026-03-26T00:00:00.000Z") });
-                expect(where.OR[1].AND[1]).toEqual({ endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } });
+                expect(where.OR[1].AND[2]).toEqual({ endDate: { gte: new Date("2026-03-17T00:00:00.000Z") } });
             });
         });
     });

@@ -60,6 +60,7 @@ describe("ClientController (Integration)", () => {
 
     const createClientWithEmployeeInfo = (client: ClientEntity) => ({
         ...client,
+        bookingConfirmedAt: client.bookingConfirmedAt?.toISOString() ?? null,
         primaryEmployee: null,
         secondaryEmployee: null,
         hasSigned: false,

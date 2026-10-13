@@ -230,6 +230,7 @@ async function validateClientWrite(
 }
 
 type ClientStatusInputs = {
+    bookingConfirmedAt: Date | null;
     id: number;
     serviceStatus?: string | null;
     startDate?: Date | null;
@@ -560,12 +561,14 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
             before.serviceStatus ?? null,
             before.startDate ?? null,
             before.endDate ?? null,
+            before.bookingConfirmedAt,
         ) === SERVICE_STATUS.PRE_BOOKING;
         if (!wasPreBooking) return;
         const isPreBooking = getEffectiveClientServiceStatus(
             after.serviceStatus ?? null,
             after.startDate ?? null,
             after.endDate ?? null,
+            after.bookingConfirmedAt,
         ) === SERVICE_STATUS.PRE_BOOKING;
         if (isPreBooking) return;
 

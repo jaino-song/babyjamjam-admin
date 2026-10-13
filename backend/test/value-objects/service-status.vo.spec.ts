@@ -37,7 +37,7 @@ describe("computeServiceStatus", () => {
         return base;
     };
     const compute = (status: string | null, start: Date | null, end: Date | null) =>
-        computeServiceStatus(status, start, end, NOW);
+        computeServiceStatus(status, start, end, NOW, NOW);
 
     describe("given manual statuses", () => {
         it("should preserve pre-booking status without service dates", () => {
@@ -187,25 +187,25 @@ describe("computeServiceStatus", () => {
             jest.useRealTimers();
         });
 
-        it("reads a service starting on the Korean date as active (3-argument call, system clock)", () => {
+        it("reads a confirmed service starting on the Korean date as active (system clock)", () => {
             jest.useFakeTimers().setSystemTime(EARLY_KST);
-            expect(computeServiceStatus(null, dateOnly("2026-10-08"), dateOnly("2026-11-08"))).toBe(
+            expect(computeServiceStatus(null, dateOnly("2026-10-08"), dateOnly("2026-11-08"), NOW)).toBe(
                 SERVICE_STATUS.ACTIVE,
             );
         });
 
-        it("reads a service that ended on the previous Korean date as completed (3-argument call, system clock)", () => {
+        it("reads a confirmed service that ended on the previous Korean date as completed (system clock)", () => {
             jest.useFakeTimers().setSystemTime(EARLY_KST);
-            expect(computeServiceStatus("active", dateOnly("2026-09-20"), dateOnly("2026-10-07"))).toBe(
+            expect(computeServiceStatus("active", dateOnly("2026-09-20"), dateOnly("2026-10-07"), NOW)).toBe(
                 SERVICE_STATUS.COMPLETED,
             );
         });
 
         it("accepts an explicit now", () => {
-            expect(computeServiceStatus(null, dateOnly("2026-10-08"), dateOnly("2026-11-08"), EARLY_KST)).toBe(
+            expect(computeServiceStatus(null, dateOnly("2026-10-08"), dateOnly("2026-11-08"), NOW, EARLY_KST)).toBe(
                 SERVICE_STATUS.ACTIVE,
             );
-            expect(computeServiceStatus("active", dateOnly("2026-09-20"), dateOnly("2026-10-07"), EARLY_KST)).toBe(
+            expect(computeServiceStatus("active", dateOnly("2026-09-20"), dateOnly("2026-10-07"), NOW, EARLY_KST)).toBe(
                 SERVICE_STATUS.COMPLETED,
             );
         });
@@ -213,16 +213,16 @@ describe("computeServiceStatus", () => {
         it("flips the Korean date exactly at 15:00Z", () => {
             const start = dateOnly("2026-10-08");
             const end = dateOnly("2026-10-08");
-            expect(computeServiceStatus(null, start, end, new Date("2026-10-07T14:59:59.999Z"))).toBe(
+            expect(computeServiceStatus(null, start, end, NOW, new Date("2026-10-07T14:59:59.999Z"))).toBe(
                 SERVICE_STATUS.WAITING,
             );
-            expect(computeServiceStatus(null, start, end, new Date("2026-10-07T15:00:00.000Z"))).toBe(
+            expect(computeServiceStatus(null, start, end, NOW, new Date("2026-10-07T15:00:00.000Z"))).toBe(
                 SERVICE_STATUS.ACTIVE,
             );
-            expect(computeServiceStatus(null, start, end, new Date("2026-10-08T14:59:59.999Z"))).toBe(
+            expect(computeServiceStatus(null, start, end, NOW, new Date("2026-10-08T14:59:59.999Z"))).toBe(
                 SERVICE_STATUS.ACTIVE,
             );
-            expect(computeServiceStatus(null, start, end, new Date("2026-10-08T15:00:00.000Z"))).toBe(
+            expect(computeServiceStatus(null, start, end, NOW, new Date("2026-10-08T15:00:00.000Z"))).toBe(
                 SERVICE_STATUS.COMPLETED,
             );
         });
@@ -247,16 +247,16 @@ describe("computeServiceStatus", () => {
             ["2026-09-01", "2026-10-08"],
             ["2026-10-09", "2026-11-09"],
         ];
-        const nonManual = [null, "waiting", "active", "completed"];
-        const manual = ["pre_booking", "terminated", "replacement_requested"];
+        const nonManual = [null, "pre_booking", "waiting", "active", "completed"];
+        const manual = ["terminated", "replacement_requested"];
 
         it("agrees for every non-manual status, instant and period", () => {
             for (const instant of instants) {
                 const now = new Date(instant);
                 for (const [start, end] of periods) {
                     for (const status of nonManual) {
-                        expect(computeServiceStatus(status, dateOnly(start), dateOnly(end), now)).toBe(
-                            getEffectiveClientServiceStatus(status, dateOnly(start), dateOnly(end), now),
+                        expect(computeServiceStatus(status, dateOnly(start), dateOnly(end), NOW, now)).toBe(
+                            getEffectiveClientServiceStatus(status, dateOnly(start), dateOnly(end), NOW, now),
                         );
                     }
                 }
@@ -267,10 +267,10 @@ describe("computeServiceStatus", () => {
             for (const instant of instants) {
                 const now = new Date(instant);
                 for (const status of manual) {
-                    expect(computeServiceStatus(status, dateOnly("2026-10-08"), dateOnly("2026-11-08"), now)).toBe(
+                    expect(computeServiceStatus(status, dateOnly("2026-10-08"), dateOnly("2026-11-08"), NOW, now)).toBe(
                         status,
                     );
-                    expect(computeServiceStatus(status, null, null, now)).toBe(status);
+                    expect(computeServiceStatus(status, null, null, NOW, now)).toBe(status);
                 }
             }
         });
@@ -307,7 +307,7 @@ describe("isAutomaticServiceStatusTransitionAllowed", () => {
         expect(isAutomaticServiceStatusTransitionAllowed(null, SERVICE_STATUS.PRE_BOOKING)).toBe(true);
     });
 
-    it.each(["pre_booking", "terminated", "replacement_requested"])(
+    it.each(["terminated", "replacement_requested"])(
         "blocks date-derived movement from manual %s",
         (currentStatus) => {
             expect(isAutomaticServiceStatusTransitionAllowed(currentStatus, SERVICE_STATUS.ACTIVE)).toBe(false);
@@ -320,8 +320,8 @@ describe("isAutomaticServiceStatusTransitionAllowed", () => {
 });
 
 describe("isManualStatus", () => {
-    it("should return true for pre-booking", () => {
-        expect(isManualStatus("pre_booking")).toBe(true);
+    it("should return false for pre-booking", () => {
+        expect(isManualStatus("pre_booking")).toBe(false);
     });
 
     it("should return true for terminated", () => {

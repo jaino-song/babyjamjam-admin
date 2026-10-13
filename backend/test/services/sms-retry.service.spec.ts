@@ -237,7 +237,7 @@ describe("SmsRetryService", () => {
                 const source = createSmsRetryLog(SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY);
                 const jobRepository = createJobRepository();
                 const { activation } = createActivationHarness(source, jobRepository);
-                logRepository.findServiceRecordLinkClientState.mockResolvedValue({ serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") });
+                logRepository.findServiceRecordLinkClientState.mockResolvedValue({ serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") });
                 aligoService.sendSms.mockResolvedValue({
                     request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
                     response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
@@ -274,7 +274,7 @@ describe("SmsRetryService", () => {
                 const { activation } = createActivationHarness(source);
                 logRepository.findByIdInBranch.mockResolvedValue(source);
                 logRepository.findServiceRecordLinkClientState.mockResolvedValue(kind === "waiting"
-                    ? { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") }
+                    ? { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") }
                     : null);
                 aligoService.sendSms.mockResolvedValue({
                     request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
