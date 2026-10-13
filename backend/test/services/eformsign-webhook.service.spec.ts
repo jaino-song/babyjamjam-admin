@@ -1939,6 +1939,9 @@ describe("EformsignWebhookService", () => {
             employeeScheduleRepository as never,
             employeeRepository as never,
             mirrorUnassignedDocUsecase as never,
+            undefined,
+            undefined,
+            documentSnapshotService as never,
         );
         return { state, statefulService, statefulDocRepository, statefulClientRepository };
     };
@@ -2089,6 +2092,100 @@ describe("EformsignWebhookService", () => {
             await statefulService.processWebhook(reviewerPayload());
 
             expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        });
+
+        describe("when the document row cannot be read again after the status write", () => {
+            // The status usecase's own read succeeds; every later read of the row fails.
+            const failLaterLookups = (
+                statefulDocRepository: { findByDocumentId: jest.Mock },
+                state: { storedDoc: EformsignDocEntity },
+            ) => {
+                statefulDocRepository.findByDocumentId
+                    .mockImplementationOnce(() => Promise.resolve(state.storedDoc))
+                    .mockRejectedValue(new Error("lookup failed"));
+            };
+
+            it("voided: sends no review notification but still stores the status, bumps the snapshot and emits once", async () => {
+                eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+                const { state, statefulService, statefulDocRepository } = createStatefulWebhookService(
+                    createDocEntity({ clientId: 7, voidedAt, voidedBy: "user-1" }),
+                    [createClientEntity(7, "010-0000-0000", null)],
+                );
+                failLaterLookups(statefulDocRepository, state);
+
+                await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+                expect(state.storedDoc.statusType).toBe("070");
+                expect(statefulDocRepository.updateIfSourceNewer).toHaveBeenCalledTimes(1);
+                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledWith({
+                    branchId,
+                    documentId,
+                    reason: "doc:doc_request_reviewer",
+                });
+            });
+
+            it("live: still notifies, because the void state came from the status write and not from a second read", async () => {
+                eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+                const { state, statefulService, statefulDocRepository } = createStatefulWebhookService(
+                    createDocEntity({ clientId: 7 }),
+                    [createClientEntity(7, "010-0000-0000", null)],
+                );
+                failLaterLookups(statefulDocRepository, state);
+
+                await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+                expect(state.storedDoc.statusType).toBe("070");
+                expect(documentSnapshotService.bumpVersion).toHaveBeenCalledTimes(1);
+                expect(eventBus.emit).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it("withholds the review notification and warns with only the document id when the void state is unknown", async () => {
+            const warn = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+            try {
+                await (service as unknown as {
+                    notifyReviewRequiredIfNeeded: (
+                        branchid: string,
+                        documentId: string,
+                        documentTitle: string,
+                        localStatusType: string,
+                        isVoided: boolean | undefined,
+                        mirroredDocument?: unknown,
+                    ) => Promise<void>;
+                }).notifyReviewRequiredIfNeeded(
+                    branchId,
+                    documentId,
+                    "계약서",
+                    "070",
+                    undefined,
+                    providerReviewDetail,
+                );
+
+                expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+                expect(warn).toHaveBeenCalledTimes(1);
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining(documentId));
+            } finally {
+                warn.mockRestore();
+            }
+        });
+
+        it("does nothing for a webhook whose document has no local row (unchanged)", async () => {
+            eformsignApiClient.getDocument.mockResolvedValue(providerReviewDetail);
+            const { statefulService, statefulDocRepository } = createStatefulWebhookService(
+                createDocEntity({ clientId: 7 }),
+                [createClientEntity(7, "010-0000-0000", null)],
+            );
+            statefulDocRepository.findByDocumentId.mockResolvedValue(null);
+
+            await expect(statefulService.processWebhook(reviewerPayload())).resolves.toBeUndefined();
+
+            expect(statefulDocRepository.updateIfSourceNewer).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            expect(eventBus.emit).not.toHaveBeenCalled();
         });
 
         it("claims the completion of a voided document but runs no link or end-date sync", async () => {
