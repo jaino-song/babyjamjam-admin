@@ -364,6 +364,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 stepType: true,
                 stepName: true,
                 permanentPurgeRequestedAt: true,
+                voidedAt: true,
             },
         });
     }
@@ -392,6 +393,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 updatedDate: true,
                 expired: true,
                 client: { select: { name: true } },
+                voidedAt: true,
             },
         });
         return docs.map((doc) => ({
@@ -405,6 +407,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             stepName: doc.stepName,
             updatedDate: doc.updatedDate,
             expired: doc.expired,
+            isVoided: doc.voidedAt !== null,
         }));
     }
 
@@ -533,6 +536,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT,
                 statusType: { in: SbEformsignDocRepository.REVIEW_STAGE_STATUS_STORAGE_VALUES },
                 permanentPurgeRequestedAt: null,
+                voidedAt: null,
             },
             select: {
                 documentId: true,

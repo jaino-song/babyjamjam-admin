@@ -37,6 +37,7 @@ export type ReceiptLinkSkipReason =
     | "not_voucher_client"
     | "missing_birthday"
     | "contract_not_signed"
+    | "contract_voided"
     | "no_contract_document"
     | "pdf_unavailable"
     | "render_failed"
@@ -46,6 +47,7 @@ export const RECEIPT_LINK_SKIP_MESSAGES: Record<ReceiptLinkSkipReason, string> =
     not_voucher_client: "바우처 이용 산모가 아닙니다",
     missing_birthday: "산모 생년월일이 등록되지 않았습니다",
     contract_not_signed: "계약서 서명이 완료된 후 발송할 수 있습니다.",
+    contract_voided: "파기된 계약서입니다.",
     no_contract_document: "연결된 계약서가 없습니다",
     pdf_unavailable: "계약서 PDF를 아직 불러올 수 없습니다",
     render_failed: "영수증 이미지 생성에 실패했습니다",
@@ -236,6 +238,10 @@ export class ReceiptLinkIssueService {
     ): Promise<void> {
         try {
             let documentId: string | null = typeof target === "string" ? target : null;
+            if (typeof target === "string") {
+                const local = await this.eformsignDocRepository.findByDocumentIdUnscoped(target);
+                if (local?.document.isVoided) throw new ReceiptLinkSkipError("contract_voided");
+            }
             if (typeof target !== "string") {
                 const client = await this.clientRepository.findById(target.branchId, target.clientId);
                 const doc = client
@@ -367,6 +373,7 @@ export class ReceiptLinkIssueService {
             rows,
             configuredServiceRecordTemplateIds(this.configService),
         );
+        if (current?.voidedAt != null) throw new ReceiptLinkSkipError("contract_voided");
         if (!current || current.permanentPurgeRequestedAt != null) return null;
         return { id: current.id, documentId: current.documentId };
     }
@@ -387,6 +394,7 @@ export class ReceiptLinkIssueService {
         if (!doc || doc.id === undefined || doc.documentKind !== "contract" || doc.clientId !== clientId) {
             return null;
         }
+        if (doc.isVoided) throw new ReceiptLinkSkipError("contract_voided");
         return { id: doc.id, documentId: doc.documentId };
     }
 
