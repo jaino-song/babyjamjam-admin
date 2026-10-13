@@ -473,6 +473,46 @@ describe("voided (계약 파기, BJJ-439): 파기됨 in the muted tone, filed un
     }
   });
 
+  it("keeps the voided stage, last, when the history also records a send failure (plan D2)", () => {
+    const doc = makeDoc({
+      statusType: "060",
+      stepType: "05",
+      stepName: "이용자",
+      displayStatus: "voided",
+      histories: [{ action: "send_failed" }],
+    });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("voided");
+    expect(progress).toBe("파기됨");
+    expect(stages).toEqual([
+      "문서가 생성되었습니다",
+      "이용자에게 문서 전송에 실패했어요.",
+      "계약이 파기됐어요",
+    ]);
+  });
+
+  it("still shows a voided document without any history as creation, send and void", () => {
+    const { stages } = view(makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "voided" }));
+    expect(stages[stages.length - 1]).toBe("계약이 파기됐어요");
+    expect(stages).not.toContain("이용자에게 문서 전송에 실패했어요.");
+  });
+
+  it("leaves a non-voided send failure unchanged: it ends at the failure with no voided stage (control)", () => {
+    const doc = makeDoc({
+      statusType: "060",
+      stepType: "05",
+      stepName: "이용자",
+      displayStatus: "pending",
+      histories: [{ action: "send_failed" }],
+    });
+    const { category, progress, stages } = view(doc);
+
+    expect(category).toBe("drafting");
+    expect(progress).toBe("이용자 문서 전송 실패");
+    expect(stages).toEqual(["문서가 생성되었습니다", "이용자에게 문서 전송에 실패했어요."]);
+  });
+
   it("does not change how the same live codes are categorized without the void (control)", () => {
     expect(view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).category).toBe("signed");
     expect(view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).category).toBe("completed");

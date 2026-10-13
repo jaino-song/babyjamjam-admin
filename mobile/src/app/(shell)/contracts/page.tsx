@@ -1278,7 +1278,19 @@ function contractStageItems(
     },
   ];
 
-  if (sendFailed) return items;
+  // 계약 파기: filed under the "expired" filter, but it was voided in the app — neutral, not danger.
+  // A void overrides every other state (plan D2), so it also ends a list that stopped at a send failure.
+  const voidedStage: ContractStageItem = {
+    icon: AlertTriangle,
+    iconVariant: "info",
+    text: "계약이 파기됐어요",
+    time: updatedAt,
+  };
+
+  if (sendFailed) {
+    if (category === "voided") items.push(voidedStage);
+    return items;
+  }
 
   if (hasOpened || hasCustomerSigned) {
     items.push({
@@ -1360,13 +1372,7 @@ function contractStageItems(
   }
 
   if (category === "voided") {
-    // 계약 파기: filed under the "expired" filter, but it was voided in the app — neutral, not danger.
-    items.push({
-      icon: AlertTriangle,
-      iconVariant: "info",
-      text: "계약이 파기됐어요",
-      time: updatedAt,
-    });
+    items.push(voidedStage);
     return items;
   }
 
