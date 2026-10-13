@@ -30,7 +30,7 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, PAST_OCCURRENCE_GRACE_MS } from "domain/constants/message-automation-policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -1091,7 +1091,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` }),
                 Prisma.sql`branch_id = ${branchId}::uuid`,
                 Prisma.sql`rule_id = ${ruleId}`,
-                Prisma.sql`status IN ('pending', 'processing', 'needs_setup')`,
+                scope.needsSetup === "all"
+                    ? Prisma.sql`(status IN ('pending', 'processing') OR status = 'needs_setup')`
+                    : scope.needsSetup === "within_window"
+                        ? Prisma.sql`(status IN ('pending', 'processing') OR (status = 'needs_setup'
+                            AND scheduled_for > clock_timestamp() - ${PAST_OCCURRENCE_GRACE_MS} * interval '1 millisecond'))`
+                        : Prisma.sql`status IN ('pending', 'processing')`,
                 Prisma.sql`NOT ${manualMessageTriggerJobPredicate({
                     templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
                 })}`,

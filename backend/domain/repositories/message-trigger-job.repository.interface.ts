@@ -6,6 +6,8 @@ export interface MessageTriggerJobCancellationScope {
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
+    /** Supersede refusals only for removed sources or a dispatchable rebuild. */
+    needsSetup?: "all" | "within_window";
 }
 
 /** Internal review read; user cancellation is needed to match the existing upsert fence. */

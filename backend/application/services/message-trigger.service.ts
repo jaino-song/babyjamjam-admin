@@ -2443,13 +2443,15 @@ export class MessageTriggerService {
             // 고객 정보 수정은 설정 필요 작업도 새 payload로 재생성한다.
             // 일반 resync/upsert는 이 상태를 복구하지 않는다.
             if (job.status === "needs_setup") {
+                // 오래된 설정 필요 작업은 재생성해도 dispatch에서 만료되므로 보존한다.
+                if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) continue;
                 if (job.recipientPhone === refreshedJob.recipientPhone
                     && agentBindingHash(agentAutomationSourcePayload(job.payload, job.templateKey))
                         === agentBindingHash(agentAutomationSourcePayload(refreshedPayload, job.templateKey))) continue;
                 const canceled = await this.jobRepository.cancelPendingForRuleGeneration(
-                    branchId, rule.id, rule.updatedAt, false, "Client data changed", { clientId },
+                    branchId, rule.id, rule.updatedAt, false, "Client data changed", { clientId, needsSetup: "within_window" },
                 );
-                if (canceled === null) continue;
+                if (canceled === null || canceled === 0) continue;
                 job.status = "pending";
             }
 
@@ -2743,6 +2745,7 @@ export class MessageTriggerService {
             rule.updatedAt,
             expectedJobsStale,
             reason,
+            { needsSetup: reason === "Rule deleted" || !rule.isActive ? "all" : undefined },
         );
         return canceled !== null;
     }
@@ -2857,7 +2860,8 @@ export class MessageTriggerService {
                 rule.updatedAt,
                 false,
                 reason,
-                { clientId },
+                { clientId, needsSetup: rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
+                    && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
             );
         }
     }
@@ -2876,7 +2880,7 @@ export class MessageTriggerService {
                 rule.updatedAt,
                 false,
                 reason,
-                { employeeScheduleId },
+                { employeeScheduleId, needsSetup: "all" },
             );
             if (canceled === null) succeeded = false;
         }
@@ -3985,7 +3989,9 @@ export class MessageTriggerService {
                 readUpdatedAt,
                 true,
                 !parentEnabled ? MESSAGE_AUTOMATION_PARENT_DISABLED_REASON : rule.isActive ? "규칙 재생성" : "Rule deactivated",
-                {},
+                { needsSetup: !parentEnabled || !rule.isActive ? "all"
+                    : rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE
+                        && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED ? "within_window" : undefined },
                 transaction,
             );
             // Another worker may have already rebuilt and cleared this generation.

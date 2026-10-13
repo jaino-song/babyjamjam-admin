@@ -1185,10 +1185,29 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(getSqlText(queryRaw.mock.calls[0][0])).toContain("FOR UPDATE");
         const updateSql = getSqlText(queryRaw.mock.calls[1][0]);
         expect(updateSql).toContain('UPDATE "message_trigger_job"');
-        expect(updateSql).toContain("status IN ('pending', 'processing', 'needs_setup')");
+        expect(updateSql).toContain("status IN ('pending', 'processing')");
+        expect(updateSql).not.toContain("needs_setup");
         expect(updateSql).toContain("client_id =");
         expect(updateSql).toContain("branch_id =");
         expect(updateSql).toContain("date_trunc('milliseconds', clock_timestamp())");
+    });
+
+    it.each(["all", "within_window"] as const)("opts into needs_setup supersession with %s", async (needsSetup) => {
+        const updatedAt = new Date("2026-07-09T00:00:00.123Z");
+        queryRaw.mockResolvedValueOnce([{ id: "rule-1", branch_id: "branch-1", jobs_stale: false, updated_at: updatedAt }])
+            .mockResolvedValueOnce([{ id: "job-1" }]);
+        await repository.cancelPendingForRuleGeneration("branch-1", "rule-1", updatedAt, false, "rebuild", { needsSetup });
+        const sql = getSqlText(queryRaw.mock.calls[1][0]);
+        expect(sql).toContain("status IN ('pending', 'processing') OR");
+        expect(sql).toContain("status = 'needs_setup'");
+        if (needsSetup === "within_window") {
+            expect(sql).toContain("scheduled_for >");
+            expect(sql).toContain("clock_timestamp()");
+            expect(sql).toContain("interval '1 millisecond'");
+            expect(queryRaw.mock.calls[1][0].values).toContain(24 * 60 * 60 * 1000);
+        } else {
+            expect(sql).not.toContain("scheduled_for >");
+        }
     });
 
     it.each([
@@ -2329,6 +2348,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
     describe("cancelPendingByRuleAndEmployeeSchedule", () => {
         it("cancels this schedule's pending and processing jobs in one statement and reports dispatching ones untouched", async () => {
             const pending = database.seed("pending");
+            const waiting = database.seed("needs_setup");
             const processing = database.seed("processing");
             const dispatching = database.seed("dispatching");
             const sent = database.seed("sent");
@@ -2337,7 +2357,8 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
 
             const result = await repository.cancelPendingByRuleAndEmployeeSchedule(RULE_ID, SCHEDULE_ID, "Service record access revoked");
 
-            expect([...result.canceledJobIds].sort()).toEqual([pending.id, processing.id].sort());
+            expect([...result.canceledJobIds].sort()).toEqual([pending.id, processing.id, waiting.id].sort());
+            expect(waiting).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
             expect(result.inFlightJobIds).toEqual([dispatching.id]);
             expect(pending).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
             expect(processing).toMatchObject({ status: "canceled", cancelReason: "Service record access revoked", claimToken: null });
