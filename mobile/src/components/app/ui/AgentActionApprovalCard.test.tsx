@@ -20,6 +20,25 @@ const defaultProps = {
 };
 
 describe("AgentActionApprovalCard", () => {
+    it("renders the optional contact directly below the summary", () => {
+        const { container } = render(<AgentActionApprovalCard {...defaultProps} contact={<p>연락처 카드</p>} />);
+        expect(container.querySelector('[data-slot="summary"]')?.nextElementSibling).toHaveTextContent("연락처 카드");
+    });
+
+    it("omits only top-level masked-contact keys from target and changes, case-insensitively", () => {
+        const values = { clientId: 12, phone: "••••5678", phoneLast4: "5678", MASKEDCONTACT: "masked", maskedReceiver: "masked", Receiver: "masked", nested: { receiver: "retained" } };
+        const { container } = render(<AgentActionApprovalCard {...defaultProps} target={values} changes={values} />);
+        const blocks = container.querySelectorAll("dd.col-span-2");
+        expect(blocks).toHaveLength(2);
+        for (const block of blocks) {
+            expect(block.textContent).not.toMatch(/phoneLast4|MASKEDCONTACT|maskedReceiver|Receiver|masked/);
+            expect(block).toHaveTextContent("clientId");
+            expect(block).toHaveTextContent("phone");
+            expect(block).toHaveTextContent("••••5678");
+            expect(block).toHaveTextContent("retained");
+        }
+    });
+
     it("renders the caller ancestry, safety labels, details, and touch-sized actions", () => {
         render(<AgentActionApprovalCard {...defaultProps} />);
 
