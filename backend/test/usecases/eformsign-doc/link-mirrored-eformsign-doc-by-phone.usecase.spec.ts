@@ -2476,6 +2476,163 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
         );
     });
 
+    describe("voided (파기) contract: no client pointer, assignment, auto-registration or lifecycle", () => {
+        const voidedAt = new Date("2026-10-01T00:00:00.000Z");
+
+        /** The complete service-record lock surface, so the locked path runs. */
+        const withLockSurface = (transaction: ReturnType<typeof setup>["transaction"]) => {
+            const tx = transaction as typeof transaction & {
+                employee_schedule: typeof transaction.employee_schedule & { findMany: jest.Mock };
+                service_record_case: { findUnique: jest.Mock };
+            };
+            tx.employee_schedule.findMany = jest.fn().mockResolvedValue([]);
+            tx.service_record_case = { findUnique: jest.fn().mockResolvedValue(null) };
+            // No other client points at the document (the default double would report client 11).
+            transaction.$queryRaw.mockImplementation((query: { strings?: string[] }) =>
+                Promise.resolve(
+                    (query.strings?.join(" ").toLowerCase() ?? "").includes("pointer_client") ? [] : [{ id: 11 }],
+                ));
+        };
+
+        const expectNothingWritten = (
+            { transaction, serviceRecordLifecycle }: Pick<ReturnType<typeof setup>, "transaction" | "serviceRecordLifecycle">,
+        ) => {
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.client.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
+        };
+
+        const assignedDocument = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({ branchId: "branch-1", clientId: 21, ...overrides });
+
+        const completedUnassigned = (overrides: Record<string, unknown> = {}) =>
+            mirroredDocument({
+                branchId: "branch-1",
+                customerPhone: "01012345678",
+                detailPayload: contractDetail(),
+                ...overrides,
+            });
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("assigned document, %s", (_label, lockSurface) => {
+            it("leaves a null client pointer untouched and skips lifecycle for a voided document", async () => {
+                const arranged = setup(assignedDocument({ voidedAt }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("skipped");
+
+                expect(arranged.prisma.$transaction).not.toHaveBeenCalled();
+                expectNothingWritten(arranged);
+            });
+
+            it("still repairs the pointer of a live document (control)", async () => {
+                const arranged = setup(assignedDocument());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("linked");
+
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+            });
+        });
+
+        it("re-checks the void state in the row re-read under the document lock (assigned repair)", async () => {
+            const live = assignedDocument();
+            const arranged = setup(live);
+            withLockSurface(arranged.transaction);
+            // The unlocked read saw a live row; the row re-read under the lock is voided.
+            arranged.transaction.eformsign_doc.findUnique.mockResolvedValue({ ...live, voidedAt });
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("skipped");
+
+            expect(arranged.prisma.$transaction).toHaveBeenCalledTimes(1);
+            expectNothingWritten(arranged);
+        });
+
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("unassigned document, %s", (_label, lockSurface) => {
+            it("neither links an existing client nor auto-registers one for a voided document whose clientId is null", async () => {
+                const arranged = setup(completedUnassigned({ voidedAt }));
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("skipped");
+
+                expect(arranged.prisma.$transaction).not.toHaveBeenCalled();
+                expect(arranged.settings.getClientAutoRegistrationEnabled).not.toHaveBeenCalled();
+                expectNothingWritten(arranged);
+                expect(arranged.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            });
+
+            it("links the matching existing client of a live document (control)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+            });
+
+            it("auto-registers a client for a live document when none matches (control)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([]);
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("created");
+
+                expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            });
+
+            it("writes nothing when the row became voided before the transaction's own read", async () => {
+                const live = completedUnassigned();
+                const arranged = setup(live);
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.client.findMany.mockResolvedValue([]);
+                arranged.transaction.eformsign_doc.findUnique.mockResolvedValue({ ...live, voidedAt });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("skipped");
+
+                expectNothingWritten(arranged);
+            });
+        });
+
+        it("rolls the auto-registered client back when the row is voided under the document lock", async () => {
+            const live = completedUnassigned();
+            const arranged = setup(live);
+            withLockSurface(arranged.transaction);
+            arranged.transaction.client.findMany.mockResolvedValue([]);
+            // First in-transaction read (before the client is created) is live; the
+            // re-read under the document lock sees the void.
+            arranged.transaction.eformsign_doc.findUnique
+                .mockResolvedValueOnce(live)
+                .mockResolvedValue({ ...live, voidedAt });
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("skipped");
+
+            // The client insert ran inside the transaction; the rollback sentinel (not a
+            // pre-check) is what keeps it, the document claim and the automation intents out.
+            expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            expect(arranged.transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(arranged.transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
+            expect(arranged.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        });
+    });
+
     it("never links service-record documents as customer contracts", async () => {
         const { prisma, usecase } = setup();
         prisma.eformsign_doc.findUnique.mockResolvedValue(

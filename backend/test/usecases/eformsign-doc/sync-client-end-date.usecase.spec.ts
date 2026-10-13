@@ -190,6 +190,71 @@ describe("SyncClientEndDateUsecase", () => {
             expect(clientRepository.update).not.toHaveBeenCalled();
         });
 
+        const malformedDateCases: Array<[string, Array<{ id: string; value: string; type: string }>]> = [
+            ["no end-date fields at all", []],
+            ["an empty month", [
+                { id: "계약 종료 년도", value: "26", type: "text" },
+                { id: "계약 종료 월", value: "", type: "text" },
+                { id: "계약 종료 일", value: "17", type: "text" },
+            ]],
+            ["non-numeric values", [
+                { id: "계약 종료 년도", value: "이천이십육", type: "text" },
+                { id: "계약 종료 월", value: "오", type: "text" },
+                { id: "계약 종료 일", value: "십칠", type: "text" },
+            ]],
+            ["an impossible calendar date", [
+                { id: "계약 종료 년도", value: "2026", type: "text" },
+                { id: "계약 종료 월", value: "02", type: "text" },
+                { id: "계약 종료 일", value: "31", type: "text" },
+            ]],
+        ];
+
+        describe.each(malformedDateCases)("with %s", (_label, fields) => {
+            it("executeFromDocument returns without throwing for a voided document in strict mode", async () => {
+                eformsignDocRepository.findByDocumentId.mockResolvedValue(
+                    createDocEntity(new Date("2026-10-01T00:00:00.000Z")),
+                );
+                const persist = jest.fn();
+
+                await expect(usecase.executeFromDocument(
+                    branchId,
+                    documentId,
+                    createDocumentResponse(fields),
+                    { persist, throwOnError: true },
+                )).resolves.toBeUndefined();
+
+                expect(persist).not.toHaveBeenCalled();
+                expect(clientRepository.update).not.toHaveBeenCalled();
+                expect(warnSpy).not.toHaveBeenCalled();
+            });
+
+            it("execute returns without throwing for a voided document in strict mode", async () => {
+                eformsignDocRepository.findByDocumentId.mockResolvedValue(
+                    createDocEntity(new Date("2026-10-01T00:00:00.000Z")),
+                );
+                eformsignClient.getDocument.mockResolvedValue(createDocumentResponse(fields));
+
+                await expect(usecase.execute(
+                    branchId,
+                    documentId,
+                    accessToken,
+                    { throwOnError: true },
+                )).resolves.toBeUndefined();
+
+                expect(clientRepository.update).not.toHaveBeenCalled();
+                expect(errorSpy).not.toHaveBeenCalled();
+            });
+
+            it("still throws in strict mode for a live document (control)", async () => {
+                await expect(usecase.executeFromDocument(
+                    branchId,
+                    documentId,
+                    createDocumentResponse(fields),
+                    { throwOnError: true },
+                )).rejects.toThrow();
+            });
+        });
+
         it("syncs the end date of a non-voided document through the same path (control)", async () => {
             const persist = jest.fn();
 

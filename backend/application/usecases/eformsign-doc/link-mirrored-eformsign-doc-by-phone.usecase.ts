@@ -89,6 +89,18 @@ function isMirrorGenerationConflict(error: unknown): error is MirrorGenerationCo
     return error instanceof MirrorGenerationConflict;
 }
 
+/**
+ * The document turned out to be voided (파기) only after the transaction had
+ * already written a client row. Rolling the transaction back keeps that client
+ * (and its schedule) from committing; the outer wrapper maps it to `skipped`.
+ */
+class VoidedDocumentRollback extends Error {
+    constructor() {
+        super("Mirrored document is voided");
+        this.name = "VoidedDocumentRollback";
+    }
+}
+
 export type LinkMirroredEformsignDocResult =
     | "created"
     | "linked"
@@ -193,12 +205,20 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 branchId: true,
                 clientId: true,
                 createdDate: true,
+                voidedAt: true,
             },
         });
         if (!document) {
             return "no_match";
         }
         if (this.isServiceRecord(document)) {
+            return "skipped";
+        }
+        // A voided (파기) contract is dead: it is never linked to or re-assigned
+        // to a client, never auto-registers one and never moves a client's
+        // contract pointer. Its status and mirror detail are kept by the mirror
+        // service; this usecase only owns the client side, so it does nothing.
+        if (document.voidedAt) {
             return "skipped";
         }
         if (
@@ -229,8 +249,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 serviceRecordCaseId: document.serviceRecordCaseId,
                 revisionId: document.revisionId,
                 createdDate: document.createdDate,
+                voidedAt: document.voidedAt,
             }, expectedMirrorGeneration, !options.linkExistingOnly);
-            if (result !== "mirror_not_ready" && !options.linkExistingOnly) {
+            if (result !== "mirror_not_ready" && result !== "skipped" && !options.linkExistingOnly) {
                 const postLinkApplied = await this.applyPostLinkEffects({
                     documentId,
                     clientId: assignedClientId,
@@ -596,10 +617,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 branchId: true,
                                 clientId: true,
                                 createdDate: true,
+                                voidedAt: true,
                             },
                         });
                         if (!document) return { status: "no_match" };
                         if (this.isServiceRecord(document)) return { status: "skipped" };
+                        if (document.voidedAt) return { status: "skipped" };
                         if (document.clientId !== null) return { status: "already_linked" };
 
                         // A serializable retry must retain the original
@@ -738,6 +761,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                         clientId: true,
                                         createdDate: true,
                                         statusType: true,
+                                        voidedAt: true,
                                     },
                                 });
                                 if (
@@ -939,6 +963,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                     id: true,
                                     branchId: true,
                                     clientId: true,
+                                    voidedAt: true,
                                 },
                             });
                             if (
@@ -948,6 +973,11 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 || currentDocument.clientId !== null
                             ) {
                                 throw new MirrorGenerationConflict();
+                            }
+                            // Voided while this attempt held no lock on the row: the client
+                            // and schedule created above must not commit.
+                            if (currentDocument.voidedAt) {
+                                throw new VoidedDocumentRollback();
                             }
                         }
                         const claimed = await transaction.eformsign_doc.updateMany({
@@ -1001,6 +1031,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             } catch (error) {
                 if (isMirrorGenerationConflict(error)) {
                     return { status: "mirror_not_ready" };
+                }
+                if (error instanceof VoidedDocumentRollback) {
+                    return { status: "skipped" };
                 }
                 lastError = error;
                 if (!isRetryableTransactionError(error) || attempt === MAX_TRANSACTION_ATTEMPTS) {
@@ -1320,6 +1353,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         serviceRecordCaseId: string | null;
         revisionId: string | null;
         createdDate: Date;
+        voidedAt: Date | null;
     }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
             if (this.hasCompleteServiceRecordWriteLockSurface(transaction)) {
@@ -1358,6 +1392,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         branchId: true,
                         clientId: true,
                         createdDate: true,
+                        voidedAt: true,
                     },
                 });
                 if (
@@ -1368,6 +1403,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 ) {
                     return "ambiguous";
                 }
+                // Voided under the document lock: nothing is written for the client.
+                if (current.voidedAt) return "skipped";
                 const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
                     branchId: locked.branchId,
                     documentId: document.documentId,
@@ -1534,6 +1571,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             serviceRecordCaseId: string | null;
             revisionId: string | null;
             createdDate: Date;
+            /** Required so no caller can reach the writes below without reading the void state. */
+            voidedAt: Date | null;
         },
         client: {
             id: number;
@@ -1541,7 +1580,13 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             eDocId: string | null;
         },
         lockedOtherPointerClientIds: readonly number[] = [],
-    ): Promise<"linked" | "already_linked" | "ambiguous"> {
+    ): Promise<"linked" | "already_linked" | "ambiguous" | "skipped"> {
+        // Last fence before the document assignment, the other-pointer clear and
+        // the `client.eDocId` write: a voided (파기) contract never becomes a
+        // client's current contract.
+        if (document.voidedAt) {
+            return "skipped";
+        }
         const clientBranchId = client.branchId;
         if (!clientBranchId) {
             return "ambiguous";
