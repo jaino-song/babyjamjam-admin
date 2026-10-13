@@ -2610,26 +2610,106 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             });
         });
 
-        it("rolls the auto-registered client back when the row is voided under the document lock", async () => {
-            const live = completedUnassigned();
+        /**
+         * Provider-bearing auto-registration on the complete lock surface: the
+         * client, the schedule and the lifecycle write all happen inside the
+         * transaction before the locked re-read of the document row. The
+         * `$transaction` double records the promise of the callback handed to
+         * it, so the rollback is observed as a rejection instead of being
+         * inferred from later writes that never happened.
+         */
+        const arrangeProviderAutoRegistration = (voidUnderLock: boolean) => {
+            const live = completedUnassigned({ detailPayload: contractDetailWithProviders() });
             const arranged = setup(live);
             withLockSurface(arranged.transaction);
             arranged.transaction.client.findMany.mockResolvedValue([]);
-            // First in-transaction read (before the client is created) is live; the
-            // re-read under the document lock sees the void.
-            arranged.transaction.eformsign_doc.findUnique
-                .mockResolvedValueOnce(live)
-                .mockResolvedValue({ ...live, voidedAt });
+            arranged.transaction.employee.findMany.mockResolvedValue([
+                { id: 55, name: "박관리사", phone: "010-5555-1111" },
+                { id: 56, name: "최관리사", phone: "01055552222" },
+            ]);
+            // The created schedule is visible to the locked schedule read, as it
+            // would be inside the real transaction.
+            let createdScheduleId: number | null = null;
+            const tx = arranged.transaction as typeof arranged.transaction & {
+                employee_schedule: { findMany: jest.Mock };
+            };
+            tx.employee_schedule.create.mockImplementation(async () => {
+                createdScheduleId = 91;
+                return { id: 91 };
+            });
+            tx.employee_schedule.findMany.mockImplementation(async () => (
+                createdScheduleId === null
+                    ? []
+                    : [{ id: createdScheduleId, primaryEmployeeId: 55, secondaryEmployeeId: 56 }]
+            ));
+            arranged.transaction.client.findUnique.mockImplementation(
+                async ({ where }: { where: { id: number } }) => ({
+                    id: where.id, branchId: "branch-1", eDocId: "doc-1",
+                }),
+            );
+            if (voidUnderLock) {
+                // First in-transaction read (before the client is created) is live; the
+                // re-read under the document lock sees the void.
+                arranged.transaction.eformsign_doc.findUnique
+                    .mockResolvedValueOnce(live)
+                    .mockResolvedValue({ ...live, voidedAt });
+            }
+            // A transaction COMMITS when its callback resolves and ROLLS BACK when it rejects.
+            const callbacks: Promise<unknown>[] = [];
+            arranged.prisma.$transaction.mockImplementation((
+                work: (candidate: typeof arranged.transaction) => Promise<unknown>,
+            ) => {
+                const result = work(arranged.transaction);
+                callbacks.push(result);
+                return result;
+            });
+            return { ...arranged, callbacks };
+        };
+
+        it("rolls the auto-registered client, schedule and lifecycle back when the row is voided under the document lock", async () => {
+            const arranged = arrangeProviderAutoRegistration(true);
 
             await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
                 .resolves.toBe("skipped");
 
-            // The client insert ran inside the transaction; the rollback sentinel (not a
-            // pre-check) is what keeps it, the document claim and the automation intents out.
+            // The transaction callback itself REJECTED, so the database rolls back
+            // everything it wrote; resolving "skipped" from inside it would commit
+            // the temporary client, schedule and lifecycle rows.
+            expect(arranged.callbacks).toHaveLength(1);
+            await expect(arranged.callbacks[0]).rejects.toMatchObject({ name: "VoidedDocumentRollback" });
+
+            // Written inside the rolled-back transaction, before the locked re-read saw the void.
             expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
+            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+                31, arranged.transaction, expect.anything(),
+            );
+            // Nothing after the re-read: no claim, no automation intents, no notice.
             expect(arranged.transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
             expect(arranged.transaction.message_trigger_job.upsert).not.toHaveBeenCalled();
             expect(arranged.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+        });
+
+        it("commits the same client, schedule and lifecycle writes for a live document (control)", async () => {
+            const arranged = arrangeProviderAutoRegistration(false);
+
+            await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                .resolves.toBe("created");
+
+            // The first transaction is the registration itself (a later one belongs to
+            // the post-create automation follow-up).
+            await expect(arranged.callbacks[0]).resolves.toMatchObject({
+                status: "created",
+                createdClientId: 31,
+                createdBranchId: "branch-1",
+                createdScheduleId: 91,
+            });
+            expect(arranged.transaction.client.create).toHaveBeenCalledTimes(1);
+            expect(arranged.transaction.employee_schedule.create).toHaveBeenCalledTimes(1);
+            expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
+                31, arranged.transaction, expect.anything(),
+            );
+            expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         });
     });
 
