@@ -603,6 +603,8 @@ function notificationStatusLabel(status: string): string {
       return MESSAGE_HISTORY_STATUS_LABELS.sent;
     case "canceled":
       return MESSAGE_HISTORY_STATUS_LABELS.canceled;
+    case "needs_setup":
+      return MESSAGE_HISTORY_STATUS_LABELS.needs_setup;
     default:
       return status || "-";
   }
@@ -613,6 +615,7 @@ function notificationStatusTone(status: string): DetailRowTone {
     case "failed":
       return "burgundy";
     case "pending":
+    case "needs_setup":
       return "orange";
     case "sent":
       return "green";

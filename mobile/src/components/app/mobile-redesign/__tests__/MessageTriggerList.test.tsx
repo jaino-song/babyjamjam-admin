@@ -36,6 +36,8 @@ function createRule(overrides: Partial<MessageTriggerRule> = {}): MessageTrigger
     offsetDays: 1,
     recipientType: "CLIENT",
     templateKey: "SERVICE_START_REMINDER",
+    targetClientStatus: "all",
+    retryOnFailure: true,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     ...overrides,

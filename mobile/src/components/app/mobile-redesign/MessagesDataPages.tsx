@@ -95,6 +95,7 @@ const JOB_STATUS: Record<MessageTriggerJobStatus, StatusMeta> = {
   sent: { label: MESSAGE_JOB_STATUS_LABELS.sent, icon: CheckCircle2 },
   failed: { label: MESSAGE_JOB_STATUS_LABELS.failed, icon: XCircle },
   canceled: { label: MESSAGE_JOB_STATUS_LABELS.canceled, icon: AlertCircle },
+  needs_setup: { label: MESSAGE_JOB_STATUS_LABELS.needs_setup, icon: AlertCircle },
 };
 
 const HISTORY_STATUS: Record<MessageLogStatus, StatusMeta> = {
@@ -102,6 +103,7 @@ const HISTORY_STATUS: Record<MessageLogStatus, StatusMeta> = {
   sent: { label: MESSAGE_HISTORY_STATUS_LABELS.sent, icon: CheckCircle2 },
   failed: { label: MESSAGE_HISTORY_STATUS_LABELS.failed, icon: XCircle },
   canceled: { label: MESSAGE_HISTORY_STATUS_LABELS.canceled, icon: AlertCircle },
+  needs_setup: { label: MESSAGE_HISTORY_STATUS_LABELS.needs_setup, icon: AlertCircle },
 };
 
 const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = {
@@ -109,6 +111,7 @@ const HISTORY_DETAIL_TONE: Record<MessageLogStatus, MessageHistoryDetailTone> = 
   sent: "green",
   failed: "burgundy",
   canceled: "muted",
+  needs_setup: "orange",
 };
 
 /**
@@ -130,6 +133,7 @@ const HISTORY_STATUS_PILL_VARIANT: Record<MessageLogStatus, "neutral" | "success
   sent: "success",
   failed: "danger",
   canceled: "neutral",
+  needs_setup: "warning",
 };
 
 type MessageHistoryRelativeDateFilter = "all" | "1d" | "7d" | "30d";
