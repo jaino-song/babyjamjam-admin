@@ -321,7 +321,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
                     const input = RetrySmsSchema.parse(rawInput);
                     const job = await this.findRetryableJob(context.principal.branchId, input.jobId);
                     const snapshot = await this.smsTriggerDeliveryService.resolveDeliverySnapshot(job);
-                    const recipientId = await this.jobRecipientId(context.principal.branchId, job);
+                    const recipient = await this.jobRecipient(context.principal.branchId, job);
                     return {
                         targetVersion: this.jobTargetVersion(job, snapshot),
                         targetSnapshot: {
@@ -329,10 +329,10 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
                             status: job.status,
                             scheduledFor: job.scheduledFor.toISOString(),
                             ...this.smsTriggerDeliveryService.snapshotForApproval(snapshot),
-                            ...recipientId,
+                            ...this.recipientId(recipient),
                         },
                         title: "문자 재시도",
-                        summary: `${job.id} 작업은 ${snapshot.recipientName || "수신자"} 님에게 ${snapshot.templateKey} 템플릿을 ${snapshot.deliveryType}(${snapshot.estimatedCost}) 유형으로 재시도합니다. 제목: ${snapshot.title || "(없음)"}. 본문: ${snapshot.message || "(없음)"}. 제공자가 명시적으로 거절한 건에 대해 새 발송을 1회 시도합니다.`,
+                        summary: `${job.id} 작업은 ${recipient.name || job.payload.recipientName || "수신자"} 님에게 ${snapshot.templateKey} 템플릿을 ${snapshot.deliveryType}(${snapshot.estimatedCost}) 유형으로 재시도합니다. 제목: ${snapshot.title || "(없음)"}. 본문: ${snapshot.message || "(없음)"}. 제공자가 명시적으로 거절한 건에 대해 새 발송을 1회 시도합니다.`,
                         provider: "Aligo",
                         estimatedCost: snapshot.estimatedCost,
                     };
@@ -565,11 +565,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
     ): Promise<MessageTriggerJobEntity> {
         if (!context.actionId) throw new AgentActionUncertainError("SMS action identity is missing");
         const recipient = await this.resolveSmsRecipient(context.principal.branchId, input.receiver);
-        const approved = context.approvedTargetSnapshot;
-        if ((approved?.["clientId"] !== undefined && approved["clientId"] !== recipient.clientId)
-            || (approved?.["employeeId"] !== undefined && approved["employeeId"] !== recipient.employeeId)) {
-            throw new AgentActionCertainFailureError("SMS recipient changed after approval; review a new proposal");
-        }
+        this.ensureApprovedRecipient(context, recipient);
         await this.ensureSmsApprovedForExecution(context.principal.branchId);
         const ruleId = `${AGENT_SMS_RULE_ID_PREFIX}${context.principal.branchId}`;
         await this.prisma.message_trigger_rule.upsert({
@@ -648,16 +644,22 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         return {};
     }
 
-    private async jobRecipientId(branchId: string, job: MessageTriggerJobEntity) {
-        if (job.recipientType === MessageTriggerRecipientType.CLIENT && job.clientId != null) {
-            return { clientId: job.clientId };
+    private ensureApprovedRecipient(
+        context: Parameters<CapabilityDefinition["execute"]>[0],
+        recipient: { clientId?: number; employeeId?: number },
+    ): void {
+        const approved = context.approvedTargetSnapshot;
+        if ((approved?.["clientId"] !== undefined && approved["clientId"] !== recipient.clientId)
+            || (approved?.["employeeId"] !== undefined && approved["employeeId"] !== recipient.employeeId)) {
+            throw new AgentActionCertainFailureError("SMS recipient changed after approval; review a new proposal");
         }
+    }
+
+    private async jobRecipient(branchId: string, job: MessageTriggerJobEntity): Promise<{ name: string | null; clientId?: number; employeeId?: number }> {
         try {
-            const recipient = await this.resolveSmsRecipient(branchId, job.recipientPhone ?? "");
-            if (job.recipientType !== MessageTriggerRecipientType.CLIENT && recipient.clientId !== undefined) return {};
-            return this.recipientId(recipient);
+            return await this.resolveSmsRecipient(branchId, job.recipientPhone ?? "");
         } catch {
-            return {};
+            return { name: null };
         }
     }
 
@@ -688,7 +690,8 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
         } catch {
             throw new AgentActionCertainFailureError("SMS approval snapshot no longer matches the provider-bound target");
         }
-        await this.resolveSmsRecipient(context.principal.branchId, source.recipientPhone ?? snapshot.receiver);
+        const recipient = await this.resolveSmsRecipient(context.principal.branchId, source.recipientPhone ?? snapshot.receiver);
+        this.ensureApprovedRecipient(context, recipient);
         const retryCandidate = MessageTriggerJobEntity.create({
             branchId: context.principal.branchId,
             ruleId: source.ruleId,
