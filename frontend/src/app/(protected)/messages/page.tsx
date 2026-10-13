@@ -17,6 +17,7 @@ import {
   MESSAGE_EVENT_LABELS,
   MESSAGE_HISTORY_STATUS_LABELS,
   MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
@@ -62,6 +63,7 @@ import {
 import {
   useCancelUpcomingMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -767,6 +769,7 @@ function MessageHistorySection() {
   const isPanelLoading = isLoading || isLoadingUpcoming;
   const { mutateAsync: retryHistory, isPending: isRetrying } = useRetryMessageHistory();
   const cancelMutation = useCancelUpcomingMessageTriggerJob();
+  const resendMutation = useResendMessageTriggerJob();
   // Retry and cancel require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
   const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
@@ -935,10 +938,18 @@ function MessageHistorySection() {
     }
   }, []);
 
-  const canRetry = canManageBranchMessages
+  const failedLog = canManageBranchMessages
     && !!selectedRecord
     && typeof selectedRecord.id === "number"
     && selectedRecord.status === "failed";
+  // A needs_setup job is re-sent by hand once its cause is fixed (resend endpoint);
+  // it is a job row, never a numeric log id.
+  const needsSetupJob = canManageBranchMessages
+    && !!selectedRecord
+    && selectedRecord.isTriggerJobRow
+    && !!selectedRecord.triggerJobId
+    && selectedRecord.status === "needs_setup";
+  const canRetry = failedLog || needsSetupJob;
 
   const handleRetry = useCallback(async () => {
     if (!selectedRecord || typeof selectedRecord.id !== "number") return;
@@ -964,6 +975,49 @@ function MessageHistorySection() {
       });
     }
   }, [retryHistory, selectedRecord, toast]);
+
+  const handleResendJob = useCallback(async () => {
+    if (!selectedRecord?.triggerJobId) return;
+
+    try {
+      const result = await resendMutation.mutateAsync(selectedRecord.triggerJobId);
+
+      if (result.status === "sent") {
+        toast({ variant: "success", description: MESSAGE_JOB_RESEND_COPY.success });
+      } else if (result.status === "needs_setup") {
+        toast({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup });
+      } else if (result.status === "canceled") {
+        toast({
+          variant: "destructive",
+          description: result.reason
+            ? `${MESSAGE_JOB_RESEND_COPY.notSent} ${result.reason}`
+            : MESSAGE_JOB_RESEND_COPY.notSent,
+        });
+      } else {
+        toast({ variant: "destructive", description: MESSAGE_JOB_RESEND_COPY.failure });
+      }
+    } catch (error) {
+      // The backend's own conflict sentence never reaches the client; a 409 is the
+      // only signal that the job is no longer resendable.
+      const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+      toast({
+        variant: "destructive",
+        description: normalized.status === 409
+          ? MESSAGE_JOB_RESEND_COPY.conflict
+          : normalized.verified
+            ? normalized.message
+            : MESSAGE_JOB_RESEND_COPY.failure,
+      });
+    }
+  }, [resendMutation, selectedRecord, toast]);
+
+  const handleRetryOrResend = useCallback(() => {
+    if (needsSetupJob) {
+      void handleResendJob();
+      return;
+    }
+    void handleRetry();
+  }, [handleResendJob, handleRetry, needsSetupJob]);
 
   // Only a pending trigger job can be canceled (POST /message-trigger-jobs/:id/cancel
   // refuses processing/sent/canceled/missing jobs), and manual scheduled entries
@@ -1474,8 +1528,9 @@ function MessageHistorySection() {
           dataComponentPrefix="desktop_messages_sections_section-content_history-section_split-layout_detail-panel"
           selectedRecord={selectedRecord}
           canRetry={canRetry}
-          isRetrying={isRetrying}
-          onRetry={handleRetry}
+          isRetrying={isRetrying || resendMutation.isPending}
+          onRetry={handleRetryOrResend}
+          retryPendingLabel={needsSetupJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
         />
       )}
     </SplitLayout>

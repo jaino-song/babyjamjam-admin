@@ -310,6 +310,22 @@ export function useCancelUpcomingMessageTriggerJob() {
     });
 }
 
+// Re-sends a `needs_setup` trigger job by hand (POST /message-trigger-jobs/:id/resend).
+// The job may move to sent, back to needs_setup, canceled or failed, so refresh both
+// upcoming and history; the caller reads the returned status for its toast.
+export function useResendMessageTriggerJob() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (jobId: string) =>
+            messageTriggersApi.resendJob(jobId).then((response) => response.data),
+        onSuccess: async () => {
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+            await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+        },
+    });
+}
+
 export function useCreateMessageTriggerRule() {
     const queryClient = useQueryClient();
 
