@@ -160,14 +160,14 @@
         "146:10-146:33|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1034:79-1034:166|visualTailwindInPage",
-        "1132:69-1132:97|visualTailwindInPage",
-        "925:39-929:30|visualTailwindInPage",
-        "987:193-987:355|visualTailwindInPage",
-        "988:78-988:180|visualTailwindInPage",
-        "991:78-991:174|visualTailwindInPage",
-        "992:78-992:213|visualTailwindInPage",
-        "994:74-994:182|visualTailwindInPage"
+        "1000:193-1000:355|visualTailwindInPage",
+        "1001:78-1001:180|visualTailwindInPage",
+        "1004:78-1004:174|visualTailwindInPage",
+        "1005:78-1005:213|visualTailwindInPage",
+        "1007:74-1007:182|visualTailwindInPage",
+        "1047:79-1047:166|visualTailwindInPage",
+        "1146:69-1146:97|visualTailwindInPage",
+        "938:39-942:30|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/consultations/page.tsx": {
@@ -212,11 +212,11 @@
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "303:21-307:22|rawUiElement"
+        "314:21-318:22|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "306:33-306:234|visualTailwindInPage",
-        "308:47-308:75|visualTailwindInPage"
+        "317:33-317:234|visualTailwindInPage",
+        "319:47-319:75|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/messages/page.tsx": {
@@ -816,14 +816,14 @@
     },
     "mobile/src/app/(shell)/clients/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "120:10-120:15|pageLocalComponent"
+        "124:10-124:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1323:13-1329:14|rawUiElement",
-        "1335:13-1341:14|rawUiElement",
-        "1714:25-1721:26|rawUiElement",
-        "1802:15-1807:16|rawUiElement",
-        "1810:15-1815:16|rawUiElement"
+        "1336:13-1342:14|rawUiElement",
+        "1348:13-1354:14|rawUiElement",
+        "1727:25-1734:26|rawUiElement",
+        "1818:15-1823:16|rawUiElement",
+        "1826:15-1831:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
