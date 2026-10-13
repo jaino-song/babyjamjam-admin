@@ -2780,10 +2780,12 @@ describe("MessageTriggerService", () => {
             dispatcher.jobRepository.findByIdInBranch.mockResolvedValue(job);
             dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
             const writtenStatuses: string[] = [];
+            const writes: Array<{ status: string; cancelReason: string | null }> = [];
             dispatcher.jobRepository.update.mockImplementation(async (written: MessageTriggerJobEntity) => {
                 writtenStatuses.push(written.status);
+                writes.push({ status: written.status, cancelReason: written.cancelReason });
             });
-            return { ...dispatcher, job, writtenStatuses };
+            return { ...dispatcher, job, writtenStatuses, writes };
         };
         const linkJobOverrides = (): Parameters<typeof createJob>[0] => ({
             ruleId: "system:service_record_link", employeeScheduleId: 10,
@@ -2850,26 +2852,60 @@ describe("MessageTriggerService", () => {
         });
 
         it("sends the stored payload unchanged through the needs_setup claim and reports sent", async () => {
-            const { service, job, jobRepository, deliveryService, writtenStatuses } = resendFixture();
-            const payloadBefore = JSON.stringify(job.payload);
+            const storedVariables = { name: "김산모", counselorName: "홍길동", visitDate: "2026-10-01" };
+            const { service, job, jobRepository, deliveryService, writtenStatuses, writes } = resendFixture({
+                payload: {
+                    memberId: "member-1", recipientName: "김산모", recipientPhone: "010-1234-5678",
+                    buttonUrl: "https://mobile.test/stored", messageBody: "저장된 본문",
+                    templateVariables: { ...storedVariables },
+                },
+            });
+            const payloadBefore = structuredClone(job.payload);
             const scheduledFor = job.scheduledFor;
             const dedupeKey = job.dedupeKey;
+            // Capture BY VALUE at call time: the job reference is shared and mutable, so a copy taken
+            // afterwards would hide a mutation made on the way to delivery.
+            let delivered: MessageTriggerJobEntity["payload"] | null = null;
+            deliveryService.sendJob.mockImplementation(async (handed: MessageTriggerJobEntity) => {
+                delivered = structuredClone(handed.payload);
+                return true;
+            });
 
             const result = await service.resendNeedsSetupJob(branchId, job.id);
 
             expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId, expect.any(Object));
             expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
             expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
-            // prepareJob freezes the delivery snapshot into the payload; nothing else changes.
-            expect(JSON.stringify({ ...job.payload, templateVariables: {} })).toBe(
-                JSON.stringify({ ...JSON.parse(payloadBefore), templateVariables: {} }),
-            );
+            // prepareJob freezes the delivery snapshot into the variables; every stored value is unchanged.
+            const { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: snapshot, ...deliveredVariables } = delivered!.templateVariables;
+            expect(snapshot).toBe("synthetic-trigger-prepared");
+            expect(deliveredVariables).toEqual(storedVariables);
+            expect({ ...delivered!, templateVariables: undefined }).toEqual({ ...payloadBefore, templateVariables: undefined });
             expect(job.claimToken).toBe("claim-a");
             expect(job.scheduledFor).toBe(scheduledFor);
             expect(job.dedupeKey).toBe(dedupeKey);
             expect(job.attempts).toBe(1);
             expect(writtenStatuses[writtenStatuses.length - 1]).toBe("sent");
+            // A sent job reports no reason: the setup reason is dropped at the sent transition.
+            expect(writes[writes.length - 1]).toEqual({ status: "sent", cancelReason: null });
             expect(result).toEqual({ id: job.id, status: "sent", reason: null });
+        });
+
+        it("keeps the setup reason on the in-flight row after the claim, as the durable resend mark", async () => {
+            const { service, job, deliveryService, writes } = resendFixture();
+            let inFlight: { status: string; cancelReason: string | null } | null = null;
+            deliveryService.sendJob.mockImplementation(async (handed: MessageTriggerJobEntity) => {
+                inFlight = { status: handed.status, cancelReason: handed.cancelReason };
+                return true;
+            });
+
+            await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(inFlight).toEqual({ status: "dispatching", cancelReason: SETUP_REASON });
+            // Every write before the terminal one (the frozen-snapshot write) still carries the mark.
+            const beforeTerminal = writes.slice(0, -1);
+            expect(beforeTerminal.length).toBeGreaterThan(0);
+            for (const written of beforeTerminal) expect(written.cancelReason).toBe(SETUP_REASON);
         });
 
         it("returns '설정 필요' with the fresh reason, attempts unchanged, when the cause is still there", async () => {
@@ -3043,6 +3079,115 @@ describe("MessageTriggerService", () => {
 
                 expect(job.status).toBe("pending");
                 expect(job.attempts).toBe(2);
+            });
+        });
+
+        describe("an in-flight resend that is reclaimed returns to '설정 필요', never pending", () => {
+            const processingResendRow = (overrides: Parameters<typeof createJob>[0] = {}) => {
+                const row = createJob({
+                    id: "waiting-job", status: "processing", cancelReason: SETUP_REASON, attempts: 1,
+                    scheduledFor: new Date(Date.now() - 30 * DAY_MS), ...overrides,
+                });
+                row.claimToken = "claim-resend";
+                return row;
+            };
+
+            it("reclaims a stale resend claim to needs_setup with attempts and schedule unchanged, fenced by its claim token", async () => {
+                const { service, jobRepository, messageLogRepository } = createDispatchService();
+                const row = processingResendRow();
+                const scheduledFor = row.scheduledFor;
+                jobRepository.findStaleProcessingSystemScope.mockResolvedValue([row]);
+                messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+
+                await service.dispatchDueJobs();
+
+                expect(row.status).toBe("needs_setup");
+                expect(row.cancelReason).toBe(SETUP_REASON);
+                expect(row.attempts).toBe(1);
+                expect(row.scheduledFor).toBe(scheduledFor);
+                expect(row.nextAttemptAt).toBeNull();
+                expect(row.claimToken).toBe("claim-resend");
+                expect(jobRepository.update).toHaveBeenCalledWith(row);
+            });
+
+            it("control: an ordinary stale processing row (no resend mark) is still deferred to pending with one more attempt", async () => {
+                const { service, jobRepository, messageLogRepository } = createDispatchService();
+                const row = createJob({ id: "ordinary-job", status: "processing", attempts: 1 });
+                row.claimToken = "claim-ordinary";
+                jobRepository.findStaleProcessingSystemScope.mockResolvedValue([row]);
+                messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+
+                await service.dispatchDueJobs();
+
+                expect(row.status).toBe("pending");
+                expect(row.attempts).toBe(2);
+                expect(row.nextAttemptAt).toBeInstanceOf(Date);
+            });
+
+            it("a stale resend row already dispatching keeps the uncertain-outcome handling", async () => {
+                const { service, jobRepository, messageLogRepository } = createDispatchService();
+                const row = processingResendRow({ status: "dispatching" });
+                jobRepository.findStaleProcessingSystemScope.mockResolvedValue([row]);
+                messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+
+                await service.dispatchDueJobs();
+
+                expect(row.status).toBe("failed");
+                expect(row.cancelReason).toContain("불확실");
+            });
+
+            it("a stale resend row with a sent message log is reconciled to sent with no reason", async () => {
+                const { service, jobRepository, messageLogRepository } = createDispatchService();
+                const row = processingResendRow();
+                jobRepository.findStaleProcessingSystemScope.mockResolvedValue([row]);
+                messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set([row.id]));
+
+                await service.dispatchDueJobs();
+
+                expect(row.status).toBe("sent");
+                expect(row.cancelReason).toBeNull();
+            });
+
+            it("a reclaim that wins the race against a running resend: the resend writes nothing, calls no provider, and reports needs_setup", async () => {
+                const { service, job, jobRepository, deliveryService, transaction, writtenStatuses } = resendFixture();
+                const reclaimed = createJob({
+                    id: job.id, status: "needs_setup", cancelReason: SETUP_REASON, attempts: 1,
+                    scheduledFor: new Date(Date.now() - 30 * DAY_MS),
+                });
+                jobRepository.findByIdInBranch.mockResolvedValueOnce(job).mockResolvedValue(reclaimed);
+                // The pre-preparation gate re-reads the row: the reclaim already moved it out of `processing`.
+                transaction.$queryRaw.mockResolvedValueOnce([{ status: "needs_setup", claim_token: null }]);
+
+                const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+                expect(result).toEqual({ id: job.id, status: "needs_setup", reason: SETUP_REASON });
+                expect(deliveryService.prepareJob).not.toHaveBeenCalled();
+                expect(deliveryService.sendJob).not.toHaveBeenCalled();
+                expect(jobRepository.update).not.toHaveBeenCalled();
+                expect(writtenStatuses).not.toContain("pending");
+            });
+
+            it("a request that dies after the claim is reclaimed to needs_setup, and a second resend then succeeds", async () => {
+                const fx = resendFixture();
+                fx.ruleRepository.findByIdIncludingGlobal.mockRejectedValueOnce(new Error("read failed after the claim"));
+
+                await expect(fx.service.resendNeedsSetupJob(branchId, fx.job.id)).rejects.toThrow("read failed after the claim");
+                // The claim left the setup reason in place: the row sits in `processing` carrying it.
+                expect(fx.job.cancelReason).toBe(SETUP_REASON);
+                expect(fx.jobRepository.update).not.toHaveBeenCalled();
+                const stuck = processingResendRow({ cancelReason: fx.job.cancelReason, attempts: fx.job.attempts });
+
+                fx.jobRepository.findStaleProcessingSystemScope.mockResolvedValueOnce([stuck]);
+                fx.messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set());
+                await fx.service.dispatchDueJobs();
+                expect(stuck.status).toBe("needs_setup");
+                expect(stuck.attempts).toBe(1);
+
+                fx.jobRepository.findByIdInBranch.mockResolvedValue(stuck);
+                const result = await fx.service.resendNeedsSetupJob(branchId, stuck.id);
+
+                expect(result).toEqual({ id: stuck.id, status: "sent", reason: null });
+                expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
             });
         });
     });

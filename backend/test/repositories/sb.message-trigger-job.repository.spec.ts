@@ -396,6 +396,9 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("claim_token = gen_random_uuid()::text");
         // The minted token is the CAS fence for every later write on this job.
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
+        // The ordinary claim clears the reason, so a `processing` row that carries one can only be a
+        // resend claim (the stale-processing reclaim reads that as the resend mark).
+        expect(sqlText).toContain("updated_at = now(), cancel_reason = NULL FROM locked_rule");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);
@@ -427,6 +430,8 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("SET status = 'processing', claim_token = gen_random_uuid()::text");
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
         expect(sqlText).not.toContain("attempts");
+        // The setup reason stays on the in-flight row: it is the durable resend mark.
+        expect(sqlText).not.toContain("cancel_reason");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);
@@ -1990,6 +1995,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 if (row.status !== "pending") return [];
                 await this.beforeClaimCommit?.();
                 row.status = "processing";
+                row.cancelReason = null;
                 row.claimToken = `claim-${id}`;
                 return [{ id, claim_token: row.claimToken }];
             }

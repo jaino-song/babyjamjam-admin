@@ -2974,9 +2974,13 @@ export class MessageTriggerService {
         // one is not safe to deliver: the pre-provider fence fails closed.
         const claimToken = claimed;
         job.claimToken = claimToken;
-        // The setup reason was consumed by this resend; whatever the attempt
-        // ends as sets its own (or none, for a sent job).
-        if (resend) job.cancelReason = null;
+        // The resend claim keeps the setup reason on the in-flight row: a
+        // non-null `cancel_reason` on a `processing` row is the durable mark
+        // that the stale-processing reclaim reads to return it to
+        // `needs_setup`. The ordinary claim clears it (repository), so keep the
+        // in-memory entity aligned. Whatever the attempt ends as sets its own
+        // reason; `markSent` clears it.
+        if (!resend) job.cancelReason = null;
 
         if (sentIds.has(job.id)) {
             job.markSent();
@@ -4215,6 +4219,13 @@ export class MessageTriggerService {
                 // prove that no provider request was accepted, so never
                 // re-queue the row for another send.
                 job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+            } else if (job.status === "processing" && job.cancelReason !== null) {
+                // A manual-resend claim (BJJ-444): the claim left the setup
+                // reason on the row. Never `pending`: the ordinary dispatcher
+                // would expire an old job. Back to '설정 필요', reason kept,
+                // attempts and scheduledFor untouched; the write is fenced by
+                // the claim token so a newer owner is never overwritten.
+                job.markNeedsSetup(job.cancelReason);
             } else {
                 job.defer("transient", "Reclaimed stale processing job");
             }

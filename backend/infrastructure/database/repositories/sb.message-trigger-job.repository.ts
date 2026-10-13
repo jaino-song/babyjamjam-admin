@@ -334,6 +334,15 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const statusPredicate = expectedStatus === "pending"
             ? Prisma.sql`job.status = 'pending'`
             : Prisma.sql`job.status = 'needs_setup'`;
+        // A resend claim leaves `cancel_reason` (the setup reason) on the
+        // `processing` row: that non-null reason is the durable mark that the
+        // in-flight row came from a resend, which the stale-processing reclaim
+        // returns to `needs_setup` instead of deferring it to `pending`. The
+        // ordinary claim therefore clears the column, so a `processing` row
+        // that carries a reason can only be a resend claim.
+        const claimedReasonAssignment = expectedStatus === "pending"
+            ? Prisma.sql`, cancel_reason = NULL`
+            : Prisma.empty;
         const jobBranchPredicate = branchId === null
             ? Prisma.sql`job.branch_id IS NULL`
             : Prisma.sql`job.branch_id = ${branchId}::uuid`;
@@ -402,7 +411,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE OF rule
             )
             UPDATE "message_trigger_job" AS job
-            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now()
+            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now()${claimedReasonAssignment}
             FROM locked_rule AS rule
             WHERE job.id = ${id}
               AND job.rule_id = rule.id
