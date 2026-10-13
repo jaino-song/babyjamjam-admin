@@ -139,6 +139,16 @@ describe("isContractReviewWindowOpen with an explicit calendar (backend copy)", 
 });
 
 describe("resolveEformsignDocDisplayStatus", () => {
+    it.each([
+        ["072", "completed"], ["060", "pending"], ["042", "revoked"], ["080", "expired"],
+    ])("voided wins over %s; a non-voided row remains %s", (code, expected) => {
+        const doc = { id: "d", current_status: { status_type: code, step_type: "05" } };
+        expect(resolveEformsignDocDisplayStatus({ ...doc, isVoided: true }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("voided");
+        expect(resolveEformsignDocDisplayStatus({ ...doc, isVoided: false }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe(expected);
+    });
+    it("voided wins over review and unassigned without consulting the end-date calendar", () => {
+        expect(resolveEformsignDocDisplayStatus({ ...reviewStepDoc("2028-01-01"), isVoided: true, [MIRROR_UNASSIGNED_KEY]: true }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR)).toBe("voided");
+    });
     it("maps terminal categories regardless of dates", () => {
         expect(resolveEformsignDocDisplayStatus(
             { id: "d", current_status: { status_type: "003" } }, kstNoon("2026-08-01"), KR_BUILTIN_CALENDAR,

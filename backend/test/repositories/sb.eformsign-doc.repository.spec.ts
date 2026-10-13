@@ -80,6 +80,23 @@ describe("SbEformsignDocRepository", () => {
         jest.clearAllMocks();
     });
 
+    it.each([1, 0])("markVoided returns count > 0 (%s) with the exact branch and audit fence", async (count) => {
+        const voidedAt = new Date("2026-10-14T00:00:00Z");
+        eformsignDocModel.updateMany.mockResolvedValue({ count });
+        await expect(repository.markVoided("branch-1", "doc-1", voidedAt, "actor")).resolves.toBe(count > 0);
+        expect(eformsignDocModel.updateMany).toHaveBeenCalledTimes(1);
+        expect(eformsignDocModel.updateMany).toHaveBeenCalledWith({
+            where: { documentId: "doc-1", branchId: "branch-1", voidedAt: null, permanentPurgeRequestedAt: null },
+            data: { voidedAt, voidedBy: "actor" },
+        });
+    });
+    it("markVoided rejects missing columns without compatibility retry", async () => {
+        const error = Object.assign(new Error("column voided_at does not exist"), { code: "P2022", meta: { column: "voided_at" } });
+        eformsignDocModel.updateMany.mockRejectedValue(error);
+        await expect(repository.markVoided("branch-1", "doc-1", new Date(), "actor")).rejects.toBe(error);
+        expect(eformsignDocModel.updateMany).toHaveBeenCalledTimes(1);
+    });
+
     it("retries client document reads with legacy columns when classification columns are pending", async () => {
         eformsignDocModel.findMany
             .mockRejectedValueOnce(pendingColumnError)

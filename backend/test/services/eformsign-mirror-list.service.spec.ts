@@ -25,6 +25,8 @@ function createMirrorDocument(overrides: {
     documentName?: string | null;
     stepRecipientName?: string;
     clientId?: number | null;
+    voidedAt?: Date | null;
+    voidedBy?: string | null;
 }): EformsignDocEntity {
     const createdDate = new Date(overrides.createdDate ?? "2026-07-01T00:00:00.000Z");
     return EformsignDocEntity.reconstitute({
@@ -53,6 +55,8 @@ function createMirrorDocument(overrides: {
         documentKind: null,
         employeeScheduleId: null,
         templateId: overrides.templateId === undefined ? "template-1" : overrides.templateId,
+        voidedAt: overrides.voidedAt,
+        voidedBy: overrides.voidedBy,
     });
 }
 
@@ -74,6 +78,7 @@ describe("EformsignMirrorListService", () => {
         findByDocumentIdUnscoped: jest.Mock;
     };
     let service: EformsignMirrorListService;
+    const prisma = { user: { findUnique: jest.fn() } };
 
     beforeEach(() => {
         repository = {
@@ -82,7 +87,8 @@ describe("EformsignMirrorListService", () => {
             findContractEndDatesByDocumentIds: jest.fn().mockResolvedValue(new Map()),
             findByDocumentIdUnscoped: jest.fn().mockResolvedValue(null),
         };
-        service = new EformsignMirrorListService(repository as never, createHolidayCalendarStub());
+        prisma.user.findUnique.mockReset();
+        service = new EformsignMirrorListService(repository as never, createHolidayCalendarStub(), prisma as never);
     });
 
     it("returns documents newest first, tie-broken by id", async () => {
@@ -308,7 +314,7 @@ describe("EformsignMirrorListService", () => {
             const builtin = await service.buildList(createQuery({ displayStatus: "review" }));
             const stub = createHolidayCalendarStub();
             (stub.forBranch as jest.Mock).mockResolvedValue(branchCalendar);
-            const branchService = new EformsignMirrorListService(repository as never, stub);
+            const branchService = new EformsignMirrorListService(repository as never, stub, prisma as never);
             const branch = await branchService.buildList(createQuery({ displayStatus: "review" }));
             const branchSigned = await branchService.buildList(createQuery({ displayStatus: "signed" }));
 
@@ -356,7 +362,7 @@ describe("EformsignMirrorListService", () => {
             const fields = await service.buildDetailDisplayFields("doc-unclaimed", calendar);
 
             expect(repository.findByDocumentIdUnscoped).toHaveBeenCalledWith("doc-unclaimed");
-            expect(fields).toEqual({ display_status: "unassigned" });
+            expect(fields).toEqual({ display_status: "unassigned", voided_at: null, voided_by_name: null });
         });
 
         it("resolves a claimed one with the same end date the list attaches", async () => {
@@ -368,7 +374,7 @@ describe("EformsignMirrorListService", () => {
             const fields = await service.buildDetailDisplayFields("doc-claimed", calendar);
 
             expect(repository.findContractEndDatesByDocumentIds).toHaveBeenCalledWith(["doc-claimed"]);
-            expect(fields).toEqual({ display_status: "review", contract_end_date: "2026-03-31" });
+            expect(fields).toEqual({ display_status: "review", contract_end_date: "2026-03-31", voided_at: null, voided_by_name: null });
         });
 
         it("leaves the end date out when none is recoverable, as the list does", async () => {
@@ -376,7 +382,7 @@ describe("EformsignMirrorListService", () => {
 
             const fields = await service.buildDetailDisplayFields("doc-claimed", calendar);
 
-            expect(fields).toEqual({ display_status: "review" });
+            expect(fields).toEqual({ display_status: "review", voided_at: null, voided_by_name: null });
         });
 
         it("does not read the detail payload for a document outside the review step", async () => {
@@ -384,13 +390,41 @@ describe("EformsignMirrorListService", () => {
 
             const fields = await service.buildDetailDisplayFields("doc-waiting", calendar);
 
-            expect(fields).toEqual({ display_status: "pending" });
+            expect(fields).toEqual({ display_status: "pending", voided_at: null, voided_by_name: null });
             expect(repository.findContractEndDatesByDocumentIds).not.toHaveBeenCalled();
         });
 
         it("returns null when the row no longer exists", async () => {
             await expect(service.buildDetailDisplayFields("gone", calendar)).resolves.toBeNull();
         });
+        it.each(["파기 담당자", null, undefined])("returns only the void timestamp and actor name (%s)", async (name) => {
+            const voidedAt = new Date("2026-10-14T00:00:00Z");
+            stored(createMirrorDocument({ documentId: "voided", statusType: "072", voidedAt, voidedBy: "actor-id" }));
+            prisma.user.findUnique.mockResolvedValue(name === undefined ? null : { name });
+            const fields = await service.buildDetailDisplayFields("voided", calendar);
+            expect(fields).toEqual({ display_status: "voided", voided_at: voidedAt.toISOString(), voided_by_name: name ?? null });
+            expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: "actor-id" }, select: { name: true } });
+            expect(fields).not.toHaveProperty("voided_by");
+            expect(fields).not.toHaveProperty("email");
+        });
+    });
+
+    it.each(["072", "060", "042", "080"])("files and counts a voided %s row only in the rejected/expired bucket", async (statusType) => {
+        repository.findAllVisibleInMirror.mockResolvedValue([
+            createMirrorDocument({ documentId: "voided", statusType, voidedAt: new Date("2026-10-14T00:00:00Z") }),
+            createMirrorDocument({ documentId: "completed", statusType: "072" }),
+            createMirrorDocument({ documentId: "pending", statusType: "060" }),
+        ]);
+        const documents = await service.loadScopeDocuments(createQuery());
+        const calendar = await createHolidayCalendarStub().forBranch("branch-1");
+        const select = (overrides: Partial<MirrorListQuery>) => service.filterScope(documents, createQuery(overrides), calendar).documents;
+        expect(select({ scope: "rejected" }).map((doc) => doc.id)).toEqual(["voided"]);
+        expect(select({ statusCategory: "expired" })).toHaveLength(1);
+        expect(select({ scope: "completed" }).map((doc) => doc.id)).toEqual(["completed"]);
+        expect(select({ scope: "in-progress" }).map((doc) => doc.id)).toEqual(["pending"]);
+        expect(select({ statusCategory: "drafting" }).map((doc) => doc.id)).toEqual(["pending"]);
+        expect(select({ statusCategory: "in-progress" })).toHaveLength(0);
+        expect(select({ displayStatus: "voided" }).map((doc) => doc.id)).toEqual(["voided"]);
     });
 
     it("does not read detail payloads when nothing sits in the provider-review step", async () => {
@@ -411,7 +445,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([entity]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never, createHolidayCalendarStub());
+        } as never, createHolidayCalendarStub(), {} as never);
         const { documents } = await service.buildList(createQuery());
 
         const [enriched] = enrichMirrorPage(documents);
@@ -438,7 +472,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([titled, named]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never, createHolidayCalendarStub());
+        } as never, createHolidayCalendarStub(), {} as never);
         const { documents } = await service.buildList(createQuery());
 
         const enriched = enrichMirrorPage(documents);
@@ -461,7 +495,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([sentinel]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never, createHolidayCalendarStub());
+        } as never, createHolidayCalendarStub(), {} as never);
         const { documents } = await service.buildList(createQuery());
 
         expect(documentCustomerNameValue(enrichMirrorPage(documents)[0]!)).toBeNull();
@@ -476,7 +510,7 @@ describe("enrichMirrorPage", () => {
         const service = new EformsignMirrorListService({
             findAllVisibleInMirror: jest.fn().mockResolvedValue([unassigned]),
             findAllVisibleInMirrorForHeadquarters: jest.fn(),
-        } as never, createHolidayCalendarStub());
+        } as never, createHolidayCalendarStub(), {} as never);
 
         const { documents } = await service.buildList(createQuery());
 

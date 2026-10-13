@@ -659,6 +659,15 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         }
     }
 
+    async markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean> {
+        // No compatibility retry: a void must never succeed without its durable audit values.
+        const result = await this.prismaService.eformsign_doc.updateMany({
+            where: { documentId, branchId: branchid, voidedAt: null, permanentPurgeRequestedAt: null },
+            data: { voidedAt, voidedBy },
+        });
+        return result.count > 0;
+    }
+
     async update(
         branchid: string,
         doc: EformsignDocEntity,

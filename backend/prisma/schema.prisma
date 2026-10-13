@@ -386,6 +386,8 @@ model eformsign_doc {
   syncError                  String?                        @map("sync_error")
   syncErrorAt                DateTime?                      @map("sync_error_at") @db.Timestamptz(6)
   permanentPurgeRequestedAt  DateTime?                      @map("permanent_purge_requested_at") @db.Timestamptz(6)
+  voidedAt                  DateTime?                      @map("voided_at") @db.Timestamptz(6)
+  voidedBy                  String?                        @map("voided_by") @db.Uuid // Deliberately no FK to user: the audit value must survive user deletion.
   autoFinalizeAttempts       Int                            @default(0) @map("auto_finalize_attempts")
   autoFinalizeLastAttemptAt  DateTime?                      @map("auto_finalize_last_attempt_at") @db.Timestamptz(6)
   autoFinalizeLastError      String?                        @map("auto_finalize_last_error")

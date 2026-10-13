@@ -51,6 +51,8 @@ interface EformsignDocProps {
     employeeScheduleId?: number | null;
     // Source eformsign template identifier.
     templateId?: string | null;
+    voidedAt?: Date | null;
+    voidedBy?: string | null;
 }
 
 export class EformsignDocEntity {
@@ -72,6 +74,8 @@ export class EformsignDocEntity {
             documentKind: props.documentKind ?? null,
             employeeScheduleId: props.employeeScheduleId ?? null,
             templateId: props.templateId ?? null,
+            voidedAt: props.voidedAt ?? null,
+            voidedBy: props.voidedBy ?? null,
         };
         this.assertInvariants();
     }
@@ -161,6 +165,9 @@ export class EformsignDocEntity {
     get documentKind(): EformsignDocumentKind | null { return this.props.documentKind ?? null; }
     get employeeScheduleId(): number | null { return this.props.employeeScheduleId ?? null; }
     get templateId(): string | null { return this.props.templateId ?? null; }
+    get voidedAt(): Date | null { return this.props.voidedAt ?? null; }
+    get voidedBy(): string | null { return this.props.voidedBy ?? null; }
+    get isVoided(): boolean { return this.voidedAt !== null; }
 
     toJSON() {
         return {
@@ -189,6 +196,7 @@ export class EformsignDocEntity {
             documentKind: this.documentKind,
             employeeScheduleId: this.employeeScheduleId,
             templateId: this.templateId,
+            voidedAt: this.voidedAt,
         };
     }
 

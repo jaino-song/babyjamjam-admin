@@ -28,6 +28,7 @@ describe("FindEformsignDocsByClientIdUsecase.executeWithContractEndDates", () =>
         findByClientId: jest.fn(),
         findContractEndDatesByDocumentIds: jest.fn(),
     };
+    const prisma = { user: { findMany: jest.fn().mockResolvedValue([]) } };
 
     beforeEach(() => {
         repository.findByClientId.mockResolvedValue(docs);
@@ -47,19 +48,46 @@ describe("FindEformsignDocsByClientIdUsecase.executeWithContractEndDates", () =>
         jest.useFakeTimers({ now: new Date("2026-08-05T03:00:00.000Z") });
 
         const builtinStub = createHolidayCalendarStub();
-        const builtin = await new FindEformsignDocsByClientIdUsecase(repository as never, builtinStub)
+        const builtin = await new FindEformsignDocsByClientIdUsecase(repository as never, builtinStub, prisma as never)
             .executeWithContractEndDates("branch-1", 10);
 
         const branchStub = createHolidayCalendarStub();
         (branchStub.forBranch as jest.Mock).mockResolvedValue(
             createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], { supportedYears: [2026] }),
         );
-        const branch = await new FindEformsignDocsByClientIdUsecase(repository as never, branchStub)
+        const branch = await new FindEformsignDocsByClientIdUsecase(repository as never, branchStub, prisma as never)
             .executeWithContractEndDates("branch-1", 10);
 
         expect(builtin.map((doc) => doc.displayStatus)).toEqual(["signed", "signed"]);
         expect(branch.map((doc) => doc.displayStatus)).toEqual(["review", "review"]);
         expect(branchStub.forBranch).toHaveBeenCalledTimes(1);
         expect(branchStub.forBranch).toHaveBeenCalledWith("branch-1");
+        expect(builtin[0]).toMatchObject({ voidedAt: null, voidedByName: null });
+        expect(prisma.user.findMany).not.toHaveBeenCalled();
+    });
+
+    it("batches distinct actor ids once and never returns the actor id or email", async () => {
+        const voidedAt = new Date("2026-10-14T00:00:00Z");
+        const voided = (id: string, actor: string) => EformsignDocEntity.reconstitute({
+            ...providerReviewDoc(id).toJSON(), voidedAt, voidedBy: actor,
+        });
+        repository.findByClientId.mockResolvedValue([
+            voided("a", "actor-1"), voided("b", "actor-1"), voided("c", "actor-2"),
+            voided("d", "deleted-actor"), providerReviewDoc("live"),
+        ]);
+        prisma.user.findMany.mockResolvedValue([{ id: "actor-1", name: "담당자" }, { id: "actor-2", name: null }]);
+        const result = await new FindEformsignDocsByClientIdUsecase(repository as never, createHolidayCalendarStub(), prisma as never)
+            .executeWithContractEndDates("branch-1", 10);
+        expect(prisma.user.findMany).toHaveBeenCalledTimes(1);
+        expect(prisma.user.findMany).toHaveBeenCalledWith({
+            where: { id: { in: ["actor-1", "actor-2", "deleted-actor"] } }, select: { id: true, name: true },
+        });
+        expect(result.map((doc) => doc.voidedByName)).toEqual(["담당자", "담당자", null, null, null]);
+        expect(result.slice(0, 4).every((doc) => doc.displayStatus === "voided" && doc.voidedAt === voidedAt.toISOString())).toBe(true);
+        expect(result[4]).toMatchObject({ voidedAt: null, voidedByName: null });
+        for (const doc of result) {
+            expect(doc).not.toHaveProperty("voidedBy");
+            expect(doc).not.toHaveProperty("email");
+        }
     });
 });

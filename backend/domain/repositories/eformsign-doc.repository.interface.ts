@@ -304,6 +304,7 @@ export interface IEformsignDocRepository {
      */
     recordAutoFinalizeFailure(documentId: string, error: string): Promise<number>;
     create(branchid: string, doc: EformsignDocEntity): Promise<EformsignDocEntity>;
+    markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean>;
     update(
         branchid: string,
         doc: EformsignDocEntity,

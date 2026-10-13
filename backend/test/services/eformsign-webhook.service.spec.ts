@@ -23,6 +23,8 @@ describe("EformsignWebhookService", () => {
         templateName: string | null;
         updatedDate: Date;
         expired: boolean;
+        voidedAt: Date | null;
+        voidedBy: string | null;
     }> = {}): EformsignDocEntity =>
         EformsignDocEntity.reconstitute({
             id: 1,
@@ -46,6 +48,8 @@ describe("EformsignWebhookService", () => {
             expiredDate: new Date("2026-06-01T00:00:00.000Z"),
             expired: overrides.expired ?? false,
             clientId: overrides.clientId ?? 9,
+            voidedAt: overrides.voidedAt,
+            voidedBy: overrides.voidedBy,
         });
 
     const createClientEntity = (
@@ -787,6 +791,19 @@ describe("EformsignWebhookService", () => {
         expect(syncClientEndDateUsecase.execute).not.toHaveBeenCalled();
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
         expect(eventBus.emit).not.toHaveBeenCalled();
+    });
+
+    it("preserves void audit values in the webhook rebuild without writing either column", async () => {
+        const voidedAt = new Date("2026-05-02T01:00:00Z");
+        const existing = createDocEntity({ voidedAt, voidedBy: "actor-id" });
+        eformsignDocRepository.findByDocumentIdUnscoped.mockResolvedValue({ document: existing, branchId: null });
+        await service.processWebhook(createReadyPdfPayload());
+        const rebuilt = eformsignDocRepository.upsertUnassignedByDocumentId.mock.calls[0]?.[0] as EformsignDocEntity;
+        expect(rebuilt.voidedAt).toEqual(voidedAt);
+        expect(rebuilt.voidedBy).toBe("actor-id");
+        expect(rebuilt.isVoided).toBe(true);
+        expect(EformsignDocMapper.toPrismaUpdate(rebuilt)).not.toHaveProperty("voidedAt");
+        expect(EformsignDocMapper.toPrismaUpdate(rebuilt)).not.toHaveProperty("voidedBy");
     });
 
     it("ignores a stale non-terminal webhook for a terminal unassigned document", async () => {
@@ -1865,6 +1882,8 @@ describe("EformsignWebhookService", () => {
             return EformsignDocMapper.toDomain({
                 id: storedId,
                 ...EformsignDocMapper.toPrismaCreate(state.storedDoc),
+                voidedAt: state.storedDoc.voidedAt,
+                voidedBy: state.storedDoc.voidedBy,
                 ...overrides,
             });
         };
@@ -1967,6 +1986,8 @@ describe("EformsignWebhookService", () => {
         const unlinkedDoc = EformsignDocMapper.toDomain({
             id: 1,
             ...EformsignDocMapper.toPrismaCreate(createDocEntity({ documentName: "기존 문서명" })),
+            voidedAt: null,
+            voidedBy: null,
             clientId: null,
         });
         const { state, statefulService, statefulDocRepository, statefulClientRepository } =

@@ -115,7 +115,7 @@ describe("EformsignListShadowCompareService", () => {
         // serves from. Stubbing it would leave them asserting on nothing.
         return new EformsignListShadowCompareService(
             createConfigService(enabled),
-            new EformsignMirrorListService(repository as never, createHolidayCalendarStub()),
+            new EformsignMirrorListService(repository as never, createHolidayCalendarStub(), {} as never),
         );
     }
 

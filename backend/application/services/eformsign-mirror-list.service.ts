@@ -32,6 +32,7 @@ import {
 } from "domain/repositories/eformsign-doc.repository.interface";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
+import { PrismaService } from "infrastructure/database/prisma.service";
 
 export interface MirrorListQuery {
     branchId: string;
@@ -69,6 +70,7 @@ export class EformsignMirrorListService {
         @Inject(EFORMSIGN_DOC_REPOSITORY)
         private readonly eformsignDocRepository: IEformsignDocRepository,
         private readonly holidayCalendar: HolidayCalendarService,
+        private readonly prisma: PrismaService,
     ) {}
 
     /**
@@ -157,15 +159,28 @@ export class EformsignMirrorListService {
     async buildDetailDisplayFields(
         documentId: string,
         calendar: KrBusinessDayCalendar,
-    ): Promise<{ display_status: EformsignDocDisplayStatus; contract_end_date?: string } | null> {
+    ): Promise<{
+        display_status: EformsignDocDisplayStatus;
+        contract_end_date?: string;
+        voided_at: string | null;
+        voided_by_name: string | null;
+    } | null> {
         const stored = await this.eformsignDocRepository.findByDocumentIdUnscoped(documentId);
         if (!stored) return null;
 
         const listDoc = eformsignListDocFromMirror(stored.document);
         const withEndDate = (await this.attachContractEndDates([listDoc]))[0] ?? listDoc;
         const contractEndDate = withEndDate["contract_end_date"];
+        const actor = stored.document.voidedBy
+            ? await this.prisma.user.findUnique({
+                where: { id: stored.document.voidedBy },
+                select: { name: true },
+            })
+            : null;
         return {
             display_status: resolveEformsignDocDisplayStatus(withEndDate, new Date(), calendar),
+            voided_at: stored.document.voidedAt?.toISOString() ?? null,
+            voided_by_name: actor?.name ?? null,
             ...(typeof contractEndDate === "string" ? { contract_end_date: contractEndDate } : {}),
         };
     }

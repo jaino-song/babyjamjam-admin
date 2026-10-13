@@ -67,6 +67,15 @@ function readPath(document: unknown, path: string): unknown {
 }
 
 describe("eformsignListDocFromMirror", () => {
+    it("carries the void flag through enrichment without the actor id", () => {
+        const document = eformsignListDocFromMirror(EformsignDocEntity.reconstitute({
+            ...persistedMirrorRow(), voidedAt: new Date("2026-10-14T00:00:00Z"), voidedBy: "actor",
+        }));
+        expect(document.isVoided).toBe(true);
+        expect(enrichMirrorPage([document])[0]?.isVoided).toBe(true);
+        expect(document).not.toHaveProperty("voidedBy");
+        expect(eformsignListDocFromMirror(createMirrorDocument()).isVoided).toBe(false);
+    });
     it("carries every property the contract list reads", () => {
         // The switch is only safe if a mirrored row can answer everything the list asks
         // of a document. When a new field starts being rendered, this list grows and this
