@@ -707,6 +707,8 @@ describe("TriggerRulesManager", () => {
       sendTime: "09:00",
       recipientType: "CLIENT",
       templateKey: "SERVICE_END_NOTICE",
+      targetClientStatus: "all",
+      retryOnFailure: true,
     });
   });
 
@@ -1219,6 +1221,8 @@ describe("TriggerRulesManager", () => {
         sendTime: "09:00",
         recipientType: "PRIMARY_EMPLOYEE",
         templateKey: "SERVICE_RECORD_LINK",
+        targetClientStatus: "all",
+        retryOnFailure: true,
       },
     });
   });
@@ -1319,6 +1323,8 @@ describe("TriggerRulesManager", () => {
         sendTime: "09:00",
         recipientType: "CLIENT",
         templateKey: "SERVICE_INFO",
+        targetClientStatus: "all",
+        retryOnFailure: true,
       },
     });
   });
@@ -1396,6 +1402,8 @@ describe("TriggerRulesManager", () => {
       sendTime: "14:37",
       recipientType: "CLIENT",
       templateKey: "SERVICE_INFO",
+      targetClientStatus: "all",
+      retryOnFailure: true,
     });
   });
 
@@ -2403,5 +2411,177 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
       callHandler(screen.getByRole("button", { name: "새 규칙" }));
       expect(screen.getByText("새 발송 규칙")).toBeInTheDocument();
     });
+  });
+});
+
+describe("TriggerRulesManager target client status and retry (BJJ-444)", () => {
+  const DC = "desktop_messages_sections_section-content_triggers-section_trigger-rules";
+  const baseRule = {
+    id: "rule-1",
+    branchId: "org-1",
+    name: "서비스 시작 안내",
+    isActive: true,
+    eventType: "SERVICE_START",
+    offsetType: "BEFORE_DAYS",
+    offsetDays: 3,
+    sendTime: "09:00",
+    recipientType: "CLIENT",
+    templateKey: "SERVICE_INFO",
+    createdAt: "2026-03-01T00:00:00.000Z",
+    updatedAt: "2026-03-01T00:00:00.000Z",
+  };
+
+  function mockRules(rule: Record<string, unknown>) {
+    mockedUseMessageTriggerRules.mockReturnValue({
+      data: [rule],
+      isLoading: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useMessageTriggerRules>);
+  }
+
+  function mockUpdate() {
+    const mutateAsync = jest.fn().mockResolvedValue(undefined);
+    mockedUseUpdateMessageTriggerRule.mockReturnValue({
+      isPending: false,
+      mutateAsync,
+    } as unknown as ReturnType<typeof useUpdateMessageTriggerRule>);
+    return mutateAsync;
+  }
+
+  beforeEach(() => {
+    mockSettingsQueries({ providerEnabled: true, senderApproved: true });
+  });
+
+  it("opens a new rule with 전체 and 실패 시 재전송 on, and offers the four statuses in order", () => {
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+
+    const statusTrigger = screen.getByLabelText("대상 고객 상태");
+    expect(statusTrigger).toHaveTextContent("전체");
+    expect(screen.getByText("일시적인 발송 실패를 5분 간격으로 최대 3번 다시 보냅니다.")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeChecked();
+
+    fireEvent.click(statusTrigger);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "전체",
+      "예약 전",
+      "대기",
+      "진행",
+    ]);
+  });
+
+  it("submits the changed status and retry switch when creating a rule", () => {
+    const mutateAsync = jest.fn().mockResolvedValue({ id: "rule-created" });
+    mockedUseCreateMessageTriggerRule.mockReturnValue({
+      isPending: false,
+      mutateAsync,
+    } as unknown as ReturnType<typeof useCreateMessageTriggerRule>);
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "대기 고객 안내" } });
+    fireEvent.click(screen.getByLabelText("대상 고객 상태"));
+    fireEvent.click(screen.getByRole("option", { name: "대기" }));
+    fireEvent.click(screen.getByRole("switch", { name: "실패 시 재전송" }));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "대기 고객 안내",
+        targetClientStatus: "waiting",
+        retryOnFailure: false,
+      }),
+    );
+  });
+
+  it("submits the changed status and retry switch when updating a rule", () => {
+    mockRules(baseRule);
+    const mutateAsync = mockUpdate();
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getAllByText("서비스 시작 안내")[0]);
+    fireEvent.click(screen.getByLabelText("대상 고객 상태"));
+    fireEvent.click(screen.getByRole("option", { name: "예약 전" }));
+    fireEvent.click(screen.getByRole("switch", { name: "실패 시 재전송" }));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+
+    expect(mutateAsync).toHaveBeenCalledWith({
+      id: "rule-1",
+      dto: expect.objectContaining({
+        targetClientStatus: "pre_booking",
+        retryOnFailure: false,
+      }),
+    });
+  });
+
+  it("shows the stored values when editing a rule", () => {
+    mockRules({ ...baseRule, targetClientStatus: "active", retryOnFailure: false });
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getAllByText("서비스 시작 안내")[0]);
+
+    expect(screen.getByLabelText("대상 고객 상태")).toHaveTextContent("진행");
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).not.toBeChecked();
+  });
+
+  it("does not treat a rule lacking both fields as changed on open", () => {
+    mockRules(baseRule);
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getAllByText("서비스 시작 안내")[0]);
+
+    expect(screen.getByLabelText("대상 고객 상태")).toHaveTextContent("전체");
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+  });
+
+  it("enables Save after changing only the status", () => {
+    mockRules({ ...baseRule, targetClientStatus: "all", retryOnFailure: true });
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getAllByText("서비스 시작 안내")[0]);
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText("대상 고객 상태"));
+    fireEvent.click(screen.getByRole("option", { name: "진행" }));
+
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+  });
+
+  it("enables Save after changing only the retry switch", () => {
+    mockRules({ ...baseRule, targetClientStatus: "all", retryOnFailure: true });
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getAllByText("서비스 시작 안내")[0]);
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("switch", { name: "실패 시 재전송" }));
+
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+  });
+
+  it("shows both controls disabled on a system rule", async () => {
+    mockRules({
+      ...baseRule,
+      id: "system:service_record_link",
+      branchId: null,
+      name: "제공기록지 작성 링크",
+      offsetType: "SAME_DAY",
+      offsetDays: 0,
+      recipientType: "PRIMARY_EMPLOYEE",
+      templateKey: "SERVICE_RECORD_LINK",
+      targetClientStatus: "waiting",
+      retryOnFailure: false,
+    });
+
+    render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getByText("제공기록지 작성 링크"));
+
+    const statusTrigger = await screen.findByLabelText("대상 고객 상태");
+    expect(statusTrigger).toBeDisabled();
+    expect(statusTrigger).toHaveTextContent("대기");
+    const retrySwitch = screen.getByRole("switch", { name: "실패 시 재전송" });
+    expect(retrySwitch).toBeDisabled();
+    expect(retrySwitch).not.toBeChecked();
   });
 });

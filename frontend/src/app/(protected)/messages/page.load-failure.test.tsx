@@ -67,6 +67,7 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useUpcomingMessageTriggerJobs: () => mockUseUpcomingJobs(),
   useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useCancelUpcomingMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
 // Compact mode so useSplitLayoutSelection never auto-selects the first row;

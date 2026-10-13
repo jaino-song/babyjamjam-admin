@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SERVICE_RECORD_LINK_RULE_ID } from "@babyjamjam/shared";
+import {
+  DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+  DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS,
+  SERVICE_RECORD_LINK_RULE_ID,
+  type MessageTriggerTargetClientStatus,
+} from "@babyjamjam/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BellRing,
@@ -142,8 +149,15 @@ function getDefaultFormState(isActive = true): RuleFormState {
     sendTime: "09:00",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
+    targetClientStatus: DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+    retryOnFailure: DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
   };
 }
+
+const TARGET_CLIENT_STATUS_OPTIONS = MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES.map((value) => ({
+  value,
+  label: MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS[value],
+}));
 
 const RULE_STATUS_TABS = [
   { label: "활성화", value: "active" },
@@ -271,6 +285,8 @@ function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean
     sendTime: rule.sendTime ?? "09:00",
     recipientType: rule.recipientType,
     templateKey: rule.templateKey,
+    targetClientStatus: rule.targetClientStatus ?? DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+    retryOnFailure: rule.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
   };
 }
 
@@ -1378,6 +1394,44 @@ export function TriggerRulesManager({
                             triggerDataComponent={component("trigger-rules-recipient-select")}
                           />
                         ) : null}
+
+                        <TitleSelectMolecule
+                          id="trigger-rule-target-client-status"
+                          label="대상 고객 상태"
+                          value={formState.targetClientStatus}
+                          options={TARGET_CLIENT_STATUS_OPTIONS}
+                          disabled={isSelectedSystemRule}
+                          onValueChange={(value) =>
+                            setFormState((current) => ({
+                              ...current,
+                              targetClientStatus: value as MessageTriggerTargetClientStatus,
+                            }))
+                          }
+                          dataComponent={component("trigger-rules-target-client-status")}
+                          triggerDataComponent={component("trigger-rules-target-client-status-select")}
+                        />
+
+                        <InfoCard
+                          title="실패 시 재전송"
+                          description="일시적인 발송 실패를 5분 간격으로 최대 3번 다시 보냅니다."
+                          data-component={component("trigger-rules-retry-on-failure")}
+                          className="md:col-span-2"
+                        >
+                          <InfoRow
+                            data-component={component("trigger-rules-retry-on-failure-toggle")}
+                            label="실패 시 재전송"
+                            value={(
+                              <Switch
+                                aria-label="실패 시 재전송"
+                                checked={formState.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE}
+                                disabled={isSelectedSystemRule}
+                                onCheckedChange={(checked) =>
+                                  setFormState((current) => ({ ...current, retryOnFailure: checked }))
+                                }
+                              />
+                            )}
+                          />
+                        </InfoCard>
 
                         {(formState.offsetType === "BEFORE_DAYS" ||
                           formState.offsetType === "AFTER_DAYS") && (
