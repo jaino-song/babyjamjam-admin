@@ -91,6 +91,7 @@ const existingClient: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: "pre_booking",
+  bookingConfirmedAt: null,
   eDocId: null,
   areaId: "Namdonggu",
   hasSigned: false,

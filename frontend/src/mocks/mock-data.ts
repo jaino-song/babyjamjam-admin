@@ -182,6 +182,7 @@ export interface Client {
   birthday: string | null;
   dueDate: string | null;
   serviceStatus: ServiceStatus | null;
+  bookingConfirmedAt: string | null;
   breastPump: boolean;
   eDocId: string | null;
 }
@@ -205,6 +206,7 @@ export const mockClients: Client[] = [
     birthday: '940315',
     dueDate: '2024-09-15T00:00:00.000Z',
     serviceStatus: 'active',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: 'edoc_12345678',
   },
@@ -226,6 +228,7 @@ export const mockClients: Client[] = [
     birthday: '891220',
     dueDate: '2024-10-01T00:00:00.000Z',
     serviceStatus: 'active',
+    bookingConfirmedAt: null,
     breastPump: true,
     eDocId: 'edoc_23456789',
   },
@@ -247,6 +250,7 @@ export const mockClients: Client[] = [
     birthday: '920508',
     dueDate: '2024-09-30T00:00:00.000Z',
     serviceStatus: 'waiting',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: null,
   },
@@ -268,6 +272,7 @@ export const mockClients: Client[] = [
     birthday: '880127',
     dueDate: null,
     serviceStatus: 'completed',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: 'edoc_34567890',
   },
@@ -289,6 +294,7 @@ export const mockClients: Client[] = [
     birthday: '950812',
     dueDate: null,
     serviceStatus: 'terminated',
+    bookingConfirmedAt: null,
     breastPump: true,
     eDocId: 'edoc_45678901',
   },
@@ -310,6 +316,7 @@ export const mockClients: Client[] = [
     birthday: '900623',
     dueDate: '2024-11-01T00:00:00.000Z',
     serviceStatus: 'replacement_requested',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: 'edoc_56789012',
   },
@@ -331,6 +338,7 @@ export const mockClients: Client[] = [
     birthday: '930405',
     dueDate: null,
     serviceStatus: 'terminated',
+    bookingConfirmedAt: null,
     breastPump: false,
     eDocId: null,
   },

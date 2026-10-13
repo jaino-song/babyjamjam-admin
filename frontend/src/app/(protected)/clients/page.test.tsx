@@ -145,8 +145,15 @@ jest.mock("@/components/app/contracts/ContractClientSelector", () => ({
 }));
 
 jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
-  ClientDetailPanel: ({ client, trailing }: { client: { name: string }; trailing?: ReactNode }) => (
-    <div data-testid="client-detail">{client.name}{trailing}</div>
+  ClientDetailPanel: ({ client, trailing, onBookingConfirmed }: {
+    client: { id: number; name: string; bookingConfirmedAt?: string | null; serviceStatus?: string | null };
+    trailing?: ReactNode;
+    onBookingConfirmed?: (booking: { id: number; bookingConfirmedAt: string; serviceStatus: "waiting" }) => void;
+  }) => (
+    <div data-testid="client-detail" data-booking-confirmed-at={client.bookingConfirmedAt} data-service-status={client.serviceStatus}>
+      {client.name}{trailing}
+      <button onClick={() => onBookingConfirmed?.({ id: client.id, bookingConfirmedAt: "2026-10-13T00:00:00.000Z", serviceStatus: "waiting" })}>확정 응답 적용</button>
+    </div>
   ),
 }));
 
@@ -935,6 +942,24 @@ describe("ClientsPage a new ?id= outranks a stale row selection (BJJ-432)", () =
 
   afterEach(() => {
     cleanup();
+  });
+
+  it("patches booking fields without losing a locally selected client's name while the list is stale", () => {
+    render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: CLIENT_A.name }));
+    fireEvent.click(screen.getByRole("button", { name: "확정 응답 적용" }));
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-booking-confirmed-at", "2026-10-13T00:00:00.000Z");
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-service-status", "waiting");
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+  });
+
+  it("patches a deep-linked snapshot when no row has been selected", () => {
+    mockSearchParams = new URLSearchParams("id=42");
+    mockClientFromParam = CLIENT_B;
+    render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "확정 응답 적용" }));
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-service-status", "waiting");
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_B.name);
   });
 
   it("shows the URL-selected client after the id changes while another row is selected", () => {

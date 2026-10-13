@@ -70,6 +70,7 @@ export interface Client {
     voucherClient: boolean;
     breastPump: boolean;
     serviceStatus: ServiceStatus | null;      // Renamed from contractStatus
+    bookingConfirmedAt: string | null;
     eDocId: string | null;
     areaId?: string | null;
     hasSigned: boolean;

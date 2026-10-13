@@ -16,6 +16,7 @@ jest.mock("@/providers/LocaleProvider", () => ({
 jest.mock("@/features/clients/hooks/use-clients", () => ({
     useApproveScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
     useRejectScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
+    useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
@@ -141,6 +142,7 @@ const client: Client = {
     voucherClient: false,
     breastPump: false,
     serviceStatus: null,
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,

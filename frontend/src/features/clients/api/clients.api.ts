@@ -100,6 +100,9 @@ export const clientsApi = {
   completeReplacement: (id: number) =>
     api.patch<Client>(`/clients/${id}/complete-replacement`, {}),
 
+  confirmBooking: (id: number) =>
+    api.patch<Client>(`/clients/${id}/confirm-booking`, {}),
+
   /**
    * Approve a pending schedule change request
    */

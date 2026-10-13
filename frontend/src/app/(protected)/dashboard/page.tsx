@@ -215,7 +215,11 @@ export default function DashboardPage() {
 
   const selectedClientData = useMemo(() => {
     if (!selectedClient) return null;
-    return clients.find((client) => client.id === selectedClient.id) ?? selectedClient;
+    const listedClient = clients.find((client) => client.id === selectedClient.id);
+    if (listedClient && listedClient.bookingConfirmedAt == null && selectedClient.bookingConfirmedAt != null) {
+      return { ...listedClient, bookingConfirmedAt: selectedClient.bookingConfirmedAt, serviceStatus: selectedClient.serviceStatus };
+    }
+    return listedClient ?? selectedClient;
   }, [clients, selectedClient]);
 
   const handleScheduleChangeDecided = useCallback((clientId: number) => {
@@ -226,6 +230,12 @@ export default function DashboardPage() {
 
       return { ...currentClient, pendingScheduleChange: null };
     });
+  }, []);
+
+  const handleBookingConfirmed = useCallback((booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => {
+    setSelectedClient((currentClient) => currentClient?.id === booking.id
+      ? { ...currentClient, bookingConfirmedAt: booking.bookingConfirmedAt, serviceStatus: booking.serviceStatus }
+      : currentClient);
   }, []);
 
   if (!user) {
@@ -297,6 +307,7 @@ export default function DashboardPage() {
               idPrefix="dashboard-client-detail"
               tabsAriaLabel="고객 상세 정보"
               onScheduleChangeDecided={handleScheduleChangeDecided}
+              onBookingConfirmed={handleBookingConfirmed}
               trailing={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

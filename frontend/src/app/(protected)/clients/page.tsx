@@ -347,10 +347,14 @@ export default function ClientsPage() {
         ? listSummary.data
         : undefined;
     const selectedClientFromList = useMemo(
-        () =>
-            selectedClient
-                ? clients.find((client) => client.id === selectedClient.id) ?? selectedClient
-                : null,
+        () => {
+            if (!selectedClient) return null;
+            const listedClient = clients.find((client) => client.id === selectedClient.id);
+            if (listedClient && listedClient.bookingConfirmedAt == null && selectedClient.bookingConfirmedAt != null) {
+                return { ...listedClient, bookingConfirmedAt: selectedClient.bookingConfirmedAt, serviceStatus: selectedClient.serviceStatus };
+            }
+            return listedClient ?? selectedClient;
+        },
         [clients, selectedClient]
     );
     const clientFromParamList = useMemo(() => {
@@ -645,6 +649,15 @@ export default function ClientsPage() {
         clearClientSelectionSources();
         setIsCreateFormDirty(false);
         setPendingCreateDiscard(null);
+    };
+
+    const handleBookingConfirmed = (booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => {
+        setSelectedClient((currentClient) => {
+            const snapshot = currentClient ?? activeSelectedClient;
+            return snapshot?.id === booking.id
+                ? { ...snapshot, bookingConfirmedAt: booking.bookingConfirmedAt, serviceStatus: booking.serviceStatus }
+                : currentClient;
+        });
     };
 
     const handleFilterChange = (nextFilter: string) => {
@@ -1113,6 +1126,7 @@ export default function ClientsPage() {
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"
                             onScheduleChangeDecided={clearSelectedClientScheduleChange}
+                            onBookingConfirmed={handleBookingConfirmed}
                             onCreateContract={
                                 canCreateNewContractDocument(activeSelectedClient)
                                     ? () => setMaternityContractClient(activeSelectedClient)
