@@ -2888,6 +2888,19 @@ export class ClientService {
                     orderBy: { id: "asc" },
                 })
                 : [];
+            // Every outcome is judged on the locked row, never on the
+            // pre-transaction snapshot. The write-set helper takes the client
+            // row lock first, so locking the same row here keeps the lock
+            // order unchanged and lets a client deleted before the lock answer
+            // not-found instead of the helper's write-target-changed conflict.
+            const lockedClient = await this.clientRepository.findByIdForUpdate(
+                branchid,
+                clientId,
+                transaction,
+            );
+            if (!lockedClient) {
+                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
+            }
             await lockServiceRecordWriteSet(transaction, {
                 branchId: branchid,
                 clientId,
@@ -2901,16 +2914,6 @@ export class ClientService {
                     schedule.secondaryEmployeeId,
                 ]),
             });
-            // Every outcome is judged on the locked row, never on the
-            // pre-transaction snapshot.
-            const lockedClient = await this.clientRepository.findByIdForUpdate(
-                branchid,
-                clientId,
-                transaction,
-            );
-            if (!lockedClient) {
-                throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
-            }
             if (
                 lockedClient.serviceStatus === SERVICE_STATUS.TERMINATED
                 || lockedClient.serviceStatus === SERVICE_STATUS.REPLACEMENT_REQUESTED

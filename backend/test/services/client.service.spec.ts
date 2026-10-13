@@ -5512,6 +5512,39 @@ describe("ClientService", () => {
             expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
         });
 
+        it("answers a client deleted before the lock with not-found, not the write-set conflict, and writes nothing", async () => {
+            // The real write-set helper finds no client row to lock (the delete committed after the preflight read).
+            arrange(null, unconfirmedRow());
+            prismaService.$queryRaw.mockResolvedValue([]);
+
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("keeps a genuine write-set conflict with the client present as 409 and writes nothing", async () => {
+            arrange(unconfirmedRow());
+            // The client exists, but a schedule appeared between the snapshot and the lock.
+            prismaService.employee_schedule.findMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([{ id: 7, primaryEmployeeId: null, secondaryEmployeeId: null }]);
+            prismaService.$queryRaw.mockResolvedValue([{ id: 1 }]);
+
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(ConflictException);
+            expect((error as ConflictException).getResponse()).toMatchObject({ code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
         it.each(["terminated", "replacement_requested"])("refuses a client stored as %s", async (stored) => {
             arrange(unconfirmedRow({ serviceStatus: stored }));
 
