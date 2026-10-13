@@ -620,9 +620,13 @@ describe("AgentPartRegistry", () => {
             const message = {
                 id: "assistant-choice",
                 role: "assistant",
-                parts: [{ type: "data-entity-choice", data: { entityType: "clients", prompt: "선택", choices: [{ id: "1", label: "홍길동" }] } }],
+                parts: [{ type: "data-entity-choice", data: { entityType: "clients", prompt: "선택", choices: [{ id: "1", label: "홍길동" }, { id: "2", label: "김영희" }] } }],
             } as unknown as UIMessage;
             render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+            // the schema needs two choices; with one the part would fall back instead of reaching the choice branch
+            expect(screen.getByRole("group", { name: "선택" })).toHaveAttribute("data-component", `${dataComponent}_entity-choice`);
+            expect(screen.getByRole("button", { name: "홍길동" })).toBeInTheDocument();
+            expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
             expect(screen.queryByTestId("contact-card")).not.toBeInTheDocument();
         });
     });

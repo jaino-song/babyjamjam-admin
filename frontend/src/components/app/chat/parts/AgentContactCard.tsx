@@ -63,9 +63,12 @@ export function AgentContactCard({ "data-component": dataComponent, clientId, em
 
     if (query.isError && isNotFoundError(query.error)) return null;
 
-    if (query.data !== undefined) {
-        const record = asContactRecord(query.data, id);
-        if (!record) return null;
+    // A usable record wins over a later failed refetch (stale notice below). Without
+    // one, a failure is shown as a failure even when the cache holds a non-record:
+    // the non-record is suppressed only while the lookup has not failed (rule S5).
+    const record = query.data !== undefined ? asContactRecord(query.data, id) : null;
+
+    if (record) {
         const name = typeof record.name === "string" ? record.name.trim() : "";
         const phone = readablePhone(record.phone);
         return (
@@ -98,6 +101,8 @@ export function AgentContactCard({ "data-component": dataComponent, clientId, em
             />
         );
     }
+
+    if (query.data !== undefined) return null;
 
     return <Skeleton data-component={`${dataComponent}_loading`} aria-hidden="true" className="h-5 w-48" />;
 }

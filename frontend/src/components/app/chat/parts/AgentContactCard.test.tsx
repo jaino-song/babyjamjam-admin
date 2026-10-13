@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AgentContactCard } from "./AgentContactCard";
 
@@ -8,9 +9,16 @@ const mockIsBranchContextAligned = jest.fn();
 const mockClientsGetById = jest.fn();
 const mockEmployeesGetById = jest.fn();
 
-jest.mock("@tanstack/react-query", () => ({
-    useQuery: (options: unknown) => mockUseQuery(options),
-}));
+// Most tests script the hook's result; the transition tests at the bottom flip
+// `useRealQuery` and run the real useQuery against a real QueryClient.
+let useRealQuery = false;
+jest.mock("@tanstack/react-query", () => {
+    const actual = jest.requireActual("@tanstack/react-query");
+    return {
+        ...actual,
+        useQuery: (options: Parameters<typeof actual.useQuery>[0]) => (useRealQuery ? actual.useQuery(options) : mockUseQuery(options)),
+    };
+});
 jest.mock("@/features/system-templates/branch-context", () => ({
     useActiveBranchId: () => mockUseActiveBranchId(),
     isBranchContextAligned: (branchId: string | null) => mockIsBranchContextAligned(branchId),
@@ -41,6 +49,7 @@ function lastOptions(): QueryOptions {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    useRealQuery = false;
     mockUseActiveBranchId.mockReturnValue("branch-1");
     mockIsBranchContextAligned.mockImplementation((branchId: string | null) => branchId !== null);
     mockUseQuery.mockReturnValue(pending);
@@ -176,5 +185,79 @@ describe("AgentContactCard", () => {
         mockIsBranchContextAligned.mockReturnValue(false);
         await expect(lastOptions().queryFn()).rejects.toThrow("Branch selection required");
         expect(mockClientsGetById).not.toHaveBeenCalled();
+    });
+});
+
+// Real QueryClient + mocked API: react-query keeps earlier data when a refetch
+// fails, so the card must decide from (usable record, error) and not from data alone.
+// `retry: false` makes the failing refetch settle at once; the production retry
+// policy (src/lib/queryClient.ts) is a separate concern with its own test.
+describe("AgentContactCard cached lookup transitions", () => {
+    function renderWithClient() {
+        useRealQuery = true;
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
+        const view = render(
+            <QueryClientProvider client={queryClient}>
+                <AgentContactCard data-component={DC} clientId={7} />
+            </QueryClientProvider>,
+        );
+        return { ...view, queryClient };
+    }
+
+    const record = { id: 7, name: "김하늘", phone: "01012345678" };
+    const rejectWith = (status: number) => mockClientsGetById.mockRejectedValue(httpError(status));
+
+    async function firstLookupSettled() {
+        await waitFor(() => expect(mockClientsGetById).toHaveBeenCalledTimes(1));
+        await act(async () => { await Promise.resolve(); });
+    }
+
+    it.each([
+        ["null", null],
+        ["an empty string", ""],
+        ["an empty object", {}],
+        ["a record with another id", { id: 8, name: "다른사람", phone: "01011112222" }],
+    ])("after a cached non-record (%s), a failed refetch (500) shows the failure with retry, and retry recovers", async (_label, cached) => {
+        mockClientsGetById.mockResolvedValue({ data: cached });
+        const { container, queryClient } = renderWithClient();
+        await firstLookupSettled();
+        expect(container).toBeEmptyDOMElement();
+
+        rejectWith(500);
+        await act(async () => { await queryClient.refetchQueries({ type: "active" }); });
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("연락처를 불러오지 못했습니다");
+        expect(alert).toHaveAttribute("data-size", "inline");
+        expect(mockClientsGetById).toHaveBeenCalledTimes(2);
+
+        mockClientsGetById.mockResolvedValue({ data: record });
+        fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+        await waitFor(() => expect(container).toHaveTextContent(/^김하늘 · 010-1234-5678$/));
+        expect(mockClientsGetById).toHaveBeenCalledTimes(3);
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it.each([404, 403])("after a cached non-record, a %i refetch still renders nothing and no alert", async (status) => {
+        mockClientsGetById.mockResolvedValue({ data: null });
+        const { container, queryClient } = renderWithClient();
+        await firstLookupSettled();
+        expect(container).toBeEmptyDOMElement();
+
+        rejectWith(status);
+        await act(async () => { await queryClient.refetchQueries({ type: "active" }); });
+        expect(mockClientsGetById).toHaveBeenCalledTimes(2);
+        expect(container).toBeEmptyDOMElement();
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("keeps the cached line with the stale notice when a refetch of a real record fails (500)", async () => {
+        mockClientsGetById.mockResolvedValue({ data: record });
+        const { container, queryClient } = renderWithClient();
+        await waitFor(() => expect(container).toHaveTextContent("김하늘 · 010-1234-5678"));
+
+        rejectWith(500);
+        await act(async () => { await queryClient.refetchQueries({ type: "active" }); });
+        expect(await screen.findByRole("alert")).toHaveTextContent("최신 정보를 불러오지 못했습니다");
+        expect(container).toHaveTextContent("김하늘 · 010-1234-5678");
     });
 });
