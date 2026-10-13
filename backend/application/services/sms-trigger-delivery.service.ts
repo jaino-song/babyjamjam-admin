@@ -24,6 +24,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
@@ -218,8 +219,14 @@ export class SmsTriggerDeliveryService {
      * missing rule row (or no repository) means on. A failed read is neither:
      * nothing has been sent yet, so the job is deferred as a transient
      * infrastructure failure instead of guessing a permission.
+     *
+     * Manual-owned jobs (agent-approved retries and scheduled sends, manual
+     * service-record-link and service-end sends) are not governed by the
+     * automatic rule retry policy: the read is skipped, so an unreadable policy
+     * can neither defer nor fail them.
      */
     private async readRuleRetryOnFailureOrDefer(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (isManualMessageTriggerJob(job)) return true;
         if (!this.ruleRepository || !job.branchId) return true;
         try {
             const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
