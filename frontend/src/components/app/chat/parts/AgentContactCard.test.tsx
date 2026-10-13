@@ -207,9 +207,12 @@ describe("AgentContactCard cached lookup transitions", () => {
     const record = { id: 7, name: "김하늘", phone: "01012345678" };
     const rejectWith = (status: number) => mockClientsGetById.mockRejectedValue(httpError(status));
 
-    async function firstLookupSettled() {
+    // The card shows a loading placeholder until react-query's success
+    // notification renders, so "settled with nothing to show" is the empty DOM,
+    // not the API call having happened.
+    async function firstLookupRenderedEmpty(container: HTMLElement) {
         await waitFor(() => expect(mockClientsGetById).toHaveBeenCalledTimes(1));
-        await act(async () => { await Promise.resolve(); });
+        await waitFor(() => expect(container).toBeEmptyDOMElement());
     }
 
     it.each([
@@ -220,8 +223,7 @@ describe("AgentContactCard cached lookup transitions", () => {
     ])("after a cached non-record (%s), a failed refetch (500) shows the failure with retry, and retry recovers", async (_label, cached) => {
         mockClientsGetById.mockResolvedValue({ data: cached });
         const { container, queryClient } = renderWithClient();
-        await firstLookupSettled();
-        expect(container).toBeEmptyDOMElement();
+        await firstLookupRenderedEmpty(container);
 
         rejectWith(500);
         await act(async () => { await queryClient.refetchQueries({ type: "active" }); });
@@ -240,13 +242,12 @@ describe("AgentContactCard cached lookup transitions", () => {
     it.each([404, 403])("after a cached non-record, a %i refetch still renders nothing and no alert", async (status) => {
         mockClientsGetById.mockResolvedValue({ data: null });
         const { container, queryClient } = renderWithClient();
-        await firstLookupSettled();
-        expect(container).toBeEmptyDOMElement();
+        await firstLookupRenderedEmpty(container);
 
         rejectWith(status);
         await act(async () => { await queryClient.refetchQueries({ type: "active" }); });
         expect(mockClientsGetById).toHaveBeenCalledTimes(2);
-        expect(container).toBeEmptyDOMElement();
+        await waitFor(() => expect(container).toBeEmptyDOMElement());
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
