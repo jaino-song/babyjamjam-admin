@@ -209,6 +209,9 @@ export class MessageTriggerJobEntity {
 
     markSent(): void {
         this.status = "sent";
+        // A manual resend keeps its setup reason on the in-flight row as the
+        // durable resend mark; a sent job reports none.
+        this.cancelReason = null;
         this.sentAt = new Date();
         this.nextAttemptAt = null;
         this.updatedAt = new Date();

@@ -26,6 +26,7 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { SmsRetryService } from "application/services/sms-retry.service";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
 describe("MessageTriggerController (Integration)", () => {
     type RuleOverrides = Partial<{
@@ -51,6 +52,7 @@ describe("MessageTriggerController (Integration)", () => {
         listHistoryPage: jest.Mock;
         listClientHistoryPage: jest.Mock;
         cancelJobByUser: jest.Mock;
+        resendNeedsSetupJob: jest.Mock;
         createRule: jest.Mock;
         getRule: jest.Mock;
         updateRule: jest.Mock;
@@ -169,6 +171,7 @@ describe("MessageTriggerController (Integration)", () => {
             listHistoryPage: jest.fn(),
             listClientHistoryPage: jest.fn(),
             cancelJobByUser: jest.fn(),
+            resendNeedsSetupJob: jest.fn(),
             createRule: jest.fn(),
             getRule: jest.fn(),
             updateRule: jest.fn(),
@@ -231,6 +234,7 @@ describe("MessageTriggerController (Integration)", () => {
     it("requires branch-manager guard on every message-trigger mutation while leaving reads tenant-only", () => {
         const mutationHandlers = [
             "cancelJob",
+            "resendJob",
             "retryHistory",
             "reconcileHistory",
             "createRule",
@@ -405,6 +409,64 @@ describe("MessageTriggerController (Integration)", () => {
             authRole = "user";
             expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/cancel")).status).toBe(403);
             expect(triggerService.cancelJobByUser).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("POST /message-trigger-jobs/:id/resend", () => {
+        it("resends one needs_setup job for the authenticated tenant and answers 200 with the outcome", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "sent", reason: null });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ id: "job-1", status: "sent", reason: null });
+            expect(triggerService.resendNeedsSetupJob).toHaveBeenCalledWith(branchId, "job-1");
+        });
+
+        it("passes a still-broken outcome through as 200 with its reason", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "needs_setup", reason: "필수 정보 누락 (name)" });
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(200);
+            expect(response.body).toEqual({ id: "job-1", status: "needs_setup", reason: "필수 정보 누락 (name)" });
+        });
+
+        it("surfaces the 404 problem body for an unknown job", async () => {
+            triggerService.resendNeedsSetupJob.mockRejectedValue(new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/missing/resend");
+
+            expect(response.status).toBe(404);
+            expect(response.body).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+        });
+
+        it("surfaces the 409 problem body when the job cannot be resent", async () => {
+            triggerService.resendNeedsSetupJob.mockRejectedValue(new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT")));
+
+            const response = await request(app.getHttpServer())
+                .post("/message-trigger-jobs/job-1/resend");
+
+            expect(response.status).toBe(409);
+            expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT" });
+        });
+
+        it("allows a branch manager and denies staff before service execution", async () => {
+            triggerService.resendNeedsSetupJob.mockResolvedValue({ id: "job-1", status: "sent", reason: null });
+            authRole = "manager";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/resend")).status).toBe(200);
+            authRole = "user";
+            expect((await request(app.getHttpServer()).post("/message-trigger-jobs/job-1/resend")).status).toBe(403);
+            expect(triggerService.resendNeedsSetupJob).toHaveBeenCalledTimes(1);
+        });
+
+        it("has no bulk form", async () => {
+            const response = await request(app.getHttpServer()).post("/message-trigger-jobs/resend");
+            expect(response.status).toBe(404);
+            expect(triggerService.resendNeedsSetupJob).not.toHaveBeenCalled();
         });
     });
 

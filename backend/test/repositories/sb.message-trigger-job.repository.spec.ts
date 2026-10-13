@@ -396,11 +396,56 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("claim_token = gen_random_uuid()::text");
         // The minted token is the CAS fence for every later write on this job.
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
+        // The ordinary claim clears the reason, so a `processing` row that carries one can only be a
+        // resend claim (the stale-processing reclaim reads that as the resend mark).
+        expect(sqlText).toContain("updated_at = now(), cancel_reason = NULL FROM locked_rule");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);
         await expect(repository.claimPendingWithRuleFence("job-1", "branch-1")).resolves.toBeNull();
         expect(queryRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it("claimNeedsSetupWithRuleFence claims only a needs_setup job through the same rule fence, minting a new token and leaving attempts alone", async () => {
+        queryRaw.mockResolvedValueOnce([{ id: "job-1", claim_token: "claim-resend" }]);
+
+        await expect(repository.claimNeedsSetupWithRuleFence("job-1", "branch-1")).resolves.toBe("claim-resend");
+
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        // The status predicate appears in both the candidate read and the guarded update.
+        expect(sqlText.match(/AND job\.status = 'needs_setup'/g)).toHaveLength(2);
+        expect(sqlText).not.toContain("job.status = 'pending'");
+        // Same rule fence as the pending claim.
+        expect(sqlText).toContain("WITH candidate_job AS");
+        expect(sqlText).toContain("FOR UPDATE OF rule");
+        expect(sqlText).toContain("rule.jobs_stale = false");
+        expect(sqlText).toContain("rule.is_active = true");
+        expect(sqlText).toContain('"message_trigger_rule_branch_override"');
+        expect(sqlText).toContain("rule.branch_id IS NULL");
+        expect(sqlText).toContain("job.branch_id = ");
+        expect(sqlText).not.toContain("job.branch_id IS NULL");
+        // A new token is minted and returned; processing is the only status written; attempts are not touched.
+        expect(sqlText).toContain("SET status = 'processing', claim_token = gen_random_uuid()::text");
+        expect(sqlText).toContain("RETURNING job.id, job.claim_token");
+        expect(sqlText).not.toContain("attempts");
+        // The setup reason stays on the in-flight row: it is the durable resend mark.
+        expect(sqlText).not.toContain("cancel_reason");
+
+        queryRaw.mockReset();
+        queryRaw.mockResolvedValueOnce([]);
+        await expect(repository.claimNeedsSetupWithRuleFence("job-1", "branch-1")).resolves.toBeNull();
+    });
+
+    it("claimPendingWithRuleFence still claims only pending jobs after the shared-claim refactor", async () => {
+        queryRaw.mockResolvedValueOnce([]);
+
+        await repository.claimPendingWithRuleFence("job-1", "branch-1");
+
+        const sqlText = getSqlText(queryRaw.mock.calls[0][0]).replace(/\s+/g, " ");
+        expect(sqlText.match(/AND job\.status = 'pending'/g)).toHaveLength(2);
+        expect(sqlText).not.toContain("needs_setup");
     });
 
     it("uses the claim token as a CAS so a stale completion cannot overwrite a newer claim", async () => {
@@ -1950,6 +1995,7 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
                 if (row.status !== "pending") return [];
                 await this.beforeClaimCommit?.();
                 row.status = "processing";
+                row.cancelReason = null;
                 row.claimToken = `claim-${id}`;
                 return [{ id, claim_token: row.claimToken }];
             }
