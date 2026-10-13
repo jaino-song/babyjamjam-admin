@@ -75,6 +75,16 @@ const candidateQuery = (findMany: jest.Mock) => findMany.mock.calls.find(
 )?.[0] as { where: Record<string, unknown>; orderBy: unknown } | undefined;
 
 describe("loadRevisionFactsSource receipt document", () => {
+    it.each([true, false])("treats newest voided=%s as no live receipt contract without falling back", async (isVoided) => {
+        const { tx, findMany } = fakeTx({
+            candidates: [candidate(20, "doc-B", { voidedAt: isVoided ? new Date() : null }), candidate(10, "doc-A")],
+            documents: [row("doc-A", [liveToken(10)]), row("doc-B")],
+        });
+        const result = await loadRevisionFactsSource(tx, BRANCH_ID, scope({ pointerDocumentId: "doc-A", tokenDocumentId: "doc-A" }));
+        expect(result.document?.documentId).toBe("doc-A");
+        expect(result.receiptDocument?.documentId ?? null).toBe(isVoided ? null : "doc-B");
+        expect(candidateQuery(findMany)).toMatchObject({ select: { voidedAt: true } });
+    });
     it("reads receipt facts from the current contract B while the contract facts stay on the pinned A", async () => {
         const { tx, findMany } = fakeTx({
             candidates: [candidate(20, "doc-B"), candidate(10, "doc-A")],

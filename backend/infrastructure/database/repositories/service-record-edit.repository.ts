@@ -443,12 +443,14 @@ export async function loadRevisionFactsSource(
                     documentKind: true,
                     serviceRecordCaseId: true,
                     templateId: true,
+                    voidedAt: true,
                 },
             });
-            currentContractDocumentId = selectCurrentContractDocument(
+            const current = selectCurrentContractDocument(
                 candidates,
                 serviceRecordTemplateIds,
-            )?.documentId ?? null;
+            );
+            currentContractDocumentId = current && current.voidedAt == null ? current.documentId : null;
         }
         // Token observations come from the documents the scope already named plus the current
         // contract; with the pointer in sync that is the same single document as before.

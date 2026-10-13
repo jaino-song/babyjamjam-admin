@@ -53,6 +53,7 @@ export interface RecentEformsignDocRow {
     stepName: string;
     updatedDate: Date;
     expired: boolean;
+    isVoided: boolean;
 }
 
 /**
@@ -70,6 +71,7 @@ export interface EformsignContractCandidateRow {
     stepType: string;
     stepName: string;
     permanentPurgeRequestedAt: Date | null;
+    voidedAt: Date | null;
 }
 
 export class EformsignDocMappingError extends Error {

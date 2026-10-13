@@ -6,6 +6,16 @@ const context = {
     sessionId: "session-a", traceId: "trace-a", locale: "ko",
 };
 
+describe("EformsignAgentCapabilitiesProvider — contracts.status", () => {
+    it.each([true, false])("reports voided=%s without changing non-voided status detail", async (isVoided) => {
+        const docs = [{ documentId: "doc-1", documentName: "계약서", statusType: "050", statusDetail: "완료", stepType: "05", stepName: "이용자", updatedDate: new Date(), expired: false, isVoided }];
+        const provider = new EformsignAgentCapabilitiesProvider({ execute: jest.fn().mockResolvedValue(docs) } as never, createHolidayCalendarStub());
+        const capability = provider.getCapabilities().find((entry) => entry.meta.name === "contracts.status")!;
+        const output = await capability.execute(context, { clientId: 10 }) as { documents: Array<Record<string, unknown>> };
+        expect(output.documents[0]).toMatchObject({ status: isVoided ? "voided" : "completed", statusDetail: isVoided ? "파기됨" : "완료" });
+    });
+});
+
 function recentDoc({
     documentId = "doc-1",
     documentName = "계약서",
@@ -17,6 +27,7 @@ function recentDoc({
     stepName = "이용자",
     updatedDate = new Date("2026-09-20T00:00:00.000Z"),
     expired = false,
+    isVoided = false,
     contractEndDate = null,
 }: Partial<{
     documentId: string;
@@ -29,11 +40,12 @@ function recentDoc({
     stepName: string;
     updatedDate: Date;
     expired: boolean;
+    isVoided: boolean;
     contractEndDate: string | null;
 }> = {}) {
     // Default *parameters* (not `??`) so an explicit `null` override (e.g. an
     // unassigned document) is not mistaken for "not provided".
-    return { documentId, documentName, clientId, clientName, statusType, statusDetail, stepType, stepName, updatedDate, expired, contractEndDate };
+    return { documentId, documentName, clientId, clientName, statusType, statusDetail, stepType, stepName, updatedDate, expired, isVoided, contractEndDate };
 }
 
 describe("EformsignAgentCapabilitiesProvider — contracts.recent", () => {
@@ -51,6 +63,17 @@ describe("EformsignAgentCapabilitiesProvider — contracts.recent", () => {
         await capability.execute(context, { limit: 5 });
 
         expect(findRecentContracts.execute).toHaveBeenCalledWith("branch-a", 5);
+    });
+    it.each([true, false])("reports voided=%s before code and expired-column meaning", async (isVoided) => {
+        const { capability } = setup([recentDoc({ statusType: "060", statusDetail: "서명 대기", expired: true, isVoided })]);
+        const output = await capability.execute(context, {}) as { documents: Array<Record<string, unknown>> };
+        expect(output.documents[0]).toMatchObject({ status: isVoided ? "voided" : "expired", statusDetail: isVoided ? "파기됨" : "서명 대기" });
+    });
+    it("accepts the voided filter without returning older live contracts", async () => {
+        const { capability } = setup([recentDoc({ isVoided: true }), recentDoc({ documentId: "live" })]);
+        const output = await capability.execute(context, { status: "voided" }) as { documents: Array<Record<string, unknown>> };
+        expect(output.documents).toHaveLength(1);
+        expect(output.documents[0]).toMatchObject({ documentId: "doc-1", status: "voided", statusDetail: "파기됨" });
     });
 
     it("defaults limit to 10 when omitted", async () => {

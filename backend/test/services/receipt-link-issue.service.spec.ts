@@ -45,6 +45,8 @@ interface DocFixture {
     serviceRecordCaseId?: string | null;
     templateId?: string | null;
     permanentPurgeRequestedAt?: Date | null;
+    voidedAt?: Date | null;
+    isVoided?: boolean;
 }
 
 interface MakeServiceOverrides {
@@ -123,6 +125,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
             .fn()
             .mockResolvedValue((overrides.docById === undefined ? doc : overrides.docById) as unknown as EformsignDocEntity | null),
         findByDocumentId: jest.fn().mockResolvedValue(doc as unknown as EformsignDocEntity | null),
+        findByDocumentIdUnscoped: jest.fn().mockResolvedValue(doc ? { document: doc, branchId: BRANCH } : null),
         findByClientId: jest
             .fn()
             .mockResolvedValue((overrides.docsByClient ?? (doc ? [doc] : [])) as unknown as EformsignDocEntity[]),
@@ -140,6 +143,7 @@ function makeService(overrides: MakeServiceOverrides = {}) {
                 stepType: "06",
                 stepName: "제공기관 확인",
                 permanentPurgeRequestedAt: row.permanentPurgeRequestedAt ?? null,
+                voidedAt: row.voidedAt ?? null,
             })).sort((a, b) => b.createdDate.getTime() - a.createdDate.getTime() || b.id - a.id),
         ),
     } as unknown as IEformsignDocRepository;
@@ -251,6 +255,33 @@ function makeService(overrides: MakeServiceOverrides = {}) {
 }
 
 describe("ReceiptLinkIssueService", () => {
+    it.each([true, false])("newest voided=%s never falls through to the older signed contract", async (isVoided) => {
+        const { service } = makeService({ docsByClient: [
+            { id: 43, documentId: "new", createdDate: new Date("2026-02-01"), voidedAt: isVoided ? new Date() : null },
+            { id: 42, documentId: "old", createdDate: new Date("2026-01-01") },
+        ] });
+        const result = service.preflight({ branchId: BRANCH, clientId: 7 });
+        if (isVoided) await expect(result).rejects.toMatchObject({ skipReason: "contract_voided" });
+        else await expect(result).resolves.toMatchObject({ doc: { id: 43, documentId: "new" } });
+    });
+    it.each([true, false])("explicit voided=%s refuses only the voided contract", async (isVoided) => {
+        const { service } = makeService({ docById: { id: 42, documentId: "doc-ext-1", documentKind: "contract", clientId: 7, isVoided } });
+        const result = service.preflight({ branchId: BRANCH, clientId: 7, eformsignDocId: 42 });
+        if (isVoided) await expect(result).rejects.toMatchObject({ skipReason: "contract_voided" });
+        else await expect(result).resolves.toMatchObject({ doc: { id: 42 } });
+    });
+    it.each(["string", "auto", "explicit"])("refuses a contract voided after approval at the %s delivery boundary", async (form) => {
+        const doc = { id: 42, documentId: "doc-ext-1", documentKind: "contract", clientId: 7, isVoided: false };
+        const { service, eformsignDocRepository } = makeService({ doc });
+        const target = form === "string" ? doc.documentId : { branchId: BRANCH, clientId: 7, ...(form === "explicit" ? { eformsignDocId: 42 } : { expectedEformsignDocId: 42 }) };
+        await service.preflight({ branchId: BRANCH, clientId: 7 });
+        await expect(service.assertDocumentSyncReady(target)).resolves.toBeUndefined();
+        doc.isVoided = true;
+        jest.mocked(eformsignDocRepository.findContractCandidatesByClientId).mockResolvedValue([
+            { ...doc, voidedAt: new Date(), createdDate: new Date(), serviceRecordCaseId: null, templateId: null, statusType: "070", stepType: "06", stepName: "제공기관 확인", permanentPurgeRequestedAt: null } as never,
+        ]);
+        await expect(service.assertDocumentSyncReady(target)).rejects.toMatchObject({ skipReason: "contract_voided" });
+    });
     it.each([
         ["1994-03-07", "19940307"],
         ["940307", "940307"],

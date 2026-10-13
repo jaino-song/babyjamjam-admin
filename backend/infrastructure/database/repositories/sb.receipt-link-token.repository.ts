@@ -615,13 +615,15 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 documentKind: string | null;
                 serviceRecordCaseId: string | null;
                 templateId: string | null;
+                voidedAt: Date | null;
             }>>(Prisma.sql`
                 SELECT
                     id,
                     document_id AS "documentId",
                     document_kind AS "documentKind",
                     service_record_case_id AS "serviceRecordCaseId",
-                    template_id AS "templateId"
+                    template_id AS "templateId",
+                    voided_at AS "voidedAt"
                 FROM eformsign_doc
                 WHERE client_id = ${input.clientId}
                   AND service_record_case_id IS NULL
@@ -633,6 +635,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 new Set(input.serviceRecordTemplateIds),
             );
             if (!current
+                || current.voidedAt != null
                 || current.id !== targetDocument.id
                 || current.documentId !== input.targetDocumentId) {
                 return { disposition: "stale", tokenIds: [], stateVersion: state.version };

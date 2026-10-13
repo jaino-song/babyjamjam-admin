@@ -197,6 +197,12 @@ describe("SbEformsignDocRepository", () => {
     });
 
     describe("findContractCandidatesByClientId", () => {
+        it.each([null, new Date("2026-10-13")])("carries voidedAt=%s without filtering or fallback", async (voidedAt) => {
+            const rows = [{ id: 1, documentId: "doc-1", voidedAt }];
+            eformsignDocModel.findMany.mockResolvedValue(rows);
+            await expect(repository.findContractCandidatesByClientId(55)).resolves.toEqual(rows);
+            expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }));
+        });
         it("asks the database for newest-first order (createdDate desc, id desc) at full precision", async () => {
             eformsignDocModel.findMany.mockResolvedValueOnce([]);
 
@@ -241,6 +247,7 @@ describe("SbEformsignDocRepository", () => {
                     stepType: true,
                     stepName: true,
                     permanentPurgeRequestedAt: true,
+                    voidedAt: true,
                 },
             });
             const where = eformsignDocModel.findMany.mock.calls[0][0].where;
@@ -250,6 +257,14 @@ describe("SbEformsignDocRepository", () => {
     });
 
     describe("findRecentContracts", () => {
+        it.each([null, new Date("2026-10-13")])("exposes voidedAt=%s as a boolean only", async (voidedAt) => {
+            eformsignDocModel.findMany.mockResolvedValue([{ ...recentRow(), voidedAt }]);
+            const [doc] = await repository.findRecentContracts("branch-1", 10);
+            expect(doc).toMatchObject({ isVoided: voidedAt !== null });
+            expect(doc).not.toHaveProperty("voidedBy");
+            expect(doc).not.toHaveProperty("voidedAt");
+            expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ voidedAt: true }) }));
+        });
         function recentRow({
             documentId = "doc-1",
             documentName = "계약서",
@@ -260,6 +275,7 @@ describe("SbEformsignDocRepository", () => {
             stepName = "이용자",
             updatedDate = new Date("2026-09-20T00:00:00.000Z"),
             expired = false,
+            voidedAt = null,
             client = { name: "산모" },
         }: Partial<{
             documentId: string;
@@ -271,11 +287,12 @@ describe("SbEformsignDocRepository", () => {
             stepName: string;
             updatedDate: Date;
             expired: boolean;
+            voidedAt: Date | null;
             client: { name: string } | null;
         }> = {}) {
             // Default *parameters* (not `??`) so an explicit `null` override (e.g. an
             // unassigned document) is not mistaken for "not provided".
-            return { documentId, documentName, clientId, statusType, statusDetail, stepType, stepName, updatedDate, expired, client };
+            return { documentId, documentName, clientId, statusType, statusDetail, stepType, stepName, updatedDate, expired, voidedAt, client };
         }
 
         it("scopes to the branch, excludes purged/deleted rows, keeps contract-or-unclassified kinds, orders newest first, and takes the given count", async () => {
@@ -306,6 +323,7 @@ describe("SbEformsignDocRepository", () => {
                     updatedDate: true,
                     expired: true,
                     client: { select: { name: true } },
+                    voidedAt: true,
                 },
             });
             expect(result).toEqual([{
@@ -319,6 +337,7 @@ describe("SbEformsignDocRepository", () => {
                 stepName: "이용자",
                 updatedDate: new Date("2026-09-20T00:00:00.000Z"),
                 expired: false,
+                isVoided: false,
             }]);
         });
 
@@ -331,6 +350,17 @@ describe("SbEformsignDocRepository", () => {
         });
     });
 
+    it("review query excludes voided rows while keeping live review contracts", async () => {
+        eformsignDocModel.findMany.mockImplementation(async ({ where }) => [
+            { documentId: "live", branchId: "branch-1", detailPayload: null, stepRecipientName: "산모", voidedAt: null },
+            { documentId: "voided", branchId: "branch-1", detailPayload: null, stepRecipientName: "산모", voidedAt: new Date() },
+        ].filter((doc) => where.voidedAt === undefined || doc.voidedAt === where.voidedAt));
+        const docs = await repository.findReviewStageContracts();
+        expect(docs.map((doc) => doc.documentId)).toEqual(["live"]);
+        expect(eformsignDocModel.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+            documentKind: "contract", statusType: { in: ["070", "70", "doc_request_reviewer"] }, permanentPurgeRequestedAt: null, voidedAt: null,
+        } }));
+    });
     it("excludes purge-pending rows from the headquarters list", async () => {
         eformsignDocModel.findMany.mockResolvedValue([legacyRow]);
 
