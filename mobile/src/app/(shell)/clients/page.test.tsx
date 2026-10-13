@@ -219,6 +219,7 @@ function makeClient(id: number): Client {
     voucherClient: false,
     breastPump: false,
     serviceStatus: "active",
+    bookingConfirmedAt: null,
     eDocId: null,
     hasSigned: false,
     documentStatus: null,

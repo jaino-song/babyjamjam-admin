@@ -36,6 +36,7 @@ const baseClient: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,

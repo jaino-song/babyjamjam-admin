@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
 
 import { Client } from "@/lib/client/types";
@@ -22,6 +22,7 @@ import {
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
 import { approveScheduleChange, rejectScheduleChange } from "@/hooks/useClients";
+import { useConfirmBooking } from "@/features/clients";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -724,6 +725,9 @@ export function ClientDetailContent({
   const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
   const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
   const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
+  const confirmBookingMutation = useConfirmBooking();
+  const confirmBookingInFlightRef = useRef(false);
+  const [confirmBookingOpen, setConfirmBookingOpen] = useState(false);
 
   const handleResetServiceRecordLink = async () => {
     setIsResettingLink(true);
@@ -836,6 +840,32 @@ export function ClientDetailContent({
     setReceiptSendConfirmOpen(false);
   };
 
+  // 고객-04: the client stays 예약 전 until an admin presses [예약 확정]. The open detail renders from
+  // a locally held snapshot, so the confirm response is merged into it (only the two fields that
+  // changed — the response is the raw client entity without employees or badges).
+  const handleConfirmBooking = async () => {
+    if (confirmBookingInFlightRef.current) return;
+    confirmBookingInFlightRef.current = true;
+    try {
+      const confirmed = await confirmBookingMutation.mutateAsync(client.id);
+      onClientUpdated({
+        ...client,
+        bookingConfirmedAt: confirmed.bookingConfirmedAt,
+        serviceStatus: confirmed.serviceStatus,
+      });
+      setConfirmBookingOpen(false);
+      toast({ variant: "success", description: "예약을 확정했습니다." });
+    } catch {
+      setConfirmBookingOpen(false);
+      toast({
+        description: "예약을 확정하지 못했습니다. 시작일·종료일과 고객 상태를 확인한 뒤 다시 시도해 주세요.",
+        variant: "destructive",
+      });
+    } finally {
+      confirmBookingInFlightRef.current = false;
+    }
+  };
+
   const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
     const pendingScheduleChange = client.pendingScheduleChange;
     if (!pendingScheduleChange) return;
@@ -869,6 +899,10 @@ export function ClientDetailContent({
     }
   };
 
+  const canConfirmBooking = client.bookingConfirmedAt == null
+    && client.serviceStatus !== "terminated"
+    && client.serviceStatus !== "replacement_requested";
+  const isBookingDateMissing = !client.startDate || !client.endDate;
   const group = GROUPS.find((g) => g.match(client)) ?? GROUPS[1];
   const clientBadges = getMobileClientBadges(client);
   const detailAvatarTone = clientBadges[0]?.tone ?? group.badgeTone;
@@ -1192,6 +1226,15 @@ export function ClientDetailContent({
         }
       />
 
+      {canConfirmBooking && isBookingDateMissing ? (
+        <p
+          className="px-1 pb-2 text-[0.75rem] leading-snug text-v3-text-muted"
+          data-component={`${dataComponent}_actions_confirm-booking-helper`}
+        >
+          서비스 시작일과 종료일을 먼저 입력해 주세요.
+        </p>
+      ) : null}
+
       <MobileDetailActions data-component={`${dataComponent}_actions`}
         name="clients"
         actions={[
@@ -1201,6 +1244,16 @@ export function ClientDetailContent({
             onClick: onMessage,
             dataComponent: `${dataComponent}_actions_message`,
           },
+          ...(canConfirmBooking
+            ? [{
+                label: confirmBookingMutation.isPending ? "확정 중..." : "예약 확정",
+                variant: "secondary" as const,
+                onClick: () => setConfirmBookingOpen(true),
+                disabled: isBookingDateMissing || confirmBookingMutation.isPending,
+                busy: confirmBookingMutation.isPending,
+                dataComponent: `${dataComponent}_actions_confirm-booking`,
+              }]
+            : []),
           {
             label: isIssuingContract ? "발급 중..." : "계약서 발급",
             variant: "primary",
@@ -1210,6 +1263,23 @@ export function ClientDetailContent({
             dataComponent: `${dataComponent}_actions_contract-create`,
           },
         ]}
+      />
+
+      <ApprovalTwoButtonModal
+        open={confirmBookingOpen}
+        onOpenChange={(open) => {
+          if (!open && !confirmBookingMutation.isPending) {
+            setConfirmBookingOpen(false);
+          }
+        }}
+        data-component={`${dataComponent}_confirm-booking-approval-modal`}
+        title="예약을 확정할까요?"
+        description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="예약 확정"
+        pendingLabel="확정 중..."
+        isPending={confirmBookingMutation.isPending}
+        onApprove={() => void handleConfirmBooking()}
       />
 
       <ApprovalTwoButtonModal

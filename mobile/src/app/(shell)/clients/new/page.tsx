@@ -28,7 +28,11 @@ import {
   type VoucherPriceInfo,
 } from "@/hooks/useVoucherData";
 import type { CreateClientDto, ServiceStatus, UpdateClientDto } from "@/lib/client/types";
-import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import {
+  getServiceStatusFormOptions,
+  SERVICE_STATUS_BOOKING_HELPER,
+  SERVICE_STATUS_BOOKING_REFUSAL,
+} from "@/lib/client/service-status-form-options";
 import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import {
@@ -1129,7 +1133,8 @@ export default function NewClientPage() {
         careCenter: store.careCenter,
         voucherClient: store.voucherClient,
         breastPump: store.breastPump,
-        serviceStatus: store.serviceStatus || null,
+        // 고객-04: creating always starts at 예약 전, whatever a prefill carried.
+        serviceStatus: "pre_booking",
         areaId: store.areaId || null,
       };
       if (editingClientId !== null && editBaseline) {
@@ -1213,6 +1218,14 @@ export default function NewClientPage() {
   const isLastStep = activeStep === WIZARD_STEPS.length - 1;
   const activeStepMeta = WIZARD_STEPS[activeStep];
   const progress = ((activeStep + 1) / WIZARD_STEPS.length) * 100;
+  // 고객-04: a new client is always 예약 전, and a save can no longer move a client between 예약 전 and
+  // 대기·진행·완료 (only [예약 확정] does), so the select offers only what the server accepts.
+  const serviceStatusOptions = getServiceStatusFormOptions({
+    isCreate: !isEditMode,
+    bookingConfirmedAt: editingClient?.bookingConfirmedAt,
+    currentStatus: editingClient?.serviceStatus ?? "pre_booking",
+  });
+  const isBookingUnconfirmed = !isEditMode || editingClient?.bookingConfirmedAt == null;
   const clientsReturnHref = editingClientId !== null ? `/clients?id=${editingClientId}` : "/clients";
   const isSaving = createClient.isPending || updateClient.isPending || isNavigationPending;
   const structuredErrors = useMemo(
@@ -1731,13 +1744,16 @@ export default function NewClientPage() {
               {activeStep === 2 ? (
                 <>
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card">
-                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_status-field" label="계약 상태" htmlFor="serviceStatus">
+                    <Field data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_status-field" label="계약 상태" htmlFor="serviceStatus"
+                      slot={fieldErrorMessageIds.serviceStatus.length > 0 ? { text: SERVICE_STATUS_BOOKING_REFUSAL, tone: "err" } : null}
+                      guidance={isBookingUnconfirmed ? SERVICE_STATUS_BOOKING_HELPER : undefined}>
                       <FormNativeSelect
                         id="serviceStatus"
                         data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_contract-status-card_select-wrap"
-                        value={store.serviceStatus}
+                        value={isEditMode ? store.serviceStatus : "pre_booking"}
                         onValueChange={(value) => setField("serviceStatus", value as ServiceStatus)}
-                        options={SERVICE_STATUS_OPTIONS}
+                        options={serviceStatusOptions}
+                        disabled={!isEditMode}
                         aria-invalid={fieldErrorMessageIds.serviceStatus.length > 0}
                         aria-describedby={["serviceStatus-message", ...fieldErrorMessageIds.serviceStatus].join(" ")}
                       />

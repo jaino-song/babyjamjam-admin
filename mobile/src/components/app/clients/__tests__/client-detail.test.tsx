@@ -67,6 +67,10 @@ jest.mock("@/hooks/useClients", () => ({
   rejectScheduleChange: jest.fn(),
 }));
 
+jest.mock("@/features/clients", () => ({
+  useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }),
+}));
+
 jest.mock("@/hooks/use-toast", () => ({
   toast: jest.fn(),
   useToast: () => ({ toast: jest.fn() }),
@@ -150,6 +154,7 @@ const client: Client = {
   voucherClient: false,
   breastPump: false,
   serviceStatus: null,
+  bookingConfirmedAt: null,
   eDocId: null,
   hasSigned: false,
   documentStatus: null,

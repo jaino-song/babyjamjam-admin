@@ -10,6 +10,7 @@ jest.mock("@/hooks/useEmployees", () => ({ useEmployees: () => ({ data: [] }) })
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: { role: "user", branchRole: "manager" } }) }));
 jest.mock("@/hooks/useServiceRecords", () => ({ useClientServiceRecords: () => ({ data: undefined }), applyServiceScheduleChange: jest.fn(), fetchClientServiceRecords: jest.fn(), previewServiceScheduleChange: jest.fn(), resetServiceRecordLink: jest.fn() }));
 jest.mock("@/hooks/useClients", () => ({ approveScheduleChange: jest.fn(), rejectScheduleChange: jest.fn() }));
+jest.mock("@/features/clients", () => ({ useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
 jest.mock("@/hooks/use-send-client-receipt", () => ({ useSendClientReceipt: () => ({ isSending: false, sendReceipt: jest.fn() }) }));
 jest.mock("@/services/api", () => ({ eformsignApi: { getDocument: jest.fn(), getLinkConfirmations: jest.fn() } }));
@@ -30,7 +31,7 @@ const client: Client = {
   id: 7, name: "고객", phone: "01012345678", birthday: null, dueDate: null, birthDate: null, address: null,
   primaryEmployee: null, secondaryEmployee: null, type: null, duration: null, fullPrice: null, grant: null, actualPrice: null,
   startDate: null, endDate: null, careCenter: false, voucherClient: false, breastPump: false, serviceStatus: null,
-  eDocId: null, hasSigned: false, documentStatus: null,
+  bookingConfirmedAt: null, eDocId: null, hasSigned: false, documentStatus: null,
 };
 const entry: EformsignLinkConfirmation = {
   documentId: "doc-1", documentName: "계약서 A", statusType: "020", statusDetail: "", createdDate: "2026-10-13T00:00:00Z",
