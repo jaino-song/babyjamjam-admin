@@ -26,7 +26,7 @@ import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { createKrBusinessDayCalendar, KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR } from "../../domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
-import { findManyFrom } from "../utils/prisma-where-evaluator";
+import { findManyFrom, matchesWhere } from "../utils/prisma-where-evaluator";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { clearSchemaCapabilityCache } from "infrastructure/database/schema-capabilities";
@@ -4645,7 +4645,7 @@ describe("ClientService", () => {
             ]);
         });
 
-        it.each(["pre_booking", "completed"])("scans confirmed dated clients with stale stored %s but excludes unconfirmed clients", async (serviceStatus) => {
+        it.each(["pre_booking"])("scans confirmed dated clients with stale stored %s but excludes unconfirmed clients", async (serviceStatus) => {
             const rows = [
                 alertClient({ id: 1, branchId, serviceStatus, eDocId: null }),
                 alertClient({ id: 2, branchId, serviceStatus: "waiting", bookingConfirmedAt: null, eDocId: null }),
@@ -4654,6 +4654,37 @@ describe("ClientService", () => {
 
             expect(await service.getActionRequiredAlerts(branchId)).toEqual([
                 expect.objectContaining({ id: 1, reason: "발송 필요" }),
+            ]);
+        });
+
+        it("keeps finished clients from crowding a waiting client's alert out of the scan window", async () => {
+            const finishedClientCount = 12;
+            const waitingClientId = finishedClientCount + 1;
+            const rows = [
+                alertClient({ id: waitingClientId, branchId, serviceStatus: "waiting", eDocId: null }),
+                ...Array.from({ length: finishedClientCount }, (_, index) => alertClient({
+                    id: index + 1,
+                    branchId,
+                    serviceStatus: "completed",
+                    createdAt: new Date(`2026-03-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`),
+                    startDate: new Date("2026-02-02T00:00:00.000Z"),
+                    endDate: new Date("2026-02-20T00:00:00.000Z"),
+                    eDocId: null,
+                })),
+            ];
+            prismaService.client.findMany.mockImplementation(async (args: {
+                where: Record<string, unknown>;
+                orderBy: { createdAt: "asc" | "desc" };
+                take: number;
+            }) => rows
+                .filter((row) => matchesWhere(row, args.where))
+                .sort((left, right) => args.orderBy.createdAt === "desc"
+                    ? right.createdAt.getTime() - left.createdAt.getTime()
+                    : left.createdAt.getTime() - right.createdAt.getTime())
+                .slice(0, args.take));
+
+            expect(await service.getActionRequiredAlerts(branchId)).toEqual([
+                expect.objectContaining({ id: waitingClientId, reason: "발송 필요" }),
             ]);
         });
 

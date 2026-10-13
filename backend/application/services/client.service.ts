@@ -2820,9 +2820,8 @@ export class ClientService {
                 },
             };
         });
-        // A stored 예약 전 client leaves that status here (the status is
-        // recomputed from its dates), so the provider link SMS the gates
-        // skipped while it was 예약 전 is scheduled now, after the commit.
+        // 예약확정 상태는 여기서 바뀌지 않으므로 예약 전 이탈 여부를 확인하는
+        // 공통 후처리는 교체 완료만으로 제공인력 링크 SMS를 예약하지 않는다.
         await this.scheduleServiceRecordLinksAfterLeavingPreBooking(
             branchid,
             clientId,
@@ -2991,7 +2990,7 @@ export class ClientService {
                     {
                         OR: [
                             { serviceStatus: null },
-                            { serviceStatus: { notIn: [SERVICE_STATUS.TERMINATED, SERVICE_STATUS.REPLACEMENT_REQUESTED] } },
+                            { serviceStatus: { notIn: [SERVICE_STATUS.COMPLETED, SERVICE_STATUS.TERMINATED, SERVICE_STATUS.REPLACEMENT_REQUESTED] } },
                         ],
                         bookingConfirmedAt: { not: null },
                         startDate: startDateBound,
