@@ -1,5 +1,6 @@
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
+import type { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
@@ -160,6 +161,15 @@ export interface IMessageTriggerJobRepository {
     ): Promise<MessageTriggerJobEntity[]>;
     /** Whether a rule still has active jobs persisted before its current version fence. */
     hasActiveJobsBefore(branchId: string, ruleId: string, before: Date): Promise<boolean>;
+    /** Whether a newer qualifying client-rule job exists, answered in the database without a row cap. */
+    hasNewerClientRuleSibling(params: {
+        branchId: string;
+        clientId: number;
+        ruleId: string;
+        recipientType: MessageTriggerRecipientType;
+        excludeJobId: string;
+        createdAfter: Date;
+    }): Promise<boolean>;
     findPendingByRuleIdsAndClientId(ruleIds: string[], clientId: number): Promise<MessageTriggerJobEntity[]>;
     /** Bounded, ordered read of actual automation generations, including terminal dedupe rows. */
     findForClientAutomationReview(branchId: string, clientId: number, ruleIds: string[], transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobReviewSnapshot[]>;

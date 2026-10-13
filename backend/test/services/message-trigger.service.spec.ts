@@ -440,6 +440,7 @@ describe("MessageTriggerService", () => {
             claimPendingWithRuleFence: jest.fn().mockResolvedValue("claim-a"),
             claimNeedsSetupWithRuleFence: jest.fn().mockResolvedValue("claim-a"),
             findForClientAutomationReview: jest.fn().mockResolvedValue([]),
+            hasNewerClientRuleSibling: jest.fn().mockResolvedValue(false),
             update: jest.fn().mockResolvedValue(undefined),
             cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
             cancelPendingOlderThan: jest.fn().mockResolvedValue(0),
@@ -2885,6 +2886,7 @@ describe("MessageTriggerService", () => {
                 expect(fx.job.cancelReason).toBe(identityReason);
                 expect(fx.job.status).toBe("canceled");
                 expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+                expect(fx.jobRepository.hasNewerClientRuleSibling).not.toHaveBeenCalled();
                 expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
             });
 
@@ -2908,22 +2910,33 @@ describe("MessageTriggerService", () => {
                 expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
             });
 
-            it.each(["pending", "processing", "dispatching", "sent", "older", "failed", "needs_setup", "canceled", "assignment", "recipient", "self", "equal"])("handles %s siblings by creation time and identity", async (kind) => {
+            it("cancels the resend without delivery when the database reports a newer sibling", async () => {
                 const fx = resendFixture();
-                const blocking = ["pending", "processing", "dispatching", "sent"].includes(kind);
-                const sibling = createJob({ id: kind === "self" ? fx.job.id : "sibling", status: blocking ? kind as MessageTriggerJobStatus
-                    : ["failed", "needs_setup", "canceled"].includes(kind) ? kind as MessageTriggerJobStatus : "sent",
-                    createdAt: new Date(fx.job.createdAt.getTime() + (kind === "older" ? -1 : kind === "equal" ? 0 : 1)),
-                    employeeScheduleId: kind === "assignment" ? 20 : null,
-                    recipientType: kind === "recipient" ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : fx.job.recipientType });
-                fx.jobRepository.findForClientAutomationReview.mockResolvedValue([sibling]);
+                fx.jobRepository.hasNewerClientRuleSibling.mockResolvedValue(true);
                 await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
-                expect(fx.jobRepository.findForClientAutomationReview).toHaveBeenCalledWith(branchId, fx.job.clientId, [fx.job.ruleId]);
-                expect(fx.job.status).toBe(blocking ? "canceled" : "sent");
-                if (blocking) {
-                    expect(fx.job.cancelReason).toBe("새 예약 메시지가 있어 재전송하지 않았습니다");
-                    expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
-                } else expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+                expect(fx.jobRepository.hasNewerClientRuleSibling).toHaveBeenCalledTimes(1);
+                expect(fx.jobRepository.hasNewerClientRuleSibling).toHaveBeenCalledWith({
+                    branchId,
+                    clientId: fx.job.clientId,
+                    ruleId: fx.job.ruleId,
+                    recipientType: fx.job.recipientType,
+                    excludeJobId: fx.job.id,
+                    createdAfter: fx.job.createdAt,
+                });
+                expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
+                expect(fx.job.status).toBe("canceled");
+                expect(fx.job.cancelReason).toBe("새 예약 메시지가 있어 재전송하지 않았습니다");
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            });
+
+            it("resends when the database reports no newer sibling", async () => {
+                const fx = resendFixture();
+                fx.jobRepository.hasNewerClientRuleSibling.mockResolvedValue(false);
+                await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+                expect(fx.jobRepository.hasNewerClientRuleSibling).toHaveBeenCalledTimes(1);
+                expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
+                expect(fx.job.status).toBe("sent");
+                expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
             });
 
             it.each([false, true])("checks assignment identity (changed key=%s) without checking a second schedule's sibling", async (changedKey) => {
@@ -2939,7 +2952,7 @@ describe("MessageTriggerService", () => {
                 const recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, fx.job.scheduledFor)!;
                 Object.assign(fx.job, { dedupeKey: recipe.dedupeKey, recipientType: recipe.recipientType, templateKey: recipe.templateKey });
                 if (changedKey) fx.job.dedupeKey = "previous-assignment-key";
-                fx.jobRepository.findForClientAutomationReview.mockResolvedValue([createJob({ employeeScheduleId: 20 })]);
+                fx.jobRepository.hasNewerClientRuleSibling.mockResolvedValue(true);
                 // The existing assignment fence independently re-reads the same current schedule.
                 fx.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
                 fx.claimedJobRead.mockImplementation(async () => ({ ...fx.job, status: "processing" }));
@@ -2949,12 +2962,14 @@ describe("MessageTriggerService", () => {
                     expect(fx.job.status).toBe("canceled");
                     expect(fx.job.cancelReason).toBe(identityReason);
                     expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+                    expect(fx.jobRepository.hasNewerClientRuleSibling).not.toHaveBeenCalled();
                     expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
                     return;
                 }
                 expect(fx.job.payload.templateVariables["employeeName"]).toBe("현재 직원");
                 expect(fx.job.dedupeKey).toBe(recipe.dedupeKey);
                 expect(fx.job.scheduledFor).toBe(time);
+                expect(fx.jobRepository.hasNewerClientRuleSibling).not.toHaveBeenCalled();
                 expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
                 expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
             });
