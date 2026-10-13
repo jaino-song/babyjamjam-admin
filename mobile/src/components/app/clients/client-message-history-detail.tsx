@@ -1,5 +1,6 @@
 "use client";
 
+import { MESSAGE_SETUP_REASON_LABEL } from "@babyjamjam/shared";
 import { ChevronLeft, CircleAlert, MessageCircle } from "lucide-react";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
@@ -25,6 +26,8 @@ export interface ClientMessageHistoryDetailView {
   messageBody: string;
   failureReason: string | null;
   cancelReason?: string | null;
+  /** Why a `needs_setup` message cannot be sent yet. */
+  setupReason?: string | null;
 }
 
 const HERO_ICON_TONE_CLASS: Record<MessageHistoryDetailTone, string> = {
@@ -50,6 +53,7 @@ export function ClientMessageHistoryDetail({
   canRetry = false,
   isRetrying = false,
   onRetry,
+  retryPendingLabel = "재발송 중...",
 }: {
   "data-component": string;
   view: ClientMessageHistoryDetailView;
@@ -60,9 +64,11 @@ export function ClientMessageHistoryDetail({
   canRetry?: boolean;
   isRetrying?: boolean;
   onRetry?: () => void;
+  /** Label while the retry request is in flight; the caller decides what is being retried. */
+  retryPendingLabel?: string;
 }) {
   const isFailed = view.statusTone === "burgundy";
-  const showRetry = isFailed && canRetry && Boolean(onRetry);
+  const showRetry = canRetry && Boolean(onRetry);
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
 
   return (
@@ -136,6 +142,9 @@ export function ClientMessageHistoryDetail({
         {view.failureReason ? (
           <InfoRow label="실패 사유" value={view.failureReason} tone="burgundy" />
         ) : null}
+        {view.setupReason ? (
+          <InfoRow label={MESSAGE_SETUP_REASON_LABEL} value={view.setupReason} tone="burgundy" />
+        ) : null}
         {view.cancelReason ? (
           <InfoRow label="취소 사유" value={view.cancelReason} tone="muted" />
         ) : null}
@@ -153,7 +162,7 @@ export function ClientMessageHistoryDetail({
             aria-busy={isRetrying || undefined}
             onClick={onRetry}
           >
-            {isRetrying ? "재발송 중..." : "재발송"}
+            {isRetrying ? retryPendingLabel : "재발송"}
           </Button>
         </div>
       ) : null}

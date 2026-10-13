@@ -1,5 +1,5 @@
 "use client";
-import { normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
+import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
 
 
 import type { ComponentType, ReactNode } from "react";
@@ -1188,12 +1188,13 @@ function notificationTitle(log: NotificationLogRecord): string {
 function notificationStatusLabel(status: string): string {
   if (status === "failed") return "실패";
   if (status === "pending") return "대기";
+  if (status === "needs_setup") return MESSAGE_HISTORY_STATUS_LABELS.needs_setup;
   return "완료";
 }
 
 function notificationStatusTone(status: string): "green" | "orange" | "burgundy" {
   if (status === "failed") return "burgundy";
-  if (status === "pending") return "orange";
+  if (status === "pending" || status === "needs_setup") return "orange";
   return "green";
 }
 

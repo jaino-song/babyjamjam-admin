@@ -1540,6 +1540,9 @@ export function ClientDetailContent({
               cancelReason: selectedLog.status === "canceled"
                 ? formatMessageFailureReason(selectedLog.errorMessage) || null
                 : null,
+              setupReason: selectedLog.status === "needs_setup"
+                ? formatMessageFailureReason(selectedLog.errorMessage) || null
+                : null,
             }}
             onBack={() => setSelectedEntry(null)}
           />
