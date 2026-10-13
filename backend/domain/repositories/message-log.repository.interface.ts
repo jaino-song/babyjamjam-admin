@@ -72,6 +72,7 @@ export interface IMessageLogRepository {
     findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
     findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
         serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
         startDate: Date | null;
         endDate: Date | null;
     } | null>;

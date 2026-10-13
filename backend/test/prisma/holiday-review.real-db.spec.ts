@@ -156,6 +156,7 @@ describeReal("holiday review (real PostgreSQL)", () => {
                 endDate: d(partial.end ?? "2026-11-13"),
                 duration: partial.duration ?? 10,
                 serviceStatus: partial.status === undefined ? "active" : partial.status,
+                bookingConfirmedAt: partial.status === "pre_booking" ? null : new Date("2026-01-01"),
             },
         });
         clientIds.push(row.id);

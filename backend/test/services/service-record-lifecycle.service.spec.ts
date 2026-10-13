@@ -69,7 +69,8 @@ describe("ServiceRecordLifecycleService", () => {
         ["pre_booking", date("2026-09-03"), true, true],
         ["waiting", date("2026-09-03"), false, true],
         [null, date("2026-09-03"), false, true],
-    ])("gates new cases using client status %s, end %s, existing %s", async (serviceStatus, endDate, hasCase, creates) => {
+        ["waiting", date("2026-09-03"), false, false, null],
+    ])("gates new cases using client status %s, end %s, existing %s", async (serviceStatus, endDate, hasCase, creates, confirmation = undefined) => {
         const record = { id: rawQueryCaseId, branchId: rawQueryBranchId, clientId: 1 };
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
@@ -77,6 +78,7 @@ describe("ServiceRecordLifecycleService", () => {
                 findUnique: jest.fn().mockResolvedValue({
                     id: 1, branchId: rawQueryBranchId, startDate: date("2026-08-10"),
                     endDate, serviceStatus, duration: null, employeeSchedules: [],
+                    bookingConfirmedAt: confirmation === null || serviceStatus === "pre_booking" ? null : date("2026-01-01"),
                 }),
                 updateMany: jest.fn(),
             },
@@ -103,11 +105,12 @@ describe("ServiceRecordLifecycleService", () => {
         const client = {
             id: 1, branchId: rawQueryBranchId, startDate: date("2026-08-10"),
             endDate: date("2026-09-03"), serviceStatus: "waiting", duration: null, employeeSchedules: [],
+            bookingConfirmedAt: date("2026-01-01"),
         };
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
             client: {
-                findUnique: jest.fn().mockResolvedValueOnce(client).mockResolvedValue({ ...client, serviceStatus: "pre_booking" }),
+                findUnique: jest.fn().mockResolvedValueOnce(client).mockResolvedValue({ ...client, serviceStatus: "pre_booking", bookingConfirmedAt: null }),
                 updateMany: jest.fn(),
             },
             service_record_case: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn().mockResolvedValue({ id: rawQueryCaseId }) },
@@ -186,6 +189,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: date("2026-09-03"),
                     duration: 15,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -225,6 +229,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: date("2026-09-03"),
                     duration: 15,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -267,6 +272,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: date("2026-09-04"),
                     duration: 15,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [{
                         id: 19,
                         branchId: rawQueryBranchId,
@@ -315,6 +321,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: date("2026-09-27"),
                     duration: null,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -354,6 +361,7 @@ describe("ServiceRecordLifecycleService", () => {
                     id: 1, branchId: "branch-1", startDate: date("2026-09-03"),
                     endDate: date("2026-09-08"), duration: 15,
                     serviceStatus: "in_progress", employeeSchedules: [],
+                    bookingConfirmedAt: date("2026-01-01"),
                 }),
                 updateMany: jest.fn(),
             },
@@ -400,6 +408,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: date("2026-08-10"),
                     duration: null,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -442,6 +451,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate: newEndDate,
                     duration: 10,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
             },
@@ -502,6 +512,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate,
                     duration: 10,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
             },
@@ -554,6 +565,7 @@ describe("ServiceRecordLifecycleService", () => {
                     endDate,
                     duration: 10,
                     serviceStatus: "in_progress",
+                    bookingConfirmedAt: date("2026-01-01"),
                     employeeSchedules: [],
                 }),
             },
@@ -1750,6 +1762,7 @@ describe("ServiceRecordLifecycleService", () => {
                         endDate: date("2026-09-03"),
                         duration: 15,
                         serviceStatus: "in_progress",
+                        bookingConfirmedAt: date("2026-01-01"),
                         employeeSchedules: [],
                     }),
                     updateMany: jest.fn().mockResolvedValue({ count: 1 }),

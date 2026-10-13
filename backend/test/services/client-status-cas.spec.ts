@@ -31,6 +31,8 @@ function createClient(serviceStatus: string | null): ClientEntity {
         serviceStatus,
         false,
         null,
+        null, null, null, null, false, null, undefined,
+        new Date("2026-01-01"),
     );
 }
 
@@ -95,6 +97,17 @@ describe("ClientService automatic service-status CAS", () => {
             "active",
         );
         expect(prisma.client.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["pre_booking", new Date("2026-01-01"), "active"],
+        ["waiting", null, "pre_booking"],
+    ] as const)("reconciles stored %s with confirmation %s to %s", async (stored, bookingConfirmedAt, expected) => {
+        const client = Object.assign(createClient(stored), { bookingConfirmedAt });
+        const { clientRepository, service } = createService(client);
+        expect((await service.findAll("branch-1"))[0]?.serviceStatus).toBe(expected);
+        await flushBackgroundWork();
+        expect(clientRepository.updateServiceStatusIfCurrent).toHaveBeenCalledWith("branch-1", 1, stored, expected);
     });
 
     it("does not let a late background write overwrite a manual terminal transition", async () => {

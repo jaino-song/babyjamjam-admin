@@ -86,6 +86,7 @@ describeAgentE2E("production service-record-link task effect planner", () => {
             phoneNormalized: "01000000501",
             voucherClient: false,
             serviceStatus: "pre_booking",
+            bookingConfirmedAt: new Date("2026-01-01"),
             startDate: serviceStart,
             endDate: serviceEnd,
         } });

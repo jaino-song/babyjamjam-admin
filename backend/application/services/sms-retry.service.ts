@@ -134,7 +134,7 @@ export class SmsRetryService {
     ): Promise<MessageLogEntity | null> {
         if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
             const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
-            if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking") {
+            if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
                 if (invocation === "automatic") {
                     // The failed job would otherwise block re-issuing the link once the
                     // client leaves 예약 전; a system-cancelled row is revivable by the claim.

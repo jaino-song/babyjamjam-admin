@@ -154,6 +154,7 @@ export class SbClientRepository implements IClientRepository {
             birthday: true,
             dueDate: true,
             serviceStatus: true,
+            bookingConfirmedAt: true,
             breastPump: true,
             eDocId: true,
             suppressGreetingSms: true,
@@ -774,7 +775,7 @@ export class SbClientRepository implements IClientRepository {
      *  - `startDate < addBusinessDays(today, threshold + 1)`: a start inside the business-day
      *    send window is exactly any date before the business day just past it (the same bound
      *    `getActionRequiredAlerts` uses); a null start never matches;
-     *  - not a stored manual pre_booking/terminated status, and `endDate >= today` (a finished
+     *  - confirmed and not a stored manual terminated status, and `endDate >= today` (a finished
      *    service is effectively completed), except 교체 요청 which keeps its stored status.
      * That leaves the branch's currently running or upcoming clients starting before the window
      * end, which is bounded by the branch's live clients rather than its whole history.
@@ -818,7 +819,6 @@ export class SbClientRepository implements IClientRepository {
                                     {
                                         serviceStatus: {
                                             notIn: [
-                                                SERVICE_STATUS.PRE_BOOKING,
                                                 SERVICE_STATUS.TERMINATED,
                                                 SERVICE_STATUS.REPLACEMENT_REQUESTED,
                                             ],
@@ -826,6 +826,7 @@ export class SbClientRepository implements IClientRepository {
                                     },
                                 ],
                             },
+                            { bookingConfirmedAt: { not: null } },
                             { endDate: { gte: todayStart } },
                         ],
                     },
@@ -850,6 +851,7 @@ export class SbClientRepository implements IClientRepository {
                         client.serviceStatus ?? null,
                         client.startDate ?? null,
                         client.endDate ?? null,
+                        client.bookingConfirmedAt,
                         now,
                     ),
                     startDate: client.startDate ?? null,

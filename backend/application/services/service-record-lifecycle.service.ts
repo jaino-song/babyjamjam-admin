@@ -362,6 +362,7 @@ export class ServiceRecordLifecycleService {
                 endDate: true,
                 duration: true,
                 serviceStatus: true,
+                bookingConfirmedAt: true,
                 employeeSchedules: {
                     include: { primaryEmployee: true },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -405,6 +406,7 @@ export class ServiceRecordLifecycleService {
                     endDate: true,
                     duration: true,
                     serviceStatus: true,
+                    bookingConfirmedAt: true,
                     employeeSchedules: {
                         include: { primaryEmployee: true },
                         orderBy: [{ startDate: "asc" }, { id: "asc" }],
@@ -426,7 +428,7 @@ export class ServiceRecordLifecycleService {
         }
         if (
             !existing
-            && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking"
+            && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking"
         ) {
             return null;
         }

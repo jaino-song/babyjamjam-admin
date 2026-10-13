@@ -185,7 +185,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -233,7 +233,7 @@ export class ServiceRecordLinkService {
             where: { id: scheduleId },
             include: {
                 primaryEmployee: true,
-                client: { select: { serviceStatus: true, startDate: true, endDate: true } },
+                client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } },
             },
         });
         if (!schedule || !schedule.branchId || schedule.replaced) {
@@ -359,10 +359,11 @@ export class ServiceRecordLinkService {
 
     private assertClientCanReceiveLink(client: {
         serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
         startDate: Date | null;
         endDate: Date | null;
     }): void {
-        if (getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate) === "pre_booking") {
+        if (getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                 pointer: "/scheduleId",
                 code: "INVALID_VALUE",
@@ -416,6 +417,7 @@ export class ServiceRecordLinkService {
                     schedule.client.serviceStatus,
                     schedule.client.startDate,
                     schedule.client.endDate,
+                    schedule.client.bookingConfirmedAt,
                 ) === "pre_booking"
                 || schedule.client?.serviceStatus === "completed"
                 || schedule.client?.serviceStatus === "terminated"

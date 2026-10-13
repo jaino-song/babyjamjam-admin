@@ -362,6 +362,7 @@ async function createScheduleFixture(): Promise<{
     const client = await prisma.client.create({
         data: {
             name: "Task 3 Schedule Client",
+            bookingConfirmedAt: new Date("2026-01-01"),
             voucherClient: false,
             branchId,
             duration: 2,

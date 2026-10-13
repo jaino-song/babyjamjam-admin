@@ -2950,7 +2950,7 @@ describe("MessageTriggerService", () => {
             dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
             dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule && {
                 ...schedule,
-                client: { serviceStatus: "waiting", startDate: new Date("2026-11-03T00:00:00.000Z"), endDate: new Date("2026-11-14T00:00:00.000Z") },
+                client: { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-11-03T00:00:00.000Z"), endDate: new Date("2026-11-14T00:00:00.000Z") },
             });
 
             await dispatcher.service.dispatchDueJobs();
@@ -2968,7 +2968,7 @@ describe("MessageTriggerService", () => {
                 expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
                     where: { id: 10, branchId },
                     select: { endDate: true, replaced: true, terminatedAt: true,
-                        client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+                        client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
                 });
             }
         } finally {
@@ -2988,6 +2988,7 @@ describe("MessageTriggerService", () => {
         ["manual", "waiting", true, "start"],
         ["retry", "waiting", true, "end"],
         ["manual", "waiting", false, "client"],
+        ["automatic", "waiting", true, "confirmation"],
     ])("dispatch gates %s link jobs for %s clients (missing %s)", async (kind, serviceStatus, cancels, missing = "none") => {
         const dispatcher = createDispatchService();
         const job = createJob({
@@ -3005,6 +3006,7 @@ describe("MessageTriggerService", () => {
             endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
             client: missing === "client" ? null : {
                 serviceStatus,
+                bookingConfirmedAt: missing === "confirmation" || serviceStatus === "pre_booking" ? null : new Date("2026-01-01"),
                 startDate: missing === "start" ? null : new Date(),
                 endDate: missing === "end" ? null : new Date(Date.now() + 86400000),
             },
@@ -3047,7 +3049,7 @@ describe("MessageTriggerService", () => {
         dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(overrides && {
             endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
-            client: { serviceStatus: "pre_booking", startDate: new Date(), endDate: new Date() },
+            client: { serviceStatus: "pre_booking", bookingConfirmedAt: null, startDate: new Date(), endDate: new Date() },
             ...overrides,
         });
         await dispatcher.service.dispatchDueJobs();
@@ -3067,7 +3069,7 @@ describe("MessageTriggerService", () => {
         dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue({
             replaced: true, terminatedAt: new Date(), endDate: new Date("2026-01-01"),
-            client: { serviceStatus: "waiting", startDate: new Date(), endDate: new Date() },
+            client: { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date(), endDate: new Date() },
         });
         await dispatcher.service.dispatchDueJobs();
         expect(job.status).toBe("sent");
@@ -3075,7 +3077,7 @@ describe("MessageTriggerService", () => {
         expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledTimes(1);
         expect(dispatcher.prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: { id: 10, branchId },
-            select: { client: { select: { serviceStatus: true, startDate: true, endDate: true } } },
+            select: { client: { select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } } },
         });
     });
 

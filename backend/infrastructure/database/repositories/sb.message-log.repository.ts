@@ -69,11 +69,12 @@ export class SbMessageLogRepository implements IMessageLogRepository {
 
     async findServiceRecordLinkClientState(log: MessageLogEntity): Promise<{
         serviceStatus: string | null;
+        bookingConfirmedAt: Date | null;
         startDate: Date | null;
         endDate: Date | null;
     } | null> {
         if (!log.branchId) return null;
-        const select = { serviceStatus: true, startDate: true, endDate: true } as const;
+        const select = { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true } as const;
         if (log.triggerJobId) {
             const job = await this.prisma.message_trigger_job.findFirst({
                 where: { id: log.triggerJobId, branchId: log.branchId },
@@ -81,7 +82,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             const client = job?.employeeSchedule?.client;
             if (client?.branchId === log.branchId) {
-                return { serviceStatus: client.serviceStatus, startDate: client.startDate, endDate: client.endDate };
+                return { serviceStatus: client.serviceStatus, startDate: client.startDate, endDate: client.endDate, bookingConfirmedAt: client.bookingConfirmedAt };
             }
         }
         if (log.clientId == null) return null;

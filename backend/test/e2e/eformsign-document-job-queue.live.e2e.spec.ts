@@ -137,6 +137,7 @@ const buildContract = (employeeName: string, employeePhone: string): ContractDat
         const client = await prisma.client.create({
             data: {
                 name: CUSTOMER_NAME,
+                bookingConfirmedAt: new Date("2026-01-01"),
                 phone: TEST_CUSTOMER_PHONE,
                 address: "E2E 삭제예정 테스트 주소",
                 birthday: "900101",

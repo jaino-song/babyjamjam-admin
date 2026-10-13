@@ -25,6 +25,7 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
             grant: "50000",
             actualPrice: "50000",
             serviceStatus: "active",
+            bookingConfirmedAt: new Date("2024-01-01"),
             areaId: "global",
         };
         const findClient = { execute: jest.fn().mockResolvedValue(existingClient) };
@@ -1333,15 +1334,17 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
 
         function arrange(after: { serviceStatus: string }) {
             const fixture = setup();
-            const before = { ...fixture.existingClient, serviceStatus: "pre_booking" };
+            const before = { ...fixture.existingClient, serviceStatus: "pre_booking", endDate: null };
             fixture.findClient.execute.mockResolvedValue(before);
-            const updated = { ...fixture.existingClient, ...after };
+            const updated = { ...fixture.existingClient, ...after,
+                endDate: after.serviceStatus === "pre_booking" ? null : fixture.existingClient.endDate };
             fixture.updateClient.execute.mockResolvedValue(updated);
             fixture.updateClient.executeApprovedTarget.mockResolvedValue(updated);
             const capability = fixture.capabilities.find((entry) => entry.meta.name === "clients.update")!;
+            const updates = { id: 1, endDate: after.serviceStatus === "pre_booking" ? null : "2024-06-01" };
             const run = (entry: (typeof entryPoints)[number]) => entry === "execute"
-                ? capability.execute!(context, { id: 1, serviceStatus: after.serviceStatus })
-                : capability.executeApprovedTarget!(context, { id: 1, serviceStatus: after.serviceStatus }, "approved-target");
+                ? capability.execute!(context, updates)
+                : capability.executeApprovedTarget!(context, updates, "approved-target");
             return { ...fixture, capability, run };
         }
 

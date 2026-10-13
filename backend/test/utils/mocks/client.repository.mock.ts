@@ -106,6 +106,7 @@ export class MockClientRepository implements IClientRepository {
                     client.serviceStatus,
                     client.startDate,
                     client.endDate,
+                    client.bookingConfirmedAt,
                 ) === tab,
         );
 
@@ -139,6 +140,7 @@ export class MockClientRepository implements IClientRepository {
             client.serviceStatus,
             client.startDate,
             client.endDate,
+            client.bookingConfirmedAt,
         );
         const byTab = {
             all: data.length,
@@ -203,6 +205,7 @@ export class MockClientRepository implements IClientRepository {
             client.suppressGreetingSms,
             client.birthDate,
             client.phoneNormalized,
+            client.bookingConfirmedAt,
         );
         this.clients.set(id, newClient);
         return newClient;
