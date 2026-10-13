@@ -488,6 +488,16 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         });
     }
 
+    async findVoidedByNames(userIds: string[]): Promise<Map<string, string | null>> {
+        if (userIds.length === 0) return new Map();
+
+        const users = await this.prismaService.user.findMany({
+            where: { id: { in: [...new Set(userIds)] } },
+            select: { id: true, name: true },
+        });
+        return new Map(users.map((user) => [user.id, user.name]));
+    }
+
     async findContractEndDatesByDocumentIds(documentIds: string[]): Promise<Map<string, string>> {
         if (documentIds.length === 0) return new Map();
 
@@ -657,6 +667,15 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
                 }));
             return EformsignDocMapper.toDomain(toCompatDomainRow(created));
         }
+    }
+
+    async markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean> {
+        // No compatibility retry: a void must never succeed without its durable audit values.
+        const result = await this.prismaService.eformsign_doc.updateMany({
+            where: { documentId, branchId: branchid, voidedAt: null, permanentPurgeRequestedAt: null },
+            data: { voidedAt, voidedBy },
+        });
+        return result.count > 0;
     }
 
     async update(

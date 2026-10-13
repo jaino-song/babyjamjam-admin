@@ -51,6 +51,7 @@ export const MIRROR_UNASSIGNED_KEY = "_mirror_unassigned";
 export function eformsignListDocFromMirror(document: EformsignDocEntity): EformsignListDoc {
     return {
         id: document.documentId,
+        isVoided: document.isVoided,
         document_name: document.documentName ?? "",
         document_number: document.documentNumber ?? "",
         created_date: document.createdDate.getTime(),

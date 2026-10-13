@@ -35,6 +35,7 @@ import {
  * shared test fixtures — change both files together.
  */
 export type EformsignDocDisplayStatus =
+    | "voided"
     | "pending"
     | "signed"
     | "review"
@@ -113,6 +114,7 @@ export function resolveEformsignDocDisplayStatus(
     now: Date,
     calendar: KrBusinessDayCalendar,
 ): EformsignDocDisplayStatus {
+    if (document.isVoided === true) return "voided";
     // Before the category checks: 040/045 sit in the expired bucket for filtering, but the document
     // is not expired — independent of step, unassigned state and end date.
     const statusType = stringFromUnknown(getCurrentStatus(document)?.["status_type"]);

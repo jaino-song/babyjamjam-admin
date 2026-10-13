@@ -1257,6 +1257,7 @@ export class EformsignWebhookService {
             : new Date(Math.max(updatedTimestamp, existing.createdDate.getTime()));
         const updated = EformsignDocEntity.reconstitute({
             ...existing.toJSON(),
+            voidedBy: existing.voidedBy,
             documentName: documentName ?? null,
             templateId: templateId ?? null,
             templateName: templateName ?? null,

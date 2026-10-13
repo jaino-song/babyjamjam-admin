@@ -20,6 +20,8 @@ export type EformsignListDoc = {
     createdDate?: unknown;
     fields?: unknown;
     detail_template_info?: unknown;
+    /** Local-only liveness flag, retained by list snapshots. */
+    isVoided?: boolean;
 } & Record<string, unknown>;
 
 export type TemplateMatch = "include" | "exclude";
@@ -96,6 +98,7 @@ export function isProviderReviewStep(document: EformsignListDoc): boolean {
 }
 
 export function getDocumentStatusCategory(document: EformsignListDoc): DocumentStatusCategory {
+    if (document.isVoided === true) return "expired";
     const statusType = stringFromUnknown(getCurrentStatus(document)?.["status_type"]);
     const normalized = normalizeEformsignStatusCode(statusType);
     if (COMPLETED_STATUS_CODES.has(normalized)) {
