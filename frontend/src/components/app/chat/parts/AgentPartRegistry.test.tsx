@@ -11,6 +11,14 @@ jest.mock("next/link", () => ({
     ),
 }));
 
+// The real card runs its own react-query lookup; the registry only decides
+// which id (if any) it is handed.
+jest.mock("./AgentContactCard", () => ({
+    AgentContactCard: ({ "data-component": dc, clientId, employeeId }: { "data-component": string; clientId?: number; employeeId?: number }) => (
+        <div data-testid="contact-card" data-component={dc} data-client-id={clientId ?? ""} data-employee-id={employeeId ?? ""} />
+    ),
+}));
+
 if (typeof globalThis.ResizeObserver === "undefined") {
     Object.defineProperty(globalThis, "ResizeObserver", {
         configurable: true,
@@ -523,5 +531,145 @@ describe("AgentPartRegistry", () => {
         } as unknown as UIMessage;
         render(<AgentPartRegistry data-component={dataComponent} message={message} />);
         expect(screen.getByText(/새 형식/)).toBeInTheDocument();
+    });
+
+    describe("contact lookup by id", () => {
+        const proposal = (fields: { target?: Record<string, unknown>; changes?: Record<string, unknown> }) => ({
+            id: "assistant-contact",
+            role: "assistant",
+            parts: [{
+                type: "data-action-proposal",
+                data: {
+                    actionId: "action-contact",
+                    capability: "contracts.dispatch",
+                    title: "작업",
+                    summary: "요약",
+                    expiresAt: "2099-08-03T00:00:00.000Z",
+                    expectedRevision: "revision-1",
+                    changes: {},
+                    ...fields,
+                },
+            }],
+        }) as unknown as UIMessage;
+
+        it("hands target.clientId to the card, under the summary", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { clientId: 12 } })} />);
+            const card = screen.getByTestId("contact-card");
+            expect(card).toHaveAttribute("data-client-id", "12");
+            expect(card).toHaveAttribute("data-employee-id", "");
+            expect(card).toHaveAttribute("data-component", `${dataComponent}_action-approval_contact`);
+            const summary = document.querySelector(`[data-component="${dataComponent}_action-approval_content_summary"]`);
+            expect(summary?.nextElementSibling).toBe(card);
+        });
+
+        it("falls back to changes.clientId", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ changes: { clientId: 5 } })} />);
+            expect(screen.getByTestId("contact-card")).toHaveAttribute("data-client-id", "5");
+        });
+
+        it("hands target.employeeId to an employee card", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { employeeId: 9 } })} />);
+            const card = screen.getByTestId("contact-card");
+            expect(card).toHaveAttribute("data-employee-id", "9");
+            expect(card).toHaveAttribute("data-client-id", "");
+        });
+
+        it("falls back to changes.employeeId last", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ changes: { employeeId: 4 } })} />);
+            expect(screen.getByTestId("contact-card")).toHaveAttribute("data-employee-id", "4");
+        });
+
+        it("prefers target.clientId over target.employeeId and changes ids", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { employeeId: 9, clientId: 12 }, changes: { clientId: 5 } })} />);
+            const card = screen.getByTestId("contact-card");
+            expect(card).toHaveAttribute("data-client-id", "12");
+            expect(card).toHaveAttribute("data-employee-id", "");
+        });
+
+        it("shows no card for a user account id (target.userId)", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { userId: 3 } })} />);
+            expect(screen.queryByTestId("contact-card")).not.toBeInTheDocument();
+        });
+
+        it("accepts a string of digits as the id", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { clientId: "12" } })} />);
+            expect(screen.getByTestId("contact-card")).toHaveAttribute("data-client-id", "12");
+        });
+
+        it.each([0, -1, "abc", 1.5, "1.5", "-3", "", null, true, 2 ** 60])("shows no card for the invalid id %p", (value) => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { clientId: value } })} />);
+            expect(screen.queryByTestId("contact-card")).not.toBeInTheDocument();
+        });
+
+        it("skips an invalid id and uses the next valid one", () => {
+            render(<AgentPartRegistry data-component={dataComponent} message={proposal({ target: { clientId: 0, employeeId: 9 } })} />);
+            expect(screen.getByTestId("contact-card")).toHaveAttribute("data-employee-id", "9");
+        });
+
+        it("shows no card for an action result, even one that carries a client id", () => {
+            const message = {
+                id: "assistant-result",
+                role: "assistant",
+                parts: [{ type: "data-action-result", data: { actionId: "a-1", status: "succeeded", summary: "완료", result: { clientId: 12 } } }],
+            } as unknown as UIMessage;
+            render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+            expect(screen.queryByTestId("contact-card")).not.toBeInTheDocument();
+        });
+
+        it("shows no card for an entity choice", () => {
+            const message = {
+                id: "assistant-choice",
+                role: "assistant",
+                parts: [{ type: "data-entity-choice", data: { entityType: "clients", prompt: "선택", choices: [{ id: "1", label: "홍길동" }, { id: "2", label: "김영희" }] } }],
+            } as unknown as UIMessage;
+            render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+            // the schema needs two choices; with one the part would fall back instead of reaching the choice branch
+            expect(screen.getByRole("group", { name: "선택" })).toHaveAttribute("data-component", `${dataComponent}_entity-choice`);
+            expect(screen.getByRole("button", { name: "홍길동" })).toBeInTheDocument();
+            expect(screen.queryByText(/새 형식/)).not.toBeInTheDocument();
+            expect(screen.queryByTestId("contact-card")).not.toBeInTheDocument();
+        });
+    });
+
+    describe("masked contact keys in the JSON blocks", () => {
+        it("omits phoneLast4, maskedContact and receiver from a proposal's target and changes", () => {
+            const message = {
+                id: "assistant-masked",
+                role: "assistant",
+                parts: [{
+                    type: "data-action-proposal",
+                    data: {
+                        actionId: "action-masked",
+                        capability: "messages.send",
+                        title: "문자 발송",
+                        summary: "요약",
+                        expiresAt: "2099-08-03T00:00:00.000Z",
+                        expectedRevision: "revision-1",
+                        target: { clientId: 12, phoneLast4: "5678", MaskedContact: "••••5678" },
+                        changes: { receiver: "••••5678", Receiver: "••••5678", maskedReceiver: "••••5678", phone: "••••5678", body: "안내" },
+                    },
+                }],
+            } as unknown as UIMessage;
+            const { container } = render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+            const text = container.textContent ?? "";
+            expect(text).not.toMatch(/phoneLast4|maskedContact|maskedReceiver|receiver/i);
+            // other keys stay exactly as they are, including `phone`
+            expect(text).toContain('"clientId":12');
+            expect(text).toContain('"phone": "••••5678"');
+            expect(text).toContain('"body": "안내"');
+        });
+
+        it("omits the masked keys from an action result", () => {
+            const message = {
+                id: "assistant-masked-result",
+                role: "assistant",
+                parts: [{ type: "data-action-result", data: { actionId: "a-1", status: "succeeded", summary: "완료", result: { phoneLast4: "5678", maskedContact: "••••5678", RECEIVER: "x", clientId: 12, phone: "keep" } } }],
+            } as unknown as UIMessage;
+            const { container } = render(<AgentPartRegistry data-component={dataComponent} message={message} />);
+            const text = container.textContent ?? "";
+            expect(text).not.toMatch(/phoneLast4|maskedContact|receiver/i);
+            expect(text).toContain('"clientId": 12');
+            expect(text).toContain('"phone": "keep"');
+        });
     });
 });

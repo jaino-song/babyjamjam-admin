@@ -1,6 +1,7 @@
 "use client";
 
 import { isSameOriginPath } from "@babyjamjam/shared/utils";
+import { omitMaskedContactKeys } from "@/components/app/ui/AgentActionApprovalCard";
 
 type ActionResultPartProps = {
     "data-component": string;
@@ -21,5 +22,5 @@ export function ActionResultPart({ "data-component": dataComponent, actionId, st
     // changes all fail), not a bare `startsWith("/")` prefix check, which a
     // value like "/\evil.test" or "//evil.test" would incorrectly pass.
     const safeHref = href && isSameOriginPath(href) ? href : undefined;
-    return <section data-component={dataComponent} data-source-component="ActionResultPart" className="rounded-xl border p-4" aria-label={`작업 결과: ${label}`}><p data-component={`${dataComponent}_status`} data-slot="status" className="font-semibold">{label}</p><p data-component={`${dataComponent}_summary`} data-slot="summary" className="text-sm">{summary}</p>{completedAt && <p data-component={`${dataComponent}_completed-at`} data-slot="completed-at" className="text-xs text-muted-foreground">처리 시각: {new Date(completedAt).toLocaleString()}</p>}{result && <pre data-component={`${dataComponent}_result`} data-slot="result" className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(result, null, 2)}</pre>}{safeHref && <a data-component={`${dataComponent}_link`} data-slot="link" className="text-sm underline" href={safeHref}>결과 열기</a>}<p data-component={`${dataComponent}_action-id`} data-slot="action-id" className="mt-1 text-xs text-muted-foreground">작업 ID: {actionId}</p></section>;
+    return <section data-component={dataComponent} data-source-component="ActionResultPart" className="rounded-xl border p-4" aria-label={`작업 결과: ${label}`}><p data-component={`${dataComponent}_status`} data-slot="status" className="font-semibold">{label}</p><p data-component={`${dataComponent}_summary`} data-slot="summary" className="text-sm">{summary}</p>{completedAt && <p data-component={`${dataComponent}_completed-at`} data-slot="completed-at" className="text-xs text-muted-foreground">처리 시각: {new Date(completedAt).toLocaleString()}</p>}{result && <pre data-component={`${dataComponent}_result`} data-slot="result" className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(omitMaskedContactKeys(result), null, 2)}</pre>}{safeHref && <a data-component={`${dataComponent}_link`} data-slot="link" className="text-sm underline" href={safeHref}>결과 열기</a>}<p data-component={`${dataComponent}_action-id`} data-slot="action-id" className="mt-1 text-xs text-muted-foreground">작업 ID: {actionId}</p></section>;
 }
