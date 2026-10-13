@@ -121,7 +121,8 @@ const AutomationRuleActiveSchema = AutomationRuleIdSchema.extend({ isActive: z.b
 const AutomationRuleOutputSchema = z.object({ status: z.string(), id: z.string(), isActive: z.boolean().optional() });
 const AutomationRulesOutputSchema = z.object({ rules: z.array(z.object({
     id: z.string(), name: z.string(), isActive: z.boolean(), eventType: z.string(), offsetType: z.string(),
-    offsetDays: z.number().int(), sendTime: z.string(), recipientType: z.string(), templateKey: z.string(), isDefault: z.boolean(), jobsStale: z.boolean(), updatedAt: z.string(),
+    offsetDays: z.number().int(), sendTime: z.string(), recipientType: z.string(), templateKey: z.string(), isDefault: z.boolean(), jobsStale: z.boolean(),
+    targetClientStatus: z.string(), retryOnFailure: z.boolean(), updatedAt: z.string(),
 })) });
 const SMS_FIELDS: AgentFormField[] = [
     { name: "receiver", label: "수신번호", type: "text", required: true },
@@ -550,7 +551,7 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
     }
 
     private ruleView(rule: MessageTriggerRuleEntity) {
-        return { id: rule.id, name: rule.name, isActive: rule.isActive, eventType: rule.eventType, offsetType: rule.offsetType, offsetDays: rule.offsetDays, sendTime: rule.sendTime, recipientType: rule.recipientType, templateKey: rule.templateKey, isDefault: rule.isDefault, jobsStale: rule.jobsStale, updatedAt: rule.updatedAt.toISOString() };
+        return { id: rule.id, name: rule.name, isActive: rule.isActive, eventType: rule.eventType, offsetType: rule.offsetType, offsetDays: rule.offsetDays, sendTime: rule.sendTime, recipientType: rule.recipientType, templateKey: rule.templateKey, isDefault: rule.isDefault, jobsStale: rule.jobsStale, targetClientStatus: rule.targetClientStatus, retryOnFailure: rule.retryOnFailure, updatedAt: rule.updatedAt.toISOString() };
     }
 
     private ruleTargetVersion(rule: MessageTriggerRuleEntity): string {

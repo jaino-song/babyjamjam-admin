@@ -410,6 +410,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -992,6 +993,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend
@@ -1552,6 +1554,7 @@ jobs:
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/scripts/verify-birthday-iso-columns.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261001000000_add_holiday_calendar/migration.sql
           ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013000000_add_client_booking_confirmed_at/migration.sql
+          ./scripts/run-prisma-db-execute.sh --schema prisma/schema.prisma --file prisma/migrations/20261013010000_add_message_trigger_rule_target_status_retry/migration.sql
 
       - name: Verify service-end notice suppression patch
         working-directory: backend

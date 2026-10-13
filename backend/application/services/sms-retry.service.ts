@@ -3,7 +3,12 @@ import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
-import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { MessageAutomationActivationService, type AutomaticRetryRulePolicy } from "application/services/message-automation-activation.service";
+import {
+    RULE_RETRY_DISABLED_REASON,
+    TARGET_CLIENT_STATUS_MISMATCH_REASON,
+    targetClientStatusAllowsSend,
+} from "application/policies/message-trigger-target-client-status.policy";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { SmsTriggerDeliveryService, type SmsTriggerDeliverySnapshot } from "application/services/sms-trigger-delivery.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
@@ -173,7 +178,10 @@ export class SmsRetryService {
             const boundary = await this.messageAutomationActivationService.runAutomaticRetryIfEnabled(
                 sourceLog.branchId,
                 sourceLog.triggerJobId,
-                async (transaction): Promise<AutomaticRetryBoundary> => {
+                async (transaction, rulePolicy): Promise<AutomaticRetryBoundary> => {
+                    const policySkip = await this.supersedeForRulePolicy(transaction, sourceLog, rulePolicy);
+                    if (policySkip) return { kind: "terminal", log: policySkip };
+
                     if (sourceLog.isPartialProviderOutcome()) {
                         sourceLog.markRetrySuperseded(PARTIAL_RETRY_SUPERSEDED_REASON);
                         await this.logRepository.update(sourceLog, transaction);
@@ -309,6 +317,36 @@ export class SmsRetryService {
             : this.beginProviderCallWithoutBoundary(retryLog);
 
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation);
+    }
+
+    /**
+     * 규칙 메시지-04 at the automatic retry boundary, using the rule values read
+     * under the boundary's lock (so a toggle changed after the retry was
+     * scheduled still applies). Both outcomes are non-failure skips: the source
+     * log is superseded with a greppable reason token, nothing is sent and
+     * nothing is rescheduled. Manual [재발송] never reaches this method.
+     */
+    private async supersedeForRulePolicy(
+        transaction: Prisma.TransactionClient,
+        sourceLog: MessageLogEntity,
+        rulePolicy: AutomaticRetryRulePolicy | undefined,
+    ): Promise<MessageLogEntity | null> {
+        if (!rulePolicy) return null;
+        if (!rulePolicy.retryOnFailure) {
+            sourceLog.markRetrySuperseded(RULE_RETRY_DISABLED_REASON);
+            await this.logRepository.update(sourceLog, transaction);
+            return sourceLog;
+        }
+        // A job with no client is not subject to the target-status gate.
+        if (rulePolicy.targetClientStatus === "all" || !sourceLog.branchId || rulePolicy.clientId === null) return null;
+        const client = await transaction.client.findFirst({
+            where: { id: rulePolicy.clientId, branchId: sourceLog.branchId },
+            select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+        });
+        if (targetClientStatusAllowsSend(rulePolicy.targetClientStatus, client)) return null;
+        sourceLog.markRetrySuperseded(TARGET_CLIENT_STATUS_MISMATCH_REASON);
+        await this.logRepository.update(sourceLog, transaction);
+        return sourceLog;
     }
 
     /**
@@ -677,6 +715,9 @@ export class SmsRetryService {
         // Trigger-delivery retries retain their existing bounded automatic
         // policy. Their provider-rejected marker remains distinct from the
         // manual marker above so a scheduler tick can continue that path.
+        // 규칙 메시지-04: this attempt was admitted by the retry boundary with the
+        // rule's 실패 시 재전송 on. If the admin switches it off afterwards, the
+        // next scheduler pick is superseded at that boundary before any send.
         log.nextRetryAt = log.canRetry()
             ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
             : null;

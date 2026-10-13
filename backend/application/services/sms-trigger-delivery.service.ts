@@ -28,6 +28,11 @@ import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-autom
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import {
+    MESSAGE_TRIGGER_RULE_REPOSITORY,
+    IMessageTriggerRuleRepository,
+} from "domain/repositories/message-trigger-rule.repository.interface";
+import { ruleSendPolicyFrom } from "application/policies/message-trigger-target-client-status.policy";
+import {
     MessageLogEntity,
     MessageLogStatus,
     SMS_DELIVERY_RETRY_DELAY_MS,
@@ -202,7 +207,29 @@ export class SmsTriggerDeliveryService {
         private readonly enricherRegistry?: SmsTriggerPayloadEnricherRegistry,
         @Optional()
         private readonly automationDeliveryGate?: AgentAutomationDeliveryGateService,
+        @Optional()
+        @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
+        private readonly ruleRepository?: IMessageTriggerRuleRepository,
     ) {}
+
+    /**
+     * 규칙 메시지-04: the rule's CURRENT 실패 시 재전송. Read before the provider
+     * call (a read failing after the call would be misread as an uncertain
+     * outcome). A missing rule, a missing repository or a failed read all mean
+     * "on", i.e. today's behaviour.
+     */
+    private async readRuleRetryOnFailure(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (!this.ruleRepository || !job.branchId) return true;
+        try {
+            const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId);
+            return ruleSendPolicyFrom(rule).retryOnFailure;
+        } catch (error) {
+            this.logger.warn(
+                `Failed to read retryOnFailure for rule ${job.ruleId}; keeping automatic retry on: ${this.formatErrorMessage(error)}`,
+            );
+            return true;
+        }
+    }
 
     canHandle(templateKey: MessageTriggerTemplateKey): boolean {
         return Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
@@ -561,6 +588,8 @@ export class SmsTriggerDeliveryService {
             ? await this.acceptanceService.beginProviderCall(persistedAttempt)
             : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
 
+        const retryOnFailure = await this.readRuleRetryOnFailure(job);
+
         try {
             const result = await this.aligoService.sendSms({
                 receiver: snapshot.receiver,
@@ -588,7 +617,7 @@ export class SmsTriggerDeliveryService {
             attempt.status = isAccepted ? "sent" : "failed";
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
-            attempt.nextRetryAt = !isAccepted && !isPermanent && attempt.canRetry()
+            attempt.nextRetryAt = !isAccepted && !isPermanent && retryOnFailure && attempt.canRetry()
                 ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
                 : null;
             attempt.updatedAt = new Date(Date.now());

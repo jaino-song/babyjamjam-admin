@@ -1095,4 +1095,152 @@ describe("SmsRetryService", () => {
         expect(logRepository.update).toHaveBeenCalledWith(expect.objectContaining({ status: "failed", errorMessage: expect.stringContaining("권한 증거") }), transaction);
     });
 
+    describe("rule 실패 시 재전송 / 대상 고객 상태 (규칙 메시지-04)", () => {
+        type Policy = { targetClientStatus: string; retryOnFailure: boolean; clientId: number | null };
+        const transientRejection = {
+            request: { receiver: "01012345678" },
+            response: { result_code: -999, message: "일시적인 서버 장애" },
+        };
+        const harness = (policy: Policy | undefined, clientFacts: unknown = null) => {
+            const source = createSmsRetryLog();
+            source.triggerJobId = "job-rule-policy";
+            // No seal on the job: legacy authority, so the callback really runs.
+            const clientFindFirst = jest.fn().mockResolvedValue(clientFacts);
+            const transaction = {
+                message_trigger_job: { findUnique: jest.fn().mockResolvedValue({
+                    id: source.triggerJobId, branchId: source.branchId, payload: {},
+                }) },
+                client: { findFirst: clientFindFirst },
+            };
+            const activation = {
+                runAutomaticRetryIfEnabled: jest.fn().mockImplementation(async (
+                    _branch: string, _job: string, work: (tx: unknown, policy: Policy | undefined) => Promise<unknown>,
+                ) => ({ allowed: true, applies: true, value: await work(transaction, policy) })),
+            };
+            service = new SmsRetryService(
+                logRepository as unknown as IMessageLogRepository,
+                aligoService as unknown as AligoService,
+                messageSenderApprovalService as unknown as MessageSenderApprovalService,
+                undefined,
+                activation as never,
+            );
+            return { source, transaction, clientFindFirst };
+        };
+
+        it("retry on: a transient rejection of the automatic retry is rescheduled as today", async () => {
+            const { source } = harness({ targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
+            aligoService.sendSms.mockResolvedValue(transientRejection);
+
+            const retry = await service.retry(source, "automatic");
+
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            expect(retry).toMatchObject({ status: "failed", attempts: 2 });
+            expect(retry?.nextRetryAt).toEqual(new Date(300_000));
+        });
+
+        it("retry off (toggled after the retry was scheduled): the pending automatic retry is superseded, nothing is sent", async () => {
+            const { source, transaction } = harness({ targetClientStatus: "all", retryOnFailure: false, clientId: 7 });
+            source.nextRetryAt = new Date(0);
+
+            const result = await service.retry(source, "automatic");
+
+            expect(result).toBe(source);
+            expect(source).toMatchObject({ status: "failed", nextRetryAt: null });
+            expect(source.errorMessage).toContain("rule_retry_disabled");
+            expect(logRepository.update).toHaveBeenCalledWith(source, transaction);
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+        });
+
+        it("manual [재발송] of a message whose rule has retry off still works", async () => {
+            const { source } = harness({ targetClientStatus: "waiting", retryOnFailure: false, clientId: 7 });
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+
+            const result = await service.retryById(source.branchId!, source.id);
+
+            expect(result.status).toBe("sent");
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        });
+
+        it("a manual rejection never reschedules, whatever the rule says", async () => {
+            const { source } = harness({ targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            aligoService.sendSms.mockResolvedValue(transientRejection);
+
+            const result = await service.retryById(source.branchId!, source.id);
+
+            expect(result.nextRetryAt).toBeNull();
+        });
+
+        const stateFacts = {
+            pre_booking: { serviceStatus: null, bookingConfirmedAt: null, startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") },
+            waiting: { serviceStatus: null, bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30") },
+            terminated: { serviceStatus: "terminated", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-01-01"), endDate: new Date("2099-06-30") },
+        };
+        it.each([
+            ["waiting", "pre_booking", true],
+            ["pre_booking", "pre_booking", false],
+            ["waiting", "waiting", false],
+            ["active", "terminated", true],
+            ["all", "terminated", false],
+        ] as const)("automatic retry for target %s with a %s client is superseded=%s", async (target, status, superseded) => {
+            const { source, clientFindFirst } = harness(
+                { targetClientStatus: target, retryOnFailure: true, clientId: 7 },
+                stateFacts[status],
+            );
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+
+            const result = await service.retry(source, "automatic");
+
+            if (target === "all") expect(clientFindFirst).not.toHaveBeenCalled();
+            if (superseded) {
+                expect(result).toBe(source);
+                expect(source.errorMessage).toContain("target_client_status_mismatch");
+                expect(source.nextRetryAt).toBeNull();
+                expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+                expect(aligoService.sendSms).not.toHaveBeenCalled();
+            } else {
+                expect(result?.status).toBe("sent");
+                expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+            }
+        });
+
+        it("does not apply the status gate to a job with no client", async () => {
+            const { source, clientFindFirst } = harness({ targetClientStatus: "waiting", retryOnFailure: true, clientId: null });
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+
+            const result = await service.retry(source, "automatic");
+
+            expect(result?.status).toBe("sent");
+            expect(clientFindFirst).not.toHaveBeenCalled();
+        });
+
+        it("manual [재발송] is not gated by the rule's target client status", async () => {
+            const { source, clientFindFirst } = harness(
+                { targetClientStatus: "active", retryOnFailure: true, clientId: 7 },
+                stateFacts.waiting,
+            );
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: source.receiver, msgType: "LMS", testModeYn: "N" },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+            });
+
+            const result = await service.retryById(source.branchId!, source.id);
+
+            expect(result.status).toBe("sent");
+            expect(clientFindFirst).not.toHaveBeenCalled();
+        });
+    });
+
 });

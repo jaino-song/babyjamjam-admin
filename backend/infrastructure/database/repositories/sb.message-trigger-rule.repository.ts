@@ -8,7 +8,10 @@ import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
+    MessageTriggerTargetClientStatus,
     MessageTriggerTemplateKey,
+    isMessageTriggerTargetClientStatus,
+    DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
 } from "domain/constants/message-trigger-catalog";
 
 type MessageTriggerRuleRawRow = {
@@ -24,6 +27,8 @@ type MessageTriggerRuleRawRow = {
     template_key: string;
     is_default: boolean;
     jobs_stale: boolean;
+    target_client_status: string;
+    retry_on_failure: boolean;
     created_at: Date | string;
     updated_at: Date | string;
 };
@@ -49,6 +54,21 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
     ): Promise<MessageTriggerRuleEntity | null> {
         const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
             where: { id, branchId },
+        });
+        return row ? this.toDomain(row) : null;
+    }
+
+    /**
+     * Read one rule by id for dispatch-time policy checks. Unlike `findById`
+     * this also returns branchless (GLOBAL) rules, which the job claim accepts.
+     */
+    async findByIdIncludingGlobal(
+        branchId: string,
+        id: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleEntity | null> {
+        const row = await (transaction ?? this.prisma).message_trigger_rule.findFirst({
+            where: { id, OR: [{ branchId }, { branchId: null }] },
         });
         return row ? this.toDomain(row) : null;
     }
@@ -137,6 +157,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: rule.templateKey,
                 isDefault: rule.isDefault,
                 jobsStale: rule.jobsStale,
+                targetClientStatus: rule.targetClientStatus,
+                retryOnFailure: rule.retryOnFailure,
             },
         });
         return this.toDomain(row);
@@ -161,6 +183,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: rule.templateKey,
                 isDefault: rule.isDefault,
                 jobsStale: rule.jobsStale,
+                targetClientStatus: rule.targetClientStatus,
+                retryOnFailure: rule.retryOnFailure,
             },
         });
         return this.toDomain(row);
@@ -185,6 +209,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: expected.templateKey,
                 isDefault: expected.isDefault,
                 jobsStale: expected.jobsStale,
+                targetClientStatus: expected.targetClientStatus,
+                retryOnFailure: expected.retryOnFailure,
                 updatedAt: expected.updatedAt,
             },
             data: {
@@ -198,6 +224,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: next.templateKey,
                 isDefault: next.isDefault,
                 jobsStale: next.jobsStale,
+                targetClientStatus: next.targetClientStatus,
+                retryOnFailure: next.retryOnFailure,
             },
         });
         return result.count === 1 ? next : null;
@@ -226,6 +254,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     template_key,
                     is_default,
                     jobs_stale,
+                    target_client_status,
+                    retry_on_failure,
                     created_at,
                     updated_at
                 FROM "message_trigger_rule"
@@ -269,6 +299,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     recipient_type = ${next.recipientType},
                     template_key = ${next.templateKey},
                     is_default = ${next.isDefault},
+                    target_client_status = ${next.targetClientStatus},
+                    retry_on_failure = ${next.retryOnFailure},
                     jobs_stale = TRUE,
                     updated_at = date_trunc('milliseconds', clock_timestamp())
                 WHERE id = ${expected.id}
@@ -286,6 +318,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     template_key,
                     is_default,
                     jobs_stale,
+                    target_client_status,
+                    retry_on_failure,
                     created_at,
                     updated_at
             `);
@@ -339,6 +373,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     templateKey: rule.templateKey,
                     isDefault: rule.isDefault,
                     jobsStale: rule.jobsStale,
+                    targetClientStatus: rule.targetClientStatus,
+                    retryOnFailure: rule.retryOnFailure,
                 },
                 update: {},
             }),
@@ -389,6 +425,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                 templateKey: expected.templateKey,
                 isDefault: expected.isDefault,
                 jobsStale: expected.jobsStale,
+                targetClientStatus: expected.targetClientStatus,
+                retryOnFailure: expected.retryOnFailure,
                 updatedAt: expected.updatedAt,
             },
         });
@@ -416,6 +454,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
                     template_key,
                     is_default,
                     jobs_stale,
+                    target_client_status,
+                    retry_on_failure,
                     created_at,
                     updated_at
                 FROM "message_trigger_rule"
@@ -478,6 +518,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
         templateKey: string;
         isDefault?: boolean;
         jobsStale?: boolean;
+        targetClientStatus?: string;
+        retryOnFailure?: boolean;
         createdAt: Date;
         updatedAt: Date;
     }): MessageTriggerRuleEntity {
@@ -496,6 +538,10 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             row.isDefault ?? false,
             row.jobsStale ?? false,
             row.sendTime,
+            isMessageTriggerTargetClientStatus(row.targetClientStatus)
+                ? row.targetClientStatus as MessageTriggerTargetClientStatus
+                : DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+            row.retryOnFailure ?? true,
         );
     }
 
@@ -513,6 +559,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             templateKey: row.template_key,
             isDefault: row.is_default,
             jobsStale: row.jobs_stale,
+            targetClientStatus: row.target_client_status,
+            retryOnFailure: row.retry_on_failure,
             createdAt: row.created_at instanceof Date ? row.created_at : new Date(row.created_at),
             updatedAt: row.updated_at instanceof Date ? row.updated_at : new Date(row.updated_at),
         });
@@ -536,6 +584,8 @@ export class SbMessageTriggerRuleRepository implements IMessageTriggerRuleReposi
             && current.templateKey === expected.templateKey
             && current.isDefault === expected.isDefault
             && current.jobsStale === expected.jobsStale
+            && current.targetClientStatus === expected.targetClientStatus
+            && current.retryOnFailure === expected.retryOnFailure
             && current.createdAt.getTime() === expected.createdAt.getTime()
             && current.updatedAt.getTime() === expected.updatedAt.getTime();
     }

@@ -15,6 +15,7 @@ import {
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
+    MessageTriggerTargetClientStatus,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
@@ -98,6 +99,8 @@ describe("MessageTriggerService", () => {
         branchId: string | null;
         isDefault: boolean;
         jobsStale: boolean;
+        targetClientStatus: MessageTriggerTargetClientStatus;
+        retryOnFailure: boolean;
         createdAt: Date;
         updatedAt: Date;
     }> = {}) =>
@@ -115,6 +118,9 @@ describe("MessageTriggerService", () => {
             overrides.updatedAt ?? new Date("2026-06-01T00:00:00.000Z"),
             overrides.isDefault ?? false,
             overrides.jobsStale ?? false,
+            "09:00",
+            overrides.targetClientStatus ?? "all",
+            overrides.retryOnFailure ?? true,
         );
 
     const createJob = (overrides: Partial<{
@@ -285,6 +291,7 @@ describe("MessageTriggerService", () => {
         const ruleRepository = {
             findAll: jest.fn(),
             findById: jest.fn(),
+            findByIdIncludingGlobal: jest.fn().mockResolvedValue(null),
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
             update: jest.fn(),
@@ -444,6 +451,7 @@ describe("MessageTriggerService", () => {
             }),
         };
         const ruleRepository = {
+            findByIdIncludingGlobal: jest.fn().mockResolvedValue(null),
             findInactiveDefaultRules: jest.fn().mockResolvedValue([]),
             update: jest.fn(),
             markJobsStale: jest.fn().mockResolvedValue(undefined),
@@ -480,6 +488,9 @@ describe("MessageTriggerService", () => {
             },
             employee_schedule: {
                 findFirst: employeeScheduleFindFirst,
+            },
+            client: {
+                findFirst: jest.fn().mockResolvedValue(null),
             },
             $transaction: jest.fn().mockImplementation(
                 async (operation: (transaction: DispatchTransaction) => Promise<unknown>) => operation(transaction),
@@ -1493,6 +1504,156 @@ describe("MessageTriggerService", () => {
             .rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
     });
 
+    describe("rule 대상 고객 상태 / 실패 시 재전송 fields (규칙 메시지-04)", () => {
+        const echoUpdate = (ruleRepository: ReturnType<typeof createService>["ruleRepository"]) => {
+            ruleRepository.update.mockImplementation(async (_branch: string, updated: MessageTriggerRuleEntity) => updated);
+        };
+
+        it("update without the fields leaves both unchanged", async () => {
+            const { service, ruleRepository } = createService();
+            const rule = createRule({ targetClientStatus: "waiting", retryOnFailure: false });
+            ruleRepository.findById.mockResolvedValue(rule);
+            echoUpdate(ruleRepository);
+
+            await service.updateRule(branchId, rule.id, { name: "이름만 변경" });
+
+            expect(ruleRepository.update).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ name: "이름만 변경", targetClientStatus: "waiting", retryOnFailure: false }),
+                expect.any(Object),
+            );
+        });
+
+        it("an activation toggle (no fields) leaves both unchanged", async () => {
+            const { service, ruleRepository } = createService();
+            const rule = createRule({ isActive: false, targetClientStatus: "active", retryOnFailure: false });
+            ruleRepository.findById.mockResolvedValue(rule);
+            echoUpdate(ruleRepository);
+
+            await service.updateRule(branchId, rule.id, { isActive: true });
+
+            expect(ruleRepository.update).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ targetClientStatus: "active", retryOnFailure: false }),
+                expect.any(Object),
+            );
+        });
+
+        it("update persists the values it is given", async () => {
+            const { service, ruleRepository } = createService();
+            const rule = createRule();
+            ruleRepository.findById.mockResolvedValue(rule);
+            echoUpdate(ruleRepository);
+
+            await service.updateRule(branchId, rule.id, { targetClientStatus: "pre_booking", retryOnFailure: false });
+
+            expect(ruleRepository.update).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ targetClientStatus: "pre_booking", retryOnFailure: false }),
+                expect.any(Object),
+            );
+        });
+
+        it.each([
+            [{}, "all", true],
+            [{ targetClientStatus: "active", retryOnFailure: false }, "active", false],
+        ] as const)("create %j persists %s / %s", async (extra, status, retry) => {
+            const { service, ruleRepository } = createService();
+            const created = createRule({ id: "rule-created" });
+            ruleRepository.create.mockResolvedValue(created);
+            ruleRepository.findById.mockResolvedValue(created);
+
+            await service.createRule(branchId, {
+                name: "신규", eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE, recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, ...extra,
+            });
+
+            expect(ruleRepository.create).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ targetClientStatus: status, retryOnFailure: retry }),
+                expect.any(Object),
+            );
+        });
+
+        it("rejects an unknown status with the validation-failed problem shape (service level)", () => {
+            expect(() => validateMessageTriggerRule({
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                targetClientStatus: "completed" as never,
+            })).toThrow(BadRequestException);
+            expect(() => validateMessageTriggerRule({
+                eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE,
+                recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+                targetClientStatus: "waiting",
+                retryOnFailure: false,
+            })).not.toThrow();
+        });
+
+        const approvedSnapshot = (rule: MessageTriggerRuleEntity, omit: string[] = []) => {
+            const snapshot: Record<string, unknown> = {
+                id: rule.id, branchId, name: rule.name, isActive: rule.isActive, eventType: rule.eventType,
+                offsetType: rule.offsetType, offsetDays: rule.offsetDays, sendTime: rule.sendTime,
+                recipientType: rule.recipientType, templateKey: rule.templateKey, isDefault: rule.isDefault,
+                jobsStale: rule.jobsStale, targetClientStatus: rule.targetClientStatus, retryOnFailure: rule.retryOnFailure,
+                createdAt: rule.createdAt.toISOString(), updatedAt: rule.updatedAt.toISOString(),
+            };
+            for (const key of omit) delete snapshot[key];
+            return snapshot;
+        };
+        const versionOf = (service: unknown, rule: MessageTriggerRuleEntity) =>
+            (service as { ruleTargetVersion(rule: MessageTriggerRuleEntity): string }).ruleTargetVersion(rule);
+
+        it("an approved update of the name leaves 대상 고객 상태 and 실패 시 재전송 unchanged", async () => {
+            const { service, ruleRepository } = createService();
+            const rule = createRule({ id: "rule-approved-fields", targetClientStatus: "waiting", retryOnFailure: false });
+            ruleRepository.updateIfTargetMatchesAndFenceJobs.mockImplementation(
+                async (_b: string, _expected: MessageTriggerRuleEntity, next: MessageTriggerRuleEntity) => next,
+            );
+
+            await service.updateRuleApprovedTarget(
+                branchId, rule.id, { name: "승인된 이름 변경" }, versionOf(service, rule), approvedSnapshot(rule),
+            );
+
+            expect(ruleRepository.updateIfTargetMatchesAndFenceJobs).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ targetClientStatus: "waiting", retryOnFailure: false }),
+                expect.objectContaining({ name: "승인된 이름 변경", targetClientStatus: "waiting", retryOnFailure: false }),
+                "Rule updated",
+                expect.any(Date),
+                expect.any(Object),
+            );
+        });
+
+        it.each([["targetClientStatus"], ["retryOnFailure"]])(
+            "rejects an approval snapshot issued without %s as stale instead of defaulting it",
+            async (missing) => {
+                const { service, ruleRepository } = createService();
+                const rule = createRule({ id: "rule-approved-stale", targetClientStatus: "waiting", retryOnFailure: false });
+
+                await expect(service.updateRuleApprovedTarget(
+                    branchId, rule.id, { name: "x" }, versionOf(service, rule), approvedSnapshot(rule, [missing]),
+                )).rejects.toMatchObject({ response: { code: "VALIDATION_FAILED" } });
+                expect(ruleRepository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+            },
+        );
+
+        it("the approval version changes when either field changes", () => {
+            const { service } = createService();
+            const base = createRule({ id: "rule-version" });
+            const versions = new Set([
+                versionOf(service, base),
+                versionOf(service, createRule({ id: "rule-version", targetClientStatus: "active" })),
+                versionOf(service, createRule({ id: "rule-version", retryOnFailure: false })),
+            ]);
+            expect(versions.size).toBe(3);
+        });
+    });
+
     it.each([undefined, "23:59"])("preserves or updates sendTime without losing the generation fence (%s)", async (sendTime) => {
         const { service, ruleRepository, jobRepository } = createService();
         const rule = createRule();
@@ -1602,6 +1763,8 @@ describe("MessageTriggerService", () => {
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
             jobsStale: existingRule.jobsStale,
+            targetClientStatus: existingRule.targetClientStatus,
+            retryOnFailure: existingRule.retryOnFailure,
             createdAt: existingRule.createdAt.toISOString(),
             updatedAt: existingRule.updatedAt.toISOString(),
         };
@@ -1649,6 +1812,8 @@ describe("MessageTriggerService", () => {
             templateKey: existingRule.templateKey,
             isDefault: existingRule.isDefault,
             jobsStale: existingRule.jobsStale,
+            targetClientStatus: existingRule.targetClientStatus,
+            retryOnFailure: existingRule.retryOnFailure,
             createdAt: existingRule.createdAt.toISOString(),
             updatedAt: existingRule.updatedAt.toISOString(),
         };
@@ -3020,6 +3185,193 @@ describe("MessageTriggerService", () => {
             expect(job.nextAttemptAt).toBeNull();
             expect(dispatcher.jobRepository.update).toHaveBeenCalledWith(job);
         }
+    });
+
+    // 규칙 메시지-04: 대상 고객 상태 send-time gate.
+    describe("target client status gate", () => {
+        const kstDay = (offsetDays: number): Date => {
+            const kst = new Date(Date.now() + 9 * 60 * 60 * 1000 + offsetDays * 86_400_000);
+            return new Date(Date.UTC(kst.getUTCFullYear(), kst.getUTCMonth(), kst.getUTCDate()));
+        };
+        const EFFECTIVE_STATUSES = [
+            "pre_booking", "waiting", "active", "completed", "terminated", "replacement_requested",
+        ] as const;
+        type EffectiveStatus = (typeof EFFECTIVE_STATUSES)[number];
+        const clientFacts = (status: EffectiveStatus) => {
+            switch (status) {
+                case "pre_booking":
+                    return { serviceStatus: null, bookingConfirmedAt: null, startDate: kstDay(3), endDate: kstDay(20) };
+                case "waiting":
+                    return { serviceStatus: null, bookingConfirmedAt: new Date("2026-01-01"), startDate: kstDay(3), endDate: kstDay(20) };
+                case "active":
+                    return { serviceStatus: null, bookingConfirmedAt: new Date("2026-01-01"), startDate: kstDay(-3), endDate: kstDay(10) };
+                case "completed":
+                    return { serviceStatus: null, bookingConfirmedAt: new Date("2026-01-01"), startDate: kstDay(-20), endDate: kstDay(-2) };
+                case "terminated":
+                case "replacement_requested":
+                    return { serviceStatus: status, bookingConfirmedAt: new Date("2026-01-01"), startDate: kstDay(-3), endDate: kstDay(10) };
+            }
+        };
+        const targets: MessageTriggerTargetClientStatus[] = ["all", "pre_booking", "waiting", "active"];
+
+        const dispatchWith = async (
+            target: MessageTriggerTargetClientStatus,
+            status: EffectiveStatus,
+            jobOverrides: Parameters<typeof createJob>[0] = {},
+        ) => {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId: "rule-target", ...jobOverrides });
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                createRule({ id: "rule-target", targetClientStatus: target }),
+            );
+            dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts(status));
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            await dispatcher.service.dispatchDueJobs();
+            return { dispatcher, job };
+        };
+
+        it.each(targets.flatMap((target) => EFFECTIVE_STATUSES.map((status) => [
+            target, status, target === "all" || target === status,
+        ] as const)))("target %s with an effective %s client sends=%s", async (target, status, sends) => {
+            const { dispatcher, job } = await dispatchWith(target, status);
+
+            expect(job.status).toBe(sends ? "sent" : "canceled");
+            expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(sends ? 1 : 0);
+            if (target === "all") {
+                // 전체 behaves exactly as before: no client read, every status sends.
+                expect(dispatcher.prisma.client.findFirst).not.toHaveBeenCalled();
+            }
+            if (!sends) {
+                expect(job.cancelReason).toContain("target_client_status_mismatch");
+                expect(dispatcher.deliveryService.prepareJob).not.toHaveBeenCalled();
+                expect(dispatcher.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+                expect(job.attempts).toBe(0);
+                expect(job.nextAttemptAt).toBeNull();
+                expect(dispatcher.jobRepository.update).toHaveBeenCalledWith(job);
+            }
+        });
+
+        it("counts an unconfirmed client WITH dates as pre_booking, whatever the stored column says", async () => {
+            const facts = { serviceStatus: "waiting", bookingConfirmedAt: null, startDate: kstDay(3), endDate: kstDay(20) };
+            for (const [target, sends] of [["pre_booking", true], ["waiting", false]] as const) {
+                const dispatcher = createDispatchService();
+                const job = createJob({ ruleId: "rule-target" });
+                dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                    createRule({ id: "rule-target", targetClientStatus: target }),
+                );
+                dispatcher.prisma.client.findFirst.mockResolvedValue(facts);
+                dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+                await dispatcher.service.dispatchDueJobs();
+                expect(job.status).toBe(sends ? "sent" : "canceled");
+            }
+        });
+
+        it("reads the rule row at dispatch (including a global rule) and the client fresh by the job's client and branch", async () => {
+            const { dispatcher, job } = await dispatchWith("waiting", "waiting");
+
+            expect(job.status).toBe("sent");
+            expect(dispatcher.ruleRepository.findByIdIncludingGlobal).toHaveBeenCalledWith(branchId, "rule-target");
+            expect(dispatcher.prisma.client.findFirst).toHaveBeenCalledWith({
+                where: { id: 1, branchId },
+                select: { serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true },
+            });
+        });
+
+        it("applies a global rule's target status (branch-scoped lookups cannot see it)", async () => {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId: "rule-global" });
+            // findById is branch-scoped and returns null for a branchless rule;
+            // only the global-aware lookup may be consulted.
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                createRule({ id: "rule-global", branchId: null, targetClientStatus: "active" }),
+            );
+            dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("waiting"));
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            await dispatcher.service.dispatchDueJobs();
+
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toContain("target_client_status_mismatch");
+        });
+
+        it("uses the rule's value at dispatch time, not anything stored on the job", async () => {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId: "rule-target" });
+            dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("waiting"));
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+            // First tick: the admin has set 진행 only.
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValueOnce(
+                createRule({ id: "rule-target", targetClientStatus: "active" }),
+            );
+            await dispatcher.service.dispatchDueJobs();
+            expect(job.status).toBe("canceled");
+
+            // The routine is then switched to 전체 and a resync re-pends the
+            // system-canceled job; the gate re-reads the rule and now sends.
+            job.status = "pending";
+            job.cancelReason = null;
+            job.canceledAt = null;
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                createRule({ id: "rule-target", targetClientStatus: "all" }),
+            );
+            await dispatcher.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+        });
+
+        it("sends a 대기-only job after 예약 확정 revives the skipped job (예약 전 -> 대기)", async () => {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId: "rule-target" });
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                createRule({ id: "rule-target", targetClientStatus: "waiting" }),
+            );
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+
+            // 09:00 — the client is still 예약 전.
+            dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("pre_booking"));
+            await dispatcher.service.dispatchDueJobs();
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toContain("target_client_status_mismatch");
+            expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+
+            // 14:00 — [예약 확정]; the resync's upsert flips the (non-user)
+            // canceled row back to pending, which dispatch evaluates again.
+            job.status = "pending";
+            job.cancelReason = null;
+            job.canceledAt = null;
+            dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("waiting"));
+            await dispatcher.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+            expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+        });
+
+        it("does not apply the gate to a job with no client", async () => {
+            const { dispatcher, job } = await dispatchWith("waiting", "pre_booking", { clientId: null });
+
+            expect(job.status).toBe("sent");
+            expect(dispatcher.prisma.client.findFirst).not.toHaveBeenCalled();
+        });
+
+        it("applies the gate for an employee-recipient job that has a client", async () => {
+            const { job } = await dispatchWith("active", "waiting", {
+                recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            });
+
+            expect(job.status).toBe("canceled");
+        });
+
+        it("skips a non-all target when the client row can no longer be read", async () => {
+            const dispatcher = createDispatchService();
+            const job = createJob({ ruleId: "rule-target" });
+            dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
+                createRule({ id: "rule-target", targetClientStatus: "active" }),
+            );
+            dispatcher.prisma.client.findFirst.mockResolvedValue(null);
+            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            await dispatcher.service.dispatchDueJobs();
+
+            expect(job.status).toBe("canceled");
+            expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
     });
 
     it("does not apply the pre_booking gate to a link job without a schedule id", async () => {

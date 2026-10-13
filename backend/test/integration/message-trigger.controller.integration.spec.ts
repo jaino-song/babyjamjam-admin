@@ -264,6 +264,52 @@ describe("MessageTriggerController (Integration)", () => {
         });
     });
 
+    describe("rule target client status / retry-on-failure validation (규칙 메시지-04)", () => {
+        it.each(["completed", "terminated", "ALL", "", null, 1])(
+            "rejects targetClientStatus %p on update before persistence",
+            async (targetClientStatus) => {
+                const response = await request(app.getHttpServer())
+                    .patch("/message-trigger-rules/rule-1").send({ targetClientStatus });
+                expect(response.status).toBe(400);
+                expect(triggerService.updateRule).not.toHaveBeenCalled();
+            },
+        );
+        it.each(["yes", 1, null, "false"])("rejects retryOnFailure %p on update before persistence", async (retryOnFailure) => {
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ retryOnFailure });
+            expect(response.status).toBe(400);
+            expect(triggerService.updateRule).not.toHaveBeenCalled();
+        });
+        it("rejects an unknown status on create before persistence", async () => {
+            const response = await request(app.getHttpServer()).post("/message-trigger-rules").send({
+                name: "신규", eventType: MessageTriggerEventType.CLIENT_CREATED,
+                offsetType: MessageTriggerOffsetType.IMMEDIATE, recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, targetClientStatus: "completed",
+            });
+            expect(response.status).toBe(400);
+            expect(triggerService.createRule).not.toHaveBeenCalled();
+        });
+        it.each(["all", "pre_booking", "waiting", "active"])("passes %s and retryOnFailure=false to the tenant service and returns both", async (targetClientStatus) => {
+            const rule = createMockRule();
+            rule.targetClientStatus = targetClientStatus as never;
+            rule.retryOnFailure = false;
+            triggerService.updateRule.mockResolvedValue(rule);
+            const response = await request(app.getHttpServer())
+                .patch("/message-trigger-rules/rule-1").send({ targetClientStatus, retryOnFailure: false });
+            expect(response.status).toBe(200);
+            expect(response.body).toMatchObject({ targetClientStatus, retryOnFailure: false });
+            expect(triggerService.updateRule).toHaveBeenCalledWith(
+                branchId, "rule-1", expect.objectContaining({ targetClientStatus, retryOnFailure: false }),
+            );
+        });
+        it("returns the default 전체 / 켬 for a rule payload", async () => {
+            triggerService.getRule.mockResolvedValue(createMockRule());
+            const response = await request(app.getHttpServer()).get("/message-trigger-rules/rule-1");
+            expect(response.status).toBe(200);
+            expect(response.body).toMatchObject({ targetClientStatus: "all", retryOnFailure: true });
+        });
+    });
+
     describe("GET /message-trigger-rules", () => {
         it("returns rules for the authenticated tenant", async () => {
             triggerService.listRules.mockResolvedValue([createMockRule()]);
