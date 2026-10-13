@@ -948,7 +948,7 @@ export class ServiceRecordLinkService {
 
     private resolveExpiry(endDate: Date, allowLateReissue: boolean): Date {
         const normalExpiry = getServiceRecordTokenExpiresAt(endDate);
-        if (!allowLateReissue || normalExpiry.getTime() >= Date.now()) return normalExpiry;
+        if (!allowLateReissue || normalExpiry.getTime() > Date.now()) return normalExpiry;
         return new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 }
