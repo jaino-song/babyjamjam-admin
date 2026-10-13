@@ -2958,7 +2958,11 @@ export class MessageTriggerService {
             return;
         }
 
-        if (await this.cancelJobOutsideRuleTargetClientStatus(job)) {
+        // Only ordinary automatic rule jobs are subject to the routine's 대상
+        // 고객 상태. Manual-owned jobs (agent-approved retries and scheduled
+        // sends, manual service-record-link / service-end-notice sends) are a
+        // human decision and never read the rule for this gate.
+        if (this.isAutomaticMessageJob(job) && await this.cancelJobOutsideRuleTargetClientStatus(job)) {
             return;
         }
 

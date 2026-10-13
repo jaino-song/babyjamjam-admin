@@ -3359,6 +3359,26 @@ describe("MessageTriggerService", () => {
             expect(job.status).toBe("canceled");
         });
 
+        it.each([
+            ["an agent-approved manual retry (agent-sms-retry dedupe key, original rule)", { ruleId: "rule-target", dedupeKey: "agent-sms-retry:approved-1" }],
+            ["an agent-scheduled send (agent-sms rule id)", { ruleId: "agent-sms:approved-2", dedupeKey: "agent-sms:approved-2:client:1" }],
+        ])("does not apply the gate to %s", async (_name, jobOverrides) => {
+            const { dispatcher, job } = await dispatchWith("active", "waiting", jobOverrides);
+
+            expect(job.status).toBe("sent");
+            expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(dispatcher.ruleRepository.findByIdIncludingGlobal).not.toHaveBeenCalled();
+            expect(dispatcher.prisma.client.findFirst).not.toHaveBeenCalled();
+        });
+
+        it("still skips an automatic job with the same non-matching target and client", async () => {
+            const { dispatcher, job } = await dispatchWith("active", "waiting", { dedupeKey: "rule-target:client:1:auto" });
+
+            expect(job.status).toBe("canceled");
+            expect(job.cancelReason).toContain("target_client_status_mismatch");
+            expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
         it("skips a non-all target when the client row can no longer be read", async () => {
             const dispatcher = createDispatchService();
             const job = createJob({ ruleId: "rule-target" });
