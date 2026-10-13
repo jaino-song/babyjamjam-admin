@@ -185,4 +185,35 @@ describe("MessageAutomationActivationService automatic retry rule policy (규칙
 
         expect(work).toHaveBeenCalledWith(transaction, { targetClientStatus: "all", retryOnFailure: true, clientId: 7 });
     });
+
+    describe("readJobRuleRetryPermission (current value at finalization)", () => {
+        const readWith = async (findUnique: jest.Mock) => {
+            const service = new MessageAutomationActivationService(
+                { message_trigger_job: { findUnique } } as unknown as MessageAutomationDatabase,
+                {} as MessageAutomationBranchLockService,
+                {} as AdminAuditEventWriter,
+            );
+            return service.readJobRuleRetryPermission(branchId, jobId);
+        };
+
+        it.each([
+            ["on", { retryOnFailure: true }, "on"],
+            ["off", { retryOnFailure: false }, "off"],
+            ["a pre-migration row without the column", {}, "on"],
+        ])("answers %s from the job's rule row", async (_name, rule, expected) => {
+            const findUnique = jest.fn().mockResolvedValue({ branchId, rule });
+
+            await expect(readWith(findUnique)).resolves.toBe(expected);
+            expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: jobId } }));
+        });
+
+        it("answers rule-missing when the rule row or the job is gone", async () => {
+            await expect(readWith(jest.fn().mockResolvedValue({ branchId, rule: null }))).resolves.toBe("rule-missing");
+            await expect(readWith(jest.fn().mockResolvedValue(null))).resolves.toBe("rule-missing");
+        });
+
+        it("rejects on a failed read instead of answering", async () => {
+            await expect(readWith(jest.fn().mockRejectedValue(new Error("db down")))).rejects.toThrow("db down");
+        });
+    });
 });
