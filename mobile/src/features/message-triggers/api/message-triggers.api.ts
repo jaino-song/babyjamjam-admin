@@ -3,6 +3,7 @@ import type {
     MessageLogRecord,
     MessageTriggerRule,
     CreateMessageTriggerRuleDto,
+    ResendMessageTriggerJobResponse,
     TriggerEventType,
     TriggerRecipientType,
     TriggerTemplateCatalogItem,
@@ -58,4 +59,6 @@ export const messageTriggersApi = {
         api.post<MessageLogRecord>(`/message-logs/${id}/retry`),
     cancelJob: (id: string) =>
         api.post<{ id: string; status: "canceled" }>(`/message-trigger-jobs/${id}/cancel`, {}),
+    resendJob: (jobId: string) =>
+        api.post<ResendMessageTriggerJobResponse>(`/message-trigger-jobs/${jobId}/resend`, {}),
 };

@@ -4,7 +4,10 @@ import { useMemo, useState } from "react";
 import {
   DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
   DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
+  MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS,
   normalizeApiError,
+  type MessageTriggerTargetClientStatus,
 } from "@babyjamjam/shared";
 import { BellRing, Trash2 } from "lucide-react";
 
@@ -300,6 +303,39 @@ export function MessageTriggerEditor({
             {templates.map((template) => <option key={template.key} value={template.key}>{template.name}</option>)}
           </select>
         </label>
+
+        <label
+          className="block space-y-1.5 text-xs font-semibold text-v3-text-muted"
+          data-component={`${dataComponent}_form_target-client-status`}
+        >
+          <span>대상 고객 상태</span>
+          <select
+            name="targetClientStatus"
+            className={FIELD_CLASS}
+            value={form.targetClientStatus}
+            onChange={(event) => setField("targetClientStatus", event.target.value as MessageTriggerTargetClientStatus)}
+          >
+            {MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES.map((status) => (
+              <option key={status} value={status}>{MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS[status]}</option>
+            ))}
+          </select>
+        </label>
+
+        <div className="space-y-1.5">
+          <label
+            className="flex min-h-11 items-center justify-between rounded-xl border border-v3-border bg-white px-3 text-sm font-semibold text-v3-dark"
+            data-component={`${dataComponent}_form_retry-on-failure`}
+          >
+            <span>실패 시 재전송</span>
+            <input
+              name="retryOnFailure"
+              type="checkbox"
+              checked={form.retryOnFailure}
+              onChange={(event) => setField("retryOnFailure", event.target.checked)}
+            />
+          </label>
+          <p className="text-xs text-v3-text-muted">일시적인 발송 실패를 5분 간격으로 최대 3번 다시 보냅니다.</p>
+        </div>
 
         <label className="flex min-h-11 items-center justify-between rounded-xl border border-v3-border bg-white px-3 text-sm font-semibold text-v3-dark">
           <span>규칙 활성화</span>

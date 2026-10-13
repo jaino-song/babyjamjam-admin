@@ -18,6 +18,7 @@ import {
   MESSAGE_HISTORY_STATUS_LABELS,
   getMessageHistoryDetailStatusLabel,
   MESSAGE_JOB_CANCEL_COPY,
+  MESSAGE_JOB_RESEND_COPY,
   MESSAGE_JOB_STATUS_BADGE_VARIANT,
   MESSAGE_JOB_STATUS_LABELS,
   MESSAGE_LOG_STATUS_BADGE_VARIANT,
@@ -38,6 +39,7 @@ import {
 import {
   useCancelMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -357,6 +359,20 @@ function getRecordReasonText(record: MessageLogRecord): string {
   return formatMessageFailureReason(record.errorMessage);
 }
 
+// A trigger-job history row (`id: "job:<uuid>"`, `provider: "message_job"`) that
+// stopped on a settings reason can be re-sent by hand. The resend endpoint takes
+// the bare job uuid, never the prefixed row id.
+function getResendableJobId(record: MessageLogRecord | null): string | null {
+  if (
+    !record
+    || record.provider !== "message_job"
+    || record.status !== "needs_setup"
+  ) {
+    return null;
+  }
+  return record.triggerJobId?.trim() ? record.triggerJobId : null;
+}
+
 const MANUAL_SCHEDULED_RULE_ID_PREFIX = "manual-sms:";
 
 // Manual scheduled sends ride along in the /upcoming response as message_log
@@ -630,6 +646,7 @@ export function MessagesHistoryPage() {
   } = useMessageHistory();
   const cancelMutation = useCancelMessageTriggerJob();
   const retryMutation = useRetryMessageHistory();
+  const resendMutation = useResendMessageTriggerJob();
   // Cancel and retry require BranchManagerGuard on the server; hide them for
   // plain branch users instead of letting them hit a 403.
   const canManageBranchMessages = canManageBranchFromAuthQuery(useGetAuthUser());
@@ -754,15 +771,81 @@ export function MessagesHistoryPage() {
   const handleRequestRetry = () => {
     if (
       selectedRecord
-      && typeof selectedRecord.id === "number"
-      && selectedRecord.status === "failed"
+      && (
+        (typeof selectedRecord.id === "number" && selectedRecord.status === "failed")
+        || getResendableJobId(selectedRecord) !== null
+      )
     ) {
       setRetryTarget(selectedRecord);
     }
   };
 
+  const handleConfirmResend = async (jobId: string) => {
+    try {
+      const response = await resendMutation.mutateAsync(jobId);
+      if (response.status === "sent") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.success,
+          variant: "success",
+        });
+      } else if (response.status === "needs_setup") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
+          variant: "destructive",
+        });
+      } else if (response.status === "canceled") {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: response.reason
+            ? `${MESSAGE_JOB_RESEND_COPY.notSent} ${response.reason}`
+            : MESSAGE_JOB_RESEND_COPY.notSent,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: MESSAGE_JOB_RESEND_COPY.action,
+          description: MESSAGE_JOB_RESEND_COPY.failure,
+          variant: "destructive",
+        });
+      }
+
+      // The open detail is a snapshot that query invalidation does not refresh:
+      // keep it open with the new reason while still blocked, close it otherwise.
+      if (response.status === "needs_setup") {
+        setSelectedRecord((current) => current && { ...current, errorMessage: response.reason });
+      } else {
+        setSelectedRecord(null);
+      }
+    } catch (resendError) {
+      // Shared problem contract resolution. A 409 means the job is no longer
+      // resendable; its backend sentence never reaches the client, so the
+      // locally authored copy is the only text for it.
+      const normalized = normalizeApiError(resendError, { locale: "ko-KR", operation: "mutation" });
+      toast({
+        title: MESSAGE_JOB_RESEND_COPY.action,
+        description: normalized.status === 409
+          ? MESSAGE_JOB_RESEND_COPY.conflict
+          : normalized.verified ? normalized.message : MESSAGE_JOB_RESEND_COPY.failure,
+        variant: "destructive",
+      });
+      setSelectedRecord(null);
+    } finally {
+      setRetryTarget(null);
+    }
+  };
+
   const handleConfirmRetry = async () => {
-    if (!retryTarget || typeof retryTarget.id !== "number") return;
+    if (!retryTarget) return;
+
+    const resendJobId = getResendableJobId(retryTarget);
+    if (resendJobId !== null) {
+      await handleConfirmResend(resendJobId);
+      return;
+    }
+
+    if (typeof retryTarget.id !== "number") return;
 
     try {
       const retriedRecord = await retryMutation.mutateAsync(retryTarget.id);
@@ -835,6 +918,7 @@ export function MessagesHistoryPage() {
     && typeof selectedRecord.id === "number"
     && selectedRecord.status === "failed",
   );
+  const canResendSelectedJob = canManageBranchMessages && getResendableJobId(selectedRecord) !== null;
   const filterPanelDataComponent = `${HISTORY_LIST_BASE}_content_list-card_filters`;
   const historyErrorMessage = getMessageHistoryErrorMessage(historyError);
 
@@ -1053,11 +1137,13 @@ export function MessagesHistoryPage() {
                         recipientPhone: normalizedSelectedRecord.recipientPhone,
                         messageBody: normalizedSelectedRecord.messagePreview.trim() || "내용이 없습니다.",
                         failureReason: normalizedSelectedRecord.failureReason ?? null,
+                        setupReason: normalizedSelectedRecord.setupReason ?? null,
                       }}
                       onBack={() => setSelectedRecord(null)}
                       showStatusBadge={false}
-                      canRetry={canRetrySelectedRecord}
-                      isRetrying={retryMutation.isPending}
+                      canRetry={canRetrySelectedRecord || canResendSelectedJob}
+                      isRetrying={retryMutation.isPending || resendMutation.isPending}
+                      retryPendingLabel={canResendSelectedJob ? MESSAGE_JOB_RESEND_COPY.pending : undefined}
                       onRetry={handleRequestRetry}
                     />
                     {selectedCancelReason ? (
@@ -1103,14 +1189,14 @@ export function MessagesHistoryPage() {
         data-component={`${HISTORY_DETAIL_BASE}_retry-modal`}
         open={retryTarget !== null}
         onOpenChange={(open) => {
-          if (!open && !retryMutation.isPending) setRetryTarget(null);
+          if (!open && !retryMutation.isPending && !resendMutation.isPending) setRetryTarget(null);
         }}
         title="메시지를 다시 보낼까요?"
         description={`${retryTarget?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
         pendingLabel="재발송 중..."
-        isPending={retryMutation.isPending}
+        isPending={retryMutation.isPending || resendMutation.isPending}
         onApprove={handleConfirmRetry}
       />
     </>

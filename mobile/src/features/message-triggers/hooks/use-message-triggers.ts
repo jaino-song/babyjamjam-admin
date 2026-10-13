@@ -418,3 +418,17 @@ export function useCancelMessageTriggerJob() {
         },
     });
 }
+
+// Re-sends a `needs_setup` job by hand after the cause was fixed. The job leaves
+// the upcoming list or stays flagged in history, so both queries need a refetch.
+export function useResendMessageTriggerJob() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (jobId: string) => messageTriggersApi.resendJob(jobId).then((response) => response.data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+            queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() });
+        },
+    });
+}

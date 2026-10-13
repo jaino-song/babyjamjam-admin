@@ -18,6 +18,7 @@ import {
   CONTRACT_DOC_DISPLAY_STATUS_LABELS,
   isContractDocDisplayStatus,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { MESSAGE_HISTORY_STATUS_LABELS } from "@babyjamjam/shared";
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
 
@@ -66,7 +67,7 @@ const helpers = vm.runInNewContext(
   ts.transpileModule(helperSource, {
     fileName: "helpers.tsx",
     compilerOptions: { target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.React },
-  }).outputText + "\n({ categorize, progressLabel, contractStageItems, countSignalsByFilter, detailHeaderStatusBadge, FILTER_LABELS, FILTER_TO_STATUS_CATEGORY, FILTER_TO_DISPLAY_STATUS, FILTER_BY_CATEGORY });",
+  }).outputText + "\n({ categorize, progressLabel, contractStageItems, countSignalsByFilter, detailHeaderStatusBadge, notificationStatusLabel, notificationStatusTone, FILTER_LABELS, FILTER_TO_STATUS_CATEGORY, FILTER_TO_DISPLAY_STATUS, FILTER_BY_CATEGORY });",
   {
     getStatusCategory,
     isContractReviewWindowOpen,
@@ -77,6 +78,7 @@ const helpers = vm.runInNewContext(
     normalizeStatusCode,
     isContractDocDisplayStatus,
     CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+    MESSAGE_HISTORY_STATUS_LABELS,
     KR_BUILTIN_CALENDAR,
     ...Object.fromEntries(
       ["FileText", "Send", "X", "Eye", "FileSignature", "CheckCircle2", "AlertTriangle"].map((name) => [name, name]),
@@ -88,6 +90,8 @@ const helpers = vm.runInNewContext(
   contractStageItems: (doc: EformsignDocument, category: Category, calendar: typeof KR_BUILTIN_CALENDAR) => StageItem[];
   countSignalsByFilter: (signals: StatusSignal[], calendar: typeof KR_BUILTIN_CALENDAR) => Record<string, number>;
   detailHeaderStatusBadge: (category: Category, isServiceRecord: boolean) => { label: string; tone: string };
+  notificationStatusLabel: (status: string) => string;
+  notificationStatusTone: (status: string) => string;
   FILTER_LABELS: string[];
   FILTER_TO_STATUS_CATEGORY: Record<string, string | null>;
   FILTER_TO_DISPLAY_STATUS: Record<string, string>;
@@ -411,5 +415,22 @@ describe("mobile contracts: 'customer signed' follows the current state, not his
 
   it("no longer scans histories for signature keywords", () => {
     expect(/hasCustomerSignatureDocument|CONTRACT_SIGNATURE_KEYWORDS/.test(source)).toBe(false);
+  });
+});
+
+describe("contract message-history status helpers (설정 필요)", () => {
+  it("labels and tones a needs_setup message as 설정 필요 in the warning tone, never as 완료", () => {
+    expect(helpers.notificationStatusLabel("needs_setup")).toBe(MESSAGE_HISTORY_STATUS_LABELS.needs_setup);
+    expect(helpers.notificationStatusLabel("needs_setup")).toBe("설정 필요");
+    expect(helpers.notificationStatusTone("needs_setup")).toBe("orange");
+  });
+
+  it("keeps the other message statuses unchanged", () => {
+    expect(helpers.notificationStatusLabel("failed")).toBe("실패");
+    expect(helpers.notificationStatusTone("failed")).toBe("burgundy");
+    expect(helpers.notificationStatusLabel("pending")).toBe("대기");
+    expect(helpers.notificationStatusTone("pending")).toBe("orange");
+    expect(helpers.notificationStatusLabel("sent")).toBe("완료");
+    expect(helpers.notificationStatusTone("sent")).toBe("green");
   });
 });

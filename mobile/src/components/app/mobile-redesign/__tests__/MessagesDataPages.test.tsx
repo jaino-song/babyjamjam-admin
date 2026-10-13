@@ -1,10 +1,11 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MESSAGE_JOB_CANCEL_COPY } from "@babyjamjam/shared";
+import { MESSAGE_JOB_CANCEL_COPY, MESSAGE_JOB_RESEND_COPY, createProblemDetails } from "@babyjamjam/shared";
 
 import {
   useCancelMessageTriggerJob,
   useMessageHistory,
+  useResendMessageTriggerJob,
   useRetryMessageHistory,
   useUpcomingMessageTriggerJobs,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -14,6 +15,7 @@ import { MessagesHistoryPage } from "../MessagesDataPages";
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageHistory: jest.fn(),
   useRetryMessageHistory: jest.fn(),
+  useResendMessageTriggerJob: jest.fn(),
   useUpcomingMessageTriggerJobs: jest.fn(),
   useCancelMessageTriggerJob: jest.fn(),
 }));
@@ -24,6 +26,7 @@ jest.mock("@/hooks/use-toast", () => ({
 
 const mockUseMessageHistory = useMessageHistory as jest.Mock;
 const mockUseRetryMessageHistory = useRetryMessageHistory as jest.Mock;
+const mockUseResendMessageTriggerJob = useResendMessageTriggerJob as jest.Mock;
 const mockUseUpcomingMessageTriggerJobs = useUpcomingMessageTriggerJobs as jest.Mock;
 const mockUseCancelMessageTriggerJob = useCancelMessageTriggerJob as jest.Mock;
 const mockToast = toast as jest.Mock;
@@ -134,12 +137,17 @@ function mockNoRetryMutation() {
   mockUseRetryMessageHistory.mockReturnValue({ mutateAsync: jest.fn(), isPending: false });
 }
 
+function mockNoResendMutation() {
+  mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync: jest.fn(), isPending: false });
+}
+
 describe("mobile message data pages (merged 발송 기록 screen)", () => {
   beforeEach(() => {
     mockUseMessageHistory.mockReturnValue({ data: [], isLoading: false, isError: false });
     mockUseUpcomingMessageTriggerJobs.mockReturnValue({ data: [], isLoading: false, isError: false });
     mockNoCancelMutation();
     mockNoRetryMutation();
+    mockNoResendMutation();
     mockToast.mockReset();
   });
 
@@ -965,5 +973,262 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
 
     expect(screen.queryByText(MESSAGE_JOB_CANCEL_COPY.confirmTitle)).not.toBeInTheDocument();
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  describe("설정 필요 trigger-job resend (BJJ-444)", () => {
+    const JOB_UUID = "8f14e45f-ceea-467a-9575-7b1a6f2f6c11";
+    const SETUP_REASON = "수신자 연락처가 필요합니다.";
+    const needsSetupJobRecord = {
+      ...sentRecord,
+      id: `job:${JOB_UUID}`,
+      provider: "message_job",
+      templateKey: "SERVICE_INFO",
+      triggerJobId: JOB_UUID,
+      status: "needs_setup" as const,
+      errorMessage: SETUP_REASON,
+      messageBody: "서비스 안내 메시지",
+      recipientName: "설정 고객",
+      clientName: "설정 고객",
+    };
+
+    function mockJobHistory(record: Record<string, unknown> = needsSetupJobRecord) {
+      mockUseMessageHistory.mockReturnValue({ data: [record], isLoading: false, isError: false });
+    }
+
+    async function openJobDetail(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: /설정 고객/ }));
+    }
+
+    async function confirmResend(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "재발송" }));
+      expect(screen.getByRole("dialog", { name: "메시지를 다시 보낼까요?" })).toBeInTheDocument();
+      const approveButton = document.querySelector('[data-component$="_retry-modal_approve"]');
+      expect(approveButton).not.toBeNull();
+      await user.click(approveButton as HTMLElement);
+    }
+
+    it("shows the 설정 필요 label, the reason row and a 재발송 button for a manager", async () => {
+      const user = userEvent.setup();
+      mockJobHistory();
+      const { container } = render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+
+      expect(container.querySelector('[data-component$="_detail-pane_header_status"]')).toHaveTextContent("설정 필요");
+      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText(SETUP_REASON)).toBeInTheDocument();
+      expect(screen.queryByText("실패 사유")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+    });
+
+    it("shows no 재발송 button to a plain branch user", async () => {
+      const user = userEvent.setup();
+      mockAuthBranchRole = "user";
+      try {
+        mockJobHistory();
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+
+        expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+      } finally {
+        mockAuthBranchRole = "manager";
+      }
+    });
+
+    it.each([
+      ["a needs_setup row that is not a trigger job", { provider: "aligo_sms" }],
+      ["a trigger-job row without a job id", { triggerJobId: null }],
+      ["a trigger-job row with a blank job id", { triggerJobId: "  " }],
+      ["a trigger-job row that is not needs_setup", { status: "sent", errorMessage: null }],
+    ])("offers no 재발송 button for %s", async (_label, overrides) => {
+      const user = userEvent.setup();
+      mockJobHistory({ ...needsSetupJobRecord, ...overrides });
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+
+      expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
+    });
+
+    it("sends one request with the bare job uuid after one confirm, then closes the detail on sent", async () => {
+      const user = userEvent.setup();
+      const mutateAsync = jest.fn().mockResolvedValue({ id: JOB_UUID, status: "sent", reason: null });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+      expect(mutateAsync).toHaveBeenCalledWith(JOB_UUID);
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: MESSAGE_JOB_RESEND_COPY.success,
+        variant: "success",
+      }));
+      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
+    });
+
+    it("keeps the detail open and shows the returned reason while it still needs setup", async () => {
+      const user = userEvent.setup();
+      const newReason = "템플릿 값이 비어 있습니다.";
+      const mutateAsync = jest.fn().mockResolvedValue({ id: JOB_UUID, status: "needs_setup", reason: newReason });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: MESSAGE_JOB_RESEND_COPY.stillNeedsSetup,
+      })));
+      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+      expect(screen.getByText(newReason)).toBeInTheDocument();
+      expect(screen.queryByText(SETUP_REASON)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "재발송" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "메시지를 다시 보낼까요?" })).not.toBeInTheDocument();
+    });
+
+    it("shows the not-sent copy followed by the returned reason on canceled, and closes the detail", async () => {
+      const user = userEvent.setup();
+      const mutateAsync = jest.fn().mockResolvedValue({
+        id: JOB_UUID,
+        status: "canceled",
+        reason: "대상 고객 상태가 아니어서 보내지 않았습니다.",
+      });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: `${MESSAGE_JOB_RESEND_COPY.notSent} 대상 고객 상태가 아니어서 보내지 않았습니다.`,
+      })));
+      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+    });
+
+    it("shows only the not-sent copy on canceled without a reason", async () => {
+      const user = userEvent.setup();
+      const mutateAsync = jest.fn().mockResolvedValue({ id: JOB_UUID, status: "canceled", reason: null });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: MESSAGE_JOB_RESEND_COPY.notSent,
+      })));
+    });
+
+    it.each(["failed", "processing", "dispatching"])(
+      "shows the generic failure copy for a %s outcome and closes the detail",
+      async (status) => {
+        const user = userEvent.setup();
+        const mutateAsync = jest.fn().mockResolvedValue({ id: JOB_UUID, status, reason: null });
+        mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+        mockJobHistory();
+        render(<MessagesHistoryPage />);
+
+        await openJobDetail(user);
+        await confirmResend(user);
+
+        await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+          description: MESSAGE_JOB_RESEND_COPY.failure,
+          variant: "destructive",
+        })));
+        await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+      },
+    );
+
+    it("shows the conflict copy for a 409 problem rejection and closes the detail", async () => {
+      const user = userEvent.setup();
+      const problem = createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "req-resend-1" });
+      expect(problem.status).toBe(409);
+      const mutateAsync = jest.fn().mockRejectedValue({ response: { status: 409, data: problem } });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: MESSAGE_JOB_RESEND_COPY.conflict,
+        variant: "destructive",
+      })));
+      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+    });
+
+    it("shows the failure copy for a rejection with no problem body and closes the detail", async () => {
+      const user = userEvent.setup();
+      const mutateAsync = jest.fn().mockRejectedValue(new Error("network down"));
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await confirmResend(user);
+
+      await waitFor(() => expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
+        description: MESSAGE_JOB_RESEND_COPY.failure,
+        variant: "destructive",
+      })));
+      await waitFor(() => expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument());
+    });
+
+    it("never sends the job resend request when the confirm dialog is dismissed", async () => {
+      const user = userEvent.setup();
+      const mutateAsync = jest.fn();
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync, isPending: false });
+      mockJobHistory();
+      render(<MessagesHistoryPage />);
+
+      await openJobDetail(user);
+      await user.click(screen.getByRole("button", { name: "재발송" }));
+      await user.keyboard("{Escape}");
+
+      expect(mutateAsync).not.toHaveBeenCalled();
+      expect(screen.getByText("설정 필요 사유")).toBeInTheDocument();
+    });
+
+    it("labels the button with the resend pending copy while the request is in flight", async () => {
+      const user = userEvent.setup();
+      mockJobHistory();
+      const view = render(<MessagesHistoryPage />);
+      await openJobDetail(user);
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync: jest.fn(), isPending: true });
+      view.rerender(<MessagesHistoryPage />);
+
+      const button = screen.getByRole("button", { name: MESSAGE_JOB_RESEND_COPY.pending });
+      expect(button).toBeDisabled();
+    });
+
+    it("keeps the failed-log retry on the history retry mutation with its old labels", async () => {
+      const user = userEvent.setup();
+      const failedRecord = { ...sentRecord, id: 91, status: "failed" as const, errorMessage: "등록되지 않은 발신번호입니다." };
+      const retryMutateAsync = jest.fn().mockResolvedValue({ ...failedRecord, status: "pending" });
+      const resendMutateAsync = jest.fn();
+      mockUseRetryMessageHistory.mockReturnValue({ mutateAsync: retryMutateAsync, isPending: false });
+      mockUseResendMessageTriggerJob.mockReturnValue({ mutateAsync: resendMutateAsync, isPending: false });
+      mockJobHistory(failedRecord);
+      render(<MessagesHistoryPage />);
+
+      await user.click(screen.getByRole("button", { name: /김문자/ }));
+      expect(screen.getByText("실패 사유")).toBeInTheDocument();
+      expect(screen.queryByText("설정 필요 사유")).not.toBeInTheDocument();
+      await confirmResend(user);
+
+      await waitFor(() => expect(retryMutateAsync).toHaveBeenCalledWith(91));
+      expect(resendMutateAsync).not.toHaveBeenCalled();
+      expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({ description: "재발송 요청을 접수했어요" }));
+    });
   });
 });
