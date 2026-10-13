@@ -133,11 +133,28 @@ type MessageTriggerRuleValidationParams = Pick<
 
 export type { ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 
+interface DispatchClaimedJobOptions {
+    /**
+     * Manual resend of a '설정 필요' job (BJJ-444): claim from `needs_setup`
+     * instead of `pending`, skip only the 24-hour expiry cancel, and never
+     * leave the job `pending`.
+     */
+    resendFromNeedsSetup?: boolean;
+}
+
+export interface ResendNeedsSetupJobResult {
+    id: string;
+    status: MessageTriggerJobEntity["status"];
+    reason: string | null;
+}
+
 const ORPHANED_TRIGGER_JOB_CANCEL_REASON = "Related client or schedule deleted";
 const EXPIRED_PENDING_JOB_CANCEL_REASON = "기존 발송 예정 24시간 경과";
 const MISSING_CATCH_UP_PREDECESSOR_CANCEL_REASON = "보충 발송 이전 순위 job 없음";
 const USER_REQUESTED_CANCEL_REASON = "사용자가 발송을 취소함";
 const CANCEL_JOB_CONFLICT_MESSAGE = "이미 발송되었거나 취소할 수 없는 상태입니다";
+const RESEND_JOB_CONFLICT_MESSAGE = "지금은 재전송할 수 없습니다. 자동 전송 설정을 확인해 주세요.";
+const CATCH_UP_PREDECESSOR_PENDING_REASON = "보충 발송 이전 순위 job이 아직 끝나지 않음";
 const MS_PER_MINUTE = 60 * 1000;
 // The authorization fence only validates the current claim/source and commits
 // a short CAS before any provider path opens another Prisma connection.
@@ -1762,6 +1779,36 @@ export class MessageTriggerService {
     }
 
     /**
+     * Manual, one-at-a-time resend of a '설정 필요' (needs_setup) job after the
+     * admin fixed the cause (BJJ-444, 메시지-04). The stored payload is sent as
+     * is. A lost claim — concurrent resend, inactive rule or branch override,
+     * stale rule, trigger dispatch off — leaves the row untouched and is a 409.
+     */
+    async resendNeedsSetupJob(branchId: string, id: string): Promise<ResendNeedsSetupJobResult> {
+        await this.ensureTriggerSchemaReady();
+        const fetchJob = () => this.jobRepository.findByIdInBranch(branchId, id);
+        const job = await fetchJob();
+        if (!job) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        if (job.status !== "needs_setup") {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
+
+        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
+            job.branchId ? [job.branchId] : [],
+        );
+        const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope([job.id]);
+        const claimed = await this.dispatchClaimedJob(job, sentIds, approvedBranchIds, { resendFromNeedsSetup: true });
+        if (!claimed) {
+            throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), message: RESEND_JOB_CONFLICT_MESSAGE });
+        }
+
+        const current = await fetchJob() ?? job;
+        return { id: current.id, status: current.status, reason: current.cancelReason ?? null };
+    }
+
+    /**
      * Cancel a scheduled trigger job on the user's behalf. Pending and
      * processing jobs scoped to the caller's branch are canceled atomically;
      * a processing claim is invalidated before the provider fence. The
@@ -2891,7 +2938,9 @@ export class MessageTriggerService {
         job: MessageTriggerJobEntity,
         sentIds: ReadonlySet<string>,
         approvedBranchIds: ReadonlySet<string>,
-    ): Promise<void> {
+        options: DispatchClaimedJobOptions = {},
+    ): Promise<boolean> {
+        const resend = options.resendFromNeedsSetup === true;
         const automaticJob = this.isAutomaticMessageJob(job);
         if (
             automaticJob
@@ -2905,6 +2954,11 @@ export class MessageTriggerService {
                     return null;
                 }
             }
+            if (resend) {
+                return transaction
+                    ? this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, transaction)
+                    : this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId);
+            }
             return transaction
                 ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction)
                 : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId);
@@ -2913,18 +2967,21 @@ export class MessageTriggerService {
             ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
-            return;
+            return false;
         }
 
         // The SQL claim returns the immutable attempt token. A claim without
         // one is not safe to deliver: the pre-provider fence fails closed.
         const claimToken = claimed;
         job.claimToken = claimToken;
+        // The setup reason was consumed by this resend; whatever the attempt
+        // ends as sets its own (or none, for a sent job).
+        if (resend) job.cancelReason = null;
 
         if (sentIds.has(job.id)) {
             job.markSent();
             await this.persistTriggerJobStatus(job, "persist sent trigger job reconciliation");
-            return;
+            return true;
         }
 
         let linkClient: { serviceStatus: string | null; startDate: Date | null; endDate: Date | null; bookingConfirmedAt: Date | null } | null = null;
@@ -2942,18 +2999,18 @@ export class MessageTriggerService {
             if (!schedule || schedule.replaced || schedule.terminatedAt) {
                 job.cancel("Service record link schedule ended or replaced");
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
-                return;
+                return true;
             }
             if (getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()) {
                 job.cancel(SERVICE_RECORD_LINK_ENDED_REASON);
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
-                return;
+                return true;
             }
             linkClient = schedule.client;
-        } else if (job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
+        } else if (!resend && job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
             job.cancel(EXPIRED_PENDING_JOB_CANCEL_REASON);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
-            return;
+            return true;
         }
 
         if (job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
@@ -2970,14 +3027,14 @@ export class MessageTriggerService {
             ) {
                 job.cancel(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
                 await this.persistTriggerJobStatus(job, "persist pre-booking service record link job");
-                return;
+                return true;
             }
         }
 
         if (!job.branchId || !approvedBranchIds.has(job.branchId)) {
             job.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
             await this.persistTriggerJobStatus(job, "persist sender approval canceled trigger job");
-            return;
+            return true;
         }
 
         // Only ordinary automatic rule jobs are subject to the routine's 대상
@@ -2985,11 +3042,11 @@ export class MessageTriggerService {
         // sends, manual service-record-link / service-end-notice sends) are a
         // human decision and never read the rule for this gate.
         if (this.isAutomaticMessageJob(job) && await this.cancelJobOutsideRuleTargetClientStatus(job)) {
-            return;
+            return true;
         }
 
-        if (await this.postponeCatchUpJobUntilPredecessorCompletes(job)) {
-            return;
+        if (await this.postponeCatchUpJobUntilPredecessorCompletes(job, resend)) {
+            return true;
         }
 
         job.markProcessing(claimToken);
@@ -3008,17 +3065,17 @@ export class MessageTriggerService {
         if (!supportsPreparedDelivery) {
             const authorization = await this.authorizeClaimedJobForDispatch(job);
             if (authorization.kind === "lost") {
-                return;
+                return true;
             }
             if (authorization.kind === "stale") {
                 job.cancel(authorization.reason);
                 await this.persistTriggerJobStatus(job, "persist stale trigger job");
-                return;
+                return true;
             }
             job.markDispatchAuthorized();
-            if (await this.deliverClaimedJob(job) === "preserve-stored") return;
+            if (await this.deliverClaimedJob(job, undefined, resend) === "preserve-stored") return true;
             await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
-            return;
+            return true;
         }
 
         // Receipt preparation can render, upload, and mint a token. Revalidate
@@ -3028,15 +3085,15 @@ export class MessageTriggerService {
         // still required because a confirm may win while preparation runs.
         const preparationFence = await this.authorizeClaimedJobBeforePreparation(job);
         if (preparationFence.kind === "lost") {
-            return;
+            return true;
         }
         if (preparationFence.kind === "stale") {
             job.cancel(preparationFence.reason);
             await this.persistTriggerJobStatus(job, "persist stale trigger job before preparation");
-            return;
+            return true;
         }
 
-        const preparation = await this.prepareClaimedJob(job);
+        const preparation = await this.prepareClaimedJob(job, resend);
         if (!preparation) {
             // Preparation either canceled the job with a policy skip reason or
             // recorded a failed/deferred state. In both cases the irreversible
@@ -3050,15 +3107,15 @@ export class MessageTriggerService {
                 // cannot remain processing or overwrite a newer claim.
                 await this.persistTriggerJobStatus(job, "persist canceled trigger preparation");
             }
-            return;
+            return true;
         }
         if (!(await this.persistPreparedDelivery(job))) {
-            return;
+            return true;
         }
 
         const authorization = await this.authorizeClaimedJobForDispatch(job, preparation);
         if (authorization.kind === "lost") {
-            return;
+            return true;
         }
         if (authorization.kind === "stale") {
             // The authorization transaction already invalidated this claim
@@ -3067,15 +3124,16 @@ export class MessageTriggerService {
             // concurrent cancellation won the race first.
             job.cancel(authorization.reason);
             await this.persistTriggerJobStatus(job, "persist stale trigger job");
-            return;
+            return true;
         }
 
         // The transaction has committed the irreversible dispatching state.
         // Provider delivery and its message_log writes must happen outside the
         // claim transaction so the FK insert cannot wait on a held row lock.
         job.markDispatchAuthorized();
-        if (await this.deliverClaimedJob(job, preparation) === "preserve-stored") return;
+        if (await this.deliverClaimedJob(job, preparation, resend) === "preserve-stored") return true;
         await this.persistTriggerJobStatus(job, "persist dispatched trigger job");
+        return true;
     }
 
     /**
@@ -3171,12 +3229,13 @@ export class MessageTriggerService {
      */
     private async prepareClaimedJob(
         job: MessageTriggerJobEntity,
+        resend = false,
     ): Promise<SmsTriggerDeliveryPreparation | null> {
         try {
             return await this.deliveryService.prepareJob(job);
         } catch (error) {
             if (error instanceof TriggerJobDeferredError) {
-                job.defer(error.kind, error.message);
+                this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -3610,9 +3669,28 @@ export class MessageTriggerService {
             : { kind: "allow" };
     }
 
+    /**
+     * A transient deferral normally re-queues the job as `pending` with one more
+     * attempt. A manual resend of a '설정 필요' job must never become `pending`:
+     * the ordinary dispatcher would expire an old job on its next tick. It goes
+     * back to `needs_setup` with the transient reason, attempts untouched.
+     */
+    private deferOrReturnToNeedsSetup(
+        job: MessageTriggerJobEntity,
+        error: TriggerJobDeferredError,
+        resend: boolean,
+    ): void {
+        if (resend) {
+            job.markNeedsSetup(error.message);
+            return;
+        }
+        job.defer(error.kind, error.message);
+    }
+
     private async deliverClaimedJob(
         job: MessageTriggerJobEntity,
         preparation?: SmsTriggerDeliveryPreparation,
+        resend = false,
     ): Promise<"persist-result" | "preserve-stored"> {
         try {
             const sent = preparation
@@ -3629,7 +3707,7 @@ export class MessageTriggerService {
             // entity; an unchanged dispatching row remains for reconciliation.
             if (error instanceof AgentAutomationDispatchUncertainError) return "preserve-stored";
             if (error instanceof TriggerJobDeferredError) {
-                job.defer(error.kind, error.message);
+                this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -3922,6 +4000,7 @@ export class MessageTriggerService {
 
     private async postponeCatchUpJobUntilPredecessorCompletes(
         job: MessageTriggerJobEntity,
+        resend = false,
     ): Promise<boolean> {
         const catchUp = job.payload.catchUp;
         if (!catchUp?.predecessorDedupeKey) {
@@ -3960,6 +4039,13 @@ export class MessageTriggerService {
             predecessor.status === "dispatching" ||
             earliestNextSend.getTime() > now
         ) {
+            if (resend) {
+                // Never `pending` under a manual resend (see deferOrReturnToNeedsSetup);
+                // `scheduledFor` stays as it was.
+                job.markNeedsSetup(CATCH_UP_PREDECESSOR_PENDING_REASON);
+                await this.persistTriggerJobStatus(job, "return resent catch-up job to needs_setup");
+                return true;
+            }
             const retryAt = new Date(Math.max(earliestNextSend.getTime(), now + intervalMs));
             job.status = "pending";
             job.scheduledFor = retryAt;

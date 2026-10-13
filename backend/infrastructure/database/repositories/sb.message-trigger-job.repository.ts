@@ -307,6 +307,33 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         branchId: string | null,
         transaction?: Prisma.TransactionClient,
     ): Promise<string | null> {
+        return this.claimWithRuleFence("pending", id, branchId, transaction);
+    }
+
+    /**
+     * Manual resend of a '설정 필요' job (BJJ-444): the same rule fence and
+     * token-minting claim as the pending claim, but the predicate is
+     * `needs_setup`. `attempts` is untouched; a lost race, an inactive rule or
+     * branch override, or a stale rule generation returns null and leaves the
+     * row exactly as it was.
+     */
+    async claimNeedsSetupWithRuleFence(
+        id: string,
+        branchId: string | null,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<string | null> {
+        return this.claimWithRuleFence("needs_setup", id, branchId, transaction);
+    }
+
+    private async claimWithRuleFence(
+        expectedStatus: "pending" | "needs_setup",
+        id: string,
+        branchId: string | null,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<string | null> {
+        const statusPredicate = expectedStatus === "pending"
+            ? Prisma.sql`job.status = 'pending'`
+            : Prisma.sql`job.status = 'needs_setup'`;
         const jobBranchPredicate = branchId === null
             ? Prisma.sql`job.branch_id IS NULL`
             : Prisma.sql`job.branch_id = ${branchId}::uuid`;
@@ -361,7 +388,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_job" AS job
                 WHERE job.id = ${id}
                   AND ${jobBranchPredicate}
-                  AND job.status = 'pending'
+                  AND ${statusPredicate}
                   AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             ),
             locked_rule AS MATERIALIZED (
@@ -380,7 +407,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             WHERE job.id = ${id}
               AND job.rule_id = rule.id
               AND ${jobBranchPredicate}
-              AND job.status = 'pending'
+              AND ${statusPredicate}
               AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             RETURNING job.id, job.claim_token
         `);

@@ -438,6 +438,7 @@ describe("MessageTriggerService", () => {
             findByIdInBranch: jest.fn().mockResolvedValue(null),
             findStaleProcessingSystemScope: jest.fn().mockResolvedValue([]),
             claimPendingWithRuleFence: jest.fn().mockResolvedValue("claim-a"),
+            claimNeedsSetupWithRuleFence: jest.fn().mockResolvedValue("claim-a"),
             update: jest.fn().mockResolvedValue(undefined),
             cancelPendingByRuleId: jest.fn().mockResolvedValue(0),
             cancelPendingOlderThan: jest.fn().mockResolvedValue(0),
@@ -2762,6 +2763,288 @@ describe("MessageTriggerService", () => {
 
         expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith("some-other-branch", "manual-job");
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
+    });
+
+    // 규칙 메시지-04 / BJJ-444: manual, one-at-a-time resend of a '설정 필요' job.
+    describe("resendNeedsSetupJob", () => {
+        const SETUP_REASON = "필수 정보 누락 (name)";
+        const DAY_MS = 24 * 60 * 60 * 1000;
+
+        const resendFixture = (jobOverrides: Parameters<typeof createJob>[0] = {}) => {
+            const dispatcher = createDispatchService();
+            const job = createJob({
+                id: "waiting-job", status: "needs_setup", cancelReason: SETUP_REASON, attempts: 1,
+                scheduledFor: new Date(Date.now() - 3 * DAY_MS), ...jobOverrides,
+            });
+            job.claimToken = "claim-old";
+            dispatcher.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
+            const writtenStatuses: string[] = [];
+            dispatcher.jobRepository.update.mockImplementation(async (written: MessageTriggerJobEntity) => {
+                writtenStatuses.push(written.status);
+            });
+            return { ...dispatcher, job, writtenStatuses };
+        };
+        const linkJobOverrides = (): Parameters<typeof createJob>[0] => ({
+            ruleId: "system:service_record_link", employeeScheduleId: 10,
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: "system:service_record_link:schedule:10:primary",
+            payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
+                buttonUrl: "https://mobile.test/service-record/efl_link",
+                templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
+        });
+
+        it("is a 404 for an unknown id or another branch's job, through the caller's branch-scoped read", async () => {
+            const { service, jobRepository, deliveryService } = resendFixture();
+            jobRepository.findByIdInBranch.mockResolvedValue(null);
+
+            await expect(service.resendNeedsSetupJob("other-branch", "waiting-job"))
+                .rejects.toMatchObject({ response: { code: "RESOURCE_NOT_FOUND" } });
+
+            expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith("other-branch", "waiting-job");
+            expect(jobRepository.claimNeedsSetupWithRuleFence).not.toHaveBeenCalled();
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each(["pending", "processing", "dispatching", "sent", "canceled", "failed"] as const)(
+            "is a 409 for a %s job, without claiming or sending",
+            async (status) => {
+                const { service, job, jobRepository, deliveryService } = resendFixture({ status });
+
+                const failure = await service.resendNeedsSetupJob(branchId, job.id).catch((error: unknown) => error);
+
+                expect(failure).toBeInstanceOf(ConflictException);
+                expect((failure as ConflictException).getStatus()).toBe(409);
+                expect((failure as ConflictException).getResponse()).toMatchObject({ code: "REQUEST_CONFLICT" });
+                expect(jobRepository.claimNeedsSetupWithRuleFence).not.toHaveBeenCalled();
+                expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+                expect(deliveryService.sendJob).not.toHaveBeenCalled();
+                expect(jobRepository.update).not.toHaveBeenCalled();
+                expect(job.status).toBe(status);
+            },
+        );
+
+        it.each([
+            ["a lost concurrent claim", "claim"],
+            ["an inactive rule, inactive branch override or stale rule (the rule fence refuses)", "claim"],
+            ["trigger dispatch being off", "dispatch-off"],
+        ])("is a 409 with the row unchanged and no provider call for %s", async (_label, cause) => {
+            const { service, job, jobRepository, deliveryService, messageAutomationActivationService } = resendFixture();
+            jobRepository.claimNeedsSetupWithRuleFence.mockResolvedValue(null);
+            if (cause === "dispatch-off") messageAutomationActivationService.getTriggerDispatchEnabled.mockResolvedValue(false);
+
+            const failure = await service.resendNeedsSetupJob(branchId, job.id).catch((error: unknown) => error);
+
+            expect(failure).toBeInstanceOf(ConflictException);
+            expect((failure as ConflictException).getResponse()).toMatchObject({
+                code: "REQUEST_CONFLICT",
+                message: "지금은 재전송할 수 없습니다. 자동 전송 설정을 확인해 주세요.",
+            });
+            if (cause === "dispatch-off") expect(jobRepository.claimNeedsSetupWithRuleFence).not.toHaveBeenCalled();
+            expect(deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(jobRepository.update).not.toHaveBeenCalled();
+            expect(job.status).toBe("needs_setup");
+            expect(job.cancelReason).toBe(SETUP_REASON);
+            expect(job.claimToken).toBe("claim-old");
+        });
+
+        it("sends the stored payload unchanged through the needs_setup claim and reports sent", async () => {
+            const { service, job, jobRepository, deliveryService, writtenStatuses } = resendFixture();
+            const payloadBefore = JSON.stringify(job.payload);
+            const scheduledFor = job.scheduledFor;
+            const dedupeKey = job.dedupeKey;
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId, expect.any(Object));
+            expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
+            // prepareJob freezes the delivery snapshot into the payload; nothing else changes.
+            expect(JSON.stringify({ ...job.payload, templateVariables: {} })).toBe(
+                JSON.stringify({ ...JSON.parse(payloadBefore), templateVariables: {} }),
+            );
+            expect(job.claimToken).toBe("claim-a");
+            expect(job.scheduledFor).toBe(scheduledFor);
+            expect(job.dedupeKey).toBe(dedupeKey);
+            expect(job.attempts).toBe(1);
+            expect(writtenStatuses[writtenStatuses.length - 1]).toBe("sent");
+            expect(result).toEqual({ id: job.id, status: "sent", reason: null });
+        });
+
+        it("returns '설정 필요' with the fresh reason, attempts unchanged, when the cause is still there", async () => {
+            const { service, job, deliveryService, writtenStatuses } = resendFixture();
+            deliveryService.sendJob.mockImplementation(async () => {
+                job.markNeedsSetup("템플릿을 찾을 수 없습니다");
+                return false;
+            });
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(result).toEqual({ id: job.id, status: "needs_setup", reason: "템플릿을 찾을 수 없습니다" });
+            expect(job.attempts).toBe(1);
+            expect(job.nextAttemptAt).toBeNull();
+            expect(writtenStatuses[writtenStatuses.length - 1]).toBe("needs_setup");
+            expect(writtenStatuses).not.toContain("pending");
+        });
+
+        it("resends a job whose scheduled time is far more than 24 hours old, while the ordinary dispatcher still expires an old pending job", async () => {
+            const resend = resendFixture({ scheduledFor: new Date(Date.now() - 30 * DAY_MS) });
+            const result = await resend.service.resendNeedsSetupJob(branchId, resend.job.id);
+            expect(result.status).toBe("sent");
+            expect(resend.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+
+            const ordinary = createDispatchService();
+            const oldPending = createJob({ scheduledFor: new Date(Date.now() - 30 * DAY_MS) });
+            ordinary.jobRepository.findDuePendingSystemScope.mockResolvedValue([oldPending]);
+            await ordinary.service.dispatchDueJobs();
+            expect(oldPending.status).toBe("canceled");
+            expect(oldPending.cancelReason).toBe("기존 발송 예정 24시간 경과");
+            expect(ordinary.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("still cancels an automatic service-record-link job whose link token window has ended", async () => {
+            const { service, job, prisma, deliveryService } = resendFixture(linkJobOverrides());
+            prisma.employee_schedule.findFirst.mockResolvedValue({
+                endDate: new Date("2026-01-01"), replaced: false, terminatedAt: null,
+                client: { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date(), endDate: new Date() },
+            });
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(result).toEqual({ id: job.id, status: "canceled", reason: SERVICE_RECORD_LINK_ENDED_REASON });
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("still blocks the pre-booking service-record-link gate (200, canceled)", async () => {
+            const { service, job, prisma, deliveryService } = resendFixture(linkJobOverrides());
+            prisma.employee_schedule.findFirst.mockResolvedValue({
+                endDate: new Date(Date.now() + DAY_MS), replaced: false, terminatedAt: null,
+                client: { serviceStatus: "pre_booking", bookingConfirmedAt: null, startDate: new Date(), endDate: new Date(Date.now() + DAY_MS) },
+            });
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(result).toEqual({
+                id: job.id, status: "canceled", reason: "예약 전 고객이라 제공기록지 링크를 발송하지 않았습니다",
+            });
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("still skips a client outside the rule's 대상 고객 상태 (200, canceled)", async () => {
+            const { service, job, ruleRepository, prisma, deliveryService } = resendFixture({ ruleId: "rule-target" });
+            ruleRepository.findByIdIncludingGlobal.mockResolvedValue(createRule({ id: "rule-target", targetClientStatus: "active" }));
+            prisma.client.findFirst.mockResolvedValue({
+                serviceStatus: null, bookingConfirmedAt: new Date("2026-01-01"),
+                startDate: new Date(Date.now() + 3 * DAY_MS), endDate: new Date(Date.now() + 20 * DAY_MS),
+            });
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(result.status).toBe("canceled");
+            expect(result.reason).toContain("target_client_status_mismatch");
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("resends a job of a global rule", async () => {
+            const { service, job, ruleRepository, jobRepository, deliveryService } = resendFixture({ ruleId: "rule-global" });
+            ruleRepository.findByIdIncludingGlobal.mockResolvedValue(createRule({ id: "rule-global", branchId: null }));
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, branchId, expect.any(Object));
+            expect(deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(result.status).toBe("sent");
+        });
+
+        it("keeps a sender-approval block terminal (200, canceled)", async () => {
+            const { service, job, messageSenderApprovalService, deliveryService } = resendFixture();
+            messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set<string>());
+
+            const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+            expect(result.status).toBe("canceled");
+            expect(deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        describe("a transient deferral never leaves the job pending", () => {
+            it("from preparation: back to '설정 필요' with the transient reason, attempts and schedule unchanged", async () => {
+                const { service, job, deliveryService, writtenStatuses } = resendFixture();
+                const scheduledFor = job.scheduledFor;
+                deliveryService.prepareJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Rule retry policy could not be read"));
+
+                const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+                expect(result).toEqual({ id: job.id, status: "needs_setup", reason: "Rule retry policy could not be read" });
+                expect(job.attempts).toBe(1);
+                expect(job.scheduledFor).toBe(scheduledFor);
+                expect(job.nextAttemptAt).toBeNull();
+                expect(writtenStatuses).not.toContain("pending");
+                expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            });
+
+            it("from delivery: back to '설정 필요' with the transient reason, attempts and schedule unchanged", async () => {
+                const { service, job, deliveryService, writtenStatuses } = resendFixture();
+                const scheduledFor = job.scheduledFor;
+                deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Provider timeout"));
+
+                const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+                expect(result).toEqual({ id: job.id, status: "needs_setup", reason: "Provider timeout" });
+                expect(job.attempts).toBe(1);
+                expect(job.scheduledFor).toBe(scheduledFor);
+                expect(writtenStatuses[writtenStatuses.length - 1]).toBe("needs_setup");
+                expect(writtenStatuses).not.toContain("pending");
+            });
+
+            it("does not terminal-fail on the attempts cap, because attempts are not incremented", async () => {
+                const { service, job, deliveryService } = resendFixture({ attempts: TRIGGER_JOB_MAX_ATTEMPTS - 1 });
+                deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Provider timeout"));
+
+                const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+                expect(result.status).toBe("needs_setup");
+                expect(job.attempts).toBe(TRIGGER_JOB_MAX_ATTEMPTS - 1);
+            });
+
+            it("from a catch-up postponement: back to '설정 필요', scheduledFor unchanged", async () => {
+                const scheduledFor = new Date(Date.now() - 3 * DAY_MS);
+                const { service, job, prisma, deliveryService, writtenStatuses } = resendFixture({
+                    scheduledFor,
+                    payload: {
+                        memberId: "1", recipientName: "김산모", recipientPhone: "010-1234-5678", templateVariables: {},
+                        catchUp: {
+                            batchId: "client:1:batch", sequence: 2, intervalMinutes: 3,
+                            originalScheduledFor: "2026-07-07T00:00:00.000Z", predecessorDedupeKey: "dedupe-predecessor",
+                        },
+                    },
+                });
+                prisma.message_trigger_job.findUnique.mockResolvedValue({
+                    status: "pending", scheduledFor: new Date(), sentAt: null, canceledAt: null,
+                    nextAttemptAt: null, updatedAt: new Date(),
+                });
+
+                const result = await service.resendNeedsSetupJob(branchId, job.id);
+
+                expect(result.status).toBe("needs_setup");
+                expect(job.scheduledFor).toBe(scheduledFor);
+                expect(job.attempts).toBe(1);
+                expect(writtenStatuses).toEqual(["needs_setup"]);
+                expect(deliveryService.sendJob).not.toHaveBeenCalled();
+            });
+
+            it("control: the ordinary dispatcher still defers the same error to pending with one more attempt", async () => {
+                const { service, deliveryService, jobRepository } = createDispatchService();
+                const job = createJob({ attempts: 1 });
+                jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+                deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Provider timeout"));
+
+                await service.dispatchDueJobs();
+
+                expect(job.status).toBe("pending");
+                expect(job.attempts).toBe(2);
+            });
+        });
     });
 
     it("binds employee-assignment jobs to the schedule source generation", () => {

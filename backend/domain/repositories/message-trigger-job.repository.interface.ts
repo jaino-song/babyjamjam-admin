@@ -91,6 +91,12 @@ export interface IMessageTriggerJobRepository {
      * to every terminal update/fence before a provider call.
      */
     claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    /**
+     * Same rule fence and token as `claimPendingWithRuleFence`, but for a job in
+     * `needs_setup` (manual resend). Returns null when the job is not in that
+     * state or the rule fence refuses; the row is left unchanged.
+     */
+    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(
