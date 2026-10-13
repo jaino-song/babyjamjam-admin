@@ -10,6 +10,12 @@ import { eformsignApi } from "@/services/api";
 import { EformsignDocument, EformsignDocumentsResponse } from "@/lib/eformsign/types";
 import { eformsignQueryKeys } from "@/hooks/useEformsignDocuments";
 import { getStatusCategory, DocumentFilterType } from "@/lib/eformsign/status-codes";
+import type { ContractDocDisplayStatus } from "@babyjamjam/shared/constants/eformsign-doc-status";
+
+// A voided (파기됨) document is filed with the expired ones and is never live (BJJ-439 D2). The
+// server stamps display_status; eformsign keeps reporting its old code for a voided document, so
+// this must be read before the code is.
+const VOIDED_DISPLAY_STATUS: ContractDocDisplayStatus = "voided";
 
 const PAGE_SIZE = 20;
 const EMPTY_DOCUMENTS: EformsignDocument[] = [];
@@ -22,9 +28,10 @@ function filterByActualStatus(
   type: DocumentFilterType
 ): EformsignDocument[] {
   if (type === null) return docs;
-  return docs.filter(
-    (doc) => getStatusCategory(doc.current_status?.status_type) === type
-  );
+  return docs.filter((doc) => {
+    if (doc.display_status === VOIDED_DISPLAY_STATUS) return type === "expired";
+    return getStatusCategory(doc.current_status?.status_type) === type;
+  });
 }
 
 // Sort by created_date desc. Per-status endpoints already return sorted

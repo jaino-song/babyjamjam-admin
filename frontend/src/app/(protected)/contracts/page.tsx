@@ -1270,7 +1270,8 @@ export function ContractDetail({
   const finalizeProgressSteps = isServiceRecordDocument
     ? SERVICE_RECORD_FINALIZE_PROGRESS_STEPS
     : FINALIZE_PROGRESS_STEPS;
-  const canReRequest = canReRequestDocument(detailedDocument);
+  // A voided contract is closed: no re-request, whatever step the provider code still reports.
+  const canReRequest = displayStatus !== "voided" && canReRequestDocument(detailedDocument);
   const reRequestStepType = detailedDocument.current_status?.step_type ?? "";
   const reRequestStepSeq = detailedDocument.current_status?.step_index ?? "";
   const currentRecipient = detailedDocument.current_status?.step_recipients?.[0];
@@ -1825,7 +1826,18 @@ export function ContractDetail({
     });
   }
 
-  if (category === "completed") {
+  if (displayStatus === "voided") {
+    // 파기됨 overrides every provider code: eformsign keeps reporting 060/003/... for a voided
+    // document, so this is read before them. Closed stage, no live marker; the signature/sent
+    // events above are real history and stay.
+    const voidedAtTimestamp = detailedDocument.voided_at ? Date.parse(detailedDocument.voided_at) : NaN;
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "계약이 파기됐어요",
+      time: Number.isNaN(voidedAtTimestamp) ? "" : formatDateTime(voidedAtTimestamp),
+    });
+  } else if (category === "completed") {
     activityItems.push({
       icon: FileSignature,
       iconVariant: "success",

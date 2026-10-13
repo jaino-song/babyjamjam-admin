@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Clock3 } from "lucide-react";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { api } from "@/lib/api/client";
@@ -556,5 +556,128 @@ describe("ContractDetail manual receipt-send interaction", () => {
     await screen.findByTestId("pdf-document");
 
     expect(screen.queryByRole("button", { name: "영수증 문자 발송" })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BJJ-439 계약 파기 (D2): a voided document overrides every eformsign code. Its detail view must
+// not read as live — no pending stage, no 현재 marker, no re-request — while the history that
+// really happened (sent, signed) stays.
+// ---------------------------------------------------------------------------
+describe("ContractDetail voided (파기됨) contract", () => {
+  const VOIDED_AT = "2026-10-01T03:04:00.000Z";
+
+  beforeAll(() => {
+    global.ResizeObserver = ResizeObserverMock as typeof ResizeObserver;
+  });
+
+  beforeEach(() => {
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200 })) as unknown as typeof fetch;
+    jest.spyOn(api, "get").mockResolvedValue({ data: [] } as never);
+    jest.spyOn(api, "post").mockResolvedValue({ data: {} } as never);
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  async function renderDetail(doc: EformsignDocument) {
+    jest.spyOn(eformsignApi, "getDocument").mockResolvedValue(doc as never);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContractDetail
+          data-component="desktop_contracts_detail"
+          document={doc}
+          onDeleteRequest={jest.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("button", { name: "계약서 단계 보기" });
+  }
+
+  async function openActivity() {
+    fireEvent.click(screen.getByRole("button", { name: "계약서 단계 보기" }));
+    return screen.findByRole("dialog", { name: "계약서 단계" });
+  }
+
+  async function openMenu() {
+    const trigger = screen.getByRole("button", { name: "계약 작업 더보기" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    return screen.findByRole("menu");
+  }
+
+  it("closes the stage of a voided unsigned 060 document instead of leaving it waiting", async () => {
+    await renderDetail({
+      ...pendingDetailDocumentFixture(),
+      display_status: "voided",
+      voided_at: VOIDED_AT,
+    } as unknown as EformsignDocument);
+
+    expect(await screen.findByText("파기됨")).toBeInTheDocument();
+    const dialog = await openActivity();
+
+    expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
+    expect(within(dialog).queryByText("이용자 문서 열람 대기중입니다")).toBeNull();
+    expect(within(dialog).queryByText("이용자 서명 대기중입니다")).toBeNull();
+    expect(within(dialog).queryByText("현재")).toBeNull();
+    // The timeline's real history is untouched.
+    expect(within(dialog).getByText("문서가 생성되었습니다")).toBeInTheDocument();
+  });
+
+  it("shows no live marker when the voided document carries no voided_at", async () => {
+    await renderDetail({
+      ...pendingDetailDocumentFixture(),
+      display_status: "voided",
+    } as unknown as EformsignDocument);
+
+    const dialog = await openActivity();
+
+    expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
+    expect(within(dialog).queryByText("현재")).toBeNull();
+  });
+
+  it("does not offer 재요청 for a voided 060 document, and keeps 삭제", async () => {
+    await renderDetail({
+      ...pendingDetailDocumentFixture(),
+      display_status: "voided",
+      voided_at: VOIDED_AT,
+    } as unknown as EformsignDocument);
+
+    const menu = await openMenu();
+
+    expect(within(menu).queryByText("재요청")).toBeNull();
+    expect(within(menu).getByText("삭제")).toBeInTheDocument();
+  });
+
+  it("keeps the historical signature event of a voided signed document", async () => {
+    await renderDetail({
+      ...receiptDetailDocumentFixture(),
+      // The customer signed (060 handing over to step 3) before the contract was voided.
+      histories: [{ status_type: "060", step_index: "3", updated_date: 1756900000000 }],
+      display_status: "voided",
+      voided_at: VOIDED_AT,
+    } as unknown as EformsignDocument);
+
+    const dialog = await openActivity();
+
+    expect(within(dialog).getByText(/서명을 완료했습니다/)).toBeInTheDocument();
+    expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
+    // 003 would otherwise read as a finished contract.
+    expect(within(dialog).queryByText("계약서가 완료되었습니다")).toBeNull();
+    expect(within(dialog).queryByText("현재")).toBeNull();
+  });
+
+  it("still shows the pending stage and 재요청 for a non-voided 060 document", async () => {
+    await renderDetail(pendingDetailDocumentFixture());
+
+    const dialog = await openActivity();
+    expect(within(dialog).getByText("이용자 문서 열람 대기중입니다")).toBeInTheDocument();
+    expect(within(dialog).getByText("현재")).toBeInTheDocument();
+    expect(within(dialog).queryByText("계약이 파기됐어요")).toBeNull();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    const menu = await openMenu();
+    expect(within(menu).getByText("재요청")).toBeInTheDocument();
   });
 });
