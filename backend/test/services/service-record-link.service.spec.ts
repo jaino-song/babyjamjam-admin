@@ -24,6 +24,8 @@ import { SbMessageTriggerJobRepository } from "infrastructure/database/repositor
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 
 describe("ServiceRecordLinkService", () => {
+    /** Stands in for the interactive transaction the repository's schedule fence hands to its callback. */
+    const FENCE_TRANSACTION = { fence: "transaction" };
     /** Stand-in for the interactive transaction the repository hands its in-transaction hook. */
     const REPLACEMENT_TRANSACTION = { name: "replacement-transaction" };
     const createPrisma = () => {
@@ -80,6 +82,15 @@ describe("ServiceRecordLinkService", () => {
     });
     const createJobRepository = () => ({
         cancelPendingByRuleAndEmployeeSchedule: jest.fn().mockResolvedValue({ canceledJobIds: [], inFlightJobIds: [] }),
+        cancelPendingUnderScheduleFence: jest.fn().mockImplementation(async (
+            _ruleId: string,
+            _scheduleId: number,
+            _reason: string,
+            afterCancel?: (transaction: unknown) => Promise<void>,
+        ) => {
+            if (afterCancel) await afterCancel(FENCE_TRANSACTION);
+            return { canceledJobIds: [], inFlightJobIds: [] };
+        }),
         update: jest.fn(),
         promoteAutomaticSchedulingClaim: jest.fn().mockImplementation(async (
             _markerId: string,
@@ -96,6 +107,7 @@ describe("ServiceRecordLinkService", () => {
         replacePendingJobsUnlessInFlight: jest.fn().mockImplementation(async (
             job: MessageTriggerJobEntity,
             _reason: string,
+            _options?: unknown,
             afterReplace?: (transaction: unknown) => Promise<void>,
         ) => {
             Object.defineProperty(job, "id", { value: "job-1" });
@@ -375,10 +387,16 @@ describe("ServiceRecordLinkService", () => {
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
         expect(tokenService.activatePreparedLink).not.toHaveBeenCalled();
         expect(prisma.message_trigger_rule.upsert).not.toHaveBeenCalled();
-        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
+        expect(jobRepository.cancelPendingUnderScheduleFence).toHaveBeenCalledWith(
             SERVICE_RECORD_LINK_RULE_ID,
             10,
             "Service record link reset without resend",
+            undefined,
+        );
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
+        // The fresh link is issued after the fence's transaction has committed.
+        expect(jobRepository.cancelPendingUnderScheduleFence.mock.invocationCallOrder[0]).toBeLessThan(
+            tokenService.issueLink.mock.invocationCallOrder[0]!,
         );
         expect(logRepository.findRetryableServiceRecordSmsByScheduleId).toHaveBeenCalledWith(10, undefined);
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
@@ -575,6 +593,8 @@ describe("ServiceRecordLinkService", () => {
                 employeeScheduleId: 10,
             }),
             expect.any(Object),
+            // The promotion re-checks, under the fence, the link it is about to enqueue.
+            { requireActiveLinkToken: "efl_token" },
         );
         expect(jobRepository.upsertPending).not.toHaveBeenCalled();
     });
@@ -687,22 +707,30 @@ describe("ServiceRecordLinkService", () => {
             return { service, prisma, tokenService };
         };
 
-        it("revoke kills the token first, keeps the dispatching job and does not throw", async () => {
+        it("revoke still revokes the token (inside the fence, on its transaction), keeps the dispatching job and does not throw", async () => {
             const jobRepository = createJobRepository();
-            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            jobRepository.cancelPendingUnderScheduleFence.mockImplementation(async (
+                _ruleId: string,
+                _scheduleId: number,
+                _reason: string,
+                afterCancel?: (transaction: unknown) => Promise<void>,
+            ) => {
+                if (afterCancel) await afterCancel(FENCE_TRANSACTION);
+                return IN_FLIGHT;
+            });
             const { service, tokenService } = build(jobRepository);
 
             await expect(service.revoke(10)).resolves.toBeUndefined();
 
-            expect(tokenService.revokeForSchedule.mock.invocationCallOrder[0]).toBeLessThan(
-                jobRepository.cancelPendingByRuleAndEmployeeSchedule.mock.invocationCallOrder[0]!,
-            );
+            // The token is revoked with the fence's own transaction, never through
+            // a method that opens another one while the fence is held.
+            expect(tokenService.revokeForSchedule).toHaveBeenCalledWith(10, FENCE_TRANSACTION);
             expect(jobRepository.update).not.toHaveBeenCalled();
         });
 
         it("resetLink still issues the fresh link, keeps the dispatching job and does not throw", async () => {
             const jobRepository = createJobRepository();
-            jobRepository.cancelPendingByRuleAndEmployeeSchedule.mockResolvedValue(IN_FLIGHT);
+            jobRepository.cancelPendingUnderScheduleFence.mockResolvedValue(IN_FLIGHT);
             const { service, tokenService } = build(jobRepository);
 
             await expect(service.resetLink(10)).resolves.toEqual({
@@ -778,6 +806,61 @@ describe("ServiceRecordLinkService", () => {
                 response: expect.objectContaining({ code: "REQUEST_CONFLICT" }),
             });
             expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        });
+
+        it("a manual send whose link was revoked while it was prepared answers the same 409 and asks for the link check", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.replacePendingJobsUnlessInFlight.mockResolvedValue({ kind: "link_revoked" });
+            const logRepository = createLogRepository();
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                logRepository as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+            );
+
+            await expect(service.sendNow(10)).rejects.toMatchObject({
+                response: expect.objectContaining({ code: "REQUEST_CONFLICT" }),
+            });
+            expect(jobRepository.replacePendingJobsUnlessInFlight).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.any(String),
+                { requireActiveLinkToken: "efl_token" },
+                expect.any(Function),
+            );
+            expect(logRepository.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        });
+
+        it("an automatic run whose promotion refused (revoked link) reports no job enqueued", async () => {
+            const jobRepository = createJobRepository();
+            jobRepository.promoteAutomaticSchedulingClaim.mockResolvedValue(null);
+            const prisma = createPrisma();
+            prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService,
+                createTokenService() as never,
+                createConfigService() as unknown as ConfigService,
+                jobRepository as unknown as IMessageTriggerJobRepository,
+                createLogRepository() as unknown as IMessageLogRepository,
+                createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
+                undefined,
+                undefined,
+                createBranchLock(prisma) as never,
+                createAutomationActivationService() as never,
+            );
+
+            await expect(service.scheduleForServiceStart(10)).resolves.toBe(false);
+            expect(jobRepository.promoteAutomaticSchedulingClaim).toHaveBeenCalledWith(
+                "claim-1",
+                expect.any(String),
+                expect.anything(),
+                expect.anything(),
+                { requireActiveLinkToken: "efl_token" },
+            );
         });
     });
 
@@ -869,6 +952,7 @@ describe("ServiceRecordLinkService", () => {
             jobRepository.replacePendingJobsUnlessInFlight.mockImplementation(async (
                 job: MessageTriggerJobEntity,
                 _reason: string,
+                _options?: unknown,
                 afterReplace?: (transaction: unknown) => Promise<void>,
             ) => {
                 await afterReplace?.(REPLACEMENT_TRANSACTION);
@@ -1276,12 +1360,14 @@ describe("ServiceRecordLinkService", () => {
 
         await service.revoke(10);
 
-        expect(tokenService.revokeForSchedule).toHaveBeenCalledWith(10);
-        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).toHaveBeenCalledWith(
+        expect(tokenService.revokeForSchedule).toHaveBeenCalledWith(10, FENCE_TRANSACTION);
+        expect(jobRepository.cancelPendingUnderScheduleFence).toHaveBeenCalledWith(
             SERVICE_RECORD_LINK_RULE_ID,
             10,
             "Service record access revoked",
+            expect.any(Function),
         );
+        expect(jobRepository.cancelPendingByRuleAndEmployeeSchedule).not.toHaveBeenCalled();
     });
 
     it("rethrows token revocation failures", async () => {

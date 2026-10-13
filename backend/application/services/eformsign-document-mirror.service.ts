@@ -15,6 +15,7 @@ import {
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_REFUSE_REVOKE_STATUS_CODE,
     isReviewStageDocumentPdfReadable,
 } from "domain/constants/eformsign-doc-status.constants";
 import {
@@ -252,6 +253,8 @@ export class EformsignDocumentMirrorService {
             && (
                 normalizedStatus === "001"
                 || normalizedStatus === "060"
+                // 041 (a refused revoke) is the document's live participant stage, like 060.
+                || normalizedStatus === EFORMSIGN_REFUSE_REVOKE_STATUS_CODE
                 || isReviewStageDocumentPdfReadable(normalizedStatus)
             );
         if (

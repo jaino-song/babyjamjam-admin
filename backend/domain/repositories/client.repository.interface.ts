@@ -119,6 +119,43 @@ export function getClientListDateRanges(now = new Date()): ClientListDateRanges 
 }
 
 /**
+ * The Korean calendar day containing `date`, as the UTC-midnight bounds a `@db.Date` column
+ * compares against (`gte` start, `lt` nextDayStart). Never use the runtime's local timezone:
+ * deployed containers run in UTC, one calendar day behind Korea from 00:00 to 08:59 KST.
+ */
+export function getClientCalendarDayRange(date: Date): { dayStart: Date; nextDayStart: Date } {
+    const day = isoDateInKorea(date);
+    return { dayStart: dateOnlyStart(day), nextDayStart: dateOnlyStart(shiftCalendarDays(day, 1)) };
+}
+
+/**
+ * The Korean calendar day containing `date`, as the instants a timestamp column compares
+ * against (`gte` start, `lt` endExclusive): KST midnight to the next KST midnight.
+ */
+export function getKstDayInstantRange(date: Date): { start: Date; endExclusive: Date } {
+    const day = isoDateInKorea(date);
+    return {
+        start: new Date(`${day}T00:00:00.000+09:00`),
+        endExclusive: new Date(`${shiftCalendarDays(day, 1)}T00:00:00.000+09:00`),
+    };
+}
+
+/**
+ * "Today through `days` days from now" on the Korean calendar, as UTC-midnight bounds for a
+ * `@db.Date` column (`gte` start, `lt` endExclusive). The last day is included.
+ */
+export function getClientDateWindow(
+    days: number,
+    now = new Date(),
+): { start: Date; endExclusive: Date } {
+    const today = isoDateInKorea(now);
+    return {
+        start: dateOnlyStart(today),
+        endExclusive: dateOnlyStart(shiftCalendarDays(today, days + 1)),
+    };
+}
+
+/**
  * Resolve the status shown by the client list from the stored status and the
  * authoritative Korean calendar date. The stored manual states are preserved;
  * every other state follows the service period dates.
@@ -337,33 +374,37 @@ export interface IClientRepository {
     findByCreatedDate(branchid: string, date: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients whose service starts within the next N days (inclusive)
-     * Used for daily summary notifications
+     * Find clients whose service starts within the next N days (inclusive), counted on the
+     * Korean calendar. Used for daily summary notifications and `/clients/filtered`.
      */
-    findStartingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
+    findStartingWithinDays(branchid: string, days: number, now?: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients whose service ends within the next N days (inclusive)
-     * Used for daily summary notifications
+     * Find clients whose service ends within the next N days (inclusive), counted on the
+     * Korean calendar. Used for daily summary notifications and `/clients/filtered`.
      */
-    findEndingWithinDays(branchid: string, days: number): Promise<ClientEntity[]>;
+    findEndingWithinDays(branchid: string, days: number, now?: Date): Promise<ClientEntity[]>;
 
     /**
-     * Find clients with incomplete contracts (eformsign doc not completed)
-     * whose service starts within the next N days
+     * Find clients whose service starts within the next N days (Korean calendar, inclusive) and
+     * whose CURRENT contract (the dashboard's latest-contract rule, not the `eDocId` pin) is
+     * alive but not completed.
      */
     findWithIncompleteContractsStartingWithinDays(
         branchid: string,
-        days: number
+        days: number,
+        now?: Date,
     ): Promise<ClientEntity[]>;
 
     /**
-     * Find clients without any contract sent (eDocId is null)
-     * whose service starts within the next N days
+     * Find exactly the clients the dashboard counts as `contractsNotSent` and whose list row
+     * carries the "발송 필요" badge: same effective service status, same current-contract
+     * lookup, same business-day send window. A live 040/045 contract is not "not sent".
      */
     findWithoutContractSentStartingWithinDays(
         branchid: string,
-        days: number
+        calendar: KrBusinessDayCalendar,
+        now?: Date,
     ): Promise<ClientEntity[]>;
 
     /**

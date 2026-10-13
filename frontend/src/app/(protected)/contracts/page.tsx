@@ -47,7 +47,9 @@ import {
   DocumentFilterType,
   type DocumentStatusCategory,
   contractStatusBadgeType,
+  isCustomerSignedDisplayStatus,
   mapDocStatusLabel,
+  resolveDocDisplayStatus,
   calendarForEndDate,
   getStatusCategory,
   foldContractStats,
@@ -1193,10 +1195,18 @@ export function ContractDetail({
   // The backend's serve-time display_status decides the label — the detail response carries it,
   // and the list row stands in until the detail loads. Without it an unassigned document at the
   // provider-review step resolved to 검토 필요 here and drew the finalize button the list hides.
+  const docContractEndDate = detailedDocument.contract_end_date ?? (contractEndDateIso || null);
+  const docDisplayStatusInput = detailedDocument.display_status ?? doc.display_status;
+  const displayStatus = resolveDocDisplayStatus(
+    detailedDocument.current_status,
+    docContractEndDate,
+    docDisplayStatusInput,
+    calendar,
+  );
   const statusLabel = mapDocStatusLabel(
     detailedDocument.current_status,
-    detailedDocument.contract_end_date ?? (contractEndDateIso || null),
-    detailedDocument.display_status ?? doc.display_status,
+    docContractEndDate,
+    docDisplayStatusInput,
     calendar,
   );
   const statusType: StatusType = contractStatusBadgeType(statusLabel);
@@ -1368,8 +1378,10 @@ export function ContractDetail({
   const reRequestEvents = extractReRequestEvents(detailedDocument);
   const openEvents = extractOpenEvents(detailedDocument);
   const hasOpenedDocument = openEvents.length > 0;
-  const isReviewNeeded = statusLabel === "검토 필요";
-  const isCustomerSigned = statusLabel === "서명 완료" || isReviewNeeded;
+  // Decided from the display status (status code + workflow step), not from the label text:
+  // an unassigned document ("고객 등록 필요") at the review step is customer-signed too.
+  const isReviewNeeded = displayStatus === "review";
+  const isCustomerSigned = isCustomerSignedDisplayStatus(displayStatus);
   const steps = getSignatureProgress(category, hasOpenedDocument, isCustomerSigned);
   const customerSignedTimestamp = extractCustomerSignedTimestamp(detailedDocument);
   const customerSignedDate =
@@ -1784,12 +1796,20 @@ export function ContractDetail({
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else if (statusLabel === "철회 요청됨") {
-    // 040 shares the "expired" category (tabs/filters) but is not over: the cancellation was
+    // 040/045 share the "expired" category (tabs/filters) but are not over: the cancellation was
     // requested, and may still be refused or completed.
     activityItems.push({
       icon: AlertTriangle,
       iconVariant: "warning",
       text: "철회가 요청됐어요 — 아직 철회가 완료되지 않았어요",
+      time: formatDateTime(detailedDocument.updated_date),
+    });
+  } else if (statusLabel === "철회됨") {
+    // 042/090 share the "expired" category (tabs/filters) but the document was revoked, not timed out.
+    activityItems.push({
+      icon: AlertTriangle,
+      iconVariant: "danger",
+      text: "문서가 철회됐어요",
       time: formatDateTime(detailedDocument.updated_date),
     });
   } else if (category === "expired") {

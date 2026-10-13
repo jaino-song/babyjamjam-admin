@@ -7,6 +7,7 @@
  * Rendering-based, mirroring ContractCreationForm.iframe-fallback.test.tsx.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 
@@ -123,11 +124,13 @@ function renderForm() {
             />
         );
     }
-    return render(
+    const invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    const view = render(
         <QueryClientProvider client={queryClient}>
             <Harness />
         </QueryClientProvider>,
     );
+    return { ...view, invalidateSpy };
 }
 
 async function submitAndWaitForDispatchVerdict() {
@@ -247,5 +250,50 @@ describe("ContractCreationForm — envelope outcome as primary classification", 
         expect(screen.queryByTestId("contract-creation-unverified-notice")).not.toBeInTheDocument();
         expect(mockOpenDocument).not.toHaveBeenCalled();
         expect(mockAdoptDocument).not.toHaveBeenCalled();
+    });
+
+    describe("client cache after a contract was sent", () => {
+        const expectClientQueriesInvalidated = (invalidateSpy: jest.SpyInstance) => {
+            const keys = invalidateSpy.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
+            expect(keys).toContainEqual(clientKeys.all);
+            expect(keys).toContainEqual(clientKeys.detail(42));
+        };
+
+        it("invalidates the client list and the client's detail when the headless dispatch succeeds", async () => {
+            mockDispatchHeadless.mockResolvedValue({ ok: true, durationMs: 5 });
+
+            const { invalidateSpy } = renderForm();
+            await submitAndWaitForDispatchVerdict();
+
+            expect(await screen.findByText("계약서가 성공적으로 생성되었습니다.")).toBeInTheDocument();
+            expectClientQueriesInvalidated(invalidateSpy);
+        });
+
+        it("invalidates the client list and the client's detail when a remote document is adopted", async () => {
+            mockDispatchHeadless.mockResolvedValue({
+                ok: false,
+                reason: "local_persist_failed",
+                outcome: "PARTIALLY_APPLIED",
+                remoteDocumentId: "doc-remote-9",
+                durationMs: 5,
+            });
+
+            const { invalidateSpy } = renderForm();
+            await submitAndWaitForDispatchVerdict();
+
+            expect(await screen.findByText("계약서가 성공적으로 생성되었습니다.")).toBeInTheDocument();
+            expectClientQueriesInvalidated(invalidateSpy);
+        });
+
+        it("does not touch the client cache when the dispatch fails", async () => {
+            mockDispatchHeadless.mockResolvedValue({ ok: false, reason: "remote_unconfirmed", durationMs: 5 });
+
+            const { invalidateSpy } = renderForm();
+            await submitAndWaitForDispatchVerdict();
+
+            expect(await screen.findByText(/문서 생성 상태를 확인할 수 없어요/)).toBeInTheDocument();
+            const keys = invalidateSpy.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
+            expect(keys).not.toContainEqual(clientKeys.all);
+        });
     });
 });

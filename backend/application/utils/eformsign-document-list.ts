@@ -1,4 +1,5 @@
 import { normalizeEformsignStatusCode, normalizeEformsignStepType } from "domain/utils/eformsign-status-code";
+import { EFORMSIGN_IN_PROGRESS_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 
 import { documentCustomerNameValue, isRecord, stringFromUnknown, type UnknownRecord } from "application/utils/eformsign-document-customer-name";
 import { eformsignDocumentTemplateId } from "application/utils/eformsign-document-template-id";
@@ -32,7 +33,7 @@ export type DocumentStatusCategory =
 export const COMPLETED_STATUS_CODES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 export const EXPIRED_STATUS_CODES = new Set(["011", "021", "031", "040", "042", "045", "047", "049", "061", "071", "080", "090"]);
 export const DELETED_STATUS_CODES = new Set(["047", "049", "099"]);
-export const IN_PROGRESS_STATUS_CODES = new Set(["001", "002", "010", "020", "030", "043", "060", "063", "064", "070"]);
+export const IN_PROGRESS_STATUS_CODES: ReadonlySet<string> = EFORMSIGN_IN_PROGRESS_STATUS_CODES;
 export const PROVIDER_REVIEW_STEP_TYPES = new Set(["06"]);
 export const PROVIDER_REVIEW_OWNER_KEYWORDS = ["제공기관", "관리자", "담당자"];
 export const PROVIDER_REVIEW_ACTION_KEYWORDS = ["확인", "검토"];

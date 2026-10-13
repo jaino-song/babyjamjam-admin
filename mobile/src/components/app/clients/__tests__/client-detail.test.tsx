@@ -829,4 +829,53 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("발송 내역을 불러오지 못했습니다.")).toBeInTheDocument();
     expect(screen.queryByText("최근 발송 기록만 표시하고 있어요")).not.toBeInTheDocument();
   });
+
+  describe("detail-empty-state slot", () => {
+    const baseProps = {
+      "data-component": "mobile_clients_detail-sheet_stack_detail-page_content",
+      client,
+      contractDocument: null,
+      onTabChange: jest.fn(),
+      onMessage: jest.fn(),
+      onIssueContract: jest.fn(),
+      onEdit: jest.fn(),
+      onDelete: jest.fn(),
+      onClientUpdated: jest.fn(),
+    } as const;
+    const slotted = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll(".detail-empty-state"));
+
+    it.each([
+      ["loading", { isNotificationLogsLoading: true }],
+      ["error", { isNotificationLogsError: true }],
+      ["empty", {}],
+    ] as const)("marks the %s message history state with data-slot", (_name, flags) => {
+      const { container } = render(
+        <ClientDetailContent {...baseProps} activeTab="message" notificationLogs={[]} {...flags} />,
+      );
+      const states = slotted(container);
+      expect(states).toHaveLength(1);
+      expect(states[0]).toHaveAttribute("data-slot", "detail-empty-state");
+    });
+
+    it("marks the truncation notice and the empty contract card with data-slot", () => {
+      const truncated = render(
+        <ClientDetailContent
+          {...baseProps}
+          activeTab="message"
+          notificationLogs={[]}
+          hasMoreNotificationLogs
+        />,
+      );
+      const notices = slotted(truncated.container);
+      expect(notices.length).toBeGreaterThan(0);
+      for (const element of notices) expect(element).toHaveAttribute("data-slot", "detail-empty-state");
+      truncated.unmount();
+
+      const contracts = render(<ClientDetailContent {...baseProps} activeTab="contracts" notificationLogs={[]} />);
+      const cards = slotted(contracts.container);
+      expect(cards.length).toBeGreaterThan(0);
+      for (const element of cards) expect(element).toHaveAttribute("data-slot", "detail-empty-state");
+    });
+  });
 });

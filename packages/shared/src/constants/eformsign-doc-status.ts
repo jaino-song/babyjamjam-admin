@@ -1,4 +1,8 @@
-import { isProviderReviewWorkflowStep, isRevokeRequestedEformsignStatus } from "./eformsign-status-codes";
+import {
+    isProviderReviewWorkflowStep,
+    isRevokeRequestedEformsignStatus,
+    isRevokedEformsignStatus,
+} from "./eformsign-status-codes";
 import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "../utils/business-days";
 
 // Preserve the historical named export for consumers that imported the
@@ -15,7 +19,7 @@ export { KR_HOLIDAYS } from "../utils/business-days";
  * 1 business day before the contract end date, so until then the document is
  * surfaced as 서명 완료 and flips to 검토 필요 when the window opens.
  */
-export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "기간 만료";
+export type ContractDocStatusLabel = "서명 대기" | "서명 완료" | "검토 필요" | "계약 완료" | "철회 요청됨" | "철회됨" | "기간 만료";
 
 export type ContractDocStatusCategory = "completed" | "expired" | "in-progress";
 
@@ -39,12 +43,19 @@ export type ContractDocDisplayStatus =
     | "unassigned"
     | "completed"
     /**
-     * eformsign 040 (doc_request_revoke): cancellation was requested, not done — it may still be
-     * refused (→ 060) or completed (→ 042). Shown "철회 요청됨" (warning); distinct from 기간 만료
+     * eformsign 040 (doc_request_revoke) and 045 (doc_request_reject): cancellation was
+     * requested, not done — it may still be refused (041, which continues like 060) or
+     * completed (→ 042). Shown "철회 요청됨" (warning); distinct from 기간 만료
      * (080) and from 철회됨 (042/090). It keeps the "expired" category for tabs/filters/stats —
      * only the label and tone differ.
      */
     | "revoke_requested"
+    /**
+     * eformsign 042 (doc_revoke) and 090 (synthesized withdrawal): the document was revoked —
+     * terminal. Shown "철회됨" (danger); distinct from 기간 만료 (080) and from 철회 요청됨. It keeps
+     * the "expired" category for tabs/filters/stats — only the label and tone differ.
+     */
+    | "revoked"
     | "expired"
     | "unknown";
 
@@ -55,6 +66,7 @@ export const CONTRACT_DOC_DISPLAY_STATUS_LABELS = {
     unassigned: "고객 등록 필요",
     completed: "계약 완료",
     revoke_requested: "철회 요청됨",
+    revoked: "철회됨",
     expired: "기간 만료",
     unknown: "알 수 없음",
 } as const satisfies Record<ContractDocDisplayStatus, string>;
@@ -136,8 +148,8 @@ export function resolveContractDocDisplayStatus(params: {
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
     /**
-     * The provider status code (current_status.status_type). Checked first so 040
-     * (cancellation requested) is not folded into the "expired" category.
+     * The provider status code (current_status.status_type). Checked first so 040/045
+     * (cancellation requested) and 042/090 (revoked) are not folded into the "expired" category.
      */
     statusType?: string | number | null;
     now?: Date;
@@ -149,6 +161,7 @@ export function resolveContractDocDisplayStatus(params: {
     // display_status gets the backend's answer, which can be "unassigned".
 }): Exclude<ContractDocDisplayStatus, "unknown" | "unassigned"> {
     if (isRevokeRequestedEformsignStatus(params.statusType)) return "revoke_requested";
+    if (isRevokedEformsignStatus(params.statusType)) return "revoked";
     if (params.category === "completed") return "completed";
     if (params.category === "expired") return "expired";
     if (!isProviderReviewWorkflowStep(params.currentStatus)) return "pending";
@@ -209,7 +222,7 @@ export function resolveContractDocStatusLabel(params: {
     category: ContractDocStatusCategory;
     currentStatus: { step_type?: string | null; step_name?: string | null } | null | undefined;
     contractEndDate: string | null | undefined;
-    /** See resolveContractDocDisplayStatus: 040 resolves to 철회 요청됨 before the category. */
+    /** See resolveContractDocDisplayStatus: 040/045 resolve to 철회 요청됨 and 042/090 to 철회됨 before the category. */
     statusType?: string | number | null;
     now?: Date;
     calendar?: KrBusinessDayCalendar;

@@ -60,6 +60,7 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
         findBranchIdByDocumentId: jest.fn(),
         claimCompletionStatus: jest.fn(),
         update: jest.fn(),
+        updateWithOutcome: jest.fn(),
         updateIfSourceNewer: jest.fn(),
         upsertUnassignedByDocumentId: jest.fn(),
     };
@@ -83,6 +84,12 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
             async (_branch: string, doc: EformsignDocEntity) => {
                 row = doc;
                 return doc;
+            },
+        );
+        eformsignDocRepository.updateWithOutcome.mockImplementation(
+            async (_branch: string, doc: EformsignDocEntity) => {
+                row = doc;
+                return { document: doc, applied: true };
             },
         );
         eformsignDocRepository.updateIfSourceNewer.mockImplementation(
@@ -172,12 +179,15 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
     });
 
     it("classifies 040 (revoke requested) as open and 042 (revoked) as ended", () => {
-        expect(TERMINAL_STATUS_CODES.has("040")).toBe(false);
-        expect(UNASSIGNED_TERMINAL_STATUS_CODES.has("040")).toBe(false);
+        // 045 (doc_request_reject) is a revoke REQUEST too — the same treatment as 040.
+        for (const code of ["040", "045"]) {
+            expect(TERMINAL_STATUS_CODES.has(code)).toBe(false);
+            expect(UNASSIGNED_TERMINAL_STATUS_CODES.has(code)).toBe(false);
+        }
         expect(TERMINAL_STATUS_CODES.has("042")).toBe(true);
         expect(UNASSIGNED_TERMINAL_STATUS_CODES.has("042")).toBe(true);
         // The remaining ended codes are unchanged.
-        for (const code of ["011", "021", "031", "045", "047", "049", "061", "071", "080", "090", "099"]) {
+        for (const code of ["011", "021", "031", "047", "049", "061", "071", "080", "090", "099"]) {
             expect(TERMINAL_STATUS_CODES.has(code)).toBe(true);
         }
     });
@@ -251,7 +261,8 @@ describe("EformsignWebhookService revoke event sequences (real usecase, in-memor
         });
     });
 
-    it("lists 040 in the forward-after-review set while it stays non-terminal", () => {
+    it("lists 040 and 045 in the forward-after-review set while they stay non-terminal", () => {
         expect(UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE.has("040")).toBe(true);
+        expect(UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE.has("045")).toBe(true);
     });
 });

@@ -42,7 +42,31 @@ export interface ClientUpcomingMessageTriggerJobCursor {
 export type ReplacePendingJobsResult =
     | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
     | { kind: "in_flight"; inFlightJobIds: string[] }
+    | { kind: "lock_timeout" }
+    | { kind: "link_revoked" };
+
+/**
+ * Outcome of claiming a provider-rejected job for an action-bound retry.
+ * `not_claimable` means the approved source drifted or is no longer retryable.
+ * `lock_timeout` means the rule or the source row stayed locked by another
+ * transaction for longer than the claim is willing to wait; the transaction
+ * aborted, so nothing was written and the caller may safely try again. An
+ * interactive-transaction timeout (a thrown P2028) is NOT this outcome: it
+ * does not prove nothing committed and stays an unclassified error.
+ */
+export type ClaimProviderRejectedForRetryResult =
+    | { kind: "claimed"; job: MessageTriggerJobEntity }
+    | { kind: "not_claimable" }
     | { kind: "lock_timeout" };
+
+/**
+ * Guard a job write taken under the schedule fence against a link revoke:
+ * the plaintext link token the job's message carries must still be an active,
+ * non-revoked token of the schedule, checked under the fence.
+ */
+export interface ScheduleFenceLinkOptions {
+    requireActiveLinkToken?: string;
+}
 
 /**
  * Outcome of cancelling a schedule's not-yet-sent jobs. `inFlightJobIds` are
@@ -152,6 +176,28 @@ export interface IMessageTriggerJobRepository {
         employeeScheduleId: number,
         reason: string,
     ): Promise<CancelPendingJobsResult>;
+    /**
+     * `cancelPendingByRuleAndEmployeeSchedule` under the schedule fence, for a
+     * revoke/reset: in ONE transaction it takes the schedule advisory lock,
+     * cancels the jobs, then runs `afterCancel` with the same transaction (the
+     * token revocation), so the cancel and the revocation are atomic against a
+     * manual send / automatic promotion of the same schedule. Never takes the
+     * rule lock or the branch lock and never gives up on a lock (it must not
+     * fail a revoke); `afterCancel` must use only the given transaction.
+     */
+    cancelPendingUnderScheduleFence(
+        ruleId: string,
+        employeeScheduleId: number,
+        reason: string,
+        afterCancel?: (transaction: Prisma.TransactionClient) => Promise<void>,
+    ): Promise<CancelPendingJobsResult>;
+    /**
+     * Cancel one `processing` claim by the token its owner read, in ONE
+     * status-predicated statement. A job that has since moved to `dispatching`
+     * (same claim token) or been re-claimed is left untouched. Returns whether
+     * this call canceled it.
+     */
+    cancelProcessingClaim(id: string, claimToken: string, reason: string): Promise<boolean>;
     cancelPendingByClientContext(branchId: string, clientId: number, reason: string): Promise<number>;
     cancelOrphanedPending(reason: string, branchId?: string): Promise<number>;
     findRecoverableOrphanedClientJobs(branchId: string, limit?: number): Promise<MessageTriggerJobEntity[]>;
@@ -176,6 +222,7 @@ export interface IMessageTriggerJobRepository {
         expectedClaimVersion: string,
         job: MessageTriggerJobEntity,
         transaction?: Prisma.TransactionClient,
+        options?: ScheduleFenceLinkOptions,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Cancel mutable pending jobs only while the branch-scoped rule is at the
@@ -203,6 +250,9 @@ export interface IMessageTriggerJobRepository {
      * Otherwise the pending jobs are canceled with `reason` and the replacement
      * is inserted in the same transaction, so a concurrent dispatcher claim
      * either wins first (-> `in_flight`) or loses against the canceled row.
+     * With `options.requireActiveLinkToken`, the link token the replacement
+     * carries is re-checked under the fence; a revoked one yields
+     * `link_revoked` with nothing written.
      * `afterReplace` runs inside that same transaction once the replacement is
      * inserted, after every schedule/rule/job lock was taken (so any row it
      * locks, e.g. message_log, comes last). If it throws, the cancel and the
@@ -211,6 +261,7 @@ export interface IMessageTriggerJobRepository {
     replacePendingJobsUnlessInFlight(
         replacement: MessageTriggerJobEntity,
         reason: string,
+        options?: ScheduleFenceLinkOptions,
         afterReplace?: (transaction: Prisma.TransactionClient) => Promise<void>,
     ): Promise<ReplacePendingJobsResult>;
     /**
@@ -227,8 +278,10 @@ export interface IMessageTriggerJobRepository {
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound
-     * retry job in the same transaction. A null result means the approved
-     * source target drifted or is no longer retryable.
+     * retry job in the same transaction. `not_claimable` means the approved
+     * source target drifted or is no longer retryable. The transaction waits
+     * at most one second for any lock; past that nothing is written and
+     * `lock_timeout` is returned.
      */
     claimProviderRejectedForRetry(
         branchId: string,
@@ -237,7 +290,7 @@ export interface IMessageTriggerJobRepository {
         expectedSnapshotHash: string,
         expectedSource: MessageTriggerJobEntity,
         retryJob: MessageTriggerJobEntity,
-    ): Promise<MessageTriggerJobEntity | null>;
+    ): Promise<ClaimProviderRejectedForRetryResult>;
 }
 
 export const MESSAGE_TRIGGER_JOB_REPOSITORY = "MESSAGE_TRIGGER_JOB_REPOSITORY";

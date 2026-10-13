@@ -174,7 +174,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         await expect(repository.findFile("doc-1", "document")).resolves.toBeNull();
     });
 
-    it("serves a stored document PDF while status 060 is still syncing its audit trail", async () => {
+    it.each(["060", "041"])("serves a stored document PDF while status %s is still syncing its audit trail", async (statusType) => {
         const file = {
             fileType: "document",
             content: Buffer.from("pdf"),
@@ -186,7 +186,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
             syncedAt,
         };
         const row = {
-            detailPayload: { current_status: { status_type: "060" } },
+            detailPayload: { current_status: { status_type: statusType } },
             detailSourceUpdatedDate: detailVersion,
             syncStatus: "partial",
             permanentPurgeRequestedAt: null,

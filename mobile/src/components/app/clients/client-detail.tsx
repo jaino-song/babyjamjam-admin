@@ -1341,7 +1341,7 @@ export function ClientDetailContent({
           </>
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_contracts_contract-card`} title="계약서">
-            <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_contracts_contract-card_empty`}>
+            <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_contracts_contract-card_empty`} data-slot="detail-empty-state">
               계약서 정보가 없습니다.
             </div>
           </InfoCard>
@@ -1376,11 +1376,11 @@ export function ClientDetailContent({
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_message_history-card`} title="발송 내역">
             {isNotificationLogsLoading ? (
-              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_loading`}>
+              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_loading`} data-slot="detail-empty-state">
                 발송 내역을 불러오는 중입니다.
               </div>
             ) : isNotificationLogsError ? (
-              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_error`}>
+              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_error`} data-slot="detail-empty-state">
                 <p>발송 내역을 불러오지 못했습니다.</p>
                 {onRetryNotificationLogs ? (
                   <button
@@ -1417,7 +1417,7 @@ export function ClientDetailContent({
                 );
               })
             ) : (
-              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_empty`}>
+              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_empty`} data-slot="detail-empty-state">
                 발송 내역이 없습니다.
               </div>
             )}
@@ -1425,6 +1425,7 @@ export function ClientDetailContent({
               <p
                 className="detail-empty-state"
                 data-component={`${dataComponent}_tab-panel_message_history-card_truncated-notice`}
+                data-slot="detail-empty-state"
               >
                 최근 발송 기록만 표시하고 있어요
               </p>

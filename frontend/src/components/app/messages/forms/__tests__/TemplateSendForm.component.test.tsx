@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { eformsignApi, messageDeliveryApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
+import { syncMessageDraftScope } from "@/stores/message-draft-scope";
 
 import { TemplateSendForm } from "../TemplateSendForm";
 
@@ -331,6 +332,10 @@ async function queueRecipient(phone: string, name = "") {
 beforeEach(() => {
   jest.clearAllMocks();
   document.cookie = "selected_branch_id=branch-a; path=/";
+  // The draft scope is module-level state: the first mount of the form for a branch resets the
+  // shared form store, wiping what a test seeded before rendering. Settle the scope here, before
+  // any seeding, so every test starts from the same scope whether it runs alone or after others.
+  syncMessageDraftScope("branch-a");
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: jest.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof useQueryClient>);

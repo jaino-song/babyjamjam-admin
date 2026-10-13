@@ -7,7 +7,6 @@ import {
     type FieldInputState,
     type FieldKind,
 } from "@babyjamjam/shared/utils/field-validation-message";
-import { getUserErrorMessage } from "@babyjamjam/shared";
 
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";

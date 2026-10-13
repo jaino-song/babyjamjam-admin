@@ -217,8 +217,8 @@ describe("SbMessageTriggerJobRepository", () => {
         }
         await expect(repository.upsertPendingForRuleGeneration(job, now, false)).resolves.toBeNull();
         await expect(repository.promoteAutomaticSchedulingClaim("marker", now.toISOString(), job)).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toBeNull();
-        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toBeNull();
+        await expect(repository.claimProviderRejectedForRetry("branch-1", job.id, "version", "snapshot", job, createJob())).resolves.toEqual({ kind: "not_claimable" });
+        await expect(repository.claimProviderRejectedForRetry("branch-1", "source", "version", "snapshot", createJob(), job)).resolves.toEqual({ kind: "not_claimable" });
         expect(queryRaw).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
         for (const method of Object.values(messageTriggerJobModel)) expect(method).not.toHaveBeenCalled();
@@ -1218,8 +1218,17 @@ describe("SbMessageTriggerJobRepository", () => {
         txJob.create.mockResolvedValue({
             ...createRow({ id: "retry-1", status: "pending", dedupeKey: retry.dedupeKey, payload: retry.payload }),
         });
-        const transaction = { $queryRaw: jest.fn().mockResolvedValue([rawSource]), message_trigger_job: txJob };
-        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+        const order: string[] = [];
+        const transaction = {
+            $executeRaw: jest.fn().mockImplementation(async (sql: Prisma.Sql) => { order.push(sql.sql.replace(/\s+/g, " ").trim()); return 0; }),
+            $queryRaw: jest.fn().mockResolvedValue([rawSource]),
+            message_trigger_job: txJob,
+        };
+        let transactionOptions: unknown;
+        (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>, options?: unknown) => {
+            transactionOptions = options;
+            return operation(transaction);
+        });
 
         const snapshotHash = "snapshot-hash";
         await expect(repository.claimProviderRejectedForRetry(
@@ -1229,7 +1238,12 @@ describe("SbMessageTriggerJobRepository", () => {
             snapshotHash,
             source,
             retry,
-        )).resolves.toEqual(expect.objectContaining({ id: "retry-1" }));
+        )).resolves.toEqual({ kind: "claimed", job: expect.objectContaining({ id: "retry-1" }) });
+        // The lock wait is bounded before any lock is taken, and the interactive
+        // transaction outlives that bound.
+        expect(order).toEqual(["SET LOCAL lock_timeout = '1s'"]);
+        expect(transaction.$executeRaw.mock.invocationCallOrder[0]!).toBeLessThan(transaction.$queryRaw.mock.invocationCallOrder[0]!);
+        expect(transactionOptions).toEqual({ timeout: 10_000 });
         // Rule row first, then the source job row: rule -> job -> retry INSERT.
         expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
         const ruleLock = (transaction.$queryRaw.mock.calls[0][0] as Prisma.Sql);
@@ -1237,6 +1251,70 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(ruleLock.values).toEqual(["rule-1"]);
         expect((transaction.$queryRaw.mock.calls[1][0] as Prisma.Sql).sql).toContain('FROM "message_trigger_job"');
         expect(txJob.create).toHaveBeenCalledTimes(1);
+    });
+
+    describe("claimProviderRejectedForRetry lock wait", () => {
+        const source = MessageTriggerJobEntity.reconstitute(
+            "job-1", "branch-1", "rule-1", "failed",
+            new Date("2026-07-09T01:00:00.000Z"), null, null, "provider rejected", 1, null,
+            MessageTriggerRecipientType.CLIENT, "01012345678", MessageTriggerTemplateKey.SERVICE_INFO,
+            "rule-1:client:1",
+            {
+                memberId: "1",
+                recipientName: "홍길동",
+                recipientPhone: "01012345678",
+                templateVariables: { retrySafety: "provider-rejected" },
+            },
+            new Date("2026-07-08T00:00:00.000Z"), new Date("2026-07-08T01:00:00.000Z"), 1, null,
+        );
+        const retry = MessageTriggerJobEntity.create({
+            branchId: "branch-1",
+            ruleId: "rule-1",
+            scheduledFor: now,
+            clientId: 1,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            recipientPhone: "01012345678",
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            dedupeKey: "agent-sms-retry:action-lock",
+            payload: source.payload,
+        });
+        const claimWith = async (failure: unknown) => {
+            const transaction = {
+                $executeRaw: jest.fn().mockResolvedValue(0),
+                $queryRaw: jest.fn().mockRejectedValue(failure),
+                message_trigger_job: createMockPrismaMessageTriggerJob(),
+            };
+            (prisma.$transaction as jest.Mock).mockImplementationOnce(async (operation: (tx: unknown) => Promise<unknown>) => operation(transaction));
+            return {
+                transaction,
+                outcome: repository.claimProviderRejectedForRetry(
+                    "branch-1", source.id, targetVersion(source, "snapshot-hash"), "snapshot-hash", source, retry,
+                ),
+            };
+        };
+
+        it("answers a lock wait past lock_timeout (P2010 / 55P03) as lock_timeout with nothing written", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("lock timeout", {
+                code: "P2010", clientVersion: "test", meta: { code: "55P03", message: "canceling statement due to lock timeout" },
+            });
+            const { transaction, outcome } = await claimWith(failure);
+            await expect(outcome).resolves.toEqual({ kind: "lock_timeout" });
+            expect(transaction.message_trigger_job.create).not.toHaveBeenCalled();
+        });
+
+        it("does not turn an interactive-transaction timeout (P2028) into a definite outcome", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("transaction timeout", { code: "P2028", clientVersion: "test" });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
+
+        it("rethrows a P2010 that is not lock_not_available", async () => {
+            const failure = new Prisma.PrismaClientKnownRequestError("deadlock", {
+                code: "P2010", clientVersion: "test", meta: { code: "40P01" },
+            });
+            const { outcome } = await claimWith(failure);
+            await expect(outcome).rejects.toBe(failure);
+        });
     });
 
     it("findSentByRuleIdAndEmployeeScheduleId queries sent rows for the schedule", async () => {
@@ -2242,5 +2320,111 @@ describe("SbMessageTriggerJobRepository.replacePendingJobsUnlessInFlight (modell
         unscoped.employeeScheduleId = null;
         await expect(repository.replacePendingJobsUnlessInFlight(unscoped, CANCEL_REASON))
             .rejects.toThrow("employee schedule scope");
+    });
+});
+
+/**
+ * Statement-shape checks for the b5 cancel/fence additions. The races those
+ * statements close are proven on a real PostgreSQL in
+ * `sb.message-trigger-job.manual-send-concurrency.spec.ts` (env-gated).
+ */
+describe("SbMessageTriggerJobRepository b5 cancel races (statement shape)", () => {
+    const RULE_ID = SERVICE_RECORD_LINK_RULE_ID;
+    const flat = (value: unknown): string => {
+        const candidate = value as { strings?: string[]; text?: string };
+        return (candidate.text ?? candidate.strings?.join("?") ?? String(value)).replace(/\s+/g, " ").trim();
+    };
+
+    const spyPrisma = (rows: (sql: string) => unknown[] = () => []) => {
+        const statements: string[] = [];
+        const client = {
+            $queryRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return rows(flat(query)); }),
+            $executeRaw: jest.fn(async (query: unknown) => { statements.push(flat(query)); return 1; }),
+        };
+        const transaction = jest.fn(async (work: (tx: typeof client) => Promise<unknown>, options?: unknown) => {
+            statements.push(`BEGIN ${JSON.stringify(options)}`);
+            return work(client);
+        });
+        return { statements, prisma: { ...client, $transaction: transaction } as unknown as PrismaService, transaction };
+    };
+
+    describe("cancelProcessingClaim", () => {
+        it("is one status- and token-predicated UPDATE, not a read-then-write", async () => {
+            const { statements, prisma, transaction } = spyPrisma(() => [{ id: "job-1" }]);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "Client data changed"))
+                .resolves.toBe(true);
+
+            expect(statements).toHaveLength(1);
+            expect(statements[0]).toMatch(/^UPDATE "message_trigger_job" SET status = 'canceled'.*claim_token = NULL/);
+            expect(statements[0]).toMatch(/AND status = 'processing' AND claim_token = \$\d+ RETURNING id$/);
+            expect(transaction).not.toHaveBeenCalled();
+        });
+
+        it("reports false when nothing matched (the job moved on)", async () => {
+            const { prisma } = spyPrisma(() => []);
+
+            await expect(new SbMessageTriggerJobRepository(prisma).cancelProcessingClaim("job-1", "token-1", "x"))
+                .resolves.toBe(false);
+        });
+    });
+
+    describe("cancelPendingUnderScheduleFence", () => {
+        it("takes the schedule advisory lock, then the job locks, then runs afterCancel on the same transaction; no rule lock, no lock_timeout, long limits", async () => {
+            const { statements, prisma, transaction } = spyPrisma();
+            const afterCancel = jest.fn(async () => { statements.push("AFTER_CANCEL"); });
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .cancelPendingUnderScheduleFence(RULE_ID, 10, "Service record access revoked", afterCancel);
+
+            expect(result).toEqual({ canceledJobIds: [], inFlightJobIds: [] });
+            expect(statements[0]).toBe('BEGIN {"timeout":30000,"maxWait":30000}');
+            expect(statements[1]).toMatch(/^SELECT pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)$/);
+            expect(statements[2]).toMatch(/^WITH locked AS .*ORDER BY id FOR UPDATE.*UPDATE "message_trigger_job" AS job/);
+            expect(statements[3]).toContain("status = 'dispatching'");
+            expect(statements[4]).toBe("AFTER_CANCEL");
+            expect(afterCancel).toHaveBeenCalledTimes(1);
+            expect(statements.join(" ")).not.toContain("message_trigger_rule");
+            expect(statements.join(" ")).not.toContain("lock_timeout");
+            expect(transaction).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe("link token re-check under the fence", () => {
+        const replacement = () => MessageTriggerJobEntity.create({
+            branchId: "11111111-1111-4111-8111-111111111111",
+            ruleId: RULE_ID,
+            scheduledFor: new Date(),
+            clientId: 20,
+            employeeScheduleId: 10,
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01011112222",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            dedupeKey: `${RULE_ID}:schedule:10:primary:manual:x`,
+            payload: { memberId: "employee:30", recipientName: "p", recipientPhone: "01011112222", templateVariables: {} },
+        });
+
+        it("a manual replace reads the token AFTER the job locks and writes nothing when it is revoked", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            const result = await new SbMessageTriggerJobRepository(prisma)
+                .replacePendingJobsUnlessInFlight(replacement(), "r", { requireActiveLinkToken: "efl_x" });
+
+            expect(result).toEqual({ kind: "link_revoked" });
+            const jobLock = statements.findIndex((sql) => sql.includes('FROM "message_trigger_job"') && sql.includes("FOR UPDATE"));
+            const tokenRead = statements.findIndex((sql) => sql.includes('FROM "service_record_token"'));
+            expect(jobLock).toBeGreaterThan(-1);
+            expect(tokenRead).toBeGreaterThan(jobLock);
+            expect(statements.join(" ")).not.toContain("INSERT INTO");
+            expect(statements.join(" ")).not.toContain("SET status = 'canceled'");
+        });
+
+        it("without the option no token statement is issued", async () => {
+            const { statements, prisma } = spyPrisma(() => []);
+
+            await new SbMessageTriggerJobRepository(prisma).replacePendingJobsUnlessInFlight(replacement(), "r").catch(() => undefined);
+
+            expect(statements.join(" ")).not.toContain("service_record_token");
+        });
     });
 });

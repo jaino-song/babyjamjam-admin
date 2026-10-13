@@ -22,6 +22,7 @@ import {
     SystemSettingService,
 } from "./system-setting.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
+import { HolidayCalendarService } from "./holiday-calendar.service";
 
 const DAYS_THRESHOLD = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -78,6 +79,7 @@ export class PwaNotificationSchedulerService {
         private readonly messageTriggerJobRepository: IMessageTriggerJobRepository,
         private readonly systemSettingService: SystemSettingService,
         private readonly schedulerLease: SchedulerLeaseService,
+        private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
     @Cron("0 9 * * *", { timeZone: "Asia/Seoul" })
@@ -159,14 +161,25 @@ export class PwaNotificationSchedulerService {
         deliveryKey: string,
     ): Promise<boolean> {
         const [upcoming, ending, incompleteContracts, contractsNotSent, undelivered] = await Promise.all([
+            // Everything below counts on the Korean calendar of the run instant, and the two
+            // contract lists use the same rules as the dashboard (current contract, not the
+            // `eDocId` pin): "계약서 미발송" is exactly the dashboard's 발송 필요 clients.
             this.collect(branchId, "upcoming services", () =>
-                this.clientRepository.findStartingWithinDays(branchId, DAYS_THRESHOLD)),
+                this.clientRepository.findStartingWithinDays(branchId, DAYS_THRESHOLD, runStartedAt)),
             this.collect(branchId, "ending services", () =>
-                this.clientRepository.findEndingWithinDays(branchId, DAYS_THRESHOLD)),
+                this.clientRepository.findEndingWithinDays(branchId, DAYS_THRESHOLD, runStartedAt)),
             this.collect(branchId, "incomplete contracts", () =>
-                this.clientRepository.findWithIncompleteContractsStartingWithinDays(branchId, DAYS_THRESHOLD)),
-            this.collect(branchId, "contracts not sent", () =>
-                this.clientRepository.findWithoutContractSentStartingWithinDays(branchId, DAYS_THRESHOLD)),
+                this.clientRepository.findWithIncompleteContractsStartingWithinDays(
+                    branchId,
+                    DAYS_THRESHOLD,
+                    runStartedAt,
+                )),
+            this.collect(branchId, "contracts not sent", async () =>
+                this.clientRepository.findWithoutContractSentStartingWithinDays(
+                    branchId,
+                    await this.holidayCalendar.forBranch(branchId),
+                    runStartedAt,
+                )),
             this.collectUndeliveredMessages(branchId, undeliveredSince, runStartedAt),
         ]);
 

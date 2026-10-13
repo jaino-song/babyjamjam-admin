@@ -12,54 +12,37 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/components/app/ui/ApprovalTwoButtonModal", () => ({
     ApprovalTwoButtonModal: ({
         open,
+        title,
+        description,
+        children,
         onApprove,
         approvalLabel,
         pendingLabel,
         isPending,
+        approvalDisabled,
     }: {
         open: boolean;
+        title: React.ReactNode;
+        description: React.ReactNode;
+        children?: React.ReactNode;
         onApprove: () => void;
         approvalLabel: string;
         pendingLabel: string;
         isPending: boolean;
+        approvalDisabled?: boolean;
     }) => open ? (
         <div role="dialog">
-            <button type="button" disabled={isPending} onClick={onApprove}>
-                {isPending ? pendingLabel : approvalLabel}
-            </button>
-        </div>
-    ) : null,
-}));
-
-jest.mock("@/components/app/ui/MobileTwoButtonModal", () => ({
-    MobileTwoButtonModal: ({
-        "data-component": dataComponent,
-        open,
-        title,
-        description,
-        loading,
-        confirmLabel,
-        confirmDisabled,
-        children,
-    }: {
-        "data-component"?: string;
-        open: boolean;
-        title: string;
-        description?: string;
-        loading?: boolean;
-        confirmLabel: string;
-        confirmDisabled?: boolean;
-        children?: React.ReactNode;
-    }) => open ? (
-        <div
-            role="dialog"
-            aria-busy={loading}
-            data-component={dataComponent}
-        >
             <h2>{title}</h2>
             <p>{description}</p>
             {children}
-            <button disabled={loading || confirmDisabled}>{confirmLabel}</button>
+            <button
+                type="button"
+                disabled={isPending || approvalDisabled}
+                aria-busy={isPending || undefined}
+                onClick={onApprove}
+            >
+                {isPending ? pendingLabel : approvalLabel}
+            </button>
         </div>
     ) : null,
 }));
@@ -460,7 +443,7 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
 
-        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("button", { name: "불러오는 중…" })).toHaveAttribute("aria-busy", "true");
         expect(screen.getByRole("heading", { name: "서비스 일정 변경" })).toBeInTheDocument();
         expect(screen.getByText("변경 가능한 일정을 확인하고 있어요.")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "불러오는 중…" })).toBeDisabled();
@@ -473,7 +456,7 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         expect(await screen.findByRole("heading", { name: "1회차 서비스 일정을 조정할까요?" }))
             .toBeInTheDocument();
-        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "false");
+        expect(screen.getByRole("button", { name: "승인 요청" })).not.toHaveAttribute("aria-busy");
         expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
     });
 
@@ -491,7 +474,7 @@ describe("ServiceRecordPage authentication restoration", () => {
         render(<ServiceRecordPage />);
 
         await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
-        expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
+        expect(screen.getByRole("button", { name: "불러오는 중…" })).toHaveAttribute("aria-busy", "true");
 
         previewResponse.reject(new Error("network unavailable"));
 

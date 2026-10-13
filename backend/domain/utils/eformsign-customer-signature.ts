@@ -1,9 +1,19 @@
+import { EFORMSIGN_IN_PROGRESS_STATUS_CODES } from "../constants/eformsign-doc-status.constants";
 import { isProviderReviewWorkflowStep, normalizeEformsignStatusCode } from "./eformsign-status-code";
 
 export const COMPLETED_DOCUMENT_STATUS_TYPES = new Set(["003", "012", "022", "032", "050", "062", "072", "092"]);
 export const OPENED_DOCUMENT_STATUS_TYPES = new Set(["020"]);
 export const CREATED_DOCUMENT_STATUS_TYPES = new Set(["001", "002", "010", "043"]);
-export const REQUESTED_DOCUMENT_STATUS_TYPES = new Set(["030", "060", "070"]);
+// Derived from the domain in-progress set (the one source of truth for "live and waiting on someone"),
+// minus the created and opened buckets that have their own client status. What is left is every
+// pre-signature "requested" state: 030, 041 (revoke refused, continues like 060), 060, 063
+// (doc_rerequest_participant), 064 (doc_open_participant) and 070.
+// 040/045 (revoke requested) are deliberately absent: not cancellable, not "requested".
+export const REQUESTED_DOCUMENT_STATUS_TYPES: ReadonlySet<string> = new Set(
+    [...EFORMSIGN_IN_PROGRESS_STATUS_CODES].filter(
+        (code) => !CREATED_DOCUMENT_STATUS_TYPES.has(code) && !OPENED_DOCUMENT_STATUS_TYPES.has(code),
+    ),
+);
 
 /** 재발행 취소는 알려진 미서명 진행 상태에서만 허용한다. */
 export function isCancellableUnsignedContract(contract: {

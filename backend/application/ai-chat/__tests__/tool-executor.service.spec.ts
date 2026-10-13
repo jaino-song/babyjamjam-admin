@@ -337,6 +337,28 @@ describe("ToolExecutorService", () => {
         expect(mocks.clientService.findByFilter).not.toHaveBeenCalled();
     });
 
+    // The chat's 계약서 미발송 / 미완료 counts are the lengths of the same lists /clients/filtered
+    // and the PWA digest serve, so they follow the dashboard's current-contract rule.
+    it("getDashboardStats reports the contract counts from the shared filtered lists", async () => {
+        const { executor, mocks } = createExecutor();
+        mocks.clientService.findAll.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+        mocks.clientService.findByFilter.mockImplementation(async (_branch: string, filter: string) => ({
+            "starting-soon": [{ id: 1 }],
+            "ending-soon": [{ id: 2 }, { id: 3 }],
+            "incomplete-contracts": [{ id: 1 }, { id: 2 }, { id: 3 }],
+            "no-contract": [{ id: 2 }],
+        })[filter] ?? []);
+
+        const result = await executor.execute("branch-1", "getDashboardStats", {});
+
+        expect(result).toMatchObject({
+            success: true,
+            data: expect.objectContaining({ incompleteContractsCount: 3, noContractCount: 1 }),
+        });
+        expect(mocks.clientService.findByFilter).toHaveBeenCalledWith("branch-1", "no-contract");
+        expect(mocks.clientService.findByFilter).toHaveBeenCalledWith("branch-1", "incomplete-contracts");
+    });
+
     it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("accepts ISO birthday %s before legacy tool confirmation", async (birthday) => {
         const { executor, mocks } = createExecutor();
         const result = await executor.execute("branch-1", "createClient", {

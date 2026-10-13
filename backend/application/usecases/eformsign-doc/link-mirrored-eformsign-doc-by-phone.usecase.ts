@@ -72,6 +72,8 @@ const AUTO_REGISTRATION_ELIGIBLE_STATUS_CODES = new Set([
     "022",
     "030",
     "032",
+    // 041 (doc_refuse_revoke): the revoke was refused, the document continues like 060.
+    "041",
     "043",
     "050",
     "060",
@@ -648,6 +650,16 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         if (matches.length === 1) {
                             if (completeLockSurface) {
                                 const matched = matches[0]!;
+                                // `client.e_doc_id` is unique, so a different client that still points
+                                // at this unassigned document would make the pointer write fail with
+                                // P2002. Lock those clients together with the matched one, in id
+                                // order, before any other lock (project-wide order: client rows
+                                // first); they are re-validated once the document is locked.
+                                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                                    branchId: existingClientBranchId,
+                                    documentId: document.documentId,
+                                    clientId: matched.id,
+                                });
                                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                                     branchId: existingClientBranchId,
                                     clientId: matched.id,
@@ -684,7 +696,23 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 ) {
                                     throw new MirrorGenerationConflict();
                                 }
-                                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                                const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
+                                    branchId: locked.branchId,
+                                    documentId: document.documentId,
+                                    clientId: matched.id,
+                                });
+                                if (currentPointerClientIds.some((id) => !lockedPointerClientIds.has(id))) {
+                                    // A pointer client appeared after the unlocked read; locking it
+                                    // now would invert the lock order and writing it unlocked is not
+                                    // allowed. Start over from the reconciler.
+                                    throw new MirrorGenerationConflict();
+                                }
+                                const linked = await this.linkExistingClient(
+                                    transaction,
+                                    current,
+                                    locked.client,
+                                    [...lockedPointerClientIds],
+                                );
                                 if (
                                     params.initializeLifecycle
                                     && (linked === "linked" || linked === "already_linked")
@@ -1236,6 +1264,15 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
     }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
             if (this.hasCompleteServiceRecordWriteLockSurface(transaction)) {
+                // Another client pointing at this document would make writing the owner's
+                // pointer fail with P2002 (unique `eDocId`). Lock those clients together with
+                // the owner, ascending, before any other lock; re-validated after the
+                // document lock below.
+                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                    branchId: document.branchId,
+                    documentId: document.documentId,
+                    clientId: document.clientId,
+                });
                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                     branchId: document.branchId,
                     clientId: document.clientId,
@@ -1272,7 +1309,22 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 ) {
                     return "ambiguous";
                 }
-                const linked = await this.linkExistingClient(transaction, current, locked.client);
+                const currentPointerClientIds = await this.findOtherPointerClientIds(transaction, {
+                    branchId: locked.branchId,
+                    documentId: document.documentId,
+                    clientId: document.clientId,
+                });
+                if (currentPointerClientIds.some((id) => !lockedPointerClientIds.has(id))) {
+                    // A pointer client appeared after the unlocked read: writing it would be
+                    // unlocked, locking it now inverts the order. Fail closed, nothing written.
+                    return "mirror_not_ready";
+                }
+                const linked = await this.linkExistingClient(
+                    transaction,
+                    current,
+                    locked.client,
+                    [...lockedPointerClientIds],
+                );
                 if (
                     initializeLifecycle
                     && (linked === "linked" || linked === "already_linked")
@@ -1319,6 +1371,49 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             }
             return linked;
         });
+    }
+
+    /**
+     * Other clients (same branch) whose `eDocId` points at the document. Read without a lock; it
+     * only chooses which client rows to lock and is re-read once the locks are held.
+     */
+    private async findOtherPointerClientIds(
+        transaction: Prisma.TransactionClient,
+        params: { branchId: string | null; documentId: string; clientId: number },
+    ): Promise<number[]> {
+        if (!params.branchId) return [];
+        const rows = await transaction.$queryRaw<Array<{ id: number }> | undefined>(Prisma.sql`
+            SELECT pointer_client.id
+            FROM client AS pointer_client
+            WHERE pointer_client.e_doc_id = ${params.documentId}
+              AND pointer_client.branch_id = ${params.branchId}::uuid
+              AND pointer_client.id <> ${params.clientId}
+        `);
+        return (rows ?? []).map((row) => row.id);
+    }
+
+    /**
+     * Locks the other clients pointing at the document. The matched client's own row is taken by
+     * the service-record write set that follows, so it is locked here too only to keep every
+     * client row of the link in one ascending-id acquisition.
+     */
+    private async lockPointerClients(
+        transaction: Prisma.TransactionClient,
+        params: { branchId: string | null; documentId: string; clientId: number },
+    ): Promise<Set<number>> {
+        const pointerClientIds = await this.findOtherPointerClientIds(transaction, params);
+        if (pointerClientIds.length > 0) {
+            const clientIdsToLock = Array.from(new Set([params.clientId, ...pointerClientIds]))
+                .sort((left, right) => left - right);
+            await transaction.$queryRaw(Prisma.sql`
+                SELECT id
+                FROM client
+                WHERE id IN (${Prisma.join(clientIdsToLock)})
+                ORDER BY id
+                FOR UPDATE
+            `);
+        }
+        return new Set(pointerClientIds);
     }
 
     private async lockExpectedMirrorGeneration(
@@ -1386,6 +1481,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             branchId: string | null;
             eDocId: string | null;
         },
+        lockedOtherPointerClientIds: readonly number[] = [],
     ): Promise<"linked" | "already_linked" | "ambiguous"> {
         const clientBranchId = client.branchId;
         if (!clientBranchId) {
@@ -1433,6 +1529,20 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         });
         if (claimed.count === 0) {
             return "ambiguous";
+        }
+
+        // Unique `eDocId`: the document now belongs to this client, so no other (locked)
+        // client may keep pointing at it - whether or not this client also takes the
+        // pointer below (it keeps a newer contract's pointer otherwise).
+        if (lockedOtherPointerClientIds.length > 0) {
+            await transaction.client.updateMany({
+                where: {
+                    id: { in: [...lockedOtherPointerClientIds] },
+                    branchId: clientBranchId,
+                    eDocId: document.documentId,
+                },
+                data: { eDocId: null },
+            });
         }
 
         let shouldPointToMirroredDocument = client.eDocId === null

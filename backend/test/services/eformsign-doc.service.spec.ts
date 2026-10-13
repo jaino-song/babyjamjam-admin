@@ -268,6 +268,51 @@ describe("EformsignDocService", () => {
             );
         });
 
+        it.each(["040", "045", "doc_request_revoke"])(
+            "maps a revoke-requested status (%s) to the webhook's 철회 요청 detail, not 거부",
+            async (statusType) => {
+                fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
+                    createApiDocument({ status_type: statusType, step_name: "이용자 서명" }),
+                );
+
+                await service.syncStatusFromApi(branchId, "access-token", documentId);
+
+                expect(updateEformsignDocStatusUsecase.execute).toHaveBeenCalledWith(
+                    branchId,
+                    expect.objectContaining({
+                        statusType: statusType === "doc_request_revoke" ? "040" : statusType,
+                        statusDetail: "철회 요청",
+                    }),
+                );
+            },
+        );
+
+        it.each(["042", "047", "061"])("keeps %s on the 거부 detail", async (statusType) => {
+            fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
+                createApiDocument({ status_type: statusType, step_name: "이용자 서명" }),
+            );
+
+            await service.syncStatusFromApi(branchId, "access-token", documentId);
+
+            expect(updateEformsignDocStatusUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType, statusDetail: "거부" }),
+            );
+        });
+
+        it("reads 041 (a refused revoke) like 060: the step name, never 거부 or 철회 요청", async () => {
+            fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
+                createApiDocument({ status_type: "041", step_name: "이용자 서명" }),
+            );
+
+            await service.syncStatusFromApi(branchId, "access-token", documentId);
+
+            expect(updateEformsignDocStatusUsecase.execute).toHaveBeenCalledWith(
+                branchId,
+                expect.objectContaining({ statusType: "041", statusDetail: "이용자 서명" }),
+            );
+        });
+
         it("falls back to the step name for an in-progress status code", async () => {
             fetchEformsignDocFromApiUsecase.execute.mockResolvedValue(
                 createApiDocument({ status_type: "060", step_name: "  이용자 서명  " }),

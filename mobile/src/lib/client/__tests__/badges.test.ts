@@ -65,3 +65,28 @@ describe("getMobileClientBadges", () => {
     );
   });
 });
+
+describe("getMobileClientBadges legacy fallback for a revoke-requested contract (040/045)", () => {
+  it("renders the 철회 요청됨 warning badge instead of 계약서 필요", () => {
+    const badges = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "revoke_requested" });
+
+    expect(badges.some((badge) => badge.key === "contract_required")).toBe(false);
+    expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_status", label: "철회 요청됨", tone: "orange" }));
+  });
+
+  it("keeps the real service-status badge and the rest, so no badge or +N count is lost", () => {
+    const withRevoke = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "revoke_requested" });
+    const plain = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "completed" });
+
+    expect(withRevoke.map((badge) => badge.label)).toEqual(["철회 요청됨", "진행중", "유축기 대여"]);
+    // Same count as a client with an ordinary contract (진행중 + 유축기 대여) plus the warning.
+    expect(withRevoke).toHaveLength(plain.length + 1);
+    expect(new Set(withRevoke.map((badge) => badge.key)).size).toBe(withRevoke.length);
+  });
+
+  it("keeps 계약서 필요 for a revoked contract", () => {
+    const badges = getMobileClientBadges({ ...BASE_CLIENT, documentStatus: "revoked" });
+
+    expect(badges[0]).toEqual(expect.objectContaining({ key: "contract_required", label: "계약서 필요" }));
+  });
+});
