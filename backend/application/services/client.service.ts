@@ -13,6 +13,7 @@ import {
     CONTRACT_SEND_BUSINESS_DAYS_THRESHOLD,
     findLatestContractSignalsByClientId,
     isActiveContractSignal,
+    isVoidedContractSignal,
     isContractSendRequired,
     type LatestContractSignal,
 } from "application/utils/current-contract-document";
@@ -135,12 +136,13 @@ const PHONE_LINK_LOCK_SET_CHANGED = Symbol("PHONE_LINK_LOCK_SET_CHANGED");
 //   still refuse it and the signer may continue, so it is non-terminal)
 // - 042/090: revoked (철회됨)
 // - 099: deleted (삭제됨)
-export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | null;
+export type DocumentStatusType = 'created' | 'opened' | 'completed' | 'requested' | 'revoke_requested' | 'rejected' | 'revoked' | 'deleted' | 'voided' | null;
 // A document in one of these states is still "alive" — the client already has
 // a contract in flight (or finished), so the "계약서 필요" signal must not fire
 // even if it is unsigned. A pending cancellation (revoke_requested) is still a live
 // contract until eformsign actually revokes it. Everything else (rejected/revoked/
 // deleted/no document at all) is a dead document and falls back to the "발송 필요" check.
+// `voided` (계약 파기) is dead too: it is deliberately absent from this set.
 const ACTIVE_DOCUMENT_STATUSES = new Set<DocumentStatusType>(["created", "requested", "revoke_requested", "opened", "completed"]);
 export type ClientBadgeKey = "contract_required" | "contract_status" | "breast_pump" | "service_status" | "care_center";
 export type ClientBadgeTone = "danger" | "success" | "primary" | "warning" | "neutral";
@@ -1666,9 +1668,13 @@ export class ClientService {
                 });
             }
             const latestContract = latestContractMap.get(client.id);
+            // Purge-requested wins ("deleted"); else a voided newest contract is "voided" whatever its
+            // eformsign code says (the code keeps moving after a void); else the code decides.
             const documentStatus = latestContract?.permanentPurgeRequestedAt != null
                 ? "deleted"
-                : this.mapStatusTypeToDocumentStatus(latestContract?.statusType);
+                : isVoidedContractSignal(latestContract)
+                    ? "voided"
+                    : this.mapStatusTypeToDocumentStatus(latestContract?.statusType);
             const hasActiveContractDocument = ACTIVE_DOCUMENT_STATUSES.has(documentStatus);
             const contractSignals = {
                 clientId: client.id,
@@ -1709,6 +1715,7 @@ export class ClientService {
                     eDocId: client.eDocId,
                     areaId: client.areaId,
                     hasSigned: latestContract?.permanentPurgeRequestedAt == null
+                        && !isVoidedContractSignal(latestContract)
                         && hasCustomerSigned(latestContract),
                     documentStatus,
                     latestContractDocumentId: latestContract?.documentId ?? null,
@@ -3044,6 +3051,7 @@ export class ClientService {
         const contractsPendingSignature = [...latestContracts].filter(([clientId, doc]) => {
             if (
                 doc.permanentPurgeRequestedAt != null
+                || isVoidedContractSignal(doc)
                 || DELETED_DOCUMENT_STATUS_TYPES.has(doc.statusType.trim().padStart(3, "0"))
             ) {
                 return false;
