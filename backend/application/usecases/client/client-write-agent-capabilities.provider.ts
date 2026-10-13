@@ -27,7 +27,9 @@ import {
     assertAllowedServiceStatus,
     assertPhoneAvailable,
     assertClientPhoneInput,
+    mergeAndValidateClientServicePeriod,
     parseClientDate,
+    resolveSavedServiceStatus,
 } from "./client-write-validation";
 import { CLIENT_REPOSITORY, IClientRepository, getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
@@ -203,11 +205,51 @@ async function validateClientServicePeriod(
     }
 }
 
+/**
+ * The status a reconcile should expect the stored client to carry for an
+ * approved `serviceStatus`: what the save rule would have stored, or
+ * `undefined` where it stores nothing (the stored status already is the
+ * approved effective one). A refusal means the write never applied, so the
+ * raw approved value is compared and a mismatch stays "uncertain".
+ */
+function approvedServiceStatusAfterSave(
+    existing: ClientStatusInputs,
+    approved: string | null,
+): string | null | undefined {
+    try {
+        return resolveSavedServiceStatus({
+            currentServiceStatus: existing.serviceStatus ?? null,
+            bookingConfirmedAt: existing.bookingConfirmedAt,
+            startDate: existing.startDate ?? null,
+            endDate: existing.endDate ?? null,
+            suppliedServiceStatus: approved,
+        });
+    } catch (error) {
+        if (error instanceof BadRequestException) return approved;
+        throw error;
+    }
+}
+
+/**
+ * Validates an agent client write. For an UPDATE it also applies the save rule
+ * for `serviceStatus` (rule 고객-04): it either refuses, or rewrites `updates`
+ * in place — deleting `serviceStatus` where nothing is to be stored, replacing
+ * it where the rule decides the value — so every caller (`inspect`, `execute`,
+ * `executeApprovedTarget`) hands the usecase the same status. The check runs on
+ * the unlocked `existing` snapshot, which is this path's design; only the
+ * service's own `update` re-checks under the row lock.
+ */
 async function validateClientWrite(
     prisma: PrismaService,
     repository: Pick<IClientRepository, "findByPhone">,
     branchId: string,
-    existing: { id: number; startDate: Date | null; endDate: Date | null } | null,
+    existing: {
+        id: number;
+        startDate: Date | null;
+        endDate: Date | null;
+        serviceStatus?: string | null;
+        bookingConfirmedAt?: Date | null;
+    } | null,
     updates: {
         areaId?: string | null;
         phone?: string | null;
@@ -221,6 +263,21 @@ async function validateClientWrite(
         assertAllowedServiceStatus(updates.serviceStatus);
         await assertAllowedClientArea(prisma, branchId, updates.areaId);
         await assertPhoneAvailable(repository, branchId, updates.phone, existing?.id);
+        if (existing && updates.serviceStatus !== undefined) {
+            const mergedPeriod = mergeAndValidateClientServicePeriod(existing, updates);
+            const savedServiceStatus = resolveSavedServiceStatus({
+                currentServiceStatus: existing.serviceStatus ?? null,
+                bookingConfirmedAt: existing.bookingConfirmedAt ?? null,
+                startDate: mergedPeriod.startDate,
+                endDate: mergedPeriod.endDate,
+                suppliedServiceStatus: updates.serviceStatus,
+            });
+            if (savedServiceStatus === undefined) {
+                delete updates.serviceStatus;
+            } else {
+                updates.serviceStatus = savedServiceStatus;
+            }
+        }
     } catch (error) {
         if (error instanceof BadRequestException || error instanceof ConflictException) {
             throw new AgentActionCertainFailureError(validationErrorMessage(error));
@@ -535,7 +592,13 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
                         ...updates,
                         ...normalizeMergedClientPricing(existing, updates),
                     }).filter(([, value]) => value !== undefined);
-                    if (desired.every(([key, value]) => sameClientValue(existing[key as keyof typeof existing], value))) {
+                    if (desired.every(([key, value]) => {
+                        if (key !== "serviceStatus") return sameClientValue(existing[key as keyof typeof existing], value);
+                        // The save rule may store a different status than the approved
+                        // one (or none); compare against what it would have stored.
+                        const expected = approvedServiceStatusAfterSave(existing, value as string | null);
+                        return expected === undefined || sameClientValue(existing.serviceStatus, expected);
+                    })) {
                         return { status: "succeeded", result: { id: existing.id, name: existing.name, status: "updated" } };
                     }
                     return { status: "uncertain", reason: "Client does not match the approved update" };

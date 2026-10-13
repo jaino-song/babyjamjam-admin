@@ -2401,7 +2401,8 @@ describe("ClientService", () => {
                 ["birthday", "birthday"],
                 ["dueDate", "dueDate"],
                 ["birthDate", "birthDate"],
-                ["serviceStatus", "serviceStatus"],
+                // serviceStatus: null is no longer written as NULL — it is treated as the
+                // date-derived status (rule 고객-04); see "update: a save may not change 예약 전".
                 ["eDocId", "eDocId"],
                 ["areaId", "areaId"],
             ])("writes explicit null for nullable %s instead of treating it as omission", async (field, dataKey) => {
@@ -5443,6 +5444,335 @@ describe("ClientService", () => {
             expect(client.bookingConfirmedAt).toEqual(confirmation);
         });
     });
+    // ============================================
+    // confirmBooking (rule 고객-04)
+    // ============================================
+    describe("confirmBooking", () => {
+        const futureDates = { startDate: new Date("2099-01-05T00:00:00.000Z"), endDate: new Date("2099-01-20T00:00:00.000Z") };
+        const unconfirmedRow = (overrides: Partial<ClientEntity> = {}): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: null,
+            serviceStatus: "pre_booking",
+            ...futureDates,
+            ...overrides,
+        });
+        const confirmedRow = (overrides: Partial<ClientEntity> = {}): ClientEntity =>
+            unconfirmedRow({ bookingConfirmedAt: new Date("2026-01-01"), serviceStatus: "waiting", ...overrides });
+
+        let tx: Record<string, unknown> & { client: { updateMany: jest.Mock } };
+        let committed: boolean;
+        let followUpSawCommit: boolean[];
+
+        /** `locked` is what the FOR UPDATE re-read returns; `after` what the post-commit read returns. */
+        const arrange = (locked: ClientEntity | null, after: ClientEntity | null = locked) => {
+            committed = false;
+            followUpSawCommit = [];
+            tx = { ...prismaService, client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
+            prismaService.$transaction.mockImplementation(async (callback: (transaction: unknown) => unknown) => {
+                const result = await callback(tx);
+                committed = true;
+                return result;
+            });
+            findClientByIdUsecase.execute.mockResolvedValue(after ?? unconfirmedRow());
+            clientRepository.findByIdForUpdate.mockResolvedValue(locked);
+            triggerService.syncClientRulesForClient.mockImplementation(async () => { followUpSawCommit.push(committed); });
+            prismaService.employee_schedule.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+                where["terminatedAt"] === null ? [{ id: 7 }] : []);
+            serviceRecordLinkService.scheduleForServiceStart.mockImplementation(async () => { followUpSawCommit.push(committed); });
+        };
+        const expectRefusal = async (detail: string) => {
+            const error = await service.confirmBooking(branchId, 1).catch((cause: unknown) => cause);
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                errors: [{ pointer: "/id", code: "INVALID_VALUE", detail, location: "path" }],
+            });
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        };
+
+        it("answers a missing client with not-found before opening a transaction", async () => {
+            arrange(null);
+            findClientByIdUsecase.execute.mockResolvedValue(null);
+
+            const error = await service.confirmBooking(branchId, 999).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(NotFoundException);
+            expect((error as NotFoundException).getResponse()).toMatchObject({ code: "RESOURCE_NOT_FOUND" });
+            expect(prismaService.$transaction).not.toHaveBeenCalled();
+        });
+
+        it("answers a client missing from the locked re-read with not-found and writes nothing", async () => {
+            arrange(null, unconfirmedRow());
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+        });
+
+        it.each(["terminated", "replacement_requested"])("refuses a client stored as %s", async (stored) => {
+            arrange(unconfirmedRow({ serviceStatus: stored }));
+
+            await expectRefusal("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+        });
+
+        it("judges the stored terminated / replacement_requested refusal before the already-confirmed check", async () => {
+            arrange(confirmedRow({ serviceStatus: "terminated" }));
+
+            await expectRefusal("종료되었거나 교체 요청 중인 고객은 예약을 확정할 수 없습니다.");
+        });
+
+        it("judges the already-confirmed check before the missing-dates check", async () => {
+            const row = confirmedRow({ startDate: null, endDate: null });
+            arrange(row);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ["start", { startDate: null }],
+            ["end", { endDate: null }],
+            ["both", { startDate: null, endDate: null }],
+        ])("refuses an unconfirmed client with the %s date missing", async (_which, missing) => {
+            arrange(unconfirmedRow(missing));
+
+            await expectRefusal("서비스 시작일과 종료일을 먼저 입력해 주세요.");
+        });
+
+        it.each([
+            ["a future period", futureDates, "waiting"],
+            ["a running period", { startDate: new Date("2000-01-03T00:00:00.000Z"), endDate: new Date("2999-12-31T00:00:00.000Z") }, "active"],
+            ["a finished period", { startDate: new Date("2020-01-06T00:00:00.000Z"), endDate: new Date("2020-01-17T00:00:00.000Z") }, "completed"],
+        ])("confirms with exactly the confirmation instant and the date-derived status for %s", async (_label, dates, derived) => {
+            const calendar = branchCalendar2026([]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            arrange(unconfirmedRow(dates), confirmedRow({ ...dates, serviceStatus: derived }));
+
+            const before = Date.now();
+            await service.confirmBooking(branchId, 1);
+            const after = Date.now();
+
+            expect(tx.client.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 1, branchId },
+                data: { bookingConfirmedAt: expect.any(Date), serviceStatus: derived },
+            });
+            const [{ data }] = tx.client.updateMany.mock.calls[0] as [{ data: { bookingConfirmedAt: Date } }];
+            expect(Object.keys(data).sort()).toEqual(["bookingConfirmedAt", "serviceStatus"]);
+            expect(data.bookingConfirmedAt.getTime()).toBeGreaterThanOrEqual(before);
+            expect(data.bookingConfirmedAt.getTime()).toBeLessThanOrEqual(after);
+            // The direct write is the only writer: it goes through the transaction client, never the root one.
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(clientRepository.findByIdForUpdate).toHaveBeenCalledWith(branchId, 1, tx);
+        });
+
+        it("reads the calendar fresh before the transaction and repairs the lifecycle with the same transaction client and calendar", async () => {
+            const calendar = branchCalendar2026(["2026-08-26"]);
+            (holidayCalendar.forBranch as jest.Mock).mockResolvedValue(calendar);
+            arrange(unconfirmedRow(), confirmedRow());
+
+            await service.confirmBooking(branchId, 1);
+
+            expect(holidayCalendar.forBranch).toHaveBeenCalledWith(branchId, { fresh: true });
+            expect((holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!)
+                .toBeLessThan((prismaService.$transaction as jest.Mock).mock.invocationCallOrder[0]!);
+            expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledTimes(1);
+            const [clientId, transactionArg, calendarArg] = serviceRecordLifecycleService.ensureForClient.mock.calls[0]!;
+            expect(clientId).toBe(1);
+            expect(transactionArg).toBe(tx);
+            expect(calendarArg).toBe(calendar);
+            expect(tx.client.updateMany.mock.invocationCallOrder[0]!)
+                .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+        });
+
+        it("runs both follow-ups after commit and returns the post-commit client", async () => {
+            const confirmed = confirmedRow();
+            arrange(unconfirmedRow(), confirmed);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(confirmed);
+
+            expect(triggerService.syncClientRulesForClient).toHaveBeenCalledWith(branchId, 1, false);
+            // The client left 예약 전, so the provider link SMS is scheduled for the active schedule.
+            expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(7);
+            expect(followUpSawCommit).toEqual([true, true]);
+        });
+
+        it("does not fail the confirm when a post-commit follow-up throws", async () => {
+            const confirmed = confirmedRow();
+            arrange(unconfirmedRow(), confirmed);
+            triggerService.syncClientRulesForClient.mockRejectedValue(new Error("trigger sync down"));
+            serviceRecordLinkService.scheduleForServiceStart.mockRejectedValue(new Error("sms down"));
+            const logError = jest.spyOn((service as unknown as { logger: { error: (message: string) => void } }).logger, "error")
+                .mockImplementation(() => undefined);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(confirmed);
+
+            expect(logError).toHaveBeenCalledWith(expect.stringContaining("trigger sync down"));
+            expect(logError).toHaveBeenCalledWith(expect.stringContaining("sms down"));
+        });
+
+        it("rejects the confirm and runs neither follow-up when the lifecycle repair rejects", async () => {
+            arrange(unconfirmedRow(), confirmedRow());
+            serviceRecordLifecycleService.ensureForClient.mockRejectedValue(new Error("lifecycle repair failed"));
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toThrow("lifecycle repair failed");
+
+            expect(committed).toBe(false);
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+
+        it("answers a zero-row write with not-found and does not repair the lifecycle", async () => {
+            arrange(unconfirmedRow(), confirmedRow());
+            tx.client.updateMany.mockResolvedValue({ count: 0 });
+
+            await expect(service.confirmBooking(branchId, 1)).rejects.toBeInstanceOf(NotFoundException);
+
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        });
+
+        it("is idempotent: an already confirmed client is returned with no write and no follow-up", async () => {
+            const row = confirmedRow();
+            arrange(row);
+
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+            await expect(service.confirmBooking(branchId, 1)).resolves.toBe(row);
+
+            expect(tx.client.updateMany).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            expect(triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+            expect(serviceRecordLinkService.scheduleForServiceStart).not.toHaveBeenCalled();
+        });
+    });
+
+    // ============================================
+    // update: serviceStatus may not change 예약 전 (rule 고객-04)
+    // ============================================
+    describe("update: a save may not change 예약 전", () => {
+        const confirmedAt = new Date("2026-01-01");
+        // Pinned clock inside a running period, so a confirmed client's date-derived status is "active".
+        const running = { startDate: new Date("2026-11-02T00:00:00.000Z"), endDate: new Date("2026-11-13T00:00:00.000Z") };
+        beforeEach(() => { jest.useFakeTimers().setSystemTime(new Date("2026-11-05T03:00:00.000Z")); });
+        afterEach(() => { jest.useRealTimers(); });
+        const unconfirmedClient = (overrides: Partial<ClientEntity> = {}): ClientEntity => Object.assign(createClientEntity(), {
+            bookingConfirmedAt: null,
+            serviceStatus: "pre_booking",
+            ...running,
+            ...overrides,
+        });
+        const confirmedClient = (overrides: Partial<ClientEntity> = {}): ClientEntity =>
+            unconfirmedClient({ bookingConfirmedAt: confirmedAt, serviceStatus: "active", ...overrides });
+        const BODY_REFUSAL = "예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+        const PRE_BOOKING_REPLACEMENT = "예약 전 고객은 제공인력 교체를 요청할 수 없습니다";
+
+        const lastUpdateData = () => {
+            const calls = prismaService.client.updateMany.mock.calls;
+            return calls[calls.length - 1]![0].data as Record<string, unknown>;
+        };
+
+        it.each([
+            ["row 5: unconfirmed -> waiting", () => unconfirmedClient(), "waiting", BODY_REFUSAL],
+            ["row 5: unconfirmed -> active", () => unconfirmedClient(), "active", BODY_REFUSAL],
+            ["row 5: unconfirmed -> completed", () => unconfirmedClient(), "completed", BODY_REFUSAL],
+            ["row 4: unconfirmed -> replacement_requested", () => unconfirmedClient(), "replacement_requested", PRE_BOOKING_REPLACEMENT],
+            ["row 8: confirmed with dates -> pre_booking", () => confirmedClient(), "pre_booking", BODY_REFUSAL],
+        ])("%s is refused and writes nothing", async (_label, build, supplied, detail) => {
+            findClientByIdUsecase.execute.mockResolvedValue(build());
+
+            const error = await service.update(branchId, 1, { address: "변경 주소", serviceStatus: supplied }).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(BadRequestException);
+            expect((error as BadRequestException).getResponse()).toMatchObject({
+                code: "VALIDATION_FAILED",
+                errors: [{ pointer: "/serviceStatus", code: "INVALID_VALUE", detail, location: "body" }],
+            });
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+            expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+        });
+
+        it("judges the locked row, not the preflight snapshot", async () => {
+            // The preflight read says confirmed, but the row under the lock is unconfirmed.
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            prismaService.client.findUnique.mockResolvedValue(unconfirmedClient());
+
+            await expect(service.update(branchId, 1, { serviceStatus: "waiting" }))
+                .rejects.toBeInstanceOf(BadRequestException);
+
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("row 9: a confirmed client's supplied date-derived status is replaced by the derived one", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "waiting" }));
+
+            await service.update(branchId, 1, { serviceStatus: "completed" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("active");
+        });
+
+        it("row 2: null on a confirmed stored-terminated client stores the derived status, never NULL", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "terminated" }));
+
+            await service.update(branchId, 1, { serviceStatus: null });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("active");
+        });
+
+        it("row 2: null on an unconfirmed client stores nothing for the status", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient());
+
+            await service.update(branchId, 1, { address: "변경 주소", serviceStatus: null });
+
+            expect(lastUpdateData()).toMatchObject({ address: "변경 주소" });
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+        });
+
+        it("row 3: a status equal to the effective one stores nothing for the status", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient({ serviceStatus: "waiting" }));
+
+            await service.update(branchId, 1, { address: "변경 주소", serviceStatus: "active" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+        });
+
+        it("rows 6 and 10 keep today's behaviour: terminated / replacement_requested are stored as sent", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient());
+            await service.update(branchId, 1, { serviceStatus: "terminated" });
+            expect(lastUpdateData()["serviceStatus"]).toBe("terminated");
+
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await service.update(branchId, 1, { serviceStatus: "replacement_requested" });
+            expect(lastUpdateData()["serviceStatus"]).toBe("replacement_requested");
+        });
+
+        it("row 7 keeps today's behaviour: pre_booking over a stored terminated unconfirmed client is stored", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(unconfirmedClient({ serviceStatus: "terminated" }));
+
+            await service.update(branchId, 1, { serviceStatus: "pre_booking" });
+
+            expect(lastUpdateData()["serviceStatus"]).toBe("pre_booking");
+        });
+
+        it("judges E on the after-save dates: clearing the dates makes pre_booking acceptable, keeping them does not", async () => {
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await expect(service.update(branchId, 1, { startDate: null, endDate: null, serviceStatus: "pre_booking" }))
+                .resolves.toBeDefined();
+            expect(lastUpdateData()).toMatchObject({ startDate: null, endDate: null });
+            expect(lastUpdateData()["serviceStatus"]).toBeUndefined();
+
+            prismaService.client.updateMany.mockClear();
+            findClientByIdUsecase.execute.mockResolvedValue(confirmedClient());
+            await expect(service.update(branchId, 1, { serviceStatus: "pre_booking" }))
+                .rejects.toBeInstanceOf(BadRequestException);
+            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+        });
+    });
+
 
     // ============================================
     // terminateService

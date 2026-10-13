@@ -1622,4 +1622,186 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         expect(setupResult.messageAutomationIntentService.persistScheduleIntent).not.toHaveBeenCalled();
         expect(setupResult.triggerService.syncEmployeeAssignmentRulesForClient).not.toHaveBeenCalled();
     });
+
+    describe("a save may not change 예약 전 (rule 고객-04)", () => {
+        const BODY_REFUSAL = "예약 상태는 [예약 확정]으로만 바꿀 수 있습니다.";
+        const PRE_BOOKING_REPLACEMENT = "예약 전 고객은 제공인력 교체를 요청할 수 없습니다";
+        const context = {
+            principal: { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" },
+            sessionId: "session-a", traceId: "trace-a", locale: "ko", actionId: "action-a",
+        } as const;
+        // The default existing client is confirmed, with a 2024 period: its date-derived status is "completed".
+        const unconfirmed = { bookingConfirmedAt: null, serviceStatus: "pre_booking" };
+
+        type Setup = ReturnType<typeof setup>;
+        type Entry = "inspect" | "execute" | "executeApprovedTarget";
+        const entries: Entry[] = ["inspect", "execute", "executeApprovedTarget"];
+        const run = (arranged: Setup, entry: Entry, input: Record<string, unknown>) => {
+            const capability = arranged.capabilities.find((candidate) => candidate.meta.name === "clients.update")!;
+            return entry === "executeApprovedTarget"
+                ? capability.executeApprovedTarget!(context, input, "approved-target")
+                : capability[entry]!(context, input);
+        };
+        const writtenUpdates = (arranged: Setup, entry: Entry): Record<string, unknown> =>
+            (entry === "execute" ? arranged.updateClient.execute : arranged.updateClient.executeApprovedTarget)
+                .mock.calls[0]![2] as Record<string, unknown>;
+
+        it.each(entries)("%s refuses an unconfirmed client's move to a date-derived state with the authored sentence", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, unconfirmed);
+
+            const error = await run(arranged, entry, { id: 1, serviceStatus: "waiting" }).catch((cause: unknown) => cause);
+
+            expect(error).toBeInstanceOf(AgentActionCertainFailureError);
+            expect((error as Error).message).toBe(BODY_REFUSAL);
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s refuses replacement_requested for an unconfirmed client with the request-replacement sentence", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, unconfirmed);
+
+            await expect(run(arranged, entry, { id: 1, serviceStatus: "replacement_requested" }))
+                .rejects.toThrow(PRE_BOOKING_REPLACEMENT);
+
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s refuses moving a confirmed client back to pre_booking while it keeps its dates", async (entry) => {
+            const arranged = setup();
+
+            await expect(run(arranged, entry, { id: 1, serviceStatus: "pre_booking" }))
+                .rejects.toThrow(BODY_REFUSAL);
+
+            expect(arranged.updateClient.execute).not.toHaveBeenCalled();
+            expect(arranged.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+        });
+
+        it.each(entries)("%s accepts pre_booking for a confirmed client whose same save clears its dates", async (entry) => {
+            const arranged = setup();
+
+            await expect(run(arranged, entry, { id: 1, startDate: null, endDate: null, serviceStatus: "pre_booking" }))
+                .resolves.toBeDefined();
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s replaces a confirmed client's supplied date-derived status with the derived one (row 9)", async (entry) => {
+            const arranged = setup();
+            Object.assign(arranged.existingClient, { serviceStatus: "terminated" });
+
+            await run(arranged, entry, { id: 1, serviceStatus: "waiting" });
+
+            expect(writtenUpdates(arranged, entry)).toMatchObject({ serviceStatus: "completed" });
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s drops a serviceStatus equal to the effective one and treats null as the derived one (rows 2 and 3)", async (entry) => {
+            const equal = setup();
+            await run(equal, entry, { id: 1, address: "변경 주소", serviceStatus: "completed" });
+            expect(writtenUpdates(equal, entry)).not.toHaveProperty("serviceStatus");
+
+            const cleared = setup();
+            await run(cleared, entry, { id: 1, address: "변경 주소", serviceStatus: null });
+            expect(writtenUpdates(cleared, entry)).not.toHaveProperty("serviceStatus");
+
+            const terminated = setup();
+            Object.assign(terminated.existingClient, { serviceStatus: "terminated" });
+            await run(terminated, entry, { id: 1, serviceStatus: null });
+            expect(writtenUpdates(terminated, entry)).toMatchObject({ serviceStatus: "completed" });
+        });
+
+        it.each(["execute", "executeApprovedTarget"] as const)("%s keeps today's behaviour for terminated (row 10)", async (entry) => {
+            const arranged = setup();
+
+            await run(arranged, entry, { id: 1, serviceStatus: "terminated" });
+
+            expect(writtenUpdates(arranged, entry)).toMatchObject({ serviceStatus: "terminated" });
+        });
+
+        it("applies the same rule on the task-automation branch of executeApprovedTarget", async () => {
+            const setupResult = setup();
+            const transaction = {
+                client: { findFirst: jest.fn().mockResolvedValue({ id: 1, createdAt: new Date("2026-09-18T00:00:00.000Z") }) },
+                employee_schedule: { findFirst: jest.fn() },
+                agent_action: { updateMany: jest.fn() },
+            };
+            const impact = { availability: "available", effects: [], complete: true, clientIdentity: "1".repeat(64), sourceGuard: "f".repeat(64), affectedJobs: [] };
+            const records = {
+                runTaskMutation: jest.fn(async (_context: unknown, _artifact: unknown, prepare: (tx: typeof transaction) => Promise<unknown>) => {
+                    await prepare(transaction);
+                    return { actionId: "action-a", capability: "clients.update", resourceType: "client", resourceId: 1, result: { id: 1, name: "홍길동", status: "updated" }, recordedAt: new Date().toISOString() };
+                }),
+            };
+            const provider = new ClientWriteAgentCapabilitiesProvider(
+                setupResult.createClient as never, setupResult.updateClient as never, setupResult.findClient as never,
+                setupResult.clientRepository as never, setupResult.prisma as never,
+                setupResult.serviceRecordLifecycle as never, createHolidayCalendarStub(), undefined, setupResult.triggerService as never,
+                setupResult.messageAutomationIntentService as never,
+                { planClientWriteInTransaction: jest.fn().mockResolvedValue(impact) } as never,
+                records as never,
+            );
+            const update = provider.getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
+            const taskContext = {
+                ...context,
+                taskAutomation: { capability: "clients.update", taskId: "task-a", branchId: "branch-a", targetClientId: 1, targetVersion: "approved-target", impact,
+                    consent: { choice: "no", binding: null }, noSend: false },
+            } as never;
+
+            Object.assign(setupResult.existingClient, unconfirmed);
+            await expect(update.executeApprovedTarget!(taskContext, { id: 1, serviceStatus: "active" }, "approved-target"))
+                .rejects.toThrow(BODY_REFUSAL);
+            expect(records.runTaskMutation).not.toHaveBeenCalled();
+            expect(setupResult.updateClient.executeApprovedTarget).not.toHaveBeenCalled();
+
+            Object.assign(setupResult.existingClient, { bookingConfirmedAt: new Date("2024-01-01"), serviceStatus: "terminated" });
+            await update.executeApprovedTarget!(taskContext, { id: 1, serviceStatus: "waiting" }, "approved-target");
+            expect(setupResult.updateClient.executeApprovedTarget).toHaveBeenCalledWith(
+                "branch-a", 1, expect.objectContaining({ serviceStatus: "completed" }), "approved-target", transaction, expect.anything(),
+            );
+        });
+
+        describe("reconcile", () => {
+            const reconcile = (arranged: Setup, input: Record<string, unknown>) =>
+                arranged.capabilities.find((candidate) => candidate.meta.name === "clients.update")!
+                    .reconcile!(context, input, null);
+            const succeeded = { status: "succeeded", result: { id: 1, name: "홍길동", status: "updated" } };
+
+            it("does not report uncertain when the stored status is what the rule stored instead of the approved one", async () => {
+                // Row 9: approved "waiting", the rule stored the derived "completed".
+                const derived = setup();
+                Object.assign(derived.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(derived, { id: 1, serviceStatus: "waiting" })).resolves.toEqual(succeeded);
+
+                // Row 2: approved null is the derived status.
+                const cleared = setup();
+                Object.assign(cleared.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(cleared, { id: 1, serviceStatus: null })).resolves.toEqual(succeeded);
+
+                // Row 3: approved equals the effective status, so nothing was stored for it.
+                const equal = setup();
+                Object.assign(equal.existingClient, { serviceStatus: "active" });
+                await expect(reconcile(equal, { id: 1, serviceStatus: "completed" })).resolves.toEqual(succeeded);
+            });
+
+            it("still reports uncertain for a genuinely different stored status", async () => {
+                const manual = setup();
+                Object.assign(manual.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(manual, { id: 1, serviceStatus: "terminated" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+
+                // A refused request never applied, so the raw comparison stays.
+                const refused = setup();
+                Object.assign(refused.existingClient, unconfirmed);
+                await expect(reconcile(refused, { id: 1, serviceStatus: "waiting" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+            });
+
+            it("keeps every other field of the comparison", async () => {
+                const arranged = setup();
+                Object.assign(arranged.existingClient, { serviceStatus: "completed" });
+                await expect(reconcile(arranged, { id: 1, serviceStatus: "waiting", name: "다른 이름" }))
+                    .resolves.toMatchObject({ status: "uncertain" });
+            });
+        });
+    });
 });
