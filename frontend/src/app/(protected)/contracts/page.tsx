@@ -4,7 +4,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
-import { isContractReceiptSendable } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import {
+  CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  isContractReceiptSendable,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
@@ -268,16 +271,23 @@ function formatDateTime(timestamp: number): string {
 function getSignatureProgress(
   category: DocumentStatusCategory,
   hasOpenedDocument: boolean,
-  isCustomerSigned: boolean
+  isCustomerSigned: boolean,
+  isVoided = false,
 ) {
   const isCompleted = category === "completed";
   const isSigned = isCompleted || isCustomerSigned;
+  // A voided contract never reads as waiting on the provider review; a completed one keeps its history.
+  const reviewLabel = isCompleted
+    ? "제공기관 검토 완료"
+    : isVoided
+      ? CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided
+      : "제공기관 검토 필요";
   const steps = [
     { label: "문서 생성", done: true },
     { label: "발송 완료", done: true },
     { label: "이용자 문서 열람", done: isSigned || hasOpenedDocument },
     { label: "이용자 서명 완료", done: isSigned },
-    { label: isCompleted ? "제공기관 검토 완료" : "제공기관 검토 필요", done: isCompleted },
+    { label: reviewLabel, done: isCompleted },
     { label: "계약서 완료", done: isCompleted },
   ];
   return steps;
@@ -1426,7 +1436,7 @@ export function ContractDetail({
   // an unassigned document ("고객 등록 필요") at the review step is customer-signed too.
   const isReviewNeeded = displayStatus === "review";
   const isCustomerSigned = isCustomerSignedDisplayStatus(displayStatus);
-  const steps = getSignatureProgress(category, hasOpenedDocument, isCustomerSigned);
+  const steps = getSignatureProgress(category, hasOpenedDocument, isCustomerSigned, displayStatus === "voided");
   const customerSignedTimestamp = extractCustomerSignedTimestamp(detailedDocument);
   const customerSignedDate =
     customerSignedTimestamp != null ? formatDateTime(customerSignedTimestamp) : null;
@@ -1826,10 +1836,10 @@ export function ContractDetail({
     });
   }
 
-  if (displayStatus === "voided") {
-    // 파기됨 overrides every provider code: eformsign keeps reporting 060/003/... for a voided
-    // document, so this is read before them. Closed stage, no live marker; the signature/sent
-    // events above are real history and stay.
+  // 파기됨 overrides every provider code: eformsign keeps reporting 060/003/... for a voided
+  // document. The void is a closed, last entry (no live marker); the sent/signed/completed events
+  // are real history and stay, while a live/pending stage is never drawn for a voided document.
+  const pushVoidedEvent = () => {
     const voidedAtTimestamp = detailedDocument.voided_at ? Date.parse(detailedDocument.voided_at) : NaN;
     activityItems.push({
       icon: AlertTriangle,
@@ -1837,7 +1847,9 @@ export function ContractDetail({
       text: "계약이 파기됐어요",
       time: Number.isNaN(voidedAtTimestamp) ? "" : formatDateTime(voidedAtTimestamp),
     });
-  } else if (category === "completed") {
+  };
+
+  if (category === "completed") {
     activityItems.push({
       icon: FileSignature,
       iconVariant: "success",
@@ -1850,6 +1862,9 @@ export function ContractDetail({
       text: "계약서가 완료되었습니다",
       time: formatDateTime(detailedDocument.updated_date),
     });
+    if (displayStatus === "voided") pushVoidedEvent();
+  } else if (displayStatus === "voided") {
+    pushVoidedEvent();
   } else if (statusLabel === "철회 요청됨") {
     // 040/045 share the "expired" category (tabs/filters) but are not over: the cancellation was
     // requested, and may still be refused or completed.

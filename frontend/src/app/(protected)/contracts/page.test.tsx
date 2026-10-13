@@ -614,7 +614,7 @@ describe("ContractDetail voided (파기됨) contract", () => {
       voided_at: VOIDED_AT,
     } as unknown as EformsignDocument);
 
-    expect(await screen.findByText("파기됨")).toBeInTheDocument();
+    expect((await screen.findAllByText("파기됨")).length).toBeGreaterThan(0);
     const dialog = await openActivity();
 
     expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
@@ -663,9 +663,58 @@ describe("ContractDetail voided (파기됨) contract", () => {
 
     expect(within(dialog).getByText(/서명을 완료했습니다/)).toBeInTheDocument();
     expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
-    // 003 would otherwise read as a finished contract.
-    expect(within(dialog).queryByText("계약서가 완료되었습니다")).toBeNull();
     expect(within(dialog).queryByText("현재")).toBeNull();
+  });
+
+  it("keeps the completion history of a completed then voided document, with the void last", async () => {
+    await renderDetail({
+      ...receiptDetailDocumentFixture(),
+      histories: [{ status_type: "060", step_index: "3", updated_date: 1756900000000 }],
+      display_status: "voided",
+      voided_at: VOIDED_AT,
+    } as unknown as EformsignDocument);
+
+    const dialog = await openActivity();
+
+    expect(within(dialog).getByText("제공기관 검토 완료")).toBeInTheDocument();
+    expect(within(dialog).getByText("계약서가 완료되었습니다")).toBeInTheDocument();
+    expect(within(dialog).getByText("계약이 파기됐어요")).toBeInTheDocument();
+    expect(within(dialog).queryByText("현재")).toBeNull();
+    const text = dialog.textContent ?? "";
+    expect(text.indexOf("제공기관 검토 완료")).toBeLessThan(text.indexOf("계약서가 완료되었습니다"));
+    expect(text.indexOf("계약서가 완료되었습니다")).toBeLessThan(text.indexOf("계약이 파기됐어요"));
+    expect(text.indexOf("계약이 파기됐어요")).toBe(text.lastIndexOf("계약이 파기됐어요"));
+    expect(text.slice(text.indexOf("계약이 파기됐어요"))).not.toMatch(/완료되었습니다|검토 완료/);
+  });
+
+  it("still shows the completed history without a void entry for a non-voided 003 document", async () => {
+    await renderDetail(receiptDetailDocumentFixture());
+
+    const dialog = await openActivity();
+
+    expect(within(dialog).getByText("제공기관 검토 완료")).toBeInTheDocument();
+    expect(within(dialog).getByText("계약서가 완료되었습니다")).toBeInTheDocument();
+    expect(within(dialog).queryByText("계약이 파기됐어요")).toBeNull();
+    expect(within(dialog).queryByText("현재")).toBeNull();
+  });
+
+  it("does not leave a live 제공기관 검토 필요 stage in the header stepper of a voided 060 document", async () => {
+    await renderDetail({
+      ...serviceRecordReviewNeededFixture(),
+      display_status: "voided",
+      voided_at: VOIDED_AT,
+    } as unknown as EformsignDocument);
+
+    expect(screen.queryByText("제공기관 검토 필요")).toBeNull();
+    const stepper = screen.getByRole("button", { name: "계약서 단계 보기" });
+    expect(within(stepper).getAllByText("파기됨").length).toBeGreaterThan(0);
+  });
+
+  it("keeps the 제공기관 검토 필요 stage in the header stepper of a non-voided 060 document", async () => {
+    await renderDetail(serviceRecordReviewNeededFixture());
+
+    const stepper = screen.getByRole("button", { name: "계약서 단계 보기" });
+    expect(within(stepper).getAllByText("제공기관 검토 필요").length).toBeGreaterThan(0);
   });
 
   it("still shows the pending stage and 재요청 for a non-voided 060 document", async () => {
