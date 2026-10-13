@@ -1079,6 +1079,62 @@ describe("EformsignController (Integration)", () => {
             expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
         });
 
+        it("refuses to re-request a voided (파기) document with a 409 and never calls the provider", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc", isVoided: true },
+            ] as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("REQUEST_CONFLICT");
+            // The shared mock is not reset between tests: assert on this capability only.
+            expect(credentialBoundary.withCredentials).not.toHaveBeenCalledWith(
+                expect.anything(),
+                "document.re_request",
+                expect.anything(),
+            );
+            expect(eformsignService.reRequestOutsiderDocument).not.toHaveBeenCalled();
+        });
+
+        it("re-requests a non-voided document through the provider as before (control)", async () => {
+            eformsignDocService.findAll.mockResolvedValue([
+                { documentId: "branch-1-doc", isVoided: false },
+            ] as never);
+            eformsignService.reRequestOutsiderDocument.mockResolvedValue({ ok: true } as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1", comment: "다시 요청" });
+
+            expect(response.status).toBe(201);
+            expect(response.body).toEqual({ ok: true });
+            expect(eformsignService.reRequestOutsiderDocument).toHaveBeenCalledWith(
+                "server-access-token",
+                "branch-1-doc",
+                "01",
+                "1",
+                "다시 요청",
+                undefined,
+            );
+        });
+
+        it("re-requests a document with no local row as before (control)", async () => {
+            // Visible through the branch list but with no resolvable local row: the fence is skipped.
+            eformsignDocService.findAll.mockResolvedValue([{ documentId: "branch-1-doc" }] as never);
+            eformsignDocService.findByDocumentId.mockResolvedValue(null);
+            eformsignService.reRequestOutsiderDocument.mockResolvedValue({ ok: true } as never);
+
+            const response = await request(app.getHttpServer())
+                .post("/api/documents/branch-1-doc/re_request_outsider")
+                .send({ stepType: "01", stepSeq: "1" });
+
+            expect(response.status).toBe(201);
+            expect(eformsignService.reRequestOutsiderDocument).toHaveBeenCalledTimes(1);
+        });
+
         it("reports an unexpected re-request failure as a registered 500 problem", async () => {
             eformsignDocService.findAll.mockResolvedValue([
                 { documentId: "branch-1-doc" },

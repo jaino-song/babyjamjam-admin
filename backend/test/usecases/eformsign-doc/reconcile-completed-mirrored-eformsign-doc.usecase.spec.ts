@@ -1,6 +1,8 @@
 import { ReconcileCompletedMirroredEformsignDocUsecase } from "application/usecases/eformsign-doc/reconcile-completed-mirrored-eformsign-doc.usecase";
 import { SyncClientEndDateUsecase } from "application/usecases/eformsign-doc/sync-client-end-date.usecase";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
+import { EformsignDocEntity } from "domain/entities/eformsign-doc.entity";
+import { createHolidayCalendarStub } from "../../utils/holiday-calendar.stub";
 
 const detail = {
     id: "doc-1",
@@ -240,6 +242,99 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase", () => {
         expect(holidayCalendar.forBranch).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.syncEndDateFromMirroredContract).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.completeServiceRecordSnapshotIfReady).not.toHaveBeenCalled();
+    });
+
+    describe("final completion of an already linked contract (real end-date usecase)", () => {
+        const completedDetail = {
+            ...detail,
+            fields: [
+                { id: "계약 종료 년도", value: "2026", type: "text" },
+                { id: "계약 종료 월", value: "08", type: "text" },
+                { id: "계약 종료 일", value: "14", type: "text" },
+            ],
+        } as EformsignApiDocumentResponse;
+
+        const linkedDocument = (voidedAt: Date | null) => EformsignDocEntity.reconstitute({
+            id: 11,
+            documentId: "doc-1",
+            createdDate: new Date("2026-07-30T00:00:00.000Z"),
+            updatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            statusType: "050",
+            statusDetail: "완료",
+            stepType: "06",
+            stepIndex: "3",
+            stepName: "완료",
+            stepRecipientType: "01",
+            stepRecipientName: "직원",
+            stepRecipientSms: "01012345678",
+            expiredDate: new Date("2026-09-01T00:00:00.000Z"),
+            expired: false,
+            clientId: 71,
+            voidedAt,
+        });
+
+        const buildReconciler = (voidedAt: Date | null) => {
+            linkMirroredDocumentByPhoneUsecase.execute.mockResolvedValue("linked");
+            mirrorRepository.findState.mockResolvedValue(readyState({ detailPayload: completedDetail }));
+            const documentRepository = { findByDocumentId: jest.fn().mockResolvedValue(linkedDocument(voidedAt)) };
+            const clientRepository = {
+                findById: jest.fn().mockResolvedValue({ id: 71, update: jest.fn() }),
+                update: jest.fn(),
+            };
+            const realSync = new SyncClientEndDateUsecase(
+                {} as never,
+                documentRepository as never,
+                clientRepository as never,
+                createHolidayCalendarStub(),
+            );
+            return {
+                documentRepository,
+                clientRepository,
+                reconciler: new ReconcileCompletedMirroredEformsignDocUsecase(
+                    linkMirroredDocumentByPhoneUsecase as never,
+                    realSync,
+                    mirrorRepository as never,
+                    serviceRecordLifecycle as never,
+                ),
+            };
+        };
+
+        it("persists no end date for a voided (파기) document, while still returning the link result", async () => {
+            const { reconciler, documentRepository, clientRepository } =
+                buildReconciler(new Date("2026-10-01T00:00:00.000Z"));
+
+            await expect(reconciler.execute({
+                documentId: "doc-1",
+                detail: completedDetail,
+                throwOnCompletionReconciliationError: true,
+            })).resolves.toBe("linked");
+
+            expect(documentRepository.findByDocumentId).toHaveBeenCalledWith("branch-1", "doc-1");
+            expect(clientRepository.findById).not.toHaveBeenCalled();
+            expect(clientRepository.update).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.syncEndDateFromMirroredContract).not.toHaveBeenCalled();
+            expect(serviceRecordLifecycle.syncEndDateFromContract).not.toHaveBeenCalled();
+        });
+
+        it("persists the end date for a non-voided document (control)", async () => {
+            const { reconciler, clientRepository } = buildReconciler(null);
+
+            await expect(reconciler.execute({
+                documentId: "doc-1",
+                detail: completedDetail,
+                throwOnCompletionReconciliationError: true,
+            })).resolves.toBe("linked");
+
+            expect(clientRepository.findById).toHaveBeenCalledWith("branch-1", 71);
+            expect(serviceRecordLifecycle.syncEndDateFromMirroredContract).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    branchId: "branch-1",
+                    clientId: 71,
+                    endDate: new Date("2026-08-14T00:00:00.000Z"),
+                    documentId: "doc-1",
+                }),
+            );
+        });
     });
 
     it("stops all completion effects when the atomic link fence loses", async () => {

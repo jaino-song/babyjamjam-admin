@@ -118,6 +118,11 @@ export class SyncClientEndDateUsecase {
                 this.logger.log(`Document ${documentId} belongs to a deleted client; skipping endDate sync.`);
                 return;
             }
+            // A voided (파기) contract is dead: its end date must not reach the client's period.
+            if (doc.isVoided) {
+                this.logger.log(`Document ${documentId} is voided; skipping endDate sync.`);
+                return;
+            }
 
             const client = await this.clientRepository.findById(branchId, doc.clientId);
             if (!client) {

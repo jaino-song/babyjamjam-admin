@@ -300,6 +300,8 @@ export class DispatchDocumentHeadlessUsecase {
                 const duplicate = localDocuments
                     .find((document) => (
                         document.templateId === (templateId ?? null)
+                        // A voided (파기) contract is dead: a new one may be sent right after a void.
+                        && !document.isVoided
                         && !TERMINAL_STATUS_CODES.has(document.statusType)
                         && start - document.createdDate.getTime() >= 0
                         && start - document.createdDate.getTime() <= DUPLICATE_WINDOW_MS

@@ -1191,6 +1191,16 @@ export class EformsignController {
                 throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
 
+            // A voided (파기) contract cannot be re-requested: the UI hides the action, this is the
+            // server side of that hide. No vendor call. A document with no local row behaves as before.
+            const localDocument = await this.eformsignDocService.findByDocumentId(
+                tenant.branchId ?? "",
+                documentId,
+            );
+            if (localDocument?.isVoided) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
             return await this.credentialBoundary.withCredentials(
                 tenant,
                 "document.re_request",

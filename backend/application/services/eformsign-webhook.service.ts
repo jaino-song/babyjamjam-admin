@@ -952,6 +952,14 @@ export class EformsignWebhookService {
             return;
         }
 
+        // A voided (파기) contract only records its status: no client pointer, period/end-date sync.
+        if (doc?.isVoided) {
+            this.logger.log(
+                `Document ${documentId} is voided; skipping contract-completion side effects (${source}).`,
+            );
+            return;
+        }
+
         this.logger.log(`Document ${documentId} completed (${source}), linking to client`);
 
         try {
@@ -1364,6 +1372,19 @@ export class EformsignWebhookService {
         // "검토 필요" push away from the very event that needs it. 071/072 stay
         // out: isReviewRequiredStatus rejects them as terminal anyway.
         if (localStatusType !== "060" && localStatusType !== "070") {
+            return;
+        }
+
+        // A voided (파기) contract is dead: its status is still recorded, but it no longer asks
+        // staff for a review. A lookup failure keeps the notification (fail open for staff).
+        let localDocument: EformsignDocEntity | null | undefined;
+        try {
+            localDocument = await this.eformsignDocRepository.findByDocumentId(branchid, documentId);
+        } catch {
+            localDocument = null;
+        }
+        if (localDocument?.isVoided) {
+            this.logger.log(`Skipping review-required notification for voided document ${documentId}`);
             return;
         }
 

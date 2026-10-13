@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 
@@ -145,6 +145,9 @@ export class EformsignDocumentJobService {
             params.documentId,
         );
         if (!document) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        // A voided (파기) contract is never finalized. A job queued before the void is stopped by
+        // FinalizeDocumentHeadlessUsecase.assertOwnedTarget when it runs.
+        if (document.isVoided) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         const payload: EformsignDocumentJobPayload = {
             documentId: params.documentId,
             ...(params.prefillEndDate ? { prefillEndDate: params.prefillEndDate } : {}),
