@@ -107,19 +107,23 @@ function assignmentById(source: ServiceRecordEditSource, assignmentId: string): 
     return source.assignments.find((assignment) => assignment.id === assignmentId) ?? null;
 }
 
-function assignmentForDate(
+/**
+ * Session ownership is not date-ranged. A written row belongs to the
+ * assignment of the schedule that wrote it (backfilled rows may predate that
+ * assignment's own range); a session with no writer belongs to the single
+ * current (non-replaced) assignment. Zero or several candidates resolve to
+ * null so the caller reports MISSING_ASSIGNMENT_PROVENANCE.
+ */
+function assignmentForSession(
     source: ServiceRecordEditSource,
-    date: string,
     scheduleId: number | null,
     employeeId: number | null,
 ): ServiceRecordEditSourceAssignment | null {
     const candidates = source.assignments.filter((assignment) => {
         if (!assignment.id) return false;
-        if (scheduleId !== null && assignment.scheduleId !== scheduleId) return false;
-        if (employeeId !== null && assignment.employeeId !== null && assignment.employeeId !== employeeId) return false;
-        const start = assignment.startDate || assignment.scheduleStartDate;
-        const end = assignment.endDate || assignment.scheduleEndDate;
-        return Boolean(start && end && date >= start && date <= end);
+        if (scheduleId === null) return !assignment.replaced;
+        if (assignment.scheduleId !== scheduleId) return false;
+        return employeeId === null || assignment.employeeId === null || assignment.employeeId === employeeId;
     });
     return candidates.length === 1 ? candidates[0]! : null;
 }
@@ -425,7 +429,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
                 continue;
             }
         }
-        const assignment = assignmentForDate(source, serviceDate, row?.scheduleId ?? null, row?.employeeId ?? null);
+        const assignment = assignmentForSession(source, row?.scheduleId ?? null, row?.employeeId ?? null);
         const entry = sourceAssignmentEntry(source, sessionIndex, serviceDate, serviceDate, assignment, {
             scheduleId: row?.scheduleId,
             employeeId: row?.employeeId,
