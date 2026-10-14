@@ -381,22 +381,34 @@ function assignmentWrites(
         .sort((left, right) =>
             left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
+    const ownsSession = (item: (typeof stored)[number]) =>
+        item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id);
     const activeIndexes = stored
         .map((item, index) => (
-            !item.assignment.scheduleTerminatedAt
-            || (item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id))
-                ? index
-                : -1
+            !item.assignment.scheduleTerminatedAt || ownsSession(item) ? index : -1
         ))
         .filter((index) => index >= 0);
     if (activeIndexes.length > 0) {
+        const head = stored[activeIndexes[0]!]!;
+        const tail = stored[activeIndexes[activeIndexes.length - 1]!]!;
         const first = activeIndexes[0]!;
         const last = activeIndexes[activeIndexes.length - 1]!;
-        if (startDate && stored.slice(0, first).every((item) => item.storedEnd <= startDate)) {
-            stored[first]!.startDate = startDate;
+        // A candidate that owns no session (a caregiver replaced before the contract start is stored
+        // as a zero-length period) cannot take an edge date beyond its own stored period: keep it.
+        // Only a candidate that owns sessions may produce the start-after-end conflict below.
+        if (
+            startDate
+            && stored.slice(0, first).every((item) => item.storedEnd <= startDate)
+            && (ownsSession(head) || startDate <= head.storedEnd)
+        ) {
+            head.startDate = startDate;
         }
-        if (endDate && stored.slice(last + 1).every((item) => item.storedStart >= endDate)) {
-            stored[last]!.endDate = endDate;
+        if (
+            endDate
+            && stored.slice(last + 1).every((item) => item.storedStart >= endDate)
+            && (ownsSession(tail) || endDate >= tail.storedStart)
+        ) {
+            tail.endDate = endDate;
         }
     }
     return stored.map((item) => {

@@ -2500,15 +2500,17 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
-    it("reports a conflict when every session moves past the stored end of an assignment that wrote nothing", async () => {
+    const shiftedAll = [
+        "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21",
+        "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28",
+        "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04",
+    ].map((serviceDate, offset) => ({ sessionIndex: offset + 1, serviceDate }));
+
+    it("keeps an assignment that wrote nothing when every session moves past its stored end", async () => {
         // A (10-01..10-14) wrote nothing, B owns the sessions. All 15 sessions shift to start on 10-15, after
-        // A's stored end: A is the earliest active assignment, so its start would follow the first session and
-        // pass its end. That is for the replacement flow to resolve, not for a confirm to paper over.
-        const shifted = [
-            "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21",
-            "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28",
-            "2026-10-29", "2026-10-30", "2026-11-02", "2026-11-03", "2026-11-04",
-        ];
+        // A's stored end. A owns no session, so it keeps its stored period instead of failing the confirm
+        // (the replacement flow cannot edit a replaced schedule, so a throw would make the case uneditable);
+        // the next assignment's start is an inner boundary and stays. B, the latest, ends on the last session.
         const source: ServiceRecordEditSource = {
             ...handoverSource(dates.map((_, index) => written(index + 1, caregiverB))),
             plannedSessions: dates.map((serviceDate, index) => ({
@@ -2521,9 +2523,79 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
                 provenanceVersion: "case-7",
             })),
         };
-        await expect(confirmedAssignments(source, {
+        const plan = await confirmedAssignments(source, { sessions: shiftedAll });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-11-04", datesChanged: true }),
+        ]);
+    });
+
+    it("still reports a conflict when the earliest assignment owns sessions and they all move past its stored end", async () => {
+        // A owns sessions 1-7 and B 8-15. Every session moves to 10-15 or later, so A, which owns sessions,
+        // would start after its stored end 10-14: a real conflict for the replacement flow.
+        const plan = confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            { sessions: shiftedAll },
+        );
+        await expect(plan).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+    });
+
+    it("keeps the latest assignment that wrote nothing when every session now ends before its stored start", async () => {
+        // Mirror: A owns every session and the plan now ends 10-13, before B's stored start 10-14. B owns
+        // nothing, so it keeps its stored period instead of failing the confirm; A is untouched.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 7,
+            endDate: "2026-10-13",
+            plannedSessions: dates.slice(0, 7).map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps a replaced zero-length period and its successor's start when every session shifts one slot later", async () => {
+        // R was replaced before the contract start, so it is stored as [10-01,10-01]; B [10-01,10-23] owns
+        // every session. The first session moves to 10-02: R (owns nothing) must not throw, nor move.
+        const replacedEarly = {
+            ...caregiverA,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-01",
+            scheduleEndDate: "2026-10-01",
+        };
+        const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const shifted = [...dates.slice(1), "2026-10-26"];
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, successor))),
+            assignments: [replacedEarly, successor],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: successor.id,
+                scheduleId: successor.scheduleId,
+                employeeId: successor.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, {
             sessions: shifted.map((serviceDate, offset) => ({ sessionIndex: offset + 1, serviceDate })),
-        })).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+        });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: replacedEarly.id, startDate: "2026-10-01", endDate: "2026-10-01", datesChanged: false }),
+            expect.objectContaining({ assignmentId: successor.id, startDate: "2026-10-01", endDate: "2026-10-26", datesChanged: true }),
+        ]);
     });
 
     it("keeps the first active start when a terminated assignment stored before it ends after the first session", async () => {
