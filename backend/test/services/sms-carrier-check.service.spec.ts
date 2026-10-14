@@ -249,6 +249,62 @@ describe("SmsCarrierCheckService", () => {
         expect(until.getTime() - Date.now()).toBeLessThanOrEqual(30 * 60 * 1000);
     });
 
+    describe("a row that keeps throwing for more than 24 hours", () => {
+        const HOUR = 60 * 60 * 1000;
+        const oldLog = (id: number, overrides: Partial<MessageLogEntity> = {}) => ({
+            ...createLog(id, "01011111111"),
+            createdAt: new Date(Date.now() - 30 * HOUR),
+            providerAcceptedAt: null,
+            ...overrides,
+        }) as MessageLogEntity;
+
+        it("is closed as lookup_error instead of being postponed", async () => {
+            logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([oldLog(30)]);
+            port.getSmsDeliveryDetails!.mockResolvedValue(okResult([{ receiver: "01011111111", smsState: "발송완료" }]));
+            logRepository.saveCarrierCheckResult
+                .mockRejectedValueOnce(new Error("write failed"))
+                .mockResolvedValueOnce("saved");
+
+            await service.checkDueCarrierResults();
+
+            expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(2);
+            expect(logRepository.saveCarrierCheckResult).toHaveBeenLastCalledWith(expect.objectContaining({
+                id: 30,
+                expectedMid: "mid-30",
+                state: "lookup_error",
+                results: [],
+                failureMessage: null,
+            }));
+            expect(logRepository.postponeCarrierCheck).not.toHaveBeenCalled();
+        });
+
+        it("measures age from providerAcceptedAt when it is set", async () => {
+            // Created long ago but accepted 1h ago: still within the 24h window, so postpone.
+            logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+                oldLog(31, { providerAcceptedAt: new Date(Date.now() - HOUR) }),
+            ]);
+            port.getSmsDeliveryDetails!.mockResolvedValue(okResult([{ receiver: "01011111111", smsState: "발송완료" }]));
+            logRepository.saveCarrierCheckResult.mockRejectedValueOnce(new Error("write failed"));
+
+            await service.checkDueCarrierResults();
+
+            expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(1);
+            expect(logRepository.postponeCarrierCheck).toHaveBeenCalledTimes(1);
+        });
+
+        it("falls back to postponing when the lookup_error save also throws", async () => {
+            logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([oldLog(32)]);
+            port.getSmsDeliveryDetails!.mockResolvedValue(okResult([{ receiver: "01011111111", smsState: "발송완료" }]));
+            logRepository.saveCarrierCheckResult.mockRejectedValue(new Error("write failed"));
+
+            await service.checkDueCarrierResults();
+
+            expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(2);
+            expect(logRepository.postponeCarrierCheck).toHaveBeenCalledTimes(1);
+            expect((logRepository.postponeCarrierCheck.mock.calls[0] as [number])[0]).toBe(32);
+        });
+    });
+
     it("does not postpone rows that are handled (lookup_error, stale) or saved", async () => {
         logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
             createLog(22, "01011111111"),

@@ -28,6 +28,8 @@ const BATCH_LIMIT = 100;
 const RUN_BUDGET_MS = 10 * 60 * 1000;
 /** A row that throws unexpectedly is skipped for this long instead of being retried every tick. */
 const FAILED_ROW_BACKOFF_MS = 30 * 60 * 1000;
+/** Past this age a row that still throws is closed as lookup_error instead of being postponed forever. */
+const FAILED_ROW_GIVE_UP_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface CarrierCheckOutcome {
     state: CarrierResultState;
@@ -129,9 +131,32 @@ export class SmsCarrierCheckService {
         }
     }
 
-    /** Back a throwing row off so one poison row cannot be re-fetched and re-failed every tick. */
+    /**
+     * Back a throwing row off so one poison row cannot be re-fetched and re-failed every tick.
+     * A row that is still throwing a day after the provider accepted it is closed as
+     * lookup_error instead, so it cannot be postponed (and re-fetched) forever.
+     */
     private async postponeFailedRow(log: MessageLogEntity): Promise<void> {
         if (!log.aligoMid) return;
+        if (this.isPastGiveUpAge(log)) {
+            try {
+                await this.logRepository.saveCarrierCheckResult({
+                    id: log.id,
+                    expectedMid: log.aligoMid,
+                    state: "lookup_error",
+                    results: [],
+                    checkedAt: new Date(),
+                    failureMessage: null,
+                });
+                return;
+            } catch (saveError) {
+                this.logger.warn(
+                    `[CarrierCheck] Could not close log ${log.id} as lookup_error, postponing instead: ${
+                        saveError instanceof Error ? saveError.message : String(saveError)
+                    }`,
+                );
+            }
+        }
         try {
             await this.logRepository.postponeCarrierCheck(
                 log.id,
@@ -145,6 +170,12 @@ export class SmsCarrierCheckService {
                 }`,
             );
         }
+    }
+
+    private isPastGiveUpAge(log: MessageLogEntity): boolean {
+        const base = log.providerAcceptedAt ?? log.createdAt;
+        const baseMs = base instanceof Date ? base.getTime() : Number.NaN;
+        return Number.isFinite(baseMs) && Date.now() - baseMs > FAILED_ROW_GIVE_UP_AGE_MS;
     }
 
     private async checkOne(log: MessageLogEntity, warnedStates: Set<string>): Promise<void> {
