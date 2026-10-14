@@ -408,6 +408,13 @@ export interface ServiceRecordEditConfirmAssignmentUpdate {
     scheduleId: number | null;
     startDate: string;
     endDate: string;
+    /**
+     * Whether this edit changes the assignment's dates. Only when true are the
+     * dates written to service_record_assignment and employee_schedule; the
+     * entry is emitted either way so message automation is re-evaluated. A
+     * missing flag is treated as true.
+     */
+    datesChanged?: boolean;
 }
 
 export interface ServiceRecordEditConfirmDocumentJobPlan {

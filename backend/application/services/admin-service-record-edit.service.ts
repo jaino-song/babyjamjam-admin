@@ -342,7 +342,8 @@ function hasPlannedDateDifference(
  * edge and keeps its stored dates, so it can neither block the confirm nor have
  * its schedule stretched. Every stored assignment is still emitted so the
  * repository re-evaluates each schedule's message automation as before, but
- * their dates are written as before.
+ * only the ones whose dates this edit changes are flagged `datesChanged` and
+ * written.
  *
  * Moving the outer edges across a neighbour's stored boundary cannot be done
  * without moving that boundary, so it is a conflict the administrator resolves
@@ -386,6 +387,7 @@ function assignmentWrites(
             scheduleId: item.assignment.scheduleId,
             startDate: item.startDate,
             endDate: item.endDate,
+            datesChanged: item.startDate !== item.storedStart || item.endDate !== item.storedEnd,
         };
     });
 }
