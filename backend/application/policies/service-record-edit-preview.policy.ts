@@ -108,24 +108,46 @@ function assignmentById(source: ServiceRecordEditSource, assignmentId: string): 
 }
 
 /**
- * Session ownership is not date-ranged. A written row belongs to the
- * assignment of the schedule that wrote it (backfilled rows may predate that
- * assignment's own range); a session with no writer belongs to the single
- * current (non-replaced) assignment. Zero or several candidates resolve to
- * null so the caller reports MISSING_ASSIGNMENT_PROVENANCE.
+ * Resolve which assignment owns a legacy session, in this order:
+ * 1. A written row belongs to the assignment of the schedule that wrote it
+ *    (the employee must match when both sides name one). No date check, so
+ *    rows backfilled before that assignment's own start date keep working.
+ * 2. Otherwise (unwritten row, or a row whose schedule id was nulled) the
+ *    assignment whose date range contains the session date owns it, limited
+ *    to the row's employee when it names one. This keeps a replaced
+ *    caregiver's unwritten sessions with that caregiver instead of silently
+ *    handing them to the current assignee.
+ * 3. If the date matches zero or several assignments (the handover day, or a
+ *    date outside every range) the unique non-replaced assignment owns it.
+ * 4. Anything else resolves to null so the caller reports
+ *    MISSING_ASSIGNMENT_PROVENANCE.
  */
 function assignmentForSession(
     source: ServiceRecordEditSource,
     scheduleId: number | null,
     employeeId: number | null,
+    serviceDate: string,
 ): ServiceRecordEditSourceAssignment | null {
-    const candidates = source.assignments.filter((assignment) => {
-        if (!assignment.id) return false;
-        if (scheduleId === null) return !assignment.replaced;
-        if (assignment.scheduleId !== scheduleId) return false;
-        return employeeId === null || assignment.employeeId === null || assignment.employeeId === employeeId;
+    const employeeMatches = (assignment: ServiceRecordEditSourceAssignment) =>
+        employeeId === null || assignment.employeeId === null || assignment.employeeId === employeeId;
+    const identified = source.assignments.filter((assignment) => Boolean(assignment.id));
+
+    if (scheduleId !== null) {
+        const bySchedule = identified.filter((assignment) =>
+            assignment.scheduleId === scheduleId && employeeMatches(assignment));
+        return bySchedule.length === 1 ? bySchedule[0]! : null;
+    }
+
+    const eligible = identified.filter(employeeMatches);
+    const byDate = eligible.filter((assignment) => {
+        const startDate = assignment.startDate || assignment.scheduleStartDate;
+        const endDate = assignment.endDate || assignment.scheduleEndDate;
+        return Boolean(startDate) && Boolean(endDate) && startDate! <= serviceDate && serviceDate <= endDate!;
     });
-    return candidates.length === 1 ? candidates[0]! : null;
+    if (byDate.length === 1) return byDate[0]!;
+
+    const current = eligible.filter((assignment) => !assignment.replaced);
+    return current.length === 1 ? current[0]! : null;
 }
 
 function provenanceVersion(raw: unknown, source: ServiceRecordEditSource): string {
@@ -429,7 +451,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
                 continue;
             }
         }
-        const assignment = assignmentForSession(source, row?.scheduleId ?? null, row?.employeeId ?? null);
+        const assignment = assignmentForSession(source, row?.scheduleId ?? null, row?.employeeId ?? null, serviceDate);
         const entry = sourceAssignmentEntry(source, sessionIndex, serviceDate, serviceDate, assignment, {
             scheduleId: row?.scheduleId,
             employeeId: row?.employeeId,

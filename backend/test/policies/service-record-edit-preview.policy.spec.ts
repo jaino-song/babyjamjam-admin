@@ -398,9 +398,64 @@ describe("service-record-edit-preview.policy", () => {
             );
             expect(projection.blockingReasons).toEqual([]);
             expect(projection.entries.map(({ serviceDate }) => serviceDate)).toEqual(dates);
-            expect(projection.entries[0]!.assignmentId).toBe(caregiverA.id);
-            expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+            // Sessions 2..7 are unwritten but lie inside A's range, so A keeps them.
+            expect(projection.entries.slice(0, 7).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            // Session 8 falls on the handover day (in both ranges) and resolves to the current assignee.
             expect(projection.entries[7]).toEqual(expect.objectContaining({ sessionIndex: 8, assignmentId: caregiverB.id }));
+            expect(projection.entries.slice(7).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        it("keeps unwritten sessions inside the outgoing range with their original owner", () => {
+            const preview = buildServiceRecordEditPreview({
+                calendar,
+                draftId: "33333333-3333-4333-8333-333333333333",
+                draftVersion: 1,
+                sourceCaseVersion: 7,
+                sourceFingerprint: "source-fingerprint",
+                source: legacy(
+                    [written(1, caregiverA), written(2, caregiverA), written(3, caregiverA), written(8, caregiverB)],
+                    [caregiverA, caregiverB],
+                ),
+                changes: {},
+                previewId: "preview-1",
+            });
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.provenance).toEqual([
+                expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-13" }),
+                expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23" }),
+            ]);
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy(
+                    [written(1, caregiverA), written(2, caregiverA), written(3, caregiverA), written(8, caregiverB)],
+                    [caregiverA, caregiverB],
+                ),
+                calendar,
+            );
+            expect(projection.entries.slice(0, 7).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            expect(projection.entries.slice(7).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        it("matches a row with no schedule id but an employee id by the employee and the session date", () => {
+            const orphan = { ...written(3, caregiverA), scheduleId: null as unknown as number };
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy([written(1, caregiverA), orphan], [caregiverA, caregiverB]),
+                calendar,
+            );
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries[2]).toEqual(expect.objectContaining({ sessionIndex: 3, assignmentId: caregiverA.id }));
+        });
+
+        it("does not report an overlap when a session between two written ones is left unwritten", () => {
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy(
+                    [written(1, caregiverA), written(2, caregiverA), written(4, caregiverA)],
+                    [caregiverA, caregiverB],
+                ),
+                calendar,
+            );
+            expect(projection.blockingReasons.map(({ code }) => code)).not.toContain("ASSIGNMENT_RANGE_OVERLAP");
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.slice(0, 7).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
         });
 
         it("lets the new assignee own sessions it backfilled before its own start date", () => {
