@@ -480,3 +480,131 @@ function createRevisionHarness(options: RevisionHarnessOptions = {}) {
         chunkRows: () => rows,
     };
 }
+
+describe("revised snapshot of a case whose current caregiver backfilled sessions", () => {
+    const ASSIGNMENT_A = "aaaaaaaa-0000-4000-8000-00000000000a";
+    const ASSIGNMENT_B = "bbbbbbbb-0000-4000-8000-00000000000b";
+    const dates = [
+        "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08",
+        "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+        "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+    ];
+    const caregivers = {
+        A: { assignmentId: ASSIGNMENT_A, scheduleId: 701, employeeId: 31, name: "공혜순" },
+        B: { assignmentId: ASSIGNMENT_B, scheduleId: 702, employeeId: 32, name: "임선녀" },
+    };
+
+    /**
+     * Shaped like the finalization freeze: day rows carry their writer's schedule, employee and name
+     * but no assignment id, while the stored planned vector gives sessions 1-7 to A and 8-15 to B.
+     */
+    function backfilledInput(writerOf: (sessionIndex: number) => "A" | "B"): ServiceRecordRevisionGenerationInput {
+        const base = makeGenerationInput({ sessionCount: dates.length });
+        const sessions = dates.map((serviceDate, offset) => {
+            const writer = caregivers[writerOf(offset + 1)];
+            return {
+                sourceRowId: `day-${offset + 1}`,
+                sessionIndex: offset + 1,
+                serviceDate,
+                scheduleId: writer.scheduleId,
+                employeeId: writer.employeeId,
+                employeeNameSnapshot: writer.name,
+                formVersion: 2,
+                answers: {},
+                etcService: null,
+                notes: null,
+                paymentConfirmed: true,
+                momApproval: "approved",
+                clientSignature: `signature-${offset + 1}`,
+                clientSignedAt: "2026-10-01T03:00:00.000Z",
+                submittedAt: "2026-10-01T04:00:00.000Z",
+                locked: true,
+            };
+        });
+        const plannedSessions = dates.map((serviceDate, offset) => {
+            const owner = caregivers[offset < 7 ? "A" : "B"];
+            return {
+                sessionIndex: offset + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: owner.assignmentId,
+                scheduleId: owner.scheduleId,
+                employeeId: owner.employeeId,
+                provenanceVersion: "case-7",
+            };
+        });
+        const immutablePayload = {
+            ...base.immutablePayload,
+            requiredSessionCount: dates.length,
+            sessions,
+            plannedSessions,
+            assignments: Object.values(caregivers).map((caregiver) => ({
+                assignmentId: caregiver.assignmentId,
+                scheduleId: caregiver.scheduleId,
+                employeeId: caregiver.employeeId,
+                employeeNameSnapshot: caregiver.name,
+                startDate: "2026-10-01",
+                endDate: "2026-10-23",
+            })),
+        };
+        const payloadFingerprint = sha256CanonicalJson(immutablePayload);
+        return {
+            ...base,
+            plannedSessionCount: dates.length,
+            plannedSessionDates: dates.map((serviceDate, offset) => ({ sessionIndex: offset + 1, serviceDate })),
+            immutablePayload,
+            payloadFingerprint,
+            businessFingerprint: payloadFingerprint,
+        };
+    }
+
+    function chunksFor(input: ServiceRecordRevisionGenerationInput) {
+        const harness = createRevisionHarness();
+        const internals = harness.usecase as unknown as {
+            buildFrozenRevisionSource: (input: ServiceRecordRevisionGenerationInput) => { record: unknown };
+            buildRevisionChunks: (
+                record: unknown,
+                tiers: number[],
+                templateIdByTier: Map<number, string>,
+                persistedLayout: unknown[],
+                input: ServiceRecordRevisionGenerationInput,
+                documentVersion: number,
+            ) => Array<{
+                assignmentId: string | null;
+                employeeName: string;
+                firstSessionIndex: number;
+                lastSessionIndex: number;
+            }>;
+        };
+        const { record } = internals.buildFrozenRevisionSource(input);
+        return internals.buildRevisionChunks(
+            record,
+            [5, 15],
+            new Map([[5, "template-5"], [15, "template-15"]]),
+            [],
+            input,
+            3,
+        );
+    }
+
+    it("attributes the sessions the current caregiver backfilled to that caregiver", () => {
+        const chunks = chunksFor(backfilledInput((sessionIndex) => (sessionIndex === 1 ? "A" : "B")));
+        expect(chunks.map((chunk) => ({
+            assignmentId: chunk.assignmentId,
+            employeeName: chunk.employeeName,
+            firstSessionIndex: chunk.firstSessionIndex,
+            lastSessionIndex: chunk.lastSessionIndex,
+        }))).toEqual([
+            { assignmentId: ASSIGNMENT_A, employeeName: "공혜순", firstSessionIndex: 1, lastSessionIndex: 1 },
+            { assignmentId: ASSIGNMENT_B, employeeName: "임선녀", firstSessionIndex: 2, lastSessionIndex: 15 },
+        ]);
+    });
+
+    it("keeps the planned split when each caregiver wrote only their own sessions", () => {
+        const chunks = chunksFor(backfilledInput((sessionIndex) => (sessionIndex <= 7 ? "A" : "B")));
+        expect(chunks.map((chunk) => [chunk.assignmentId, chunk.firstSessionIndex, chunk.lastSessionIndex])).toEqual([
+            [ASSIGNMENT_A, 1, 7],
+            [ASSIGNMENT_B, 8, 15],
+        ]);
+    });
+});
