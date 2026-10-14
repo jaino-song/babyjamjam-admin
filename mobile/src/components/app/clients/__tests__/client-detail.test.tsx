@@ -1,7 +1,10 @@
-import { render, renderHook, screen } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { formatMessageDateTimeCompact } from "@babyjamjam/shared";
+import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
+import { eformsignApi } from "@/services/api";
+import { toast } from "@/hooks/use-toast";
 
 import {
   ClientDetailContent,
@@ -126,7 +129,7 @@ jest.mock("../ServiceScheduleChangeModal", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
-  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }), getLinkConfirmations: jest.fn().mockResolvedValue([]) },
+  eformsignApi: { getDocument: jest.fn().mockResolvedValue({ fields: [] }), getLinkConfirmations: jest.fn().mockResolvedValue([]), voidDocument: jest.fn() },
 }));
 
 const client: Client = {
@@ -219,6 +222,120 @@ function contractDocumentWithDates({
     detail_template_info: [],
   };
 }
+
+describe("contract void workflow", () => {
+  const linkedClient: Client = { ...client, eDocId: "document-1", latestContractDocumentId: "document-1", documentStatus: "requested", hasSigned: true };
+  const voidedAt = "2026-10-14T01:02:00Z";
+  const document = (display_status: string): EformsignDocument => ({
+    ...contractDocumentWithDates({ createdDate: Date.parse("2026-10-01T00:00:00Z") }),
+    display_status,
+  });
+  const refresh = jest.fn();
+  function renderVoid(doc = document("signed"), target = linkedClient) {
+    return render(<ClientDetailContent data-component="mobile_clients_detail-sheet_content"
+      client={target} contractDocument={doc} activeTab="contracts" onContractVoided={refresh}
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+      onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={jest.fn()} />);
+  }
+  beforeEach(() => {
+    jest.mocked(eformsignApi.voidDocument).mockReset();
+    jest.mocked(toast).mockClear();
+    refresh.mockClear();
+  });
+  it.each(["003", "060"])("voided overrides provider code %s and shows time/name with no action", (code) => {
+    const doc = document("voided");
+    doc.current_status.status_type = code;
+    doc.voided_at = voidedAt;
+    doc.voided_by_name = "담당자";
+    renderVoid(doc, { ...linkedClient, hasSigned: false });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.getByText("파기")).toBeInTheDocument();
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 담당자`)).toBeInTheDocument();
+    expect(screen.getByText("서명 대기자").parentElement).toHaveTextContent("-");
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+    expect(screen.queryByText("서명 완료")).not.toBeInTheDocument();
+  });
+  it("uses the void timestamp even when display status lags and the actor is unknown", () => {
+    renderVoid({ ...document("signed"), voided_at: voidedAt, voided_by_name: null });
+    expect(screen.getByText(`${formatMessageDateTimeCompact(voidedAt)} · 알 수 없음`)).toBeInTheDocument();
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("honors display_status voided without a timestamp regardless of a completed code", () => {
+    const doc = document("voided");
+    doc.current_status.status_type = "003";
+    renderVoid(doc, { ...linkedClient, documentStatus: "completed" });
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("계약 완료")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("uses only the coarse voided status when no document is loaded", () => {
+    renderDetail(null, { ...linkedClient, documentStatus: "voided" }, "contracts");
+    expect(screen.getAllByText("파기됨").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it.each(["revoked", "expired"])("does not offer void for %s", (status) => {
+    renderVoid(document(status));
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("does not void an older linked document or inherit the latest contract's voided badge", () => {
+    renderVoid(document("signed"), { ...linkedClient, latestContractDocumentId: "newer", documentStatus: "voided" });
+    expect(screen.getAllByText("서명 완료").length).toBeGreaterThan(0);
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: CONTRACT_VOID_COPY.action })).not.toBeInTheDocument();
+  });
+  it("keeps the loaded document's status even when the same client's coarse status is voided", () => {
+    renderVoid(document("signed"), { ...linkedClient, documentStatus: "voided" });
+    expect(screen.queryByText("파기됨")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action })).toBeInTheDocument();
+  });
+  it("shows shared confirmation copy and cancels without a request", async () => {
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmTitle);
+    expect(screen.getByRole("dialog")).toHaveTextContent(CONTRACT_VOID_COPY.confirmDescription);
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel }));
+    expect(eformsignApi.voidDocument).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it("submits once, disables pending actions, ignores dismissal, and refreshes on success", async () => {
+    let resolve!: (response: Awaited<ReturnType<typeof eformsignApi.voidDocument>>) => void;
+    jest.mocked(eformsignApi.voidDocument).mockImplementation(() => new Promise((done) => { resolve = done; }));
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    const pending = screen.getByRole("button", { name: CONTRACT_VOID_COPY.pending });
+    expect(pending).toBeDisabled();
+    expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toBeDisabled();
+    await user.click(pending);
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(eformsignApi.voidDocument).toHaveBeenCalledTimes(1);
+    expect(eformsignApi.voidDocument).toHaveBeenCalledWith("document-1");
+    await act(async () => resolve({ documentId: "document-1", voidedAt, voidedByName: null, displayStatus: "voided" }));
+    expect(toast).toHaveBeenCalledWith({ title: CONTRACT_VOID_COPY.success });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+  it.each([
+    [409, { isAxiosError: true, response: { status: 409 } }, CONTRACT_VOID_COPY.conflict, false],
+    [500, { isAxiosError: true, response: { status: 500 } }, CONTRACT_VOID_COPY.failure, true],
+    ["network", new Error("network"), CONTRACT_VOID_COPY.failure, true],
+  ])("refreshes after %s and preserves the correct modal state", async (_name, error, copy, staysOpen) => {
+    jest.mocked(eformsignApi.voidDocument).mockRejectedValue(error);
+    renderVoid();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
+    await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledWith({ title: copy, variant: "destructive" });
+    if (staysOpen) expect(screen.getByRole("dialog")).toBeInTheDocument();
+    else expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
 
 describe("ClientDetailContent", () => {
   it("leaves the payment date blank when the old document fetch fails during reissue", async () => {
