@@ -111,6 +111,8 @@ describe("shared message presentation contract", () => {
     expect(getMessageChannelLabel("aligo_alimtalk")).toBe("메시지");
     expect(getMessageHistoryTimestamp(record)).toBe("2026-07-16T12:19:00.000Z");
     expect(formatMessageFailureReason("provider timeout (code: 500) 재시도 필요")).toBe("재시도 필요");
+    expect(formatMessageFailureReason("통신사 전달 실패: 1234 가입자없음, 5678 결번"))
+      .toBe("통신사 전달 실패: 1234 가입자없음, 5678 결번");
     expect(MESSAGE_HISTORY_STATUS_LABELS).toEqual({
       sent: "발송 성공",
       failed: "발송 실패",

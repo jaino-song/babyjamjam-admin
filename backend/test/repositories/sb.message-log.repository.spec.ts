@@ -52,7 +52,7 @@ describe("SbMessageLogRepository", () => {
             expect(messageLogModel.findMany).not.toHaveBeenCalled();
         });
 
-        it("should query sent logs and return non-null trigger job ids", async () => {
+        it("should query sent or carrier-failed logs and return non-null trigger job ids", async () => {
             messageLogModel.findMany.mockResolvedValue([
                 { triggerJobId: "job-1" },
                 { triggerJobId: null },
@@ -64,7 +64,7 @@ describe("SbMessageLogRepository", () => {
             expect(messageLogModel.findMany).toHaveBeenCalledWith({
                 where: {
                     triggerJobId: { in: ["job-1", "job-2", "job-3"] },
-                    status: "sent",
+                    OR: [{ status: "sent" }, { carrierResultState: "failed" }],
                 },
                 select: { triggerJobId: true },
             });

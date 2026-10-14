@@ -305,7 +305,9 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const rows = await this.prisma.message_log.findMany({
             where: {
                 triggerJobId: { in: jobIds },
-                status: "sent",
+                // A carrier-check failure flips status to "failed" after the provider
+                // already accepted the send; it still counts as sent (never auto-resend).
+                OR: [{ status: "sent" }, { carrierResultState: "failed" }],
             },
             select: { triggerJobId: true },
         });
