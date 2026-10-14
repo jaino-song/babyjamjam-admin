@@ -49,7 +49,6 @@ import {
     type ServiceRecordEditRevisionFactsSource,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
-    ServiceRecordEditPreviewAssignmentRange,
     ServiceRecordEditConfirmDocumentStatus,
     ServiceRecordEditConfirmResponse,
     ServiceRecordRevisionDispatchContext,
@@ -331,52 +330,49 @@ function hasPlannedDateDifference(
 /**
  * Dates written to service_record_assignment and employee_schedule on confirm.
  *
- * The owned session dates (`provenance`) say which sessions each caregiver
- * holds, not where the hand-over between caregivers lies: the replacement flow
- * deliberately stores the outgoing end date equal to the incoming start date,
- * and a newly assigned caregiver may backfill sessions before its own start.
- * Deriving every edge from owned sessions would move that boundary on any
- * confirm. So the outer edges of the case (the first range's start and the
- * last range's end) follow the sessions, which keeps a single caregiver's
- * schedule tracking moved session dates, and each boundary between consecutive
- * ranges keeps its stored shared date when that date is still valid: the
- * outgoing range must reach its last owned session (boundary >= its owned end)
- * and the incoming range must not end before the boundary (boundary <= its
- * owned end). The incoming range may own sessions before the boundary; those
- * are its backfill. A boundary that is not shared, or that a moved session made
- * invalid, falls back to the owned session dates for both neighbours.
+ * A confirmed edit never moves an inner handover boundary: the caregiver
+ * replacement flow owns those (it deliberately stores the outgoing end equal to
+ * the incoming start), and ownership of sessions, including a newly assigned
+ * caregiver's backfill, says nothing about where a hand-over lies. So every
+ * stored assignment keeps its dates, except the two outer edges of the case:
+ * the earliest assignment starts on the first planned session and the latest
+ * ends on the last one, which is how a single caregiver's schedule follows moved
+ * session dates. Every stored assignment is written (unchanged ones with their
+ * stored dates) so the repository still re-evaluates each schedule's message
+ * automation as before.
+ *
+ * Moving the outer edges across a neighbour's stored boundary cannot be done
+ * without moving that boundary, so it is a conflict the administrator resolves
+ * through the caregiver replacement flow; it is never repaired here.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
-    ranges: ServiceRecordEditPreviewAssignmentRange[],
+    startDate: string | null,
+    endDate: string | null,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
-    const ordered = [...ranges].sort((left, right) =>
-        left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
-    const starts = ordered.map((range) => range.startDate);
-    const ends = ordered.map((range) => range.endDate);
-    for (let index = 0; index + 1 < ordered.length; index += 1) {
-        const previous = ordered[index]!;
-        const next = ordered[index + 1]!;
-        const storedPrevious = source.assignments.find((candidate) => candidate.id === previous.assignmentId);
-        const storedNext = source.assignments.find((candidate) => candidate.id === next.assignmentId);
-        const boundary = storedPrevious ? storedPrevious.endDate || storedPrevious.scheduleEndDate : "";
-        const nextStart = storedNext ? storedNext.startDate || storedNext.scheduleStartDate : "";
-        if (boundary && boundary === nextStart && previous.endDate <= boundary && boundary <= next.endDate) {
-            ends[index] = boundary;
-            starts[index + 1] = boundary;
-        }
-    }
-    return ordered.map((range, index) => {
-        if (starts[index]! > ends[index]!) {
+    const stored = source.assignments
+        .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
+        .map((assignment) => ({
+            assignment,
+            startDate: assignment.startDate || assignment.scheduleStartDate,
+            endDate: assignment.endDate || assignment.scheduleEndDate,
+        }))
+        .sort((left, right) =>
+            left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
+    if (stored.length === 0) return [];
+    if (startDate) stored[0]!.startDate = startDate;
+    if (endDate) stored[stored.length - 1]!.endDate = endDate;
+    return stored.map((item) => {
+        if (!item.startDate || !item.endDate || item.startDate > item.endDate) {
             throw new ServiceRecordEditConflictError(
-                `Assignment ${range.assignmentId} would be written with its start after its end`,
+                `Assignment ${item.assignment.id} would be written with its start after its end`,
             );
         }
         return {
-            assignmentId: range.assignmentId,
-            scheduleId: range.scheduleId,
-            startDate: starts[index]!,
-            endDate: ends[index]!,
+            assignmentId: item.assignment.id,
+            scheduleId: item.assignment.scheduleId,
+            startDate: item.startDate,
+            endDate: item.endDate,
         };
     });
 }
@@ -1246,7 +1242,7 @@ export class AdminServiceRecordEditService {
             plannedSessions,
             sessions,
             newSessions,
-            assignments: assignmentWrites(source, provisional.provenance),
+            assignments: assignmentWrites(source, provisional.after.startDate, provisional.after.endDate),
             revision: changed
                 ? {
                     branchId,
