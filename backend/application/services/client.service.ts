@@ -403,6 +403,7 @@ export class ClientService {
                     clientId: true,
                     branchId: true,
                     documentKind: true,
+                    createdDate: true,
                     serviceRecordCaseId: true,
                     templateId: true,
                     stepRecipientSms: true,
@@ -478,7 +479,11 @@ export class ClientService {
                 return;
             }
 
+            // Owned by the attempt: reset when an attempt starts, set only once the pointer
+            // update ran, so the in-memory entity below follows what was actually written.
+            let pointerWritten = false;
             await this.retryWhilePhoneLinkLockSetChanges(() => this.prismaService.$transaction(async (transaction) => {
+                pointerWritten = false;
                 const documentIdsToLock = Array.from(new Set([
                     ...documentIdsToReassign,
                     ...(shouldUpdateClientDocument && latestContract ? [latestContract.id] : []),
@@ -656,11 +661,17 @@ export class ClientService {
                 // leave the link undone. Release exactly those pointers, only on clients that
                 // are in the locked set (every pointer client of these documents was verified
                 // to be above), and only for documents this link hands to the target.
+                // D3: a voided contract newer than the pointer candidate means the client has no
+                // live contract, so an older document must not take the pointer. Only the
+                // pointer is skipped; ownership and the other reassignments proceed.
+                const pointerBlockedByVoid = shouldUpdateClientDocument && latestContract !== undefined
+                    && await this.hasNewerVoidedContract(transaction, client.id, latestContract);
+                const takesPointer = shouldUpdateClientDocument && !pointerBlockedByVoid;
                 const releasedDocumentIds = [
                     ...matchingDocs
                         .filter((doc) => documentIdsToReassign.includes(doc.id))
                         .map((doc) => doc.documentId),
-                    ...(shouldUpdateClientDocument && latestContract ? [latestContract.documentId] : []),
+                    ...(takesPointer && latestContract ? [latestContract.documentId] : []),
                 ];
                 const otherLockedClientIds = [...lockedClientIds].filter((id) => id !== client.id);
                 if (releasedDocumentIds.length > 0 && otherLockedClientIds.length > 0) {
@@ -674,7 +685,7 @@ export class ClientService {
                     });
                 }
 
-                if (shouldUpdateClientDocument) {
+                if (takesPointer) {
                     const updated = await transaction.client.updateMany({
                         where: {
                             id: client.id,
@@ -685,11 +696,12 @@ export class ClientService {
                     if (updated.count !== 1) {
                         throw new Error("Client contract pointer update failed");
                     }
+                    pointerWritten = true;
                 }
                 return undefined;
             }));
 
-            if (shouldUpdateClientDocument) {
+            if (pointerWritten && latestContract) {
                 // SAVED computation: update() re-derives the client's duration.
                 const calendar = await this.holidayCalendar.forBranch(branchid, { fresh: true });
                 client.update({ eDocId: latestContract.documentId }, calendar);
@@ -712,6 +724,41 @@ export class ClientService {
                 `[CLIENT_CONTRACT_PHONE_LINK_FAILED] 고객 ${client.id} 계약서 자동 연결 실패 (${errorType})`,
             );
         }
+    }
+
+    /**
+     * D3 fence, read under the client/document locks: whether this client owns a voided
+     * contract document newer than `document` ("newer" = later created date, larger id on a
+     * tie). Status and purge flags are deliberately ignored - a voided unsigned contract is
+     * cancelled in eformsign and later commonly mirrored as deleted; it must keep blocking.
+     */
+    private async hasNewerVoidedContract(
+        transaction: Prisma.TransactionClient,
+        clientId: number,
+        document: { id: number; createdDate: Date },
+    ): Promise<boolean> {
+        const blocker = await transaction.eformsign_doc.findFirst({
+            where: {
+                clientId,
+                voidedAt: { not: null },
+                AND: [
+                    {
+                        OR: [
+                            { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                            { documentKind: null },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { createdDate: { gt: document.createdDate } },
+                            { createdDate: document.createdDate, id: { gt: document.id } },
+                        ],
+                    },
+                ],
+            },
+            select: { id: true },
+        });
+        return blocker !== null;
     }
 
     private async linkNotReadyContractDocumentsByPhone(

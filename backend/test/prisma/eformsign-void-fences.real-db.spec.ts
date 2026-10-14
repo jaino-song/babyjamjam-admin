@@ -1,7 +1,10 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 
+import { ClientService } from "application/services/client.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { LinkMirroredEformsignDocByPhoneUsecase } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
+import { ClientMapper } from "infrastructure/database/mapper/client.mapper";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import type { HolidayCalendarService } from "application/services/holiday-calendar.service";
@@ -15,7 +18,10 @@ import type { HolidayCalendarService } from "application/services/holiday-calend
  * issues. While it is paused the void commits through `markVoided` on a separate connection;
  * then the writer resumes and takes the lock. A void check made earlier in the transaction
  * therefore cannot satisfy these cases; only a `voided_at IS NULL` predicate evaluated under the
- * lock can. Skipped unless HOLIDAY_REVIEW_REAL_DB=1, and then only against a local throwaway
+ * lock can. The second `describe` (BJJ-439 D3, merge-audit round 2) is NOT race-instrumented: it
+ * wires the real `LinkMirroredEformsignDocByPhoneUsecase` and `ClientService` over the same
+ * database and proves a voided newest contract keeps ANY phone-link path from promoting an older
+ * contract. Skipped unless HOLIDAY_REVIEW_REAL_DB=1, and then only against a local throwaway
  * database:
  *
  *   createdb throwaway_vf && export DATABASE_URL=postgresql://<user>@localhost/throwaway_vf DIRECT_URL=$DATABASE_URL
@@ -356,5 +362,207 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
             detailSyncedAt: new Date("2026-10-10T01:01:00.000Z"),
         })).resolves.toBe(true);
         expect((await clientRow(client.id)).endDate).toEqual(d("2026-10-30"));
+    });
+});
+
+/**
+ * BJJ-439 D3 (merge-audit round 2): once a client's newest contract document is voided, the
+ * client has no live contract, so no phone-link path may point `client.e_doc_id` at an OLDER
+ * document; a contract created AFTER the voided one still takes the pointer. Real
+ * `LinkMirroredEformsignDocByPhoneUsecase` and `ClientService` over the real database; only the
+ * non-database collaborators (calendar, config, snapshot bumps) are stubbed. Not race-instrumented.
+ */
+describeReal("a voided newest contract keeps phone links from promoting an older contract (real PostgreSQL)", () => {
+    let raw: PrismaClient;
+    let branchId: string;
+    let service: ClientService;
+    let sequence = 0;
+
+    const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService;
+
+    beforeAll(async () => {
+        assertThrowawayTarget();
+        raw = new PrismaClient();
+        await raw.$connect();
+        branchId = (await raw.branch.create({
+            data: { name: "d3 phone link", slug: `throwaway-d3-phone-link-${Date.now().toString(36)}` },
+        })).id;
+        const prisma = raw as unknown as PrismaService;
+        const config = { get: () => undefined };
+        const snapshots = { bumpVersion: async () => undefined, bumpCompanyEpoch: async () => undefined };
+        const readClient = {
+            execute: async (_branch: string, id: number) =>
+                ClientMapper.toDomain(await raw.client.findUniqueOrThrow({ where: { id } })),
+        };
+        const linker = new LinkMirroredEformsignDocByPhoneUsecase(
+            prisma,
+            config as never,
+            {} as never,
+            calendar,
+        );
+        service = new ClientService(
+            {} as never, readClient as never, {} as never, {} as never, {} as never, {} as never,
+            prisma, {} as never, {} as never, snapshots as never, {} as never, calendar,
+            undefined, undefined, undefined, config as never, linker,
+        );
+    });
+
+    afterAll(async () => {
+        await raw.client.deleteMany({ where: { branchId } });
+        await raw.eformsign_doc.deleteMany({ where: { branchId } });
+        await raw.branch.deleteMany({ where: { id: branchId } });
+        await raw.$disconnect();
+    });
+
+    /** A client with its own phone, so no other test's documents can match it. */
+    async function makeClient() {
+        const phone = `010${String(10_000_000 + (++sequence * 7919) % 89_999_999).padStart(8, "0")}`;
+        const client = await raw.client.create({
+            data: {
+                name: `d3-phone-${sequence}`,
+                voucherClient: false,
+                branchId,
+                phone,
+                startDate: d("2026-10-01"),
+                endDate: d("2026-10-16"),
+                duration: 12,
+            },
+        });
+        return { id: client.id, phone };
+    }
+
+    async function makeDocument(
+        label: string,
+        owner: { id: number; phone: string },
+        options: { createdDate: string; ready: boolean; voided?: boolean; statusType?: string },
+    ) {
+        const documentId = `d3-phone-${label}-${++sequence}-${Date.now().toString(36)}`;
+        const createdDate = new Date(options.createdDate);
+        const row = await raw.eformsign_doc.create({
+            data: {
+                documentId,
+                createdDate,
+                updatedDate: createdDate,
+                statusType: options.statusType ?? "050",
+                statusDetail: "Complete",
+                stepType: "reviewer",
+                stepIndex: "1",
+                stepName: "reviewer",
+                stepRecipientType: "client",
+                stepRecipientName: "Fixture",
+                stepRecipientSms: owner.phone,
+                customerPhone: owner.phone,
+                expiredDate: new Date("2099-01-01T00:00:00.000Z"),
+                clientId: owner.id,
+                branchId,
+                documentKind: "contract",
+                syncStatus: options.ready ? "ready" : "pending",
+                ...(options.voided ? { voidedAt: new Date("2026-10-13T00:00:00.000Z"), voidedBy: ACTOR } : {}),
+                ...(options.ready
+                    ? {
+                        detailPayload: { document: { id: documentId } },
+                        detailSourceUpdatedDate: createdDate,
+                        detailSyncedAt: createdDate,
+                    }
+                    : {}),
+            },
+        });
+        if (options.ready) {
+            for (const fileType of ["document", "audit_trail"]) {
+                await raw.eformsign_doc_file.create({
+                    data: {
+                        eformsignDocId: row.id,
+                        fileType,
+                        content: Buffer.from("x"),
+                        contentType: "application/pdf",
+                        byteSize: 1,
+                        sha256: "0".repeat(64),
+                        sourceUpdatedDate: createdDate,
+                    },
+                });
+            }
+        }
+        return documentId;
+    }
+
+    async function pointerOf(clientId: number) {
+        return (await raw.client.findUniqueOrThrow({ where: { id: clientId } })).eDocId;
+    }
+
+    it("(a) a voided newest READY contract does not let an older PENDING contract take the pointer", async () => {
+        const client = await makeClient();
+        await makeDocument("a-newest", client, { createdDate: "2026-10-12T00:00:00.000Z", ready: true, voided: true });
+        await makeDocument("a-older", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: false });
+
+        const updated = await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBeNull();
+        expect(updated.eDocId).toBeNull();
+    });
+
+    it("(b) a voided newest NOT-ready contract (status 049) does not let an older READY contract take the pointer", async () => {
+        const client = await makeClient();
+        await makeDocument("b-newest", client, {
+            createdDate: "2026-10-12T00:00:00.000Z", ready: false, voided: true, statusType: "049",
+        });
+        await makeDocument("b-older", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: true });
+
+        const updated = await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBeNull();
+        expect(updated.eDocId).toBeNull();
+    });
+
+    it("keeps an existing pointer when the newest contract is voided and a newer-than-pointer contract is linkable", async () => {
+        const client = await makeClient();
+        const existing = await makeDocument("keep-pointer", client, { createdDate: "2026-10-01T00:00:00.000Z", ready: true });
+        await raw.client.update({ where: { id: client.id }, data: { eDocId: existing } });
+        await makeDocument("keep-newest", client, { createdDate: "2026-10-12T00:00:00.000Z", ready: true, voided: true });
+        await makeDocument("keep-older", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: false });
+
+        await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBe(existing);
+    });
+
+    it("(c) control: a READY contract created after the voided one is linked and takes the pointer", async () => {
+        const client = await makeClient();
+        await makeDocument("c-voided", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: true, voided: true });
+        const newer = await makeDocument("c-newer", client, { createdDate: "2026-10-12T00:00:00.000Z", ready: true });
+
+        const updated = await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBe(newer);
+        expect(updated.eDocId).toBe(newer);
+    });
+
+    it("(c) control: a PENDING contract created after the voided one is linked through the existing-only path", async () => {
+        const client = await makeClient();
+        await makeDocument("c2-voided", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: true, voided: true });
+        const newer = await makeDocument("c2-newer", client, { createdDate: "2026-10-12T00:00:00.000Z", ready: false });
+
+        await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBe(newer);
+    });
+
+    it("control: a voided contract of ANOTHER client never blocks this client", async () => {
+        const client = await makeClient();
+        const other = await makeClient();
+        await makeDocument("other-voided", other, { createdDate: "2026-10-12T00:00:00.000Z", ready: true, voided: true });
+        const own = await makeDocument("own", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: true });
+
+        await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBe(own);
+    });
+
+    it("control: a client without a voided contract is linked as before", async () => {
+        const client = await makeClient();
+        const own = await makeDocument("plain", client, { createdDate: "2026-10-05T00:00:00.000Z", ready: true });
+
+        await service.update(branchId, client.id, {});
+
+        expect(await pointerOf(client.id)).toBe(own);
     });
 });

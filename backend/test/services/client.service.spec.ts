@@ -107,6 +107,8 @@ describe("ClientService", () => {
             },
             eformsign_doc: {
                 findMany: jest.fn().mockResolvedValue([]),
+                // D3 blocker query: no newer voided contract unless a test says so.
+                findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             schedule_change_request: {
@@ -859,6 +861,7 @@ describe("ClientService", () => {
                     clientId: true,
                     branchId: true,
                     documentKind: true,
+                    createdDate: true,
                     serviceRecordCaseId: true,
                     templateId: true,
                     stepRecipientSms: true,
@@ -927,6 +930,7 @@ describe("ClientService", () => {
                         clientId: null,
                         branchId: null,
                         statusType: "060",
+                        createdDate: new Date("2026-09-02T00:00:00Z"),
                         voidedAt: null,
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
@@ -937,6 +941,7 @@ describe("ClientService", () => {
                         clientId: null,
                         branchId,
                         statusType: "060",
+                        createdDate: new Date("2026-09-01T00:00:00Z"),
                         voidedAt: null,
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "연락처 +82 10 1234 5678",
@@ -1087,6 +1092,98 @@ describe("ClientService", () => {
                         data: { eDocId: "DOC-LATEST" },
                     }],
                 ]);
+            });
+
+            describe("D3: a voided contract newer than the pointer candidate", () => {
+                const expectedBlockerQuery = (clientId: number, createdDate: Date, id: number) => ({
+                    where: {
+                        clientId,
+                        voidedAt: { not: null },
+                        AND: [
+                            { OR: [{ documentKind: "contract" }, { documentKind: null }] },
+                            { OR: [{ createdDate: { gt: createdDate } }, { createdDate, id: { gt: id } }] },
+                        ],
+                    },
+                    select: { id: true },
+                });
+
+                it("claims the documents but does not write the pointer when a newer voided contract blocks", async () => {
+                    const mockClient = arrangeCandidates();
+                    arrangeQueries([[55]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+                    const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                    try {
+                        await service.create(branchId, CREATE_DTO);
+
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledWith(
+                            expectedBlockerQuery(mockClient.id, new Date("2026-09-02T00:00:00Z"), 11),
+                        );
+                        // Ownership of both documents is still claimed and the other client's
+                        // stale pointer to them released; only the pointer write is skipped.
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                            where: expect.objectContaining({ id: { in: [11, 10] } }),
+                        }));
+                        expect(prismaService.client.updateMany.mock.calls).toEqual([
+                            [{
+                                where: { id: { in: [55] }, branchId, eDocId: { in: ["DOC-LATEST", "DOC-OLDER"] } },
+                                data: { eDocId: null },
+                            }],
+                        ]);
+                        expect(mockClient.eDocId).toBeNull();
+                        expect(documentSnapshotService.bumpVersion).toHaveBeenCalledWith(branchId);
+                        expect(errorLog).not.toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                    } finally {
+                        errorLog.mockRestore();
+                    }
+                });
+
+                it("keeps an existing pointer and releases nobody when the blocked latest document is not reassigned", async () => {
+                    const mockClient = arrangeCandidates();
+                    mockClient.eDocId = "DOC-EXISTING";
+                    prismaService.eformsign_doc.findMany.mockResolvedValue([{
+                        id: 11,
+                        documentId: "DOC-LATEST",
+                        clientId: mockClient.id,
+                        branchId,
+                        createdDate: new Date("2026-09-02T00:00:00Z"),
+                        voidedAt: null,
+                        stepRecipientSms: "고객 010-1234-5678",
+                    }]);
+                    arrangeQueries([[55]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+                    const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                    try {
+                        await service.create(branchId, CREATE_DTO);
+
+                        expect(prismaService.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(mockClient.eDocId).toBe("DOC-EXISTING");
+                        expect(errorLog).not.toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                    } finally {
+                        errorLog.mockRestore();
+                    }
+                });
+
+                it("takes the pointer when no voided contract is newer, querying only this client's voided contracts regardless of status", async () => {
+                    const mockClient = arrangeCandidates();
+                    arrangeQueries([[]]);
+                    prismaService.eformsign_doc.findFirst.mockResolvedValue(null);
+
+                    await service.create(branchId, CREATE_DTO);
+
+                    const [query] = prismaService.eformsign_doc.findFirst.mock.calls[0]!;
+                    expect(query).toEqual(expectedBlockerQuery(mockClient.id, new Date("2026-09-02T00:00:00Z"), 11));
+                    // Another client's void never blocks (clientId scoped); a voided row mirrored
+                    // as deleted (049) or purge-requested still blocks (no status/purge filter).
+                    expect(query.where).not.toHaveProperty("statusType");
+                    expect(query.where).not.toHaveProperty("permanentPurgeRequestedAt");
+                    expect(prismaService.client.updateMany.mock.calls).toEqual([
+                        [{ where: { id: mockClient.id, branchId }, data: { eDocId: "DOC-LATEST" } }],
+                    ]);
+                    expect(mockClient.eDocId).toBe("DOC-LATEST");
+                });
             });
 
             it("gives up after three stale attempts, writes nothing and logs the phone-link failure", async () => {
