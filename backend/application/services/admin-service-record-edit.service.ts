@@ -337,12 +337,14 @@ function hasPlannedDateDifference(
  * the sessions: an unwritten service record does not mean the caregiver did not
  * work, so a replaced caregiver whose period covers a day worked it even when a
  * successor backfilled that day's record. The earliest active assignment
- * (terminated schedules are never candidates, replaced ones are) therefore starts
+ * (replaced ones are candidates; a terminated schedule is one only when it owns a
+ * session, so a case ended early still follows its session dates, while a
+ * session-less terminated schedule is never an edge) therefore starts
  * on the first planned session and the latest active one ends on the last one,
  * regardless of which caregiver owns the sessions (ownership in the records and
  * documents stays with the writer). That also keeps a single caregiver's schedule
- * following moved session dates. An outer edge never crosses into a terminated
- * assignment's stored period: when an assignment sorting before the earliest
+ * following moved session dates. An outer edge never crosses into a session-less
+ * terminated assignment's stored period: when an assignment sorting before the earliest
  * active one stored an end after the new start, or one sorting after the latest
  * active one stored a start before the new end, the stored date is kept, since
  * taking the session date would move that boundary. Every stored assignment is
@@ -361,6 +363,7 @@ function assignmentWrites(
     source: ServiceRecordEditSource,
     startDate: string | null,
     endDate: string | null,
+    ownerAssignmentIds: ReadonlySet<string>,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
     const stored = source.assignments
         .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
@@ -379,7 +382,12 @@ function assignmentWrites(
             left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
     const activeIndexes = stored
-        .map((item, index) => (!item.assignment.scheduleTerminatedAt ? index : -1))
+        .map((item, index) => (
+            !item.assignment.scheduleTerminatedAt
+            || (item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id))
+                ? index
+                : -1
+        ))
         .filter((index) => index >= 0);
     if (activeIndexes.length > 0) {
         const first = activeIndexes[0]!;
@@ -1280,6 +1288,7 @@ export class AdminServiceRecordEditService {
                 source,
                 provisional.after.startDate,
                 provisional.after.endDate,
+                new Set(provisional.provenance.map((range) => range.assignmentId)),
             ),
             revision: changed
                 ? {

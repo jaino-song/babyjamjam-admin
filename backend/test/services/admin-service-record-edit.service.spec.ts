@@ -2570,6 +2570,53 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
+    it("still follows the session dates for a single caregiver whose schedule is terminated early and owns every session", async () => {
+        // A case ended early (중도 종료) has its only schedule terminated. It owns the sessions, so it stays
+        // an outer edge: start follows the first session (stored earlier), end follows the last (moved later).
+        const single = {
+            ...caregiverB,
+            scheduleTerminatedAt: "2026-10-20T00:00:00.000Z",
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const source = {
+            ...handoverSource([written(1, single)]),
+            assignments: [single],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const later = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-26" }] });
+        expect(later.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-26", datesChanged: true }),
+        ]);
+        const earlier = await confirmedAssignments(source, headerOnly);
+        expect(earlier.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: true }),
+        ]);
+    });
+
+    it("ends a terminated latest caregiver on the last session when she owns sessions", async () => {
+        const terminatedB = { ...caregiverB, scheduleTerminatedAt: "2026-10-25T00:00:00.000Z" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(8, terminatedB)]),
+            assignments: [caregiverA, terminatedB],
+        };
+        const plan = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-27" }] });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: terminatedB.id, startDate: "2026-10-14", endDate: "2026-10-27", datesChanged: true }),
+        ]);
+    });
+
     it("flags an assignment whose employee_schedule disagrees with the computed dates", async () => {
         const drifted = { ...caregiverB, scheduleStartDate: "2026-10-12" };
         const source: ServiceRecordEditSource = {
