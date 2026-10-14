@@ -411,6 +411,7 @@ export class ClientService {
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
                     statusType: true,
+                    voidedAt: true,
                 },
             });
             const serviceRecordTemplateIds =
@@ -459,10 +460,12 @@ export class ClientService {
                     && compareEformsignClientIdentity(candidate, client, new Date()).length === 0;
             });
             const documentIdsToReassign = matchingDocs
-                .filter((doc) => doc.clientId !== client.id)
+                .filter((doc) => doc.clientId !== client.id && doc.voidedAt === null)
                 .map((doc) => doc.id);
             const latestContract = matchingDocs[0];
+            // 최신 계약이 파기되었으면 기존 포인터를 유지하고 이전 계약으로 대체하지 않는다.
             const shouldUpdateClientDocument = latestContract !== undefined
+                && latestContract.voidedAt === null
                 && client.eDocId !== latestContract.documentId;
 
             if (documentIdsToReassign.length === 0 && !shouldUpdateClientDocument) {
@@ -555,6 +558,7 @@ export class ClientService {
                         detailSourceUpdatedDate: true,
                         detailSyncedAt: true,
                         statusType: true,
+                        voidedAt: true,
                     },
                 });
                 const lockedCandidateById = new Map(
@@ -569,6 +573,7 @@ export class ClientService {
                     const locked = lockedCandidateById.get(id);
                     return !initial
                         || !locked
+                        || locked.voidedAt !== null
                         || (locked.clientId !== null && locked.clientId !== client.id)
                         // Only a document about to be newly linked must be in an allowed
                         // status; the pointer document may already be this client's.
