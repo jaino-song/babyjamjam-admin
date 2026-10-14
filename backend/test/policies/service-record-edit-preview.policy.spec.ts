@@ -579,6 +579,7 @@ describe("service-record-edit-preview.policy", () => {
         function persisted(
             rows: Array<ReturnType<typeof written>>,
             assignments: typeof caregiverA[] = [caregiverA, caregiverB],
+            ownerOf: (sessionIndex: number) => typeof caregiverA = (sessionIndex) => sessionIndex <= 7 ? caregiverA : caregiverB,
         ): ServiceRecordEditSource {
             return source({
                 requiredSessionCount: dates.length,
@@ -591,7 +592,7 @@ describe("service-record-edit-preview.policy", () => {
                     serviceRecordCaseId: assignment.serviceRecordCaseId,
                 })),
                 plannedSessions: dates.map((serviceDate, index) => {
-                    const owner = index < 7 ? caregiverA : caregiverB;
+                    const owner = ownerOf(index + 1);
                     return {
                         sessionIndex: index + 1,
                         serviceDate,
@@ -627,6 +628,68 @@ describe("service-record-edit-preview.policy", () => {
                 previewId: "preview-1",
             });
             expect(preview.blockingReasons).toEqual([]);
+        });
+
+        it("gives the slots after a partial persisted backfill to the caregiver who backfilled", () => {
+            // A wrote 1-2, B backfilled 3; 4-7 have no row and the vector still names A for them.
+            const rows = [written(1, caregiverA), written(2, caregiverA), written(3, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.slice(0, 2).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            expect(projection.entries.slice(2).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        it("keeps the slots before the first persisted backfill with their vector owner", () => {
+            const rows = [written(1, caregiverA), written(4, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.slice(0, 3).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            expect(projection.entries.slice(3).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        describe("when the backfilling caregiver was itself replaced", () => {
+            const middle = {
+                ...caregiverB,
+                id: "cccccccc-0000-4000-8000-00000000000c",
+                scheduleId: 703,
+                employeeId: 33,
+                employeeName: "중간",
+                startDate: "2026-10-14",
+                scheduleStartDate: "2026-10-14",
+                endDate: "2026-10-19",
+                scheduleEndDate: "2026-10-19",
+                replaced: true,
+            };
+            const latest = {
+                ...caregiverB,
+                id: "dddddddd-0000-4000-8000-00000000000d",
+                scheduleId: 704,
+                employeeId: 34,
+                employeeName: "현재",
+                startDate: "2026-10-19",
+                scheduleStartDate: "2026-10-19",
+                endDate: "2026-10-23",
+                scheduleEndDate: "2026-10-23",
+                replaced: false,
+            };
+            const chain = [caregiverA, middle, latest];
+            const ownerOf = (sessionIndex: number) => sessionIndex <= 7 ? caregiverA : sessionIndex <= 11 ? middle : latest;
+
+            it("still treats the middle caregiver's rows on the first caregiver's slots as that caregiver's", () => {
+                const rows = [written(1, caregiverA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, middle))];
+                const projection = resolveServiceRecordScheduleProjection(persisted(rows, chain, ownerOf), KR_BUILTIN_CALENDAR);
+                expect(projection.blockingReasons).toEqual([]);
+                expect(projection.entries.slice(1, 11).every((entry) => entry.assignmentId === middle.id)).toBe(true);
+                expect(projection.entries.slice(11).every((entry) => entry.assignmentId === latest.id)).toBe(true);
+            });
+
+            it("still blocks an earlier caregiver writing over a later caregiver's slot", () => {
+                const projection = resolveServiceRecordScheduleProjection(
+                    persisted([written(9, caregiverA)], chain, ownerOf),
+                    KR_BUILTIN_CALENDAR,
+                );
+                expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+            });
         });
 
         it("still blocks a date contradiction on a re-attributed slot", () => {

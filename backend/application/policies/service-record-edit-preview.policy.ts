@@ -234,38 +234,98 @@ function sourceAssignmentEntry(
     };
 }
 
+/** The date an assignment's range starts or ends on, falling back to its schedule's. */
+function assignmentStart(assignment: ServiceRecordEditSourceAssignment): string {
+    return assignment.startDate || assignment.scheduleStartDate;
+}
+
+function assignmentEnd(assignment: ServiceRecordEditSourceAssignment): string {
+    return assignment.endDate || assignment.scheduleEndDate;
+}
+
+/**
+ * A caregiver may write over a slot the vector gives to an earlier one: write
+ * authority moved forward, never back. The writer therefore has to start on or
+ * after the planned owner's end (a hand-over stores end == start), and the
+ * planned owner has to have been replaced.
+ */
+function isSuccessorOf(
+    writer: ServiceRecordEditSourceAssignment,
+    planned: ServiceRecordEditSourceAssignment,
+): boolean {
+    if (!planned.replaced || writer.id === planned.id) return false;
+    const writerStart = assignmentStart(writer);
+    const plannedEnd = assignmentEnd(planned);
+    return Boolean(writerStart) && Boolean(plannedEnd) && writerStart >= plannedEnd;
+}
+
 /**
  * A persisted vector attributes each slot to the assignment that owned it when
- * the vector was written. Write authority then moved to the current caregiver,
- * who may backfill a slot the vector still attributes to a replaced one. In
- * exactly that case the writer owns the slot: the entry is re-attributed to the
- * writer's assignment and keeps its vector dates. Any other disagreement
- * between a row and the vector is left for persistedDayReasons to block.
+ * the vector was written. Write authority then moved to later caregivers, who
+ * may backfill a slot the vector still attributes to an earlier, replaced one.
+ * When the row for a slot was written by a successor of the vector's owner,
+ * that writer owns the slot. The writer must be the single assignment matching
+ * the row's schedule (and employee when the row names one). Any other
+ * disagreement between a row and the vector is left for persistedDayReasons to
+ * block, and the vector's dates are never changed here.
  */
-function reattributedToWriter(
+function backfillWriter(
     source: ServiceRecordEditSource,
     entry: SharedPlannedSession,
-): SharedPlannedSession {
+): ServiceRecordEditSourceAssignment | null {
     const rows = source.sessions.filter((session) => session.sessionIndex === entry.sessionIndex);
     const row = rows.length === 1 ? rows[0]! : null;
-    if (!row || row.ambiguous || row.scheduleId === null) return entry;
+    if (!row || row.ambiguous || row.scheduleId === null) return null;
     if (row.scheduleId === entry.scheduleId && (row.employeeId === null || row.employeeId === entry.employeeId)) {
-        return entry;
+        return null;
     }
     const planned = assignmentById(source, entry.assignmentId);
-    if (!planned?.replaced) return entry;
+    if (!planned) return null;
     const writers = source.assignments.filter((assignment) =>
         Boolean(assignment.id)
         && assignment.scheduleId === row.scheduleId
         && (row.employeeId === null || assignment.employeeId === row.employeeId));
     const writer = writers.length === 1 ? writers[0]! : null;
-    if (!writer?.id || writer.replaced || writer.scheduleId === null || writer.employeeId === null) return entry;
+    if (!writer?.id || writer.scheduleId === null || writer.employeeId === null) return null;
+    return isSuccessorOf(writer, planned) ? writer : null;
+}
+
+function attributedTo(entry: SharedPlannedSession, writer: ServiceRecordEditSourceAssignment): SharedPlannedSession {
     return {
         ...entry,
-        assignmentId: writer.id,
-        scheduleId: writer.scheduleId,
-        employeeId: writer.employeeId,
+        assignmentId: writer.id!,
+        scheduleId: writer.scheduleId!,
+        employeeId: writer.employeeId!,
     };
+}
+
+/**
+ * Re-attribute the slots a later caregiver backfilled. Once a successor has
+ * backfilled from some session on, the slots after it that still have no row
+ * and that the vector gives to an earlier replaced caregiver are part of the
+ * same backfill (write authority never interleaves), so they go to that writer
+ * too; otherwise the earlier caregiver's leftover slots would straddle the
+ * backfilled ones and overlap their range.
+ */
+function reattributedBackfill(
+    source: ServiceRecordEditSource,
+    entries: SharedPlannedSession[],
+): SharedPlannedSession[] {
+    let first: { sessionIndex: number; writer: ServiceRecordEditSourceAssignment } | null = null;
+    const attributed = entries.map((entry) => {
+        const writer = backfillWriter(source, entry);
+        if (!writer) return entry;
+        if (!first || entry.sessionIndex < first.sessionIndex) first = { sessionIndex: entry.sessionIndex, writer };
+        return attributedTo(entry, writer);
+    });
+    const start = first as { sessionIndex: number; writer: ServiceRecordEditSourceAssignment } | null;
+    if (!start) return attributed;
+    return attributed.map((entry) => {
+        if (entry.sessionIndex <= start.sessionIndex) return entry;
+        if (source.sessions.some((session) => session.sessionIndex === entry.sessionIndex)) return entry;
+        const owner = assignmentById(source, entry.assignmentId);
+        return owner && isSuccessorOf(start.writer, owner) ? attributedTo(entry, start.writer) : entry;
+    });
 }
 
 function persistedDayReasons(
@@ -444,11 +504,16 @@ function projectPersisted(
             provenanceVersion: explicitProvenanceVersion,
         });
         if ("code" in entry) blockingReasons.push(entry);
-        else entries.push(reattributedToWriter(source, entry));
+        else entries.push(entry);
     }
     if (blockingReasons.length > 0) return { entries: [], source: "planned", blockingReasons };
     try {
-        const validated = validateServiceRecordScheduleVector(entries, expected, calendar, { persisted: true });
+        const validated = validateServiceRecordScheduleVector(
+            reattributedBackfill(source, entries),
+            expected,
+            calendar,
+            { persisted: true },
+        );
         const rangeBlockingReasons = [
             ...persistedDayReasons(source, validated),
             ...assignmentRangeReasons(source, validated),
