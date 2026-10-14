@@ -19,7 +19,11 @@ describe("SmsCarrierCheckService", () => {
         rows: rows.map((row) => ({ mdid: null, sendDate: "2026-10-14 09:00:00", ...row })),
     });
 
-    let logRepository: { findCarrierChecksDueSystemScope: jest.Mock; saveCarrierCheckResult: jest.Mock };
+    let logRepository: {
+        findCarrierChecksDueSystemScope: jest.Mock;
+        saveCarrierCheckResult: jest.Mock;
+        postponeCarrierCheck: jest.Mock;
+    };
     let port: { sendSms: jest.Mock; getSmsDeliveryDetails?: jest.Mock; getDefaultSenderPolicy?: jest.Mock };
     let lease: ReturnType<typeof createSchedulerLeaseMock>;
     let warnSpy: jest.SpyInstance;
@@ -37,6 +41,7 @@ describe("SmsCarrierCheckService", () => {
         logRepository = {
             findCarrierChecksDueSystemScope: jest.fn().mockResolvedValue([]),
             saveCarrierCheckResult: jest.fn().mockResolvedValue("saved"),
+            postponeCarrierCheck: jest.fn().mockResolvedValue(true),
         };
         port = {
             sendSms: jest.fn(),
@@ -213,6 +218,108 @@ describe("SmsCarrierCheckService", () => {
         logRepository.saveCarrierCheckResult
             .mockRejectedValueOnce(new Error("write failed"))
             .mockResolvedValueOnce("saved");
+
+        await service.checkDueCarrierResults();
+
+        expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(2);
+    });
+
+    it("postpones a row that throws unexpectedly by 30 minutes and keeps going", async () => {
+        logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+            createLog(20, "01011111111"),
+            createLog(21, "01022222222"),
+        ]);
+        port.getSmsDeliveryDetails!.mockResolvedValue(okResult([
+            { receiver: "01011111111", smsState: "발송완료" },
+            { receiver: "01022222222", smsState: "발송완료" },
+        ]));
+        logRepository.saveCarrierCheckResult
+            .mockRejectedValueOnce(new Error("write failed"))
+            .mockResolvedValueOnce("saved");
+        const before = Date.now();
+
+        await service.checkDueCarrierResults();
+
+        expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(2);
+        expect(logRepository.postponeCarrierCheck).toHaveBeenCalledTimes(1);
+        const [id, mid, until] = logRepository.postponeCarrierCheck.mock.calls[0] as [number, string, Date];
+        expect(id).toBe(20);
+        expect(mid).toBe("mid-20");
+        expect(until.getTime() - before).toBeGreaterThanOrEqual(30 * 60 * 1000);
+        expect(until.getTime() - Date.now()).toBeLessThanOrEqual(30 * 60 * 1000);
+    });
+
+    it("does not postpone rows that are handled (lookup_error, stale) or saved", async () => {
+        logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+            createLog(22, "01011111111"),
+            createLog(23, "01022222222"),
+        ]);
+        port.getSmsDeliveryDetails!
+            .mockRejectedValueOnce(new Error("timeout"))
+            .mockResolvedValueOnce(okResult([{ receiver: "01022222222", smsState: "발송완료" }]));
+        logRepository.saveCarrierCheckResult.mockResolvedValueOnce("saved").mockResolvedValueOnce("stale");
+
+        await service.checkDueCarrierResults();
+
+        expect(logRepository.postponeCarrierCheck).not.toHaveBeenCalled();
+    });
+
+    it("swallows a postpone failure and still processes the next row", async () => {
+        logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+            createLog(24, "01011111111"),
+            createLog(25, "01022222222"),
+        ]);
+        port.getSmsDeliveryDetails!.mockResolvedValue(okResult([
+            { receiver: "01011111111", smsState: "발송완료" },
+            { receiver: "01022222222", smsState: "발송완료" },
+        ]));
+        logRepository.saveCarrierCheckResult
+            .mockRejectedValueOnce(new Error("write failed"))
+            .mockResolvedValueOnce("saved");
+        logRepository.postponeCarrierCheck.mockRejectedValue(new Error("postpone failed"));
+
+        await expect(service.checkDueCarrierResults()).resolves.toBeUndefined();
+
+        expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(2);
+        expect(warnSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain("Could not postpone log 24");
+    });
+
+    it("stops starting new rows once the run time budget is spent", async () => {
+        let now = Date.parse("2026-10-14T00:00:00.000Z");
+        jest.spyOn(Date, "now").mockImplementation(() => now);
+        logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+            createLog(30, "01011111111"),
+            createLog(31, "01022222222"),
+            createLog(32, "01033333333"),
+        ]);
+        port.getSmsDeliveryDetails!.mockImplementation(async () => {
+            now += 11 * 60 * 1000; // a single slow lookup burns the whole budget
+            return okResult([{ receiver: "01011111111", smsState: "발송완료" }]);
+        });
+
+        await service.checkDueCarrierResults();
+
+        expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledTimes(1);
+        expect(logRepository.saveCarrierCheckResult).toHaveBeenCalledWith(expect.objectContaining({ id: 30 }));
+        const warnings = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+        expect(warnings).toContain("time budget exhausted");
+        expect(warnings).toContain("processed 1 of 3");
+    });
+
+    it("processes every row when the run stays within the time budget", async () => {
+        let now = Date.parse("2026-10-14T00:00:00.000Z");
+        jest.spyOn(Date, "now").mockImplementation(() => now);
+        logRepository.findCarrierChecksDueSystemScope.mockResolvedValue([
+            createLog(33, "01011111111"),
+            createLog(34, "01022222222"),
+        ]);
+        port.getSmsDeliveryDetails!.mockImplementation(async () => {
+            now += 60 * 1000;
+            return okResult([
+                { receiver: "01011111111", smsState: "발송완료" },
+                { receiver: "01022222222", smsState: "발송완료" },
+            ]);
+        });
 
         await service.checkDueCarrierResults();
 

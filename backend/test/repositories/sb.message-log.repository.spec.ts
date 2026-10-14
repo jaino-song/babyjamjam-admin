@@ -157,6 +157,62 @@ describe("SbMessageLogRepository", () => {
             );
         });
 
+        it("writes the scheduled carrier fields once, then stops rewriting them", async () => {
+            const log = buildEntity("branch-1");
+            log.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
+            messageLogModel.update.mockResolvedValue(buildRow("branch-1"));
+
+            await repository.update(log);
+            await repository.update(log);
+
+            const first = messageLogModel.update.mock.calls[0][0] as { data: Record<string, unknown> };
+            const second = messageLogModel.update.mock.calls[1][0] as { data: Record<string, unknown> };
+            expect(first.data).toEqual(expect.objectContaining({
+                carrierCheckDueAt: new Date("2026-10-14T05:30:00.000Z"),
+                carrierResultState: null,
+            }));
+            expect(second.data).not.toHaveProperty("carrierCheckDueAt");
+            expect(second.data).not.toHaveProperty("carrierCheckedAt");
+            expect(second.data).not.toHaveProperty("carrierResultState");
+            expect(second.data).not.toHaveProperty("carrierResults");
+            expect(log.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
+
+        it("keeps the carrier schedule when the update fails", async () => {
+            const log = buildEntity("branch-1");
+            log.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
+            messageLogModel.update
+                .mockRejectedValueOnce(new Error("write failed"))
+                .mockResolvedValueOnce(buildRow("branch-1"));
+
+            await expect(repository.update(log)).rejects.toThrow("write failed");
+            expect(log.hasPendingCarrierCheckSchedule()).toBe(true);
+
+            await repository.update(log);
+            const retried = messageLogModel.update.mock.calls[1][0] as { data: Record<string, unknown> };
+            expect(retried.data).toHaveProperty("carrierCheckDueAt");
+        });
+
+        it("keeps the carrier schedule when the caller owns the transaction", async () => {
+            const log = buildEntity("branch-1");
+            log.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
+            messageLogModel.update.mockResolvedValue(buildRow("branch-1"));
+
+            await repository.update(log, { message_log: messageLogModel } as never);
+
+            expect(log.hasPendingCarrierCheckSchedule()).toBe(true);
+        });
+
+        it("clears the carrier schedule after save()", async () => {
+            const log = buildEntity("branch-1");
+            log.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
+            messageLogModel.create.mockResolvedValue(buildRow("branch-1"));
+
+            await repository.save(log);
+
+            expect(log.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
+
         it("atomically stamps the client when a service-end notice is provider-accepted", async () => {
             const acceptedAt = new Date("2026-09-16T03:00:00.000Z");
             const log = MessageLogEntity.reconstitute(
@@ -852,6 +908,27 @@ describe("SbMessageLogRepository", () => {
                 orderBy: [{ carrierCheckDueAt: "asc" }, { id: "asc" }],
                 take: 25,
             });
+        });
+    });
+
+    describe("postponeCarrierCheck", () => {
+        const until = new Date("2026-10-14T04:00:00.000Z");
+
+        it("conditionally pushes a still-due check out to the given time", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+
+            expect(await repository.postponeCarrierCheck(55, "mid-1", until)).toBe(true);
+
+            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, aligoMid: "mid-1", carrierCheckDueAt: { not: null } },
+                data: { carrierCheckDueAt: until },
+            });
+        });
+
+        it("returns false when the row changed or was already checked", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 0 });
+
+            expect(await repository.postponeCarrierCheck(55, "mid-1", until)).toBe(false);
         });
     });
 

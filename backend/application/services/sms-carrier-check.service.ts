@@ -24,6 +24,10 @@ import { SchedulerLeaseService } from "./scheduler-lease.service";
 const MAX_RUN_MS = 15 * 60 * 1000;
 const DB_COOLDOWN_MS = 5 * 60 * 1000;
 const BATCH_LIMIT = 100;
+/** Stop starting new rows well before MAX_RUN_MS so a slow run never trips the overlap guard. */
+const RUN_BUDGET_MS = 10 * 60 * 1000;
+/** A row that throws unexpectedly is skipped for this long instead of being retried every tick. */
+const FAILED_ROW_BACKOFF_MS = 30 * 60 * 1000;
 
 interface CarrierCheckOutcome {
     state: CarrierResultState;
@@ -80,8 +84,15 @@ export class SmsCarrierCheckService {
             this.logger.log(`[CarrierCheck] Found ${dueLogs.length} messages due for carrier check`);
 
             const warnedStates = new Set<string>();
+            const startedAt = Date.now();
             let processedCount = 0;
             for (const log of dueLogs) {
+                if (Date.now() - startedAt >= RUN_BUDGET_MS) {
+                    this.logger.warn(
+                        `[CarrierCheck] run time budget exhausted; processed ${processedCount} of ${dueLogs.length} items, the rest wait for the next tick`,
+                    );
+                    break;
+                }
                 if (!this.schedulerLease.holdsLease()) {
                     this.logger.warn(
                         `[CarrierCheck] scheduler lease lost mid-run; stopping after ${processedCount} items`,
@@ -96,11 +107,11 @@ export class SmsCarrierCheckService {
                         this.executionGuard.enterCooldown(summarizePrismaError(error));
                         return;
                     }
-                    // The row stays due and is retried on the next tick.
                     this.logger.error(
                         `[CarrierCheck] Failed to process log ${log.id}`,
                         error instanceof Error ? error.stack : String(error),
                     );
+                    await this.postponeFailedRow(log);
                 }
             }
         } catch (error) {
@@ -115,6 +126,24 @@ export class SmsCarrierCheckService {
             );
         } finally {
             this.executionGuard.finish(runToken);
+        }
+    }
+
+    /** Back a throwing row off so one poison row cannot be re-fetched and re-failed every tick. */
+    private async postponeFailedRow(log: MessageLogEntity): Promise<void> {
+        if (!log.aligoMid) return;
+        try {
+            await this.logRepository.postponeCarrierCheck(
+                log.id,
+                log.aligoMid,
+                new Date(Date.now() + FAILED_ROW_BACKOFF_MS),
+            );
+        } catch (postponeError) {
+            this.logger.warn(
+                `[CarrierCheck] Could not postpone log ${log.id}: ${
+                    postponeError instanceof Error ? postponeError.message : String(postponeError)
+                }`,
+            );
         }
     }
 

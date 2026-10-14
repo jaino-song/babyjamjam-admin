@@ -90,6 +90,12 @@ export interface IMessageLogRepository {
      * fields or client.serviceEndNoticeSentAt.
      */
     saveCarrierCheckResult(input: SaveCarrierCheckResultInput): Promise<SaveCarrierCheckResultOutcome>;
+    /**
+     * Push a still-due carrier check out to `until` (backoff for a row whose
+     * processing threw). Conditional on id + expected mid + a pending check, so
+     * it never resurrects a checked row. Returns whether a row was updated.
+     */
+    postponeCarrierCheck(id: number, expectedMid: string, until: Date): Promise<boolean>;
     findRetryableServiceRecordSmsByScheduleId(
         scheduleId: number,
         transaction?: Prisma.TransactionClient,

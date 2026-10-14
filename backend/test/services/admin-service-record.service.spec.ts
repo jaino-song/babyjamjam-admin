@@ -681,6 +681,50 @@ describe("AdminServiceRecordService", () => {
             expect(link.lastSentAt).toEqual(at("1T06:00"));
         });
 
+        it("shows failed when the carrier check failed the log of a job that is still sent", async () => {
+            // The job went "sent" at 06:01; the carrier check flipped its own log to
+            // "failed" 35 minutes later. The job must not outrank its own failed log.
+            const link = await linkFor(
+                [job("job-1", "sent", at("1T06:01"))],
+                [{
+                    ...log(1, "job-1", "failed", at("1T06:00")),
+                    carrierResultState: "failed",
+                    carrierCheckedAt: at("1T06:35"),
+                }],
+            );
+            expect(link.status).toBe("failed");
+            expect(link.sentCount).toBe(0);
+        });
+
+        it("keeps sent when the carrier check delivered the log", async () => {
+            const link = await linkFor(
+                [job("job-1", "sent", at("1T06:01"))],
+                [{
+                    ...log(1, "job-1", "sent", at("1T06:00")),
+                    carrierResultState: "delivered",
+                    carrierCheckedAt: at("1T06:35"),
+                }],
+            );
+            expect(link.status).toBe("sent");
+            expect(link.sentCount).toBe(1);
+        });
+
+        it("shows sent when a newer resend succeeded after a carrier-failed log", async () => {
+            const link = await linkFor(
+                [job("job-old", "sent", at("1T06:01")), job("job-new", "sent", at("2T06:00"))],
+                [
+                    {
+                        ...log(1, "job-old", "failed", at("1T06:00")),
+                        carrierResultState: "failed",
+                        carrierCheckedAt: at("1T06:35"),
+                    },
+                    log(2, "job-new", "sent", at("2T06:00")),
+                ],
+            );
+            expect(link.status).toBe("sent");
+            expect(link.sentCount).toBe(1);
+        });
+
         it("shows failed for a job that failed during preparation and wrote no log", async () => {
             const link = await linkFor([job("job-1", "failed", at("3T06:00"))], []);
             expect(link.status).toBe("failed");

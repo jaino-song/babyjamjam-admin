@@ -673,7 +673,15 @@ export class AdminServiceRecordService {
     }
 
     private logActivityTime(log: ServiceRecordLinkLog): number {
-        return (log.lastAttemptAt ?? log.createdAt).getTime();
+        const attemptTime = (log.lastAttemptAt ?? log.createdAt).getTime();
+        // A carrier-check failure lands ~30 minutes after the send, flips the
+        // log to "failed" and happens after its trigger job already went
+        // "sent". The failure is the log's newest moment, so it must outrank
+        // its own job rather than lose to the job's earlier updatedAt.
+        if (log.carrierResultState === "failed" && log.carrierCheckedAt) {
+            return Math.max(attemptTime, log.carrierCheckedAt.getTime());
+        }
+        return attemptTime;
     }
 
     private jobActivityTime(job: ServiceRecordLinkJob): number {

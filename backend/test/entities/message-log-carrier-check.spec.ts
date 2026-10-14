@@ -127,6 +127,19 @@ describe("message log carrier check", () => {
             expect(data).not.toHaveProperty("carrierResults");
         });
 
+        it("stops writing carrier fields after markCarrierCheckPersisted", () => {
+            const entity = MessageLogMapper.toDomain(baseRow);
+            entity.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
+            expect(MessageLogMapper.toPrismaUpdate(entity)).toHaveProperty("carrierCheckDueAt");
+
+            entity.markCarrierCheckPersisted();
+
+            const data = MessageLogMapper.toPrismaUpdate(entity);
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(false);
+            expect(data).not.toHaveProperty("carrierCheckDueAt");
+            expect(data).not.toHaveProperty("carrierResults");
+        });
+
         it("writes the scheduled due time and cleared result on toPrismaUpdate after scheduleCarrierCheck", () => {
             const entity = MessageLogMapper.toDomain(baseRow);
             entity.scheduleCarrierCheck(new Date("2026-10-14T05:00:00.000Z"));
