@@ -234,18 +234,20 @@ function currentPlannedSessionsMatchDays(
             && day.employeeId === planned.employeeId
             && assignment.scheduleId === planned.scheduleId
             && assignment.employeeId === planned.employeeId;
-        return matchesPlannedOwner || isBackfilledByCurrentAssignment(record, assignment, day);
+        return matchesPlannedOwner || isBackfilledBySuccessor(record, assignment, day);
     });
 }
 
 /**
- * Write authority belongs to the currently assigned caregiver, who may backfill
- * a session the stored vector still attributes to a replaced assignment. Such a
- * day matches its slot when its writer is the case's current (non-replaced)
- * assignment and the vector's owner is a replaced one. The date check above
- * still applies, and any other disagreement stays a mismatch.
+ * Write authority moves forward, so a later caregiver may backfill a session
+ * the stored vector still attributes to an earlier, replaced one. Such a day
+ * matches its slot when its writer is the single assignment of the case with
+ * that schedule and employee, the vector's owner was replaced, and the writer
+ * is that owner's successor: it starts on or after the owner's end (a handover
+ * stores end == start). The date check in the caller still applies, and any
+ * other disagreement stays a mismatch.
  */
-function isBackfilledByCurrentAssignment(
+function isBackfilledBySuccessor(
     record: FinalizationCaseSnapshot,
     plannedAssignment: FinalizationAssignmentSnapshot,
     day: FinalizationDaySnapshot,
@@ -255,9 +257,10 @@ function isBackfilledByCurrentAssignment(
     const writers = record.assignments.filter((candidate) => (
         candidate.scheduleId === day.scheduleId && candidate.employeeId === day.employeeId
     ));
-    return writers.length === 1
-        && writers[0]!.id !== plannedAssignment.id
-        && writers[0]!.schedule?.replaced === false;
+    if (writers.length !== 1) return false;
+    const writer = writers[0]!;
+    return writer.id !== plannedAssignment.id
+        && writer.startDate.getTime() >= plannedAssignment.endDate.getTime();
 }
 
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {

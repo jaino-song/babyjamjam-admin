@@ -464,13 +464,51 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
         expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it.each([
-        ["the writer's schedule is not known to be current", { writerReplaced: true }],
-        ["the vector names the current assignment and the writer is another one", { vectorOwner: "current" as const }],
-    ])("still fails closed when %s", async (_label, options) => {
-        await expect(freeze(backfilledSource(options))).rejects.toMatchObject({
+    it("accepts a backfill by a caregiver who has itself been replaced since", async () => {
+        // A -> B -> C: B backfilled A's slot, then C took over.
+        const record = backfilledSource({ writerReplaced: true });
+        record.assignments.push({
+            id: "00000000-0000-4000-8000-000000000043",
+            scheduleId: 300,
+            employeeId: 13,
+            employeeNameSnapshot: "후임인력",
+            startDate: secondDate,
+            endDate: secondDate,
+            schedule: { replaced: false },
+        });
+        const jobService = await freeze(record);
+        expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    const failsClosed = async (record: ReturnType<typeof backfilledSource>) => {
+        await expect(freeze(record)).rejects.toMatchObject({
             response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
         });
+    };
+
+    it("still fails closed when the vector names the current assignment and the writer is another one", async () => {
+        await failsClosed(backfilledSource({ vectorOwner: "current" }));
+    });
+
+    it("still fails closed when an earlier caregiver wrote over a later replaced caregiver's slot", async () => {
+        // The vector names the (replaced) later assignment for both slots; the earlier one wrote slot 1.
+        const record = backfilledSource({ vectorOwner: "current", writerReplaced: true });
+        await failsClosed(record);
+    });
+
+    it("still fails closed when the vector's owner was not replaced, even for a later writer", async () => {
+        const record = backfilledSource();
+        record.assignments[0] = { ...record.assignments[0]!, schedule: { replaced: false } };
+        await failsClosed(record);
+    });
+
+    it("still fails closed when the writer's schedule and employee match more than one assignment", async () => {
+        const record = backfilledSource();
+        record.assignments.push({
+            ...record.assignments[1]!,
+            id: "00000000-0000-4000-8000-000000000044",
+        });
+        await failsClosed(record);
     });
 
     it("still fails closed when the backfilled day's date contradicts the vector", async () => {
