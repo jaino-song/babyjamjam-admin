@@ -351,8 +351,10 @@ function hasPlannedDateDifference(
  * `datesChanged`; those are re-synced in both tables.
  *
  * Moving the outer edges across a neighbour's stored boundary cannot be done
- * without moving that boundary, so it is a conflict the administrator resolves
- * through the caregiver replacement flow; it is never repaired here.
+ * without moving that boundary, so the stored date is kept silently (the case
+ * period may then start before, or end after, every assignment's stored range);
+ * changing boundaries belongs to the caregiver replacement flow. Only a
+ * computed start after its end is refused as a conflict.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
