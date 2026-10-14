@@ -12,6 +12,7 @@ import {
     EformsignReRequestDocumentRequest,
     HeadlessDispatchResponse,
     HeadlessFinalizeResponse,
+    VoidContractDocumentResponse,
 } from '@babyjamjam/shared/types/eformsign';
 import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
 
@@ -135,6 +136,10 @@ export interface LocalEformsignDocRecord {
     voidedAt?: string | null;
     /** Name of the user who voided it; null when unresolved (the UI shows 알 수 없음). */
     voidedByName?: string | null;
+    /** Sent by the server for the contract card's 문서 보기 preview. */
+    documentName?: string | null;
+    documentNumber?: string | null;
+    templateName?: string | null;
 }
 
 export function normalizeDocumentListResponse(
@@ -296,6 +301,14 @@ export const eformsignApi = {
     // and refuses until the client is linked to the replacement.
     supersedeDocument: async (documentId: string, clientId: number): Promise<void> => {
         await api.post(`/eformsign/documents/${encodeURIComponent(documentId)}/supersede`, { clientId });
+    },
+    // 계약 파기 (BJJ-439). Sends no body; the server cancels an unsigned document's signing
+    // link first. A failure with no response leaves the outcome uncertain.
+    voidContractDocument: async (documentId: string): Promise<VoidContractDocumentResponse> => {
+        const { data } = await api.post<VoidContractDocumentResponse>(
+            `/eformsign/documents/${encodeURIComponent(documentId)}/void`,
+        );
+        return data;
     },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {

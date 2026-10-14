@@ -1,7 +1,10 @@
 import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { AxiosError, AxiosHeaders } from "axios";
 import type { ReactNode } from "react";
 
+import { clientKeys } from "@/features/clients/hooks/keys";
+import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 import { ClientDetailPanel } from "../ClientDetailPanel";
 import type { Client } from "@/lib/client/types";
 import { eformsignApi } from "@/services/api";
@@ -58,8 +61,9 @@ jest.mock("@/hooks/useBusinessDayCalendar", () => ({
     }),
 }));
 
+const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
-    useToast: () => ({ toast: jest.fn() }),
+    useToast: () => ({ toast: mockToast }),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -67,7 +71,37 @@ jest.mock("@/services/api", () => ({
         getDocumentsByClientId: jest.fn(),
         getLinkConfirmations: jest.fn(),
         adoptDocument: jest.fn(),
+        voidContractDocument: jest.fn(),
     },
+}));
+
+// The real modal loads a PDF viewer; the card only has to hand it the adapted document.
+jest.mock("@/components/app/contracts/ContractDocumentPreviewModal", () => ({
+    ContractDocumentPreviewModal: ({
+        open,
+        document: previewDocument,
+        customerName,
+    }: {
+        open: boolean;
+        document: {
+            id: string;
+            document_name: string;
+            created_date: number;
+            document_number: string;
+            template?: { name?: string };
+        } | null;
+        customerName?: string | null;
+    }) =>
+        open && previewDocument ? (
+            <div data-testid="preview-modal">
+                <span data-testid="preview-id">{previewDocument.id}</span>
+                <span data-testid="preview-name">{previewDocument.document_name}</span>
+                <span data-testid="preview-created">{String(previewDocument.created_date)}</span>
+                <span data-testid="preview-number">{previewDocument.document_number}</span>
+                <span data-testid="preview-template">{previewDocument.template?.name ?? ""}</span>
+                <span data-testid="preview-customer">{customerName}</span>
+            </div>
+        ) : null,
 }));
 
 jest.mock("@/components/app/messages/MessageHistoryDetailPanel", () => ({
@@ -121,6 +155,7 @@ jest.mock("@/components/app/v3", () => ({
 
 const getDocuments = eformsignApi.getDocumentsByClientId as jest.Mock;
 const getLinkConfirmations = eformsignApi.getLinkConfirmations as jest.Mock;
+const voidContractDocument = eformsignApi.voidContractDocument as jest.Mock;
 
 const client: Client = {
     id: 1,
@@ -494,5 +529,285 @@ describe("ClientDetailPanel contracts area: voided contract (계약 파기, BJJ-
         const badge = await screen.findByTestId("status-badge");
         expect(badge).toHaveTextContent("계약 완료");
         expect(badge).toHaveAttribute("data-status", "completed");
+    });
+});
+
+describe("ClientDetailPanel contracts area: 계약 파기 action (BJJ-439 D9)", () => {
+    const VOID_TITLE = "계약을 파기할까요?";
+    const VOID_DESCRIPTION = "파기하면 되돌릴 수 없습니다. 서명 전 계약서는 서명 링크도 함께 취소됩니다.";
+
+    const liveDoc = { ...contractDoc, statusType: "002", displayStatus: "pending" };
+
+    const withStatus = (code: string, displayStatus: string, extra: Record<string, unknown> = {}) => ({
+        ...contractDoc,
+        statusType: code,
+        displayStatus,
+        ...extra,
+    });
+
+    function axiosFailure(status: number | undefined): AxiosError {
+        return new AxiosError(
+            "failed",
+            status === undefined ? "ERR_NETWORK" : "ERR_BAD_RESPONSE",
+            undefined,
+            undefined,
+            status === undefined
+                ? undefined
+                : {
+                      status,
+                      statusText: String(status),
+                      headers: {},
+                      config: { headers: new AxiosHeaders() },
+                      data: {},
+                  },
+        );
+    }
+
+    async function openVoidModal() {
+        fireEvent.click(await screen.findByRole("button", { name: "계약 파기" }));
+        return screen.findByRole("dialog");
+    }
+
+    function spyOnInvalidation() {
+        return jest.spyOn(queryClient, "invalidateQueries");
+    }
+
+    function expectFullInvalidationSet(spy: jest.SpyInstance) {
+        const keys = spy.mock.calls.map(([filters]) => (filters as { queryKey: unknown }).queryKey);
+        expect(keys).toEqual(
+            expect.arrayContaining([
+                ["eformsign-docs", "client", client.id],
+                clientKeys.all,
+                ["eformsign-documents"],
+                dashboardQueryKeys.overviewAll(),
+            ]),
+        );
+    }
+
+    function voidRow(): HTMLElement {
+        return within(screen.getByTestId("contract-card")).getByText("파기", { selector: "span" })
+            .parentElement as HTMLElement;
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockToast.mockReset();
+        getLinkConfirmations.mockReset();
+        getLinkConfirmations.mockResolvedValue([]);
+        voidContractDocument.mockReset();
+    });
+
+    afterEach(() => {
+        cleanup();
+    });
+
+    it("offers 계약 파기 at a quarter width and 문서 보기 at three quarters on a voidable card", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        openContractsTab();
+
+        const voidButton = await screen.findByRole("button", { name: "계약 파기" });
+        const previewButton = screen.getByRole("button", { name: "문서 보기" });
+        expect(voidButton).toHaveClass("w-1/4");
+        expect(previewButton).toHaveClass("w-3/4");
+        expect(previewButton).not.toHaveClass("w-full");
+        expect(within(screen.getByTestId("contract-card")).queryByText("파기", { selector: "span" })).toBeNull();
+    });
+
+    it.each([
+        ["서명 대기", "pending", "002"],
+        ["계약 완료", "completed", "003"],
+        ["철회 요청됨", "revoke_requested", "040"],
+        ["반려됨", "rejected_by_reviewer", "071"],
+    ])("offers 계약 파기 on a %s card", async (_label, displayStatus, code) => {
+        getDocuments.mockResolvedValue([withStatus(code, displayStatus)]);
+        openContractsTab();
+
+        expect(await screen.findByRole("button", { name: "계약 파기" })).toBeInTheDocument();
+    });
+
+    it.each([
+        ["voided", "003", "voided", { voidedAt: "2026-10-13T01:02:03.000Z", voidedByName: "박지점" }],
+        ["철회됨", "042", "revoked", {}],
+        ["기간 만료", "002", "expired", {}],
+    ])("does not offer 계약 파기 on a %s card, only a full-width 문서 보기", async (_label, code, displayStatus, extra) => {
+        getDocuments.mockResolvedValue([withStatus(code, displayStatus, extra)]);
+        openContractsTab();
+
+        const previewButton = await screen.findByRole("button", { name: "문서 보기" });
+        expect(screen.queryByRole("button", { name: "계약 파기" })).not.toBeInTheDocument();
+        expect(previewButton).toHaveClass("w-full");
+        expect(previewButton).not.toHaveClass("w-3/4");
+    });
+
+    it("does not offer 계약 파기 on a card with a voidedAt even if the displayStatus is stale", async () => {
+        getDocuments.mockResolvedValue([
+            withStatus("002", "pending", { voidedAt: "2026-10-13T01:02:03.000Z", voidedByName: null }),
+        ]);
+        openContractsTab();
+
+        await screen.findByRole("button", { name: "문서 보기" });
+        expect(screen.queryByRole("button", { name: "계약 파기" })).not.toBeInTheDocument();
+    });
+
+    it("shows a 파기 row with time and name on a voided card", async () => {
+        getDocuments.mockResolvedValue([
+            withStatus("003", "voided", { voidedAt: "2026-10-13T01:02:03.000Z", voidedByName: "박지점" }),
+        ]);
+        openContractsTab();
+
+        const badge = await screen.findByTestId("status-badge");
+        expect(badge).toHaveTextContent("파기됨");
+        expect(voidRow()).toHaveTextContent(/2026.*10.*13.*· 박지점/);
+    });
+
+    it("shows 알 수 없음 as the name when voidedByName is null", async () => {
+        getDocuments.mockResolvedValue([
+            withStatus("003", "voided", { voidedAt: "2026-10-13T01:02:03.000Z", voidedByName: null }),
+        ]);
+        openContractsTab();
+
+        await screen.findByTestId("status-badge");
+        expect(voidRow()).toHaveTextContent("· 알 수 없음");
+    });
+
+    it("opens the preview with the adapted document and the client name from 문서 보기", async () => {
+        getDocuments.mockResolvedValue([
+            {
+                ...liveDoc,
+                documentName: "산후도우미 계약서",
+                documentNumber: "BJ-0001",
+                templateName: "서비스 계약서",
+            },
+        ]);
+        openContractsTab();
+
+        fireEvent.click(await screen.findByRole("button", { name: "문서 보기" }));
+
+        expect(await screen.findByTestId("preview-modal")).toBeInTheDocument();
+        expect(screen.getByTestId("preview-id")).toHaveTextContent("doc-1");
+        expect(screen.getByTestId("preview-name")).toHaveTextContent("산후도우미 계약서");
+        expect(screen.getByTestId("preview-number")).toHaveTextContent("BJ-0001");
+        expect(screen.getByTestId("preview-template")).toHaveTextContent("서비스 계약서");
+        expect(screen.getByTestId("preview-created")).toHaveTextContent(String(Date.parse("2026-09-01T00:00:00.000Z")));
+        expect(screen.getByTestId("preview-customer")).toHaveTextContent("김고객");
+    });
+
+    it("opens a confirm modal with the shared title and a visible description, and sends nothing yet", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        openContractsTab();
+
+        const dialog = await openVoidModal();
+
+        expect(within(dialog).getByText(VOID_TITLE)).toBeInTheDocument();
+        const description = within(dialog).getByText(VOID_DESCRIPTION);
+        expect(description).not.toHaveClass("sr-only");
+        expect(within(dialog).getByRole("button", { name: "취소" })).toBeInTheDocument();
+        expect(within(dialog).getByRole("button", { name: "파기" })).toBeInTheDocument();
+        expect(voidContractDocument).not.toHaveBeenCalled();
+    });
+
+    it("sends no request when the user cancels", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        openContractsTab();
+        const dialog = await openVoidModal();
+
+        fireEvent.click(within(dialog).getByRole("button", { name: "취소" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(voidContractDocument).not.toHaveBeenCalled();
+        expect(mockToast).not.toHaveBeenCalled();
+    });
+
+    it("voids the document, disables the confirm button while pending, then toasts, closes and invalidates", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        let resolveVoid: (value: unknown) => void = () => undefined;
+        voidContractDocument.mockReturnValue(new Promise((resolve) => { resolveVoid = resolve; }));
+        openContractsTab();
+        const dialog = await openVoidModal();
+        // Spy only after the panel's own mount-time refreshes: what is counted here is the void's.
+        const invalidate = spyOnInvalidation();
+
+        fireEvent.click(within(dialog).getByRole("button", { name: "파기" }));
+
+        await waitFor(() => expect(voidContractDocument).toHaveBeenCalledWith("doc-1"));
+        const pending = await within(dialog).findByRole("button", { name: "파기 중" });
+        expect(pending).toBeDisabled();
+        // No optimistic update: nothing is announced or refreshed until the server answers.
+        expect(mockToast).not.toHaveBeenCalled();
+        expect(invalidate).not.toHaveBeenCalled();
+
+        resolveVoid({
+            documentId: "doc-1",
+            voidedAt: "2026-10-13T01:02:03.000Z",
+            voidedByName: "박지점",
+            displayStatus: "voided",
+        });
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "계약을 파기했습니다." });
+        expectFullInvalidationSet(invalidate);
+    });
+
+    it("answers a 409 with the conflict toast, closes the modal and refreshes the stale card", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        voidContractDocument.mockRejectedValue(axiosFailure(409));
+        openContractsTab();
+        const dialog = await openVoidModal();
+        const invalidate = spyOnInvalidation();
+
+        fireEvent.click(within(dialog).getByRole("button", { name: "파기" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(mockToast).toHaveBeenCalledWith({
+            variant: "destructive",
+            description: "이미 파기되었거나 파기할 수 없는 계약서입니다.",
+        });
+        expectFullInvalidationSet(invalidate);
+    });
+
+    it.each([
+        ["a 500", 500],
+        ["a network error with no response", undefined],
+        ["a 503", 503],
+    ])("keeps the modal open after %s, toasts the failure and still invalidates", async (_label, status) => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        voidContractDocument.mockRejectedValue(axiosFailure(status));
+        openContractsTab();
+        const dialog = await openVoidModal();
+        const invalidate = spyOnInvalidation();
+
+        fireEvent.click(within(dialog).getByRole("button", { name: "파기" }));
+
+        await waitFor(() =>
+            expect(mockToast).toHaveBeenCalledWith({
+                variant: "destructive",
+                description: "계약을 파기하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+            }),
+        );
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        // The confirm button is usable again so the user can retry or cancel.
+        expect(within(screen.getByRole("dialog")).getByRole("button", { name: "파기" })).toBeEnabled();
+        expectFullInvalidationSet(invalidate);
+    });
+
+    it("lets the user retry after a failure", async () => {
+        getDocuments.mockResolvedValue([liveDoc]);
+        voidContractDocument.mockRejectedValueOnce(axiosFailure(500));
+        voidContractDocument.mockResolvedValueOnce({
+            documentId: "doc-1",
+            voidedAt: "2026-10-13T01:02:03.000Z",
+            voidedByName: null,
+            displayStatus: "voided",
+        });
+        openContractsTab();
+        const dialog = await openVoidModal();
+
+        fireEvent.click(within(dialog).getByRole("button", { name: "파기" }));
+        await waitFor(() => expect(mockToast).toHaveBeenCalledTimes(1));
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "파기" }));
+
+        await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+        expect(voidContractDocument).toHaveBeenCalledTimes(2);
+        expect(mockToast).toHaveBeenLastCalledWith({ variant: "success", description: "계약을 파기했습니다." });
     });
 });

@@ -11,6 +11,8 @@ export const RECEIPT_LINK_REASON_MESSAGES: Record<string, string> = {
   render_failed: "영수증 이미지 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.",
   upload_failed: "영수증 이미지 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.",
   missing_phone: "산모 연락처가 없거나 형식이 올바르지 않아요.",
+  // BJJ-439: the server refuses a receipt for a voided (파기) contract; this is its own text.
+  contract_voided: "파기된 계약서입니다.",
 };
 export const RECEIPT_LINK_SEND_FALLBACK_MESSAGE = "영수증 문자 발송에 실패했어요. 잠시 후 다시 시도해 주세요.";
 
