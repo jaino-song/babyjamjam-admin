@@ -37,6 +37,7 @@ import {
     type CreateServiceRecordEditDraftInput,
     type IServiceRecordEditRepository,
     type ServiceRecordEditDraft,
+    type ServiceRecordEditConfirmAssignmentUpdate,
     type ServiceRecordEditConfirmPlan,
     type ServiceRecordEditConfirmOperationPlan,
     type ServiceRecordEditConfirmNewSession,
@@ -48,6 +49,7 @@ import {
     type ServiceRecordEditRevisionFactsSource,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
+    ServiceRecordEditPreviewAssignmentRange,
     ServiceRecordEditConfirmDocumentStatus,
     ServiceRecordEditConfirmResponse,
     ServiceRecordRevisionDispatchContext,
@@ -324,6 +326,49 @@ function hasPlannedDateDifference(
     after: Array<{ sessionIndex: number; serviceDate: string }>,
 ): boolean {
     return after.some((entry) => before.find((candidate) => candidate.sessionIndex === entry.sessionIndex)?.serviceDate !== entry.serviceDate);
+}
+
+/**
+ * Dates written to service_record_assignment and employee_schedule on confirm.
+ *
+ * The owned session dates (`provenance`) say which sessions each caregiver
+ * holds, not where the hand-over between caregivers lies: the replacement flow
+ * deliberately stores the outgoing end date equal to the incoming start date,
+ * and a newly assigned caregiver may backfill sessions before its own start.
+ * Deriving every edge from owned sessions would move that boundary on any
+ * confirm. So only the outer edges of the case (the first range's start and the
+ * last range's end) follow the sessions, which keeps a single caregiver's
+ * schedule tracking moved session dates; every inner edge keeps the stored
+ * value. An inner edge is only widened where a moved session would otherwise
+ * fall outside its own assignment, and the next caregiver's start then follows
+ * so the shared boundary stays shared.
+ */
+function assignmentWrites(
+    source: ServiceRecordEditSource,
+    ranges: ServiceRecordEditPreviewAssignmentRange[],
+): ServiceRecordEditConfirmAssignmentUpdate[] {
+    const ordered = [...ranges].sort((left, right) =>
+        left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
+    let previousEnd: string | null = null;
+    return ordered.map((range, index) => {
+        const stored = source.assignments.find((candidate) => candidate.id === range.assignmentId);
+        const first = index === 0;
+        const last = index === ordered.length - 1;
+        const storedStart = stored ? stored.startDate || stored.scheduleStartDate : "";
+        const storedEnd = stored ? stored.endDate || stored.scheduleEndDate : "";
+        let startDate = first || !storedStart ? range.startDate : storedStart;
+        if (!first && previousEnd !== null && startDate < previousEnd) startDate = previousEnd;
+        const endDate = last || !storedEnd
+            ? range.endDate
+            : storedEnd < range.endDate ? range.endDate : storedEnd;
+        previousEnd = endDate;
+        return {
+            assignmentId: range.assignmentId,
+            scheduleId: range.scheduleId,
+            startDate,
+            endDate,
+        };
+    });
 }
 
 function buildFutureContentSession(
@@ -1191,12 +1236,7 @@ export class AdminServiceRecordEditService {
             plannedSessions,
             sessions,
             newSessions,
-            assignments: provisional.provenance.map((range) => ({
-                assignmentId: range.assignmentId,
-                scheduleId: range.scheduleId,
-                startDate: range.startDate,
-                endDate: range.endDate,
-            })),
+            assignments: assignmentWrites(source, provisional.provenance),
             revision: changed
                 ? {
                     branchId,
