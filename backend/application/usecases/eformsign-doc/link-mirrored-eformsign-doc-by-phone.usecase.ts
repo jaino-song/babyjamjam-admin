@@ -1672,6 +1672,17 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 || revisionSupersedesCreatedDate
                 || document.createdDate >= currentDocument.createdDate;
         }
+        // D3: a voided contract newer than this document means the client has no live
+        // contract, so an older document must not take the pointer (revision candidates
+        // included). Only the pointer is skipped; the claim above and the return value
+        // are unchanged. Runs on every lock surface, not only the complete one.
+        if (
+            shouldPointToMirroredDocument
+            && client.eDocId !== document.documentId
+            && await this.hasNewerVoidedContract(transaction, client.id, document)
+        ) {
+            shouldPointToMirroredDocument = false;
+        }
         if (shouldPointToMirroredDocument) {
             await transaction.client.updateMany({
                 where: {
@@ -1683,6 +1694,41 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             });
         }
         return wasAlreadyLinked ? "already_linked" : "linked";
+    }
+
+    /**
+     * Whether this client owns a voided contract document newer than `document` ("newer" =
+     * later created date, larger id on a tie). Status and purge flags are deliberately
+     * ignored: a voided unsigned contract is cancelled in eformsign and later commonly
+     * mirrored as deleted, and must keep blocking.
+     */
+    private async hasNewerVoidedContract(
+        transaction: Prisma.TransactionClient,
+        clientId: number,
+        document: { id: number; createdDate: Date },
+    ): Promise<boolean> {
+        const blocker = await transaction.eformsign_doc.findFirst({
+            where: {
+                clientId,
+                voidedAt: { not: null },
+                AND: [
+                    {
+                        OR: [
+                            { documentKind: EFORMSIGN_DOCUMENT_KIND.CONTRACT },
+                            { documentKind: null },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { createdDate: { gt: document.createdDate } },
+                            { createdDate: document.createdDate, id: { gt: document.id } },
+                        ],
+                    },
+                ],
+            },
+            select: { id: true },
+        });
+        return blocker !== null;
     }
 
     private async isCurrentContractWriteTarget(

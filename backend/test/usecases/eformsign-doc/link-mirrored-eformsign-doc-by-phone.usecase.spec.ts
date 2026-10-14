@@ -94,6 +94,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
             eformsign_doc: {
+                // D3 blocker query: no newer voided contract unless a test says so.
+                findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockImplementation(async ({ data }) => {
                     Object.assign(document, data);
                     return { count: 1 };
@@ -2608,6 +2610,143 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
                 expectNothingWritten(arranged);
             });
+        });
+
+        /**
+         * D3: when the client owns a voided contract newer than the document being linked,
+         * the client has no live contract; the document may still be claimed, but it must not
+         * take `client.eDocId`. Applies on both lock surfaces and on every caller of
+         * `linkExistingClient` (assigned repair, existing-only link, general link).
+         */
+        describe.each([
+            ["plain path", false],
+            ["lock-surface path", true],
+        ])("D3: a newer voided contract of the same client blocks the pointer, %s", (_label, lockSurface) => {
+            const expectedBlockerQuery = {
+                where: {
+                    clientId: 21,
+                    voidedAt: { not: null },
+                    AND: [
+                        { OR: [{ documentKind: "contract" }, { documentKind: null }] },
+                        {
+                            OR: [
+                                { createdDate: { gt: new Date("2026-07-20T00:00:00.000Z") } },
+                                { createdDate: new Date("2026-07-20T00:00:00.000Z"), id: { gt: 11 } },
+                            ],
+                        },
+                    ],
+                },
+                select: { id: true },
+            };
+            const existingOnly = {
+                linkExistingOnly: true,
+                existingClientId: 21,
+                existingClientBranchId: "branch-1",
+            };
+
+            it("claims an unassigned document for the existing client but writes no pointer (existing-only)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1", existingOnly)).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledTimes(1);
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({ id: 11 }),
+                    data: expect.objectContaining({ clientId: 21, branchId: "branch-1" }),
+                }));
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("claims an unassigned document for the existing client but writes no pointer (general path)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1")).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                    where: expect.objectContaining({ id: 11 }),
+                }));
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+            });
+
+            it("repairs ownership of an assigned document without writing the pointer", async () => {
+                const arranged = setup(assignedDocument());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+
+                await expect(arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration()))
+                    .resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
+                expect(arranged.serviceRecordLifecycle.ensureForClient).toHaveBeenCalledTimes(1);
+            });
+
+            it("links a document newer than the voided one and lets it take the pointer", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+                arranged.transaction.eformsign_doc.findFirst.mockResolvedValue(null);
+
+                await expect(arranged.usecase.execute("doc-1", existingOnly)).resolves.toBe("linked");
+
+                expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledWith(expectedBlockerQuery);
+                expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                    where: { id: 21, branchId: "branch-1", eDocId: null },
+                    data: { eDocId: "doc-1" },
+                });
+            });
+
+            it("does not filter the blocker by status or purge flag (a voided row mirrored as deleted keeps blocking)", async () => {
+                const arranged = setup(completedUnassigned());
+                if (lockSurface) withLockSurface(arranged.transaction);
+
+                await arranged.usecase.execute("doc-1", existingOnly);
+
+                const [query] = arranged.transaction.eformsign_doc.findFirst.mock.calls[0]!;
+                expect(query.where).not.toHaveProperty("statusType");
+                expect(query.where).not.toHaveProperty("permanentPurgeRequestedAt");
+                expect(query.where.clientId).toBe(21);
+            });
+        });
+
+        it("does not let a revision candidate created before the voided contract replace the pointer (plain path)", async () => {
+            const document = assignedDocument({ revisionId: "rev-1" });
+            const arranged = setup(document);
+            arranged.transaction.client.findUnique.mockResolvedValue({
+                id: 21, branchId: "branch-1", eDocId: "doc-old",
+            });
+            arranged.transaction.eformsign_doc.findUnique.mockImplementation(({ where }) =>
+                Promise.resolve(
+                    where.documentId === "doc-1"
+                        ? document
+                        : where.documentId === "doc-old"
+                            ? {
+                                createdDate: new Date("2026-07-25T00:00:00.000Z"),
+                                revisionId: "rev-0",
+                                serviceRecordCaseId: null,
+                                branchId: "branch-1",
+                                clientId: 21,
+                            }
+                            : null,
+                ));
+
+            // Control: no newer voided contract, the revision supersedes the older pointer.
+            await arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration());
+            expect(arranged.transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 21, branchId: "branch-1", eDocId: "doc-old" },
+                data: { eDocId: "doc-1" },
+            });
+
+            arranged.transaction.client.updateMany.mockClear();
+            arranged.transaction.eformsign_doc.findFirst.mockResolvedValue({ id: 90 });
+            await arranged.usecase.execute("doc-1", undefined, expectedMirrorGeneration());
+            expect(arranged.transaction.eformsign_doc.findFirst).toHaveBeenCalledTimes(2);
+            expect(arranged.transaction.client.updateMany).not.toHaveBeenCalled();
         });
 
         /**

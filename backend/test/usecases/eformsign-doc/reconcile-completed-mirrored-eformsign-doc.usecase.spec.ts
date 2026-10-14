@@ -556,6 +556,8 @@ describe("ReconcileCompletedMirroredEformsignDocUsecase with the real linker and
             $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
             eformsign_doc: {
                 findUnique: jest.fn().mockResolvedValue(row),
+                // D3 blocker query: no newer voided contract.
+                findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             },
             client: {
