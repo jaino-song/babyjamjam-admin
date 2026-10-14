@@ -2181,7 +2181,13 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
             prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
         };
         return input.prepare({ draft: activeDraft, source }) as {
-            assignments: Array<{ assignmentId: string | null; scheduleId: number | null; startDate: string; endDate: string }>;
+            assignments: Array<{
+                assignmentId: string | null;
+                scheduleId: number | null;
+                startDate: string;
+                endDate: string;
+                datesChanged?: boolean;
+            }>;
             revision: { provenance: Array<{ assignmentId: string; startDate: string; endDate: string }> } | null;
         };
     }
@@ -2309,6 +2315,172 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
                 { sessionIndex: 9, serviceDate: "2026-10-15" },
             ],
         })).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+    });
+
+    /** A terminated schedule on the case that owns no session: dates only, never an outer edge. */
+    const terminated = {
+        ...caregiverB,
+        id: "dddddddd-0000-4000-8000-00000000000d",
+        scheduleId: 704,
+        employeeId: 34,
+        employeeName: "종료",
+        primaryEmployeeId: 34,
+        primaryEmployeeName: "종료",
+        replaced: false,
+    };
+    function singleOwnerSource(
+        single: typeof caregiverB,
+        extra: typeof terminated,
+        order: "extra-first" | "extra-last",
+    ): ServiceRecordEditSource {
+        return {
+            ...handoverSource([written(1, single)]),
+            assignments: order === "extra-first" ? [extra, single] : [single, extra],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+    }
+
+    it("does not treat a session-less terminated schedule before the first session as the case start", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const early = {
+            ...terminated,
+            startDate: "2026-09-01",
+            scheduleStartDate: "2026-09-01",
+            endDate: "2026-09-05",
+            scheduleEndDate: "2026-09-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, early, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: early.id, scheduleId: 704, startDate: "2026-09-01", endDate: "2026-09-05" }),
+            expect.objectContaining({ assignmentId: single.id, scheduleId: 702, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("does not extend a session-less terminated schedule stored after the last session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const late = {
+            ...terminated,
+            startDate: "2026-10-26",
+            scheduleStartDate: "2026-10-26",
+            endDate: "2026-10-30",
+            scheduleEndDate: "2026-10-30",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, late, "extra-last"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+            expect.objectContaining({ assignmentId: late.id, scheduleId: 704, startDate: "2026-10-26", endDate: "2026-10-30" }),
+        ]);
+    });
+
+    it("keeps both stored ranges when only the later caregiver wrote sessions, backfilling the earlier ones", async () => {
+        // B wrote sessions 1-8, so the provenance holds only B. B's first session (10-01) lies inside A's
+        // stored period, so B's start must stay on the stored handover day, not move to 10-01.
+        const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((index) => written(index, caregiverB));
+        const plan = await confirmedAssignments(handoverSource(rows), headerOnly);
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the earlier caregiver's end when only the earlier caregiver owns sessions beyond the handover", async () => {
+        // Mirror: every session is A's, and the last (10-23) lies inside B's stored period.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverA))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("flags an assignment whose employee_schedule disagrees with the computed dates", async () => {
+        const drifted = { ...caregiverB, scheduleStartDate: "2026-10-12" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            assignments: [caregiverA, drifted],
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: true }),
+        ]);
+    });
+
+    it("flags no assignment as changed when a confirm leaves every date alone", async () => {
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            headerOnly,
+        );
+        expect(plan.assignments).toHaveLength(2);
+        expect(plan.assignments.map((assignment) => assignment.datesChanged)).toEqual([false, false]);
+    });
+
+    it("flags only the outer-edge assignment whose dates actually move", async () => {
+        const moved = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27"];
+        const plan = await confirmedAssignments(
+            handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            { sessions: moved.map((serviceDate, offset) => ({ sessionIndex: offset + 7, serviceDate })) },
+        );
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, datesChanged: true }),
+        ]);
+    });
+
+    it("flags a moved start and leaves a session-less neighbour unflagged", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const early = {
+            ...terminated,
+            startDate: "2026-09-01",
+            scheduleStartDate: "2026-09-01",
+            endDate: "2026-09-05",
+            scheduleEndDate: "2026-09-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, early, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: early.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: single.id, datesChanged: true }),
+        ]);
     });
 
     it("still moves a single caregiver's end with the last session", async () => {

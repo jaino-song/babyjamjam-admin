@@ -335,33 +335,64 @@ function hasPlannedDateDifference(
  * the incoming start), and ownership of sessions, including a newly assigned
  * caregiver's backfill, says nothing about where a hand-over lies. So every
  * stored assignment keeps its dates, except the two outer edges of the case:
- * the earliest assignment starts on the first planned session and the latest
- * ends on the last one, which is how a single caregiver's schedule follows moved
- * session dates. Every stored assignment is written (unchanged ones with their
- * stored dates) so the repository still re-evaluates each schedule's message
- * automation as before.
+ * the earliest session-owning assignment starts on the first planned session and
+ * the latest session-owning one ends on the last one, which is how a single
+ * caregiver's schedule follows moved session dates. An assignment that owns no
+ * session (a terminated or otherwise session-less schedule) is never an outer
+ * edge and keeps its stored dates, so it can neither block the confirm nor have
+ * its schedule stretched. An outer edge also never crosses into a neighbour's
+ * stored period: when the earliest owner's sessions begin before an earlier
+ * assignment's stored end (a backfill by a later caregiver), or the latest
+ * owner's end would pass a later assignment's stored start, the stored date is
+ * kept, since taking the session date would move that boundary. Every stored
+ * assignment is still emitted so the repository re-evaluates each schedule's
+ * message automation as before, but only the ones whose service_record_assignment
+ * or employee_schedule dates differ from the computed ones are flagged
+ * `datesChanged`; those are re-synced in both tables.
  *
  * Moving the outer edges across a neighbour's stored boundary cannot be done
- * without moving that boundary, so it is a conflict the administrator resolves
- * through the caregiver replacement flow; it is never repaired here.
+ * without moving that boundary, so the stored date is kept silently (the case
+ * period may then start before, or end after, every assignment's stored range);
+ * changing boundaries belongs to the caregiver replacement flow. Only a
+ * computed start after its end is refused as a conflict.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
     startDate: string | null,
     endDate: string | null,
+    ownerAssignmentIds: ReadonlySet<string>,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
     const stored = source.assignments
         .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
-        .map((assignment) => ({
-            assignment,
-            startDate: assignment.startDate || assignment.scheduleStartDate,
-            endDate: assignment.endDate || assignment.scheduleEndDate,
-        }))
+        .map((assignment) => {
+            const storedStart = assignment.startDate || assignment.scheduleStartDate;
+            const storedEnd = assignment.endDate || assignment.scheduleEndDate;
+            return {
+                assignment,
+                storedStart,
+                storedEnd,
+                startDate: storedStart,
+                endDate: storedEnd,
+            };
+        })
         .sort((left, right) =>
-            left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
+            left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
-    if (startDate) stored[0]!.startDate = startDate;
-    if (endDate) stored[stored.length - 1]!.endDate = endDate;
+    const ownerIndexes = stored
+        .map((item, index) => (
+            item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id) ? index : -1
+        ))
+        .filter((index) => index >= 0);
+    if (ownerIndexes.length > 0) {
+        const first = ownerIndexes[0]!;
+        const last = ownerIndexes[ownerIndexes.length - 1]!;
+        if (startDate && stored.slice(0, first).every((item) => item.storedEnd <= startDate)) {
+            stored[first]!.startDate = startDate;
+        }
+        if (endDate && stored.slice(last + 1).every((item) => item.storedStart >= endDate)) {
+            stored[last]!.endDate = endDate;
+        }
+    }
     return stored.map((item) => {
         if (!item.startDate || !item.endDate || item.startDate > item.endDate) {
             throw new ServiceRecordEditConflictError(
@@ -373,6 +404,11 @@ function assignmentWrites(
             scheduleId: item.assignment.scheduleId,
             startDate: item.startDate,
             endDate: item.endDate,
+            // Both tables must already hold the computed dates, else they are re-synced.
+            datesChanged: item.startDate !== item.assignment.startDate
+                || item.startDate !== item.assignment.scheduleStartDate
+                || item.endDate !== item.assignment.endDate
+                || item.endDate !== item.assignment.scheduleEndDate,
         };
     });
 }
@@ -1242,7 +1278,12 @@ export class AdminServiceRecordEditService {
             plannedSessions,
             sessions,
             newSessions,
-            assignments: assignmentWrites(source, provisional.after.startDate, provisional.after.endDate),
+            assignments: assignmentWrites(
+                source,
+                provisional.after.startDate,
+                provisional.after.endDate,
+                new Set(provisional.provenance.map((range) => range.assignmentId)),
+            ),
             revision: changed
                 ? {
                     branchId,
