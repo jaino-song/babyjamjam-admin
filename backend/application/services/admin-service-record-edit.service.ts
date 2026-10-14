@@ -332,35 +332,35 @@ function hasPlannedDateDifference(
  *
  * A confirmed edit never moves an inner handover boundary: the caregiver
  * replacement flow owns those (it deliberately stores the outgoing end equal to
- * the incoming start), and ownership of sessions, including a newly assigned
- * caregiver's backfill, says nothing about where a hand-over lies. So every
- * stored assignment keeps its dates, except the two outer edges of the case:
- * the earliest session-owning assignment starts on the first planned session and
- * the latest session-owning one ends on the last one, which is how a single
- * caregiver's schedule follows moved session dates. An assignment that owns no
- * session (a terminated or otherwise session-less schedule) is never an outer
- * edge and keeps its stored dates, so it can neither block the confirm nor have
- * its schedule stretched. An outer edge also never crosses into a neighbour's
- * stored period: when the earliest owner's sessions begin before an earlier
- * assignment's stored end (a backfill by a later caregiver), or the latest
- * owner's end would pass a later assignment's stored start, the stored date is
- * kept, since taking the session date would move that boundary. Every stored
- * assignment is still emitted so the repository re-evaluates each schedule's
- * message automation as before, but only the ones whose service_record_assignment
- * or employee_schedule dates differ from the computed ones are flagged
+ * the incoming start), so every stored assignment keeps its dates except the two
+ * outer edges of the case. The outer edges follow the assignments, not who wrote
+ * the sessions: an unwritten service record does not mean the caregiver did not
+ * work, so a replaced caregiver whose period covers a day worked it even when a
+ * successor backfilled that day's record. The earliest active assignment
+ * (terminated schedules are never candidates, replaced ones are) therefore starts
+ * on the first planned session and the latest active one ends on the last one,
+ * regardless of which caregiver owns the sessions (ownership in the records and
+ * documents stays with the writer). That also keeps a single caregiver's schedule
+ * following moved session dates. An outer edge never crosses into a terminated
+ * assignment's stored period: when an assignment sorting before the earliest
+ * active one stored an end after the new start, or one sorting after the latest
+ * active one stored a start before the new end, the stored date is kept, since
+ * taking the session date would move that boundary. Every stored assignment is
+ * still emitted so the repository re-evaluates each schedule's message automation
+ * as before, but only the ones whose service_record_assignment or
+ * employee_schedule dates differ from the computed ones are flagged
  * `datesChanged`; those are re-synced in both tables.
  *
- * Moving the outer edges across a neighbour's stored boundary cannot be done
- * without moving that boundary, so the stored date is kept silently (the case
- * period may then start before, or end after, every assignment's stored range);
- * changing boundaries belongs to the caregiver replacement flow. Only a
- * computed start after its end is refused as a conflict.
+ * Moving an outer edge across a terminated neighbour's stored boundary cannot be
+ * done without moving that boundary, so the stored date is kept silently;
+ * changing boundaries belongs to the caregiver replacement flow. A computed start
+ * after its end (e.g. every session now lies after the earliest assignment's
+ * stored end) is refused as a conflict to be resolved through that flow.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
     startDate: string | null,
     endDate: string | null,
-    ownerAssignmentIds: ReadonlySet<string>,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
     const stored = source.assignments
         .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
@@ -378,14 +378,12 @@ function assignmentWrites(
         .sort((left, right) =>
             left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
-    const ownerIndexes = stored
-        .map((item, index) => (
-            item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id) ? index : -1
-        ))
+    const activeIndexes = stored
+        .map((item, index) => (!item.assignment.scheduleTerminatedAt ? index : -1))
         .filter((index) => index >= 0);
-    if (ownerIndexes.length > 0) {
-        const first = ownerIndexes[0]!;
-        const last = ownerIndexes[ownerIndexes.length - 1]!;
+    if (activeIndexes.length > 0) {
+        const first = activeIndexes[0]!;
+        const last = activeIndexes[activeIndexes.length - 1]!;
         if (startDate && stored.slice(0, first).every((item) => item.storedEnd <= startDate)) {
             stored[first]!.startDate = startDate;
         }
@@ -1282,7 +1280,6 @@ export class AdminServiceRecordEditService {
                 source,
                 provisional.after.startDate,
                 provisional.after.endDate,
-                new Set(provisional.provenance.map((range) => range.assignmentId)),
             ),
             revision: changed
                 ? {
