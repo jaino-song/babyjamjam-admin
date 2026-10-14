@@ -15,3 +15,13 @@ OPENAI_API_KEY=
 # Optional local-only automatic login. Never set these on a deployment.
 LOCAL_AUTO_LOGIN_EMAIL=
 LOCAL_AUTO_LOGIN_PASSWORD=
+
+# Real-login Playwright runs (pnpm e2e:dev / pnpm e2e:preview). Local-only; never set on a deployment.
+# e2e:dev falls back to LOCAL_AUTO_LOGIN_EMAIL/PASSWORD when the E2E_DEV_* pair is blank.
+E2E_DEV_EMAIL=
+E2E_DEV_PASSWORD=
+E2E_DEV_BRANCH_NAME=
+# Preview uses the PRODUCTION database: use a test account limited to the test branch.
+E2E_PREVIEW_EMAIL=
+E2E_PREVIEW_PASSWORD=
+E2E_PREVIEW_BRANCH_NAME=
