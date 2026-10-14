@@ -3,12 +3,17 @@
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
+import { isAxiosError } from "axios";
 
 import { Client } from "@/lib/client/types";
 import { getMobileClientBadges } from "@/lib/client/badges";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import {
   CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+  CONTRACT_VOID_COPY,
+  CONTRACT_VOID_ROW_LABEL,
+  CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
+  isContractVoidable,
   isContractDocDisplayStatus,
 } from "@babyjamjam/shared/constants/eformsign-doc-status";
 import { isReviewerRejectedEformsignStatus } from "@babyjamjam/shared/constants/eformsign-status-codes";
@@ -31,6 +36,7 @@ import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   MESSAGE_HISTORY_STATUS_LABELS,
@@ -371,14 +377,17 @@ function documentStatusTone(client: Pick<Client, "documentStatus" | "hasSigned">
 /**
  * What the contract card and the "현재 단계" row show. The coarse client summary is a liveness
  * summary: a rejected (071) contract still reads as signed there, so the document's own display
- * status takes over for 반려됨 — the one status the summary cannot express. Every other status keeps
- * the summary's wording, and so does a client with no contract document.
+ * status takes over for 반려됨 and 파기됨. A linked older document must not inherit the
+ * latest contract's coarse status. Clients without a loaded document retain the summary.
  */
 function contractCardStatus(
-  client: Pick<Client, "documentStatus" | "hasSigned">,
+  client: Pick<Client, "documentStatus" | "hasSigned" | "latestContractDocumentId" | "eDocId">,
   contractDocument: EformsignDocument | null | undefined,
 ): { label: string; tone: DetailDocRowTone; rowTone: "green" | "primary" | "orange" | "muted" | "burgundy" } {
   const displayStatus = contractDocument?.display_status;
+  if (displayStatus === "voided" || contractDocument?.voided_at) {
+    return { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided, tone: "muted", rowTone: "muted" };
+  }
   const isRejectedByReviewer = isContractDocDisplayStatus(displayStatus)
     ? displayStatus === "rejected_by_reviewer"
     : isReviewerRejectedEformsignStatus(contractDocument?.current_status?.status_type);
@@ -388,6 +397,14 @@ function contractCardStatus(
       tone: "burgundy-solid",
       rowTone: "burgundy",
     };
+  }
+  if (contractDocument && (client.documentStatus === "voided" || contractDocument.id !== (client.latestContractDocumentId ?? client.eDocId))) {
+    const ownStatus = isContractDocDisplayStatus(displayStatus) ? displayStatus : "unknown";
+    const tone = ownStatus === "completed" || ownStatus === "signed" ? "green"
+      : ownStatus === "revoked" ? "burgundy"
+      : ownStatus === "expired" || ownStatus === "unknown" ? "muted"
+      : ownStatus === "pending" ? "primary" : "orange";
+    return { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS[ownStatus], tone, rowTone: tone };
   }
   const tone = documentStatusTone(client);
   return { label: documentStatusLabel(client), tone, rowTone: tone };
@@ -639,6 +656,7 @@ export function ClientDetailContent({
   isLinkConfirmationsFetching = false,
   refetchLinkConfirmations,
   onContractLinked,
+  onContractVoided,
   activeTab,
   notificationLogs = [],
   hasMoreNotificationLogs = false,
@@ -662,6 +680,7 @@ export function ClientDetailContent({
   isLinkConfirmationsFetching?: boolean;
   refetchLinkConfirmations?: () => Promise<{ data?: EformsignLinkConfirmation[]; isError?: boolean }>;
   onContractLinked?: () => void;
+  onContractVoided?: () => void;
   activeTab: DetailTabId;
   notificationLogs?: ClientNotificationLogRecord[];
   /** The server holds older records than `notificationLogs`; say so instead of presenting a complete history. */
@@ -682,6 +701,32 @@ export function ClientDetailContent({
   // Keyed selection so the open message-detail auto-resets when the tab or client changes
   // (derive-during-render — avoids a setState-in-effect).
   const detailKey = `${activeTab}:${client.id}`;
+  const [voidModalDocumentId, setVoidModalDocumentId] = useState<string | null>(null);
+  const [isVoidingContract, setIsVoidingContract] = useState(false);
+  const voidInFlightRef = useRef(false);
+  const canVoidContract = Boolean(contractDocument
+    && contractDocument.id === (client.latestContractDocumentId ?? client.eDocId)
+    && isContractVoidable({ displayStatus: contractDocument.display_status ?? "unknown", voidedAt: contractDocument.voided_at }));
+  const isContractVoided = Boolean(contractDocument?.display_status === "voided" || contractDocument?.voided_at
+    || (!contractDocument && client.documentStatus === "voided"));
+  const handleVoidContract = async () => {
+    if (!voidModalDocumentId || !canVoidContract || voidModalDocumentId !== contractDocument?.id || voidInFlightRef.current) return;
+    voidInFlightRef.current = true;
+    setIsVoidingContract(true);
+    try {
+      await eformsignApi.voidDocument(voidModalDocumentId);
+      toast({ title: CONTRACT_VOID_COPY.success });
+      setVoidModalDocumentId(null);
+    } catch (error) {
+      const conflict = isAxiosError(error) && error.response?.status === 409;
+      toast({ title: conflict ? CONTRACT_VOID_COPY.conflict : CONTRACT_VOID_COPY.failure, variant: "destructive" });
+      if (conflict) setVoidModalDocumentId(null);
+    } finally {
+      voidInFlightRef.current = false;
+      setIsVoidingContract(false);
+      onContractVoided?.();
+    }
+  };
   const [selectedConfirmation, setSelectedConfirmation] = useState<{ key: string; entry: EformsignLinkConfirmation } | null>(null);
   const confirmationEntry = selectedConfirmation?.key === detailKey ? selectedConfirmation.entry : null;
   const [selectedEntry, setSelectedEntry] = useState<{ key: string; log: ClientNotificationLogRecord } | null>(null);
@@ -1491,10 +1536,21 @@ export function ClientDetailContent({
                 badge={contractCard.label}
                 tone={contractCard.tone}
               />
+              {canVoidContract ? (
+                <Button data-component={`${dataComponent}_tab-panel_contracts_contract-card_void-button`}
+                  variant="destructive" size="sm" onClick={() => setVoidModalDocumentId(contractDocument?.id ?? null)}>
+                  {CONTRACT_VOID_COPY.action}
+                </Button>
+              ) : null}
             </InfoCard>
             <InfoCard data-component={`${dataComponent}_tab-panel_contracts_activity-card`} title="최근 진행 상황" delay={60}>
               <InfoRow label="현재 단계" value={contractCard.label} tone={contractCard.rowTone} />
-              <InfoRow label="서명 대기자" value={client.hasSigned ? "-" : `고객 (${client.name})`} />
+              <InfoRow label="서명 대기자" value={isContractVoided || client.hasSigned ? "-" : `고객 (${client.name})`} />
+              {contractDocument && isContractVoided ? (
+                <InfoRow data-component={`${dataComponent}_tab-panel_contracts_activity-card_void-row`}
+                  label={CONTRACT_VOID_ROW_LABEL}
+                  value={`${formatMessageDateTimeCompact(contractDocument.voided_at ?? null)} · ${contractDocument.voided_by_name ?? CONTRACT_VOIDED_BY_UNKNOWN_LABEL}`} />
+              ) : null}
               <InfoRow label="발송일" value={formatDate(contractDocSentDate)} />
               {isContractCompleted && <InfoRow label="완료일" value={formatDate(contractDocCompletedDate)} />}
             </InfoCard>
@@ -1507,6 +1563,19 @@ export function ClientDetailContent({
           </InfoCard>
         )}
       </MobileDetailTabPanel>
+
+      <MobileTwoButtonModal
+        data-component={`${dataComponent}_tab-panel_contracts_contract-card_void-modal`}
+        open={voidModalDocumentId !== null && voidModalDocumentId === contractDocument?.id && activeTab === "contracts"}
+        title={CONTRACT_VOID_COPY.confirmTitle}
+        description={CONTRACT_VOID_COPY.confirmDescription}
+        cancelLabel={CONTRACT_VOID_COPY.cancel}
+        confirmLabel={isVoidingContract ? CONTRACT_VOID_COPY.pending : CONTRACT_VOID_COPY.confirm}
+        loading={isVoidingContract}
+        onOpenChange={(open) => { if (!open && !voidInFlightRef.current) setVoidModalDocumentId(null); }}
+        onCancel={() => { if (!voidInFlightRef.current) setVoidModalDocumentId(null); }}
+        onConfirm={handleVoidContract}
+      />
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_message`} name="clients" tabId="message" activeTab={activeTab}>
         {selectedLog ? (

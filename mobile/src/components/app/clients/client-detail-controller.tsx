@@ -180,6 +180,13 @@ export function useClientDetailController({
     enabled: resolvedClientId !== null && detailSheetTab === "contracts",
   });
 
+  const handleContractVoided = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-docs", "document", detailClient?.eDocId] });
+    retryDetail();
+    void queryClient.invalidateQueries({ queryKey: clientQueryKeys.lists() });
+    void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+  }, [detailClient?.eDocId, queryClient, retryDetail]);
+
   // The client detail response is the canonical contract projection. The
   // legacy eFormSign document is still passed through for field fallbacks,
   // but its status may lag after a reissue and must never override the
@@ -286,6 +293,7 @@ export function useClientDetailController({
           isLinkConfirmationsFetching={linkConfirmationsQuery.isFetching}
           refetchLinkConfirmations={linkConfirmationsQuery.refetch}
           onContractLinked={retryDetail}
+          onContractVoided={handleContractVoided}
           activeTab={detailSheetTab}
           notificationLogs={detailNotificationLogs as ClientNotificationLogRecord[]}
           hasMoreNotificationLogs={hasMoreNotificationLogs}

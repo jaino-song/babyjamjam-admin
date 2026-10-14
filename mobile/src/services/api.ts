@@ -11,6 +11,7 @@ import {
     EformsignReRequestDocumentRequest,
     FinalizeHeadlessResponse,
     HeadlessDispatchResponse,
+    VoidContractDocumentResponse,
 } from "@babyjamjam/shared/types/eformsign";
 import type {
     MessageAutomationPastTriggerConfig,
@@ -540,6 +541,10 @@ export const eformsignApi = {
     // and refuses until the client is linked to the replacement.
     supersedeDocument: async (documentId: string, clientId: number): Promise<void> => {
         await api.post(`/eformsign/documents/${encodeURIComponent(documentId)}/supersede`, { clientId });
+    },
+    voidDocument: async (documentId: string): Promise<VoidContractDocumentResponse> => {
+        const { data } = await api.post<VoidContractDocumentResponse>(`/eformsign/documents/${encodeURIComponent(documentId)}/void`);
+        return data;
     },
     // Legacy alias
     getDocuments: async (): Promise<EformsignDocumentsResponse> => {

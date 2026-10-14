@@ -141,18 +141,21 @@ function hasDataComponent(node: ReactNode, expected: string): boolean {
 function getClientDetailProps(node: ReactNode): {
   onDelete: (id: number) => void;
   onClientUpdated: (client: Client) => void;
+  onContractVoided?: () => void;
 } | null {
   for (const child of Children.toArray(node)) {
     if (!isValidElement(child)) continue;
     const props = child.props as {
       onDelete?: (id: number) => void;
       onClientUpdated?: (client: Client) => void;
+      onContractVoided?: () => void;
       children?: ReactNode;
     };
     if (props.onDelete && props.onClientUpdated) {
       return {
         onDelete: props.onDelete,
         onClientUpdated: props.onClientUpdated,
+        onContractVoided: props.onContractVoided,
       };
     }
     const nested = getClientDetailProps(props.children);
@@ -173,6 +176,24 @@ function findHasMoreNotificationLogs(node: ReactNode): boolean | undefined {
 }
 
 describe("useClientDetailController", () => {
+  it("invalidates the document and both lists and reloads manual client state after void outcomes", async () => {
+    const linked: Client = { ...makeClient(1), eDocId: "doc-1", documentStatus: "requested", hasSigned: true };
+    mockedFetchClient.mockResolvedValue(linked);
+    jest.mocked(eformsignApi.getDocument).mockRejectedValue(new Error("not needed for this handler test"));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = jest.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useClientDetailController({ client: linked, dataComponent: "mobile_clients_detail-sheet_detail" }), { wrapper });
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    mockedFetchClient.mockClear();
+    mockedFetchClient.mockResolvedValue({ ...linked, documentStatus: "voided", hasSigned: false });
+    await act(async () => getClientDetailProps(result.current.detail)?.onContractVoided?.());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-docs", "document", "doc-1"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["clients", "list"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-documents"] });
+    await waitFor(() => expect(result.current.detailClient?.documentStatus).toBe("voided"));
+    expect(mockedFetchClient).toHaveBeenCalledWith(1);
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockHistoryHasMore = false;

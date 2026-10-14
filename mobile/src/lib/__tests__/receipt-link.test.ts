@@ -2,6 +2,7 @@ import {
   RECEIPT_LINK_REASON_MESSAGES,
   RECEIPT_LINK_SEND_FALLBACK_MESSAGE,
   describeReceiptLinkError,
+  describeReceiptLinkSlotCopy,
 } from "@/lib/receipt-link";
 
 // M4: pins the exact reason keys — copied from
@@ -16,6 +17,7 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
         "not_voucher_client",
         "missing_birthday",
         "contract_not_signed",
+        "contract_voided",
         "no_contract_document",
         "document_not_linked",
         "document_not_found",
@@ -39,6 +41,11 @@ describe("RECEIPT_LINK_REASON_MESSAGES", () => {
 });
 
 describe("describeReceiptLinkError", () => {
+  it("explains a voided contract in the error and field slot", () => {
+    const message = describeReceiptLinkError({ response: { data: { reason: "contract_voided" } } });
+    expect(message).toBe("파기된 계약서입니다.");
+    expect(describeReceiptLinkSlotCopy(message)).toBe("파기된 계약서예요");
+  });
   it("prefers the mapped reason message over a server message", () => {
     const error = {
       response: { data: { reason: "missing_phone", message: "some other server message" } },
