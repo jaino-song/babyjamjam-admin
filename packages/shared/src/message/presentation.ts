@@ -270,11 +270,19 @@ export function formatMessageDateTimeDetail(dateString: string | null): string {
   });
 }
 
+const CARRIER_FAILURE_REASON_PREFIX = "통신사 전달 실패:";
+
 export function formatMessageFailureReason(reason: string | null | undefined): string {
   if (!reason) return "";
 
+  // Carrier-check failures ("통신사 전달 실패: 1234 가입자없음, 5678 결번") carry the
+  // last four digits of the receiver; keep digits, colon and commas for them.
+  const keepPattern = reason.startsWith(CARRIER_FAILURE_REASON_PREFIX)
+    ? /[^\uAC00-\uD7A3\u3131-\u318E\s.0-9:,]/g
+    : /[^\uAC00-\uD7A3\u3131-\u318E\s.]/g;
+
   return reason
-    .replace(/[^\uAC00-\uD7A3\u3131-\u318E\s.]/g, "")
+    .replace(keepPattern, "")
     .replace(/\s+/g, " ")
     .replace(/\s+\./g, ".")
     .trim();

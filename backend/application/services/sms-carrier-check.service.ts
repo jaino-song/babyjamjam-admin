@@ -1,0 +1,193 @@
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Cron } from "@nestjs/schedule";
+import type { MessageLogEntity, CarrierResultState } from "domain/entities/message-log.entity";
+import {
+    ALIGO_SMS_API_PORT,
+    type AligoSmsDeliveryDetailsResult,
+    type IAligoSmsApiPort,
+} from "domain/ports/aligo-sms-api.port";
+import {
+    MESSAGE_LOG_REPOSITORY,
+    type IMessageLogRepository,
+} from "domain/repositories/message-log.repository.interface";
+import {
+    isTransientPrismaConnectivityError,
+    summarizePrismaError,
+} from "infrastructure/database/prisma-error.utils";
+import {
+    classifyCarrierCheck,
+    formatCarrierFailureMessage,
+} from "./sms-carrier-check-classifier";
+import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
+import { SchedulerLeaseService } from "./scheduler-lease.service";
+
+const MAX_RUN_MS = 15 * 60 * 1000;
+const DB_COOLDOWN_MS = 5 * 60 * 1000;
+const BATCH_LIMIT = 100;
+
+interface CarrierCheckOutcome {
+    state: CarrierResultState;
+    results: unknown[];
+    failureMessage: string | null;
+}
+
+/**
+ * One-shot carrier delivery check: ~30 minutes after Aligo accepts an SMS, look up the
+ * per-recipient carrier result once and record it. The "only once" guarantee comes from
+ * saveCarrierCheckResult clearing carrierCheckDueAt.
+ */
+@Injectable()
+export class SmsCarrierCheckService {
+    private readonly logger = new Logger(SmsCarrierCheckService.name);
+    private readonly executionGuard = new SchedulerExecutionGuard({
+        logger: this.logger,
+        runningWarning: "[CarrierCheck] Previous carrier-check cycle is still running; skipping tick",
+        staleRunError: "[CarrierCheck] Previous carrier-check cycle exceeded the max runtime",
+        cooldownWarning: "[CarrierCheck] Database connectivity issue detected during carrier-check cycle",
+        maxRunMs: MAX_RUN_MS,
+        cooldownMs: DB_COOLDOWN_MS,
+    });
+
+    constructor(
+        @Inject(MESSAGE_LOG_REPOSITORY)
+        private readonly logRepository: IMessageLogRepository,
+        @Inject(ALIGO_SMS_API_PORT)
+        private readonly aligoSmsApi: IAligoSmsApiPort,
+        private readonly schedulerLease: SchedulerLeaseService,
+    ) {}
+
+    @Cron("*/5 * * * *", { timeZone: "Asia/Seoul" })
+    async checkDueCarrierResults(): Promise<void> {
+        if (!this.schedulerLease.holdsLease()) {
+            return;
+        }
+        if (typeof this.aligoSmsApi.getSmsDeliveryDetails !== "function") {
+            return;
+        }
+        if (this.aligoSmsApi.getDefaultSenderPolicy?.()?.availability === "unavailable") {
+            return;
+        }
+
+        const runToken = this.executionGuard.tryStart();
+        if (!runToken) {
+            return;
+        }
+
+        try {
+            const dueLogs = await this.logRepository.findCarrierChecksDueSystemScope(BATCH_LIMIT);
+            if (dueLogs.length === 0) return;
+
+            this.logger.log(`[CarrierCheck] Found ${dueLogs.length} messages due for carrier check`);
+
+            const warnedStates = new Set<string>();
+            let processedCount = 0;
+            for (const log of dueLogs) {
+                if (!this.schedulerLease.holdsLease()) {
+                    this.logger.warn(
+                        `[CarrierCheck] scheduler lease lost mid-run; stopping after ${processedCount} items`,
+                    );
+                    break;
+                }
+                processedCount += 1;
+                try {
+                    await this.checkOne(log, warnedStates);
+                } catch (error) {
+                    if (isTransientPrismaConnectivityError(error)) {
+                        this.executionGuard.enterCooldown(summarizePrismaError(error));
+                        return;
+                    }
+                    // The row stays due and is retried on the next tick.
+                    this.logger.error(
+                        `[CarrierCheck] Failed to process log ${log.id}`,
+                        error instanceof Error ? error.stack : String(error),
+                    );
+                }
+            }
+        } catch (error) {
+            if (isTransientPrismaConnectivityError(error)) {
+                this.executionGuard.enterCooldown(summarizePrismaError(error));
+                return;
+            }
+
+            this.logger.error(
+                "[CarrierCheck] Failed to load due carrier checks",
+                error instanceof Error ? error.stack : String(error),
+            );
+        } finally {
+            this.executionGuard.finish(runToken);
+        }
+    }
+
+    private async checkOne(log: MessageLogEntity, warnedStates: Set<string>): Promise<void> {
+        const mid = log.aligoMid;
+        if (!mid) {
+            // The due query only returns rows with a mid; there is nothing to condition a save on.
+            this.logger.warn(`[CarrierCheck] Log ${log.id} has no provider message id; skipping`);
+            return;
+        }
+        const expectedReceivers = log.receiver
+            .split(",")
+            .map((receiver) => receiver.trim())
+            .filter((receiver) => receiver.length > 0);
+
+        const outcome: CarrierCheckOutcome = expectedReceivers.length === 0
+            ? { state: "unconfirmed", results: [], failureMessage: null }
+            : await this.lookup(log, mid, expectedReceivers, warnedStates);
+
+        const saved = await this.logRepository.saveCarrierCheckResult({
+            id: log.id,
+            expectedMid: mid,
+            state: outcome.state,
+            results: outcome.results,
+            checkedAt: new Date(),
+            failureMessage: outcome.failureMessage,
+        });
+        if (saved === "stale") {
+            this.logger.debug(`[CarrierCheck] Log ${log.id} changed before the result was saved; skipping`);
+        }
+    }
+
+    private async lookup(
+        log: MessageLogEntity,
+        mid: string,
+        expectedReceivers: string[],
+        warnedStates: Set<string>,
+    ): Promise<CarrierCheckOutcome> {
+        const lookupError: CarrierCheckOutcome = { state: "lookup_error", results: [], failureMessage: null };
+
+        let details: AligoSmsDeliveryDetailsResult;
+        try {
+            details = await this.aligoSmsApi.getSmsDeliveryDetails!(mid);
+        } catch {
+            this.logger.warn(`[CarrierCheck] Carrier lookup failed for log ${log.id} (mid ${mid})`);
+            return lookupError;
+        }
+        if (details.resultCode !== 1) {
+            this.logger.warn(
+                `[CarrierCheck] Carrier lookup returned result code ${details.resultCode} for log ${log.id} (mid ${mid})`,
+            );
+            return lookupError;
+        }
+
+        const classification = classifyCarrierCheck(expectedReceivers, details.rows);
+        for (const state of classification.unrecognizedStates) {
+            if (warnedStates.has(state)) continue;
+            warnedStates.add(state);
+            this.logger.warn(`[CarrierCheck] Unrecognized carrier state: ${state}`);
+        }
+
+        return {
+            state: classification.outcome,
+            results: classification.recipients.map((recipient) => ({
+                receiver: recipient.receiver,
+                smsState: recipient.smsState,
+                sendDate: recipient.sendDate,
+                verdict: recipient.verdict,
+            })),
+            failureMessage:
+                classification.outcome === "failed"
+                    ? formatCarrierFailureMessage(classification.failures)
+                    : null,
+        };
+    }
+}
