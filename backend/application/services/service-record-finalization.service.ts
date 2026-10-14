@@ -63,6 +63,8 @@ type FinalizationAssignmentSnapshot = {
     employeeNameSnapshot: string;
     startDate: Date;
     endDate: Date;
+    /** The assignment's schedule; `replaced` marks a caregiver who was swapped out. */
+    schedule?: { replaced: boolean } | null;
 };
 
 type FinalizationCaseSnapshot = {
@@ -219,18 +221,43 @@ function currentPlannedSessionsMatchDays(
     return plannedSessions.every((planned) => {
         const day = daysByIndex.get(planned.sessionIndex);
         const assignment = record.assignments.find((candidate) => candidate.id === planned.assignmentId);
-        return Boolean(
-            day
-            && assignment
-            && day.caseSessionIndex === planned.sessionIndex
-            && day.serviceDate instanceof Date
-            && isoDate(day.serviceDate) === planned.serviceDate
-            && day.scheduleId === planned.scheduleId
+        if (
+            !day
+            || !assignment
+            || day.caseSessionIndex !== planned.sessionIndex
+            || !(day.serviceDate instanceof Date)
+            || isoDate(day.serviceDate) !== planned.serviceDate
+        ) {
+            return false;
+        }
+        const matchesPlannedOwner = day.scheduleId === planned.scheduleId
             && day.employeeId === planned.employeeId
             && assignment.scheduleId === planned.scheduleId
-            && assignment.employeeId === planned.employeeId,
-        );
+            && assignment.employeeId === planned.employeeId;
+        return matchesPlannedOwner || isBackfilledByCurrentAssignment(record, assignment, day);
     });
+}
+
+/**
+ * Write authority belongs to the currently assigned caregiver, who may backfill
+ * a session the stored vector still attributes to a replaced assignment. Such a
+ * day matches its slot when its writer is the case's current (non-replaced)
+ * assignment and the vector's owner is a replaced one. The date check above
+ * still applies, and any other disagreement stays a mismatch.
+ */
+function isBackfilledByCurrentAssignment(
+    record: FinalizationCaseSnapshot,
+    plannedAssignment: FinalizationAssignmentSnapshot,
+    day: FinalizationDaySnapshot,
+): boolean {
+    if (plannedAssignment.schedule?.replaced !== true) return false;
+    if (day.scheduleId === null || day.employeeId === null) return false;
+    const writers = record.assignments.filter((candidate) => (
+        candidate.scheduleId === day.scheduleId && candidate.employeeId === day.employeeId
+    ));
+    return writers.length === 1
+        && writers[0]!.id !== plannedAssignment.id
+        && writers[0]!.schedule?.replaced === false;
 }
 
 function revisionOriginalDateRows(payload: Prisma.JsonValue): Prisma.JsonValue[] | null {
@@ -674,6 +701,7 @@ export class ServiceRecordFinalizationService {
                         employeeNameSnapshot: true,
                         startDate: true,
                         endDate: true,
+                        schedule: { select: { replaced: true } },
                     },
                     orderBy: [{ startDate: "asc" }, { id: "asc" }],
                 },

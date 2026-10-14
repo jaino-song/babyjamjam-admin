@@ -369,3 +369,115 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 });
+
+describe("ServiceRecordFinalizationService backfilled sessions", () => {
+    const replacedAssignmentId = "00000000-0000-4000-8000-000000000041";
+    const currentAssignmentId = "00000000-0000-4000-8000-000000000042";
+    const secondDate = new Date("2026-09-08T00:00:00.000Z");
+
+    /** The stored vector attributes both sessions to the replaced caregiver (schedule 100, employee 11). */
+    function backfilledSource(options: { vectorOwner?: "replaced" | "current"; writerReplaced?: boolean } = {}) {
+        const base = source();
+        const vectorOwner = options.vectorOwner === "current"
+            ? { assignmentId: currentAssignmentId, scheduleId: 200, employeeId: 12 }
+            : { assignmentId: replacedAssignmentId, scheduleId: 100, employeeId: 11 };
+        const plannedEntry = (sessionIndex: number, serviceDate: string) => ({
+            sessionIndex,
+            serviceDate,
+            originalDate: serviceDate,
+            ...vectorOwner,
+            provenanceVersion: "revision-1",
+        });
+        return {
+            ...base,
+            requiredSessionCount: 2,
+            endDate: secondDate,
+            plannedSessions: [plannedEntry(1, "2026-09-07"), plannedEntry(2, "2026-09-08")],
+            assignments: [
+                {
+                    id: replacedAssignmentId,
+                    scheduleId: 100,
+                    employeeId: 11,
+                    employeeNameSnapshot: "제공인력",
+                    startDate: date,
+                    endDate: secondDate,
+                    schedule: { replaced: true },
+                },
+                {
+                    id: currentAssignmentId,
+                    scheduleId: 200,
+                    employeeId: 12,
+                    employeeNameSnapshot: "신규인력",
+                    startDate: secondDate,
+                    endDate: secondDate,
+                    schedule: { replaced: options.writerReplaced ?? false },
+                },
+            ],
+            days: [
+                base.days[0]!,
+                {
+                    ...base.days[0]!,
+                    id: "00000000-0000-4000-8000-000000000051",
+                    scheduleId: 200,
+                    caseSessionIndex: 2,
+                    sessionIndex: 2,
+                    employeeId: 12,
+                    employeeNameSnapshot: "신규인력",
+                    serviceDate: secondDate,
+                },
+            ],
+        };
+    }
+
+    async function freeze(record: ReturnType<typeof backfilledSource>) {
+        const jobService = {
+            findByRequestKeyInTransaction: jest.fn().mockResolvedValue(null),
+            enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false, job: { requestKey: "unused" } }),
+        };
+        const tx = {
+            service_record_revision: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: revisionId,
+                    revisionNumber: 2,
+                    payload: {
+                        plannedSessions: [
+                            { sessionIndex: 1, originalDate: "2026-09-07" },
+                            { sessionIndex: 2, originalDate: "2026-09-08" },
+                        ],
+                        sessions: [],
+                    },
+                }),
+            },
+        };
+        await (buildService(jobService) as unknown as {
+            freezeInitialFinalizationGeneration: (
+                tx: unknown,
+                source: unknown,
+                calendar: KrBusinessDayCalendar,
+            ) => Promise<void>;
+        }).freezeInitialFinalizationGeneration(tx, record, KR_BUILTIN_CALENDAR);
+        return jobService;
+    }
+
+    it("accepts a day the current caregiver backfilled on a slot the vector gives a replaced one", async () => {
+        const jobService = await freeze(backfilledSource());
+        expect(jobService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["the writer's schedule is not known to be current", { writerReplaced: true }],
+        ["the vector names the current assignment and the writer is another one", { vectorOwner: "current" as const }],
+    ])("still fails closed when %s", async (_label, options) => {
+        await expect(freeze(backfilledSource(options))).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
+        });
+    });
+
+    it("still fails closed when the backfilled day's date contradicts the vector", async () => {
+        const record = backfilledSource();
+        record.days[1] = { ...record.days[1]!, serviceDate: new Date("2026-09-09T00:00:00.000Z") };
+        await expect(freeze(record)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
+        });
+    });
+});
