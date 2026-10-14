@@ -42,6 +42,16 @@ interface CarrierCheckOutcome {
  * per-recipient carrier result once and record it. The "only once" guarantee comes from
  * saveCarrierCheckResult clearing carrierCheckDueAt.
  */
+// Prisma validation errors can echo query arguments (receiver numbers), so
+// only the error class and code are logged here.
+function describeErrorWithoutDetails(error: unknown): string {
+    const name = error instanceof Error ? error.name : typeof error;
+    const code = typeof error === "object" && error !== null && "code" in error
+        ? String((error as { code: unknown }).code)
+        : null;
+    return code ? `${name} (${code})` : name;
+}
+
 @Injectable()
 export class SmsCarrierCheckService {
     private readonly logger = new Logger(SmsCarrierCheckService.name);
@@ -111,7 +121,7 @@ export class SmsCarrierCheckService {
                     }
                     this.logger.error(
                         `[CarrierCheck] Failed to process log ${log.id}`,
-                        error instanceof Error ? error.stack : String(error),
+                        describeErrorWithoutDetails(error),
                     );
                     await this.postponeFailedRow(log);
                 }
@@ -124,7 +134,7 @@ export class SmsCarrierCheckService {
 
             this.logger.error(
                 "[CarrierCheck] Failed to load due carrier checks",
-                error instanceof Error ? error.stack : String(error),
+                describeErrorWithoutDetails(error),
             );
         } finally {
             this.executionGuard.finish(runToken);
