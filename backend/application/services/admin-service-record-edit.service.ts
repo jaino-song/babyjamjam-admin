@@ -344,10 +344,11 @@ function hasPlannedDateDifference(
  * stored period: when the earliest owner's sessions begin before an earlier
  * assignment's stored end (a backfill by a later caregiver), or the latest
  * owner's end would pass a later assignment's stored start, the stored date is
- * kept, since taking the session date would move that boundary. Every stored assignment is still emitted so the
- * repository re-evaluates each schedule's message automation as before, but
- * only the ones whose dates this edit changes are flagged `datesChanged` and
- * written.
+ * kept, since taking the session date would move that boundary. Every stored
+ * assignment is still emitted so the repository re-evaluates each schedule's
+ * message automation as before, but only the ones whose service_record_assignment
+ * or employee_schedule dates differ from the computed ones are flagged
+ * `datesChanged`; those are re-synced in both tables.
  *
  * Moving the outer edges across a neighbour's stored boundary cannot be done
  * without moving that boundary, so it is a conflict the administrator resolves
@@ -401,7 +402,11 @@ function assignmentWrites(
             scheduleId: item.assignment.scheduleId,
             startDate: item.startDate,
             endDate: item.endDate,
-            datesChanged: item.startDate !== item.storedStart || item.endDate !== item.storedEnd,
+            // Both tables must already hold the computed dates, else they are re-synced.
+            datesChanged: item.startDate !== item.assignment.startDate
+                || item.startDate !== item.assignment.scheduleStartDate
+                || item.endDate !== item.assignment.endDate
+                || item.endDate !== item.assignment.scheduleEndDate,
         };
     });
 }

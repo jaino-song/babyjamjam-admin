@@ -3261,8 +3261,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 });
             }
             for (const assignment of plan.assignments) {
-                // Unchanged assignments are emitted for message automation only; writing
-                // their dates would overwrite whichever table disagrees with the other.
+                // An assignment whose two tables already hold the computed dates is emitted for
+                // message automation only; otherwise both tables are re-synced to those dates.
                 if (assignment.datesChanged === false) continue;
                 if (assignment.assignmentId) {
                     await tx.service_record_assignment.updateMany({

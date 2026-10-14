@@ -409,10 +409,11 @@ export interface ServiceRecordEditConfirmAssignmentUpdate {
     startDate: string;
     endDate: string;
     /**
-     * Whether this edit changes the assignment's dates. Only when true are the
-     * dates written to service_record_assignment and employee_schedule; the
-     * entry is emitted either way so message automation is re-evaluated. A
-     * missing flag is treated as true.
+     * True when service_record_assignment and employee_schedule do not both
+     * already hold `startDate`/`endDate`. Only then are the dates written, to
+     * both tables, so they are re-synced to the computed value; when false
+     * neither table is touched. The entry is emitted either way so message
+     * automation is re-evaluated. A missing flag is treated as true.
      */
     datesChanged?: boolean;
 }

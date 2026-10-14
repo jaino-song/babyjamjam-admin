@@ -2427,6 +2427,19 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
+    it("flags an assignment whose employee_schedule disagrees with the computed dates", async () => {
+        const drifted = { ...caregiverB, scheduleStartDate: "2026-10-12" };
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA), written(8, caregiverB)]),
+            assignments: [caregiverA, drifted],
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: true }),
+        ]);
+    });
+
     it("flags no assignment as changed when a confirm leaves every date alone", async () => {
         const plan = await confirmedAssignments(
             handoverSource([written(1, caregiverA), written(8, caregiverB)]),
