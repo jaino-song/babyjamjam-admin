@@ -21,6 +21,7 @@ import { AligoService } from "application/services/aligo.service";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { parseKstSchedule } from "application/utils/kst-schedule";
+import { CARRIER_CHECK_DELAY_MS } from "domain/entities/message-log.entity";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -637,6 +638,21 @@ export class MessageDeliveryController {
                             : "uncertain",
             },
         };
+        if (isAccepted && typeof updateData["aligoMid"] === "string" && updateData["aligoMid"]) {
+            // The one-shot carrier check runs 30 minutes after delivery; for a
+            // reserved send that is counted from the reserved time (Asia/Seoul).
+            const acceptedAt = updateData["providerAcceptedAt"] as Date;
+            const reservedAt = this.reservedSendTime(
+                request?.["scheduledDate"],
+                request?.["scheduledTime"],
+            );
+            updateData["carrierCheckDueAt"] = new Date(
+                (reservedAt ?? acceptedAt).getTime() + CARRIER_CHECK_DELAY_MS,
+            );
+            updateData["carrierCheckedAt"] = null;
+            updateData["carrierResultState"] = null;
+            updateData["carrierResults"] = Prisma.DbNull;
+        }
         const receiver = request?.["receiver"];
         if (typeof receiver === "string" && receiver.trim()) {
             updateData["receiver"] = receiver;
@@ -644,6 +660,16 @@ export class MessageDeliveryController {
         }
 
         await this.updateSmsLog(logId, updateData);
+    }
+
+    /** Reserved send time from Aligo's YYYYMMDD + HHmm request fields (Asia/Seoul), or null. */
+    private reservedSendTime(rawDate: unknown, rawTime: unknown): Date | null {
+        if (typeof rawDate !== "string" || typeof rawTime !== "string") return null;
+        if (!/^\d{8}$/.test(rawDate) || !/^\d{4}$/.test(rawTime)) return null;
+        return parseKstSchedule(
+            `${rawDate.slice(0, 4)}-${rawDate.slice(4, 6)}-${rawDate.slice(6, 8)}`,
+            `${rawTime.slice(0, 2)}:${rawTime.slice(2, 4)}`,
+        );
     }
 
     private async updateSmsLog(

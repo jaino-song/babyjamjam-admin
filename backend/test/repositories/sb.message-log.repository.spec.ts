@@ -835,4 +835,126 @@ describe("SbMessageLogRepository", () => {
             });
         });
     });
+
+    describe("findCarrierChecksDueSystemScope", () => {
+        it("queries due aligo_sms rows with a mid in system scope, oldest due first", async () => {
+            messageLogModel.findMany.mockResolvedValue([]);
+            const now = new Date("2026-10-14T03:00:00.000Z");
+
+            await repository.findCarrierChecksDueSystemScope(25, now);
+
+            expect(messageLogModel.findMany).toHaveBeenCalledWith({
+                where: {
+                    provider: "aligo_sms",
+                    aligoMid: { not: null },
+                    carrierCheckDueAt: { not: null, lte: now },
+                },
+                orderBy: [{ carrierCheckDueAt: "asc" }, { id: "asc" }],
+                take: 25,
+            });
+        });
+    });
+
+    describe("saveCarrierCheckResult", () => {
+        const checkedAt = new Date("2026-10-14T03:30:00.000Z");
+        const baseInput = {
+            id: 55,
+            expectedMid: "mid-1",
+            results: [{ receiver: "01012345678", verdict: "success" }],
+            checkedAt,
+            failureMessage: null,
+        };
+        const carrierData = (state: string) => ({
+            carrierCheckDueAt: null,
+            carrierCheckedAt: checkedAt,
+            carrierResultState: state,
+            carrierResults: baseInput.results,
+        });
+
+        it("stores a delivered result without touching status or provider acceptance", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+
+            const outcome = await repository.saveCarrierCheckResult({ ...baseInput, state: "delivered" });
+
+            expect(outcome).toBe("saved");
+            expect(messageLogModel.updateMany).toHaveBeenCalledTimes(1);
+            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, aligoMid: "mid-1", carrierCheckDueAt: { not: null } },
+                data: carrierData("delivered"),
+            });
+            expect(clientModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("flips a sent or accepted-pending row to failed in one conditional update", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+
+            const outcome = await repository.saveCarrierCheckResult({
+                ...baseInput,
+                state: "failed",
+                failureMessage: "통신사 전달 실패: 5678 결번",
+            });
+
+            expect(outcome).toBe("saved_status_failed");
+            expect(messageLogModel.updateMany).toHaveBeenCalledTimes(1);
+            expect(messageLogModel.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 55,
+                    aligoMid: "mid-1",
+                    carrierCheckDueAt: { not: null },
+                    OR: [
+                        { status: "sent" },
+                        { status: "pending", providerAcceptanceState: "accepted" },
+                    ],
+                },
+                data: {
+                    ...carrierData("failed"),
+                    status: "failed",
+                    errorMessage: "통신사 전달 실패: 5678 결번",
+                    nextRetryAt: null,
+                },
+            });
+            expect(clientModel.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("saves the failed result without flipping status when the row is no longer sent", async () => {
+            messageLogModel.updateMany
+                .mockResolvedValueOnce({ count: 0 })
+                .mockResolvedValueOnce({ count: 1 });
+
+            const outcome = await repository.saveCarrierCheckResult({
+                ...baseInput,
+                state: "failed",
+                failureMessage: "통신사 전달 실패: 5678 결번",
+            });
+
+            expect(outcome).toBe("saved");
+            expect(messageLogModel.updateMany).toHaveBeenNthCalledWith(2, {
+                where: { id: 55, aligoMid: "mid-1", carrierCheckDueAt: { not: null } },
+                data: carrierData("failed"),
+            });
+        });
+
+        it("never flips status for non-failed states", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+
+            for (const state of ["unconfirmed", "lookup_error"] as const) {
+                messageLogModel.updateMany.mockClear();
+                expect(await repository.saveCarrierCheckResult({ ...baseInput, state })).toBe("saved");
+                expect(messageLogModel.updateMany).toHaveBeenCalledTimes(1);
+                const call = messageLogModel.updateMany.mock.calls[0][0] as { data: Record<string, unknown> };
+                expect(call.data).not.toHaveProperty("status");
+            }
+        });
+
+        it("returns stale when no row matches (mid changed or already checked)", async () => {
+            messageLogModel.updateMany.mockResolvedValue({ count: 0 });
+
+            expect(await repository.saveCarrierCheckResult({ ...baseInput, state: "delivered" })).toBe("stale");
+            expect(await repository.saveCarrierCheckResult({
+                ...baseInput,
+                state: "failed",
+                failureMessage: "x",
+            })).toBe("stale");
+        });
+    });
 });

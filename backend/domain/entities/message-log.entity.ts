@@ -20,6 +20,12 @@ export function getMessageDeliveryRetryPolicy(provider: string): MessageDelivery
     };
 }
 
+/** Delay between Aligo accepting an SMS and the one-shot carrier delivery check. */
+export const CARRIER_CHECK_DELAY_MS = 30 * 60 * 1000;
+
+/** Outcome of the one-shot carrier delivery check. */
+export type CarrierResultState = "delivered" | "failed" | "unconfirmed" | "lookup_error";
+
 export type MessageLogStatus = "pending" | "sent" | "failed";
 
 /** Local state for the boundary around a non-idempotent SMS provider call. */
@@ -68,7 +74,31 @@ export class MessageLogEntity {
         public providerReconciledAt: Date | null = null,
         public providerReconciledBy: string | null = null,
         public providerReconciliationReason: string | null = null,
+        public carrierCheckDueAt: Date | null = null,
+        public carrierCheckedAt: Date | null = null,
+        public carrierResultState: CarrierResultState | null = null,
+        public carrierResults: unknown[] | null = null,
     ) {}
+
+    /**
+     * True only after scheduleCarrierCheck() ran on this instance. The mapper
+     * writes carrier columns on update only when set, so a stale entity can
+     * never overwrite a carrier result saved by the one-shot check.
+     */
+    private carrierCheckScheduled = false;
+
+    hasPendingCarrierCheckSchedule(): boolean {
+        return this.carrierCheckScheduled;
+    }
+
+    /** Schedule (or re-schedule, resetting any earlier result) the one-shot carrier check. */
+    scheduleCarrierCheck(baseTime: Date): void {
+        this.carrierCheckDueAt = new Date(baseTime.getTime() + CARRIER_CHECK_DELAY_MS);
+        this.carrierCheckedAt = null;
+        this.carrierResultState = null;
+        this.carrierResults = null;
+        this.carrierCheckScheduled = true;
+    }
 
     markSent(aligoMid?: string): void {
         this.status = "sent";
@@ -177,6 +207,10 @@ export class MessageLogEntity {
         providerReconciledAt: Date | null = null,
         providerReconciledBy: string | null = null,
         providerReconciliationReason: string | null = null,
+        carrierCheckDueAt: Date | null = null,
+        carrierCheckedAt: Date | null = null,
+        carrierResultState: CarrierResultState | null = null,
+        carrierResults: unknown[] | null = null,
     ): MessageLogEntity {
         return new MessageLogEntity(
             id, branchId, provider, templateKey, triggerJobId, receiver, clientId,
@@ -190,6 +224,10 @@ export class MessageLogEntity {
             providerReconciledAt,
             providerReconciledBy,
             providerReconciliationReason,
+            carrierCheckDueAt,
+            carrierCheckedAt,
+            carrierResultState,
+            carrierResults,
         );
     }
 
