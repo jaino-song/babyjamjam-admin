@@ -2311,6 +2311,81 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         })).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
     });
 
+    /** A terminated schedule on the case that owns no session: dates only, never an outer edge. */
+    const terminated = {
+        ...caregiverB,
+        id: "dddddddd-0000-4000-8000-00000000000d",
+        scheduleId: 704,
+        employeeId: 34,
+        employeeName: "종료",
+        primaryEmployeeId: 34,
+        primaryEmployeeName: "종료",
+        replaced: false,
+    };
+    function singleOwnerSource(
+        single: typeof caregiverB,
+        extra: typeof terminated,
+        order: "extra-first" | "extra-last",
+    ): ServiceRecordEditSource {
+        return {
+            ...handoverSource([written(1, single)]),
+            assignments: order === "extra-first" ? [extra, single] : [single, extra],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+    }
+
+    it("does not treat a session-less terminated schedule before the first session as the case start", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-09-28",
+            scheduleStartDate: "2026-09-28",
+            endDate: "2026-10-23",
+            scheduleEndDate: "2026-10-23",
+        };
+        const early = {
+            ...terminated,
+            startDate: "2026-09-01",
+            scheduleStartDate: "2026-09-01",
+            endDate: "2026-09-05",
+            scheduleEndDate: "2026-09-05",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, early, "extra-first"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: early.id, scheduleId: 704, startDate: "2026-09-01", endDate: "2026-09-05" }),
+            expect.objectContaining({ assignmentId: single.id, scheduleId: 702, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+    });
+
+    it("does not extend a session-less terminated schedule stored after the last session", async () => {
+        const single = {
+            ...caregiverB,
+            startDate: "2026-10-01",
+            scheduleStartDate: "2026-10-01",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const late = {
+            ...terminated,
+            startDate: "2026-10-26",
+            scheduleStartDate: "2026-10-26",
+            endDate: "2026-10-30",
+            scheduleEndDate: "2026-10-30",
+        };
+        const plan = await confirmedAssignments(singleOwnerSource(single, late, "extra-last"), headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+            expect.objectContaining({ assignmentId: late.id, scheduleId: 704, startDate: "2026-10-26", endDate: "2026-10-30" }),
+        ]);
+    });
+
     it("still moves a single caregiver's end with the last session", async () => {
         const single = {
             ...caregiverB,

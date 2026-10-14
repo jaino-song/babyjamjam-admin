@@ -335,11 +335,14 @@ function hasPlannedDateDifference(
  * the incoming start), and ownership of sessions, including a newly assigned
  * caregiver's backfill, says nothing about where a hand-over lies. So every
  * stored assignment keeps its dates, except the two outer edges of the case:
- * the earliest assignment starts on the first planned session and the latest
- * ends on the last one, which is how a single caregiver's schedule follows moved
- * session dates. Every stored assignment is written (unchanged ones with their
- * stored dates) so the repository still re-evaluates each schedule's message
- * automation as before.
+ * the earliest session-owning assignment starts on the first planned session and
+ * the latest session-owning one ends on the last one, which is how a single
+ * caregiver's schedule follows moved session dates. An assignment that owns no
+ * session (a terminated or otherwise session-less schedule) is never an outer
+ * edge and keeps its stored dates, so it can neither block the confirm nor have
+ * its schedule stretched. Every stored assignment is still emitted so the
+ * repository re-evaluates each schedule's message automation as before, but
+ * their dates are written as before.
  *
  * Moving the outer edges across a neighbour's stored boundary cannot be done
  * without moving that boundary, so it is a conflict the administrator resolves
@@ -349,19 +352,29 @@ function assignmentWrites(
     source: ServiceRecordEditSource,
     startDate: string | null,
     endDate: string | null,
+    ownerAssignmentIds: ReadonlySet<string>,
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
     const stored = source.assignments
         .filter((assignment) => Boolean(assignment.id) && assignment.scheduleId !== null)
-        .map((assignment) => ({
-            assignment,
-            startDate: assignment.startDate || assignment.scheduleStartDate,
-            endDate: assignment.endDate || assignment.scheduleEndDate,
-        }))
+        .map((assignment) => {
+            const storedStart = assignment.startDate || assignment.scheduleStartDate;
+            const storedEnd = assignment.endDate || assignment.scheduleEndDate;
+            return {
+                assignment,
+                storedStart,
+                storedEnd,
+                startDate: storedStart,
+                endDate: storedEnd,
+            };
+        })
         .sort((left, right) =>
-            left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
+            left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
-    if (startDate) stored[0]!.startDate = startDate;
-    if (endDate) stored[stored.length - 1]!.endDate = endDate;
+    const owners = stored.filter((item) => item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id));
+    if (owners.length > 0) {
+        if (startDate) owners[0]!.startDate = startDate;
+        if (endDate) owners[owners.length - 1]!.endDate = endDate;
+    }
     return stored.map((item) => {
         if (!item.startDate || !item.endDate || item.startDate > item.endDate) {
             throw new ServiceRecordEditConflictError(
@@ -1242,7 +1255,12 @@ export class AdminServiceRecordEditService {
             plannedSessions,
             sessions,
             newSessions,
-            assignments: assignmentWrites(source, provisional.after.startDate, provisional.after.endDate),
+            assignments: assignmentWrites(
+                source,
+                provisional.after.startDate,
+                provisional.after.endDate,
+                new Set(provisional.provenance.map((range) => range.assignmentId)),
+            ),
             revision: changed
                 ? {
                     branchId,
