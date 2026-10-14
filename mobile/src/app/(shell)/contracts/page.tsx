@@ -1260,7 +1260,11 @@ function contractStageItems(
   const sendFailed = hasDocumentSendFailure(doc);
   const hasOpened = hasOpenedDocument(doc);
   const reviewNeeded = isReviewNeeded(doc, calendar);
-  const hasCustomerSigned = isCustomerSignedCategory(category);
+  const isVoided = category === "voided";
+  // A void overrides every provider code (plan D2), but it does not erase what happened before it: draw the
+  // history the document would show if it were not voided, ignoring display_status, then close it with the void.
+  const historyCategory = isVoided ? categorize({ ...doc, display_status: null }, calendar) : category;
+  const hasCustomerSigned = isCustomerSignedCategory(historyCategory);
   const items: ContractStageItem[] = [
     {
       icon: FileText,
@@ -1284,11 +1288,11 @@ function contractStageItems(
     icon: AlertTriangle,
     iconVariant: "info",
     text: "계약이 파기됐어요",
-    time: updatedAt,
+    time: formatDateTime(doc.voided_at),
   };
 
   if (sendFailed) {
-    if (category === "voided") items.push(voidedStage);
+    if (isVoided) items.push(voidedStage);
     return items;
   }
 
@@ -1310,7 +1314,7 @@ function contractStageItems(
     });
   }
 
-  if (category === "completed") {
+  if (historyCategory === "completed") {
     items.push(
       {
         icon: FileSignature,
@@ -1325,6 +1329,13 @@ function contractStageItems(
         time: updatedAt,
       },
     );
+    if (isVoided) items.push(voidedStage);
+    return items;
+  }
+
+  // Whatever else the pre-void state was, its terminal or live entry is dropped: the void is the last, closed entry.
+  if (isVoided) {
+    items.push(voidedStage);
     return items;
   }
 
@@ -1368,11 +1379,6 @@ function contractStageItems(
       text: "문서 기간이 만료됐어요",
       time: updatedAt,
     });
-    return items;
-  }
-
-  if (category === "voided") {
-    items.push(voidedStage);
     return items;
   }
 

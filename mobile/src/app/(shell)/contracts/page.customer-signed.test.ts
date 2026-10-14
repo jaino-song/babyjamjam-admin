@@ -450,8 +450,9 @@ describe("voided (계약 파기, BJJ-439): 파기됨 in the muted tone, filed un
 
     expect(category).toBe("voided");
     expect(progress).toBe("파기됨");
-    expect(stages).toContain("계약이 파기됐어요");
-    expect(stages).not.toContain(SIGNED_STAGE);
+    expect(stages[stages.length - 1]).toBe("계약이 파기됐어요");
+    expect(stages).not.toContain("제공기관 검토 필요");
+    expect(stages.some((text) => text.includes("대기중"))).toBe(false);
     expect(stages).not.toContain("문서 기간이 만료됐어요");
     expect(stages).not.toContain("문서가 철회됐어요");
   });
@@ -496,6 +497,123 @@ describe("voided (계약 파기, BJJ-439): 파기됨 in the muted tone, filed un
     const { stages } = view(makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "voided" }));
     expect(stages[stages.length - 1]).toBe("계약이 파기됐어요");
     expect(stages).not.toContain("이용자에게 문서 전송에 실패했어요.");
+  });
+
+  describe("stage list of a voided document keeps the real history and closes with the void (plan D2)", () => {
+    const VOID_STAGE = "계약이 파기됐어요";
+    const VOIDED_AT = "2026-03-05T06:30:00.000Z";
+    const UPDATED_AT = Date.UTC(2026, 2, 1, 1, 0, 0);
+    const stageView = (doc: EformsignDocument) => {
+      const category = helpers.categorize(doc, KR_BUILTIN_CALENDAR);
+      return helpers.contractStageItems(doc, category, KR_BUILTIN_CALENDAR) as Array<StageItem & { time: string }>;
+    };
+    const formatted = (value: string | number) =>
+      new Date(value).toLocaleString("ko-KR", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+
+    it("stamps the void stage with voided_at, never with the provider's updated_date", () => {
+      const doc = {
+        ...makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        updated_date: UPDATED_AT,
+        voided_at: VOIDED_AT,
+      } as unknown as EformsignDocument;
+      const items = stageView(doc);
+      const last = items[items.length - 1];
+
+      expect(last.text).toBe(VOID_STAGE);
+      expect(last.time).toBe(formatted(VOIDED_AT));
+      expect(last.time).not.toBe(formatted(UPDATED_AT));
+    });
+
+    it("shows no time on the void stage when voided_at is absent, and does not borrow updated_date", () => {
+      const doc = {
+        ...makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        updated_date: UPDATED_AT,
+      } as unknown as EformsignDocument;
+      const items = stageView(doc);
+      const last = items[items.length - 1];
+
+      expect(last.text).toBe(VOID_STAGE);
+      expect(last.time).toBe("-");
+      expect(last.time).not.toBe(formatted(UPDATED_AT));
+    });
+
+    it("keeps a completed (003) document's history, then ends with the void", () => {
+      const { stages } = view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }));
+
+      expect(stages).toEqual([
+        "문서가 생성되었습니다",
+        "이용자에게 문서가 발송되었습니다.",
+        "이용자가 문서를 열람했습니다",
+        SIGNED_STAGE,
+        "제공기관 검토 완료",
+        "계약서가 완료되었습니다",
+        VOID_STAGE,
+      ]);
+    });
+
+    it("keeps a completed (050) document's history, then ends with the void", () => {
+      const { stages } = view(makeDoc({ statusType: "050", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }));
+
+      expect(stages).toContain("제공기관 검토 완료");
+      expect(stages).toContain("계약서가 완료되었습니다");
+      expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+    });
+
+    it("keeps a customer-signed document's signature, then ends with the void and no live entry", () => {
+      const doc = {
+        ...makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "voided" }),
+        contract_end_date: "2026-03-05",
+      } as unknown as EformsignDocument;
+      const { stages } = view(doc);
+
+      expect(stages).toContain(SIGNED_STAGE);
+      expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+      expect(stages).not.toContain("제공기관 검토 필요");
+      expect(stages).not.toContain("제공기관 검토 완료");
+      expect(stages.some((text) => text.includes("대기중"))).toBe(false);
+      expect(stageView(doc).some((item) => item.time === "현재")).toBe(false);
+    });
+
+    it("draws an unsigned voided document as creation, send and void with no live entry", () => {
+      const doc = makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "voided" });
+      const { stages } = view(doc);
+
+      expect(stages).toEqual(["문서가 생성되었습니다", "이용자에게 문서가 발송되었습니다.", VOID_STAGE]);
+      expect(stages.some((text) => text.includes("대기중"))).toBe(false);
+      expect(stageView(doc).some((item) => item.time === "현재")).toBe(false);
+    });
+
+    it("drops the terminal entry of a pre-void revoked / revoke-requested / expired document and still ends with the void", () => {
+      for (const statusType of ["042", "040", "080"]) {
+        const { stages } = view(makeDoc({ statusType, stepType: "05", stepName: "이용자", displayStatus: "voided" }));
+
+        expect(stages[stages.length - 1]).toBe(VOID_STAGE);
+        expect(stages).not.toContain("문서가 철회됐어요");
+        expect(stages).not.toContain("문서 기간이 만료됐어요");
+        expect(stages.some((text) => text.startsWith("철회가 요청됐어요"))).toBe(false);
+      }
+    });
+
+    it("keeps the non-voided stage lists unchanged (controls)", () => {
+      const completed = view(makeDoc({ statusType: "003", stepType: "06", stepName: "제공기관 검토", displayStatus: "completed" })).stages;
+      expect(completed.slice(-2)).toEqual(["제공기관 검토 완료", "계약서가 완료되었습니다"]);
+      expect(completed).not.toContain(VOID_STAGE);
+
+      const inProgress = stageView(makeDoc({ statusType: "060", stepType: "05", stepName: "이용자", displayStatus: "pending" }));
+      expect(inProgress[inProgress.length - 1].time).toBe("현재");
+      expect(inProgress.map((item) => item.text)).not.toContain(VOID_STAGE);
+
+      const signed = view(makeDoc({ statusType: "070", stepType: "06", stepName: "제공기관 검토", displayStatus: "signed" })).stages;
+      expect(signed).toContain(SIGNED_STAGE);
+      expect(signed).not.toContain(VOID_STAGE);
+    });
   });
 
   it("leaves a non-voided send failure unchanged: it ends at the failure with no voided stage (control)", () => {
