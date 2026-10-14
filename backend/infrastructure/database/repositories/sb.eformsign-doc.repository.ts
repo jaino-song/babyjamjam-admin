@@ -51,6 +51,8 @@ const DELETED_EFORMSIGN_STATUS_TYPES = ["047", "049", "099"];
 /** Sentinel: the document's owner moved between the unlocked read and its row lock in a link. */
 const LINK_OWNERSHIP_CHANGED = Symbol("LINK_OWNERSHIP_CHANGED");
 const LINK_OWNERSHIP_RETRY_LIMIT = 3;
+/** Thrown inside a void transaction so it rolls back (its client write included) and starts over. */
+class VoidOwnerChanged extends Error {}
 const COMPLETED_EFORMSIGN_STATUS_TYPES = [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES];
 const MIRROR_LIST_NON_COMPLETED_WHERE: Prisma.eformsign_docWhereInput = {
     statusType: { notIn: COMPLETED_EFORMSIGN_STATUS_TYPES },
@@ -685,9 +687,93 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         });
     }
 
+    /**
+     * Voids a contract document, serialised with every phone-link pointer writer through the
+     * owning client's row lock (BJJ-439 D3).
+     *
+     * Those writers take the client row `FOR UPDATE` and only then read "is there a newer voided
+     * contract" before pointing `client.e_doc_id` at an older document. A void that did not hold
+     * the same lock could commit between that read and the pointer write. Lock order is the
+     * project-wide one: client row -> document row.
+     *
+     * 1. read the document's owner WITHOUT a lock (it only chooses which client row to lock);
+     * 2. lock that client row, then WRITE it (no value change): a lock alone does not
+     *    invalidate the snapshot of a Serializable link transaction that started earlier and is
+     *    waiting on this row, while a concurrent UPDATE makes it fail with 40001 and retry
+     *    against a fresh snapshot that sees the void;
+     * 3. lock the document row and re-check owner / void / purge state under it;
+     * 4. write the audit columns.
+     *
+     * The caller has already cancelled the document at the vendor, so an owner that moved between
+     * (1) and (3) is not a refusal: the transaction rolls back and starts over with the new owner.
+     * No compatibility retry: a void must never succeed without its durable audit values.
+     */
     async markVoided(branchid: string, documentId: string, voidedAt: Date, voidedBy: string): Promise<boolean> {
-        // No compatibility retry: a void must never succeed without its durable audit values.
-        const result = await this.prismaService.eformsign_doc.updateMany({
+        for (let attempt = 0; attempt < LINK_OWNERSHIP_RETRY_LIMIT; attempt += 1) {
+            try {
+                return await this.prismaService.$transaction((tx) =>
+                    this.markVoidedOnce(tx, branchid, documentId, voidedAt, voidedBy));
+            } catch (error) {
+                if (!(error instanceof VoidOwnerChanged)) throw error;
+            }
+        }
+        return false;
+    }
+
+    private async markVoidedOnce(
+        tx: Prisma.TransactionClient,
+        branchid: string,
+        documentId: string,
+        voidedAt: Date,
+        voidedBy: string,
+    ): Promise<boolean> {
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND voided_at IS NULL
+              AND permanent_purge_requested_at IS NULL
+        `);
+        const ownerId = peeked?.[0]?.clientId ?? null;
+        if (ownerId === null) {
+            return false;
+        }
+
+        const lockedClients = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id = ${ownerId}
+            FOR UPDATE
+        `);
+        if (lockedClients?.length !== 1) {
+            return false;
+        }
+        await tx.$executeRaw(Prisma.sql`
+            UPDATE client
+            SET e_doc_id = e_doc_id
+            WHERE id = ${ownerId}
+        `);
+
+        const documents = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
+            SELECT client_id AS "clientId"
+            FROM eformsign_doc
+            WHERE document_id = ${documentId}
+              AND branch_id = ${branchid}::uuid
+              AND voided_at IS NULL
+              AND permanent_purge_requested_at IS NULL
+            FOR UPDATE
+        `);
+        const document = documents?.[0];
+        if (!document) {
+            return false;
+        }
+        if ((document.clientId ?? null) !== ownerId) {
+            // The owner moved after the unlocked read: the locked client is not the owner.
+            throw new VoidOwnerChanged();
+        }
+
+        const result = await tx.eformsign_doc.updateMany({
             where: { documentId, branchId: branchid, voidedAt: null, permanentPurgeRequestedAt: null },
             data: { voidedAt, voidedBy },
         });
