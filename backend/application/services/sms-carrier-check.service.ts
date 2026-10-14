@@ -161,9 +161,7 @@ export class SmsCarrierCheckService {
                 return;
             } catch (saveError) {
                 this.logger.warn(
-                    `[CarrierCheck] Could not close log ${log.id} as lookup_error, postponing instead: ${
-                        saveError instanceof Error ? saveError.message : String(saveError)
-                    }`,
+                    `[CarrierCheck] Could not close log ${log.id} as lookup_error, postponing instead: ${describeErrorWithoutDetails(saveError)}`,
                 );
             }
         }
@@ -175,9 +173,7 @@ export class SmsCarrierCheckService {
             );
         } catch (postponeError) {
             this.logger.warn(
-                `[CarrierCheck] Could not postpone log ${log.id}: ${
-                    postponeError instanceof Error ? postponeError.message : String(postponeError)
-                }`,
+                `[CarrierCheck] Could not postpone log ${log.id}: ${describeErrorWithoutDetails(postponeError)}`,
             );
         }
     }
