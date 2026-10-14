@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { mapHttpProblem, sendProblemResponse } from "infrastructure/filters/problem-response";
@@ -207,6 +208,95 @@ describe("MessageDeliveryController", () => {
                 errorMessage: null,
                 attempts: 1,
             }),
+        });
+    });
+
+    describe("carrier check scheduling", () => {
+        const acceptedResponse = {
+            result_code: 1,
+            message: "성공적으로 전송요청 하였습니다.",
+            msg_id: 321,
+            success_cnt: 1,
+            error_cnt: 0,
+            msg_type: "LMS" as const,
+        };
+
+        it("schedules the carrier check 30 minutes after the reserved time (Asia/Seoul) for a reserved send", async () => {
+            jest.spyOn(Date, "now").mockReturnValue(new Date("2026-03-09T11:00:00.000Z").getTime());
+            aligoService.sendSms.mockResolvedValue({
+                request: {
+                    senderPhone: "0212345678",
+                    receiver: "01012345678",
+                    msgType: "LMS",
+                    scheduledDate: "20260309",
+                    scheduledTime: "2015",
+                    testModeYn: "N",
+                },
+                response: acceptedResponse,
+            });
+
+            await controller.sendSms(
+                { branchId: "org-1" },
+                {
+                    receiver: "010-1234-5678",
+                    message: "장문 테스트 메시지",
+                    title: "안내",
+                    triggerType: "scheduled",
+                    scheduledDate: "2026-03-09",
+                    scheduledTime: "20:15",
+                },
+            );
+
+            expect(prismaService.message_log.update).toHaveBeenCalledWith({
+                where: { id: 42 },
+                data: expect.objectContaining({
+                    status: "pending",
+                    providerAcceptanceState: "accepted",
+                    carrierCheckDueAt: new Date("2026-03-09T20:45:00+09:00"),
+                    carrierCheckedAt: null,
+                    carrierResultState: null,
+                    carrierResults: Prisma.DbNull,
+                }),
+            });
+        });
+
+        it("schedules the carrier check 30 minutes after acceptance for an immediate send", async () => {
+            const nowMs = new Date("2026-03-09T11:00:00.000Z").getTime();
+            jest.spyOn(Date, "now").mockReturnValue(nowMs);
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "SMS", testModeYn: "N" },
+                response: acceptedResponse,
+            });
+
+            await controller.sendSms(
+                { branchId: "org-1" },
+                { receiver: "01012345678", message: "테스트 발송 본문", triggerType: "immediate", msgType: "AUTO" },
+            );
+
+            expect(prismaService.message_log.update).toHaveBeenCalledWith({
+                where: { id: 42 },
+                data: expect.objectContaining({
+                    status: "sent",
+                    carrierCheckDueAt: new Date(nowMs + 30 * 60 * 1000),
+                }),
+            });
+        });
+
+        it("does not schedule a carrier check when the send was rejected", async () => {
+            aligoService.sendSms.mockResolvedValue({
+                request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "SMS", testModeYn: "N" },
+                response: { result_code: -101, message: "rejected", success_cnt: 0, error_cnt: 1, msg_type: "SMS" },
+            });
+
+            await expect(
+                controller.sendSms(
+                    { branchId: "org-1" },
+                    { receiver: "01012345678", message: "테스트 발송 본문", triggerType: "immediate", msgType: "AUTO" },
+                ),
+            ).rejects.toBeDefined();
+
+            const data = prismaService.message_log.update.mock.calls[0][0].data as Record<string, unknown>;
+            expect(data).not.toHaveProperty("carrierCheckDueAt");
         });
     });
 

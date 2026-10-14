@@ -454,6 +454,15 @@ export class SmsRetryService {
             }
             providerAttempt.providerAcceptanceState = "accepted";
             providerAttempt.providerAcceptedAt = new Date(Date.now());
+            if (providerAttempt.aligoMid) {
+                // Reserved sends are delivered at the reserved time, so the
+                // 30-minute carrier check counts from then; otherwise from now.
+                providerAttempt.scheduleCarrierCheck(
+                    isScheduledInFuture && schedule.scheduledAtMs !== null
+                        ? new Date(schedule.scheduledAtMs)
+                        : providerAttempt.providerAcceptedAt,
+                );
+            }
             await this.logRepository.update(providerAttempt);
             this.logger.log(`[Retry] Successfully resent SMS ${providerAttempt.templateKey} to ${maskPhone(providerAttempt.receiver)}`);
             return providerAttempt;

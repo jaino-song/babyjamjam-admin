@@ -7,6 +7,8 @@ import {
     MessageHistoryPageQuery,
     MessageRetryInvocation,
     MessageRetryStartResult,
+    SaveCarrierCheckResultInput,
+    SaveCarrierCheckResultOutcome,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
@@ -48,6 +50,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const row = await this.prisma.message_log.create({
             data: MessageLogMapper.toPrismaCreate(log),
         });
+        log.markCarrierCheckPersisted();
         return MessageLogMapper.toDomain(row);
     }
 
@@ -62,9 +65,14 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             }
             return MessageLogMapper.toDomain(row);
         };
+        // With a caller-owned transaction the commit is not ours to observe, so the
+        // scheduled flag stays set (a rollback must not lose the schedule).
         if (transaction) return run(transaction);
-        if (this.isDeliveredServiceEndNotice(log)) return this.prisma.$transaction(run);
-        return run(this.prisma);
+        const persisted = this.isDeliveredServiceEndNotice(log)
+            ? await this.prisma.$transaction(run)
+            : await run(this.prisma);
+        log.markCarrierCheckPersisted();
+        return persisted;
     }
 
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -303,7 +311,9 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const rows = await this.prisma.message_log.findMany({
             where: {
                 triggerJobId: { in: jobIds },
-                status: "sent",
+                // A carrier-check failure flips status to "failed" after the provider
+                // already accepted the send; it still counts as sent (never auto-resend).
+                OR: [{ status: "sent" }, { carrierResultState: "failed" }],
             },
             select: { triggerJobId: true },
         });
@@ -343,6 +353,70 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             take: 50,
         });
         return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async findCarrierChecksDueSystemScope(limit: number, now: Date = new Date()): Promise<MessageLogEntity[]> {
+        const rows = await this.prisma.message_log.findMany({
+            where: {
+                provider: "aligo_sms",
+                aligoMid: { not: null },
+                carrierCheckDueAt: { not: null, lte: now },
+            },
+            orderBy: [{ carrierCheckDueAt: "asc" }, { id: "asc" }],
+            take: limit,
+        });
+        return rows.map(MessageLogMapper.toDomain);
+    }
+
+    async saveCarrierCheckResult(input: SaveCarrierCheckResultInput): Promise<SaveCarrierCheckResultOutcome> {
+        const carrierData = {
+            carrierCheckDueAt: null,
+            carrierCheckedAt: input.checkedAt,
+            carrierResultState: input.state,
+            carrierResults: input.results as Prisma.InputJsonValue,
+        };
+        const matchBase = {
+            id: input.id,
+            aligoMid: input.expectedMid,
+            carrierCheckDueAt: { not: null },
+        } satisfies Prisma.message_logWhereInput;
+
+        return this.prisma.$transaction(async (transaction) => {
+            if (input.state === "failed") {
+                // Reserved sends stay "pending" after acceptance, so both
+                // "sent" and accepted-"pending" rows are flipped.
+                const flipped = await transaction.message_log.updateMany({
+                    where: {
+                        ...matchBase,
+                        OR: [
+                            { status: "sent" },
+                            { status: "pending", providerAcceptanceState: "accepted" },
+                        ],
+                    },
+                    data: {
+                        ...carrierData,
+                        status: "failed",
+                        errorMessage: input.failureMessage,
+                        nextRetryAt: null,
+                    },
+                });
+                if (flipped.count === 1) return "saved_status_failed";
+            }
+
+            const saved = await transaction.message_log.updateMany({
+                where: matchBase,
+                data: carrierData,
+            });
+            return saved.count === 1 ? "saved" : "stale";
+        });
+    }
+
+    async postponeCarrierCheck(id: number, expectedMid: string, until: Date): Promise<boolean> {
+        const result = await this.prisma.message_log.updateMany({
+            where: { id, aligoMid: expectedMid, carrierCheckDueAt: { not: null } },
+            data: { carrierCheckDueAt: until },
+        });
+        return result.count === 1;
     }
 
     async findRetryableServiceRecordSmsByScheduleId(

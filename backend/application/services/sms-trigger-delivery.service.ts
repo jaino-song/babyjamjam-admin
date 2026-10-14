@@ -580,6 +580,9 @@ export class SmsTriggerDeliveryService {
             attempt.lastAttemptAt = new Date(Date.now());
             attempt.nextRetryAt = isAccepted ? null : new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS);
             attempt.updatedAt = new Date(Date.now());
+            if (isAccepted && attempt.aligoMid) {
+                attempt.scheduleCarrierCheck(attempt.providerAcceptedAt ?? new Date(Date.now()));
+            }
             job.payload.templateVariables["retrySafety"] = isAccepted ? "delivered" : "provider-rejected";
             await this.persistAttempt(attempt);
             return isAccepted;
