@@ -3,6 +3,8 @@ import { ConfigService } from "@nestjs/config";
 import { createHash } from "node:crypto";
 import {
     AligoSendSmsParams,
+    AligoSmsDeliveryDetailRow,
+    AligoSmsDeliveryDetailsResult,
     AligoSmsResponse,
     IAligoSmsApiPort,
     ALIGO_DEFAULT_SENDER_POLICY_VERSION,
@@ -12,6 +14,8 @@ import { maskPhone } from "application/utils/mask";
 
 export const DEFAULT_ALIGO_SENDER_PHONE = "010-9641-1878";
 const ALIGO_SEND_TIMEOUT_MS = 30_000;
+const ALIGO_LIST_PAGE_SIZE = 500;
+const ALIGO_LIST_MAX_PAGES = 20;
 
 @Injectable()
 export class AligoApiClient implements IAligoSmsApiPort {
@@ -94,6 +98,70 @@ export class AligoApiClient implements IAligoSmsApiPort {
         }
 
         return this.normalizeSmsResponse(await response.json());
+    }
+
+    async getSmsDeliveryDetails(mid: string): Promise<AligoSmsDeliveryDetailsResult> {
+        this.assertConfigured();
+        const url = `${this.ALIGO_SMS_API_URL}/sms_list/`;
+        const rows: AligoSmsDeliveryDetailRow[] = [];
+        let resultCode = 1;
+        let message = "";
+
+        for (let page = 1; page <= ALIGO_LIST_MAX_PAGES; page += 1) {
+            const formData = new FormData();
+            formData.append("key", this.ALIGO_API_KEY);
+            formData.append("user_id", this.ALIGO_USER_ID);
+            formData.append("mid", mid);
+            formData.append("page", String(page));
+            formData.append("page_size", String(ALIGO_LIST_PAGE_SIZE));
+
+            this.logger.debug(`[Aligo] Fetching sms delivery details mid=${mid} page=${page}`);
+
+            const response = await fetch(url, {
+                method: "POST",
+                body: formData,
+                signal: AbortSignal.timeout(ALIGO_SEND_TIMEOUT_MS),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                this.logger.error(`[Aligo] SMS list API error: ${response.status} - ${errorText}`);
+                throw new Error(`Aligo SMS list API error (${response.status}): ${errorText}`);
+            }
+
+            const data = await response.json() as unknown;
+            const body = data && typeof data === "object" ? data as Record<string, unknown> : {};
+            resultCode = this.toNumber(body["result_code"], 0);
+            message = typeof body["message"] === "string" ? body["message"] : "";
+            if (resultCode !== 1) {
+                return { resultCode, message, rows: [] };
+            }
+
+            const list = Array.isArray(body["list"]) ? body["list"] as unknown[] : [];
+            for (const item of list) {
+                rows.push(this.normalizeDeliveryDetailRow(item));
+            }
+
+            if (body["next_yn"] !== "Y") break;
+        }
+
+        return { resultCode, message, rows };
+    }
+
+    private normalizeDeliveryDetailRow(item: unknown): AligoSmsDeliveryDetailRow {
+        const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+        const mdid = row["mdid"];
+        const sendDate = row["send_date"];
+        const smsState = row["sms_state"];
+        const receiver = row["receiver"];
+        return {
+            mdid: typeof mdid === "string" || typeof mdid === "number" ? String(mdid) : null,
+            receiver: typeof receiver === "string" || typeof receiver === "number"
+                ? String(receiver).replace(/\D/g, "")
+                : "",
+            smsState: typeof smsState === "string" ? smsState.trim() : "",
+            sendDate: typeof sendDate === "string" && sendDate.trim() ? sendDate : null,
+        };
     }
 
     private normalizeSmsResponse(data: unknown): AligoSmsResponse {
