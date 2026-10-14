@@ -133,6 +133,8 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     // eformsign 071: rejected by the provider's reviewer, not terminal — the solid burgundy badge.
     "반려됨": "rejected_by_reviewer",
     "기간 만료": "expired",
+    // 계약 파기 (BJJ-439): inactive, not an error — the pending badge status is the neutral tone.
+    "파기됨": "pending",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {

@@ -197,6 +197,10 @@ export function contractStatusBadgeType(
       return "review";
     case "서명 완료":
       return "signed";
+    // 파기됨 (계약 파기): inactive, not an error — the pending badge status is the neutral tone.
+    // Explicit rather than left to the default so a later change to the default cannot recolour it.
+    case "파기됨":
+      return "pending";
     default:
       return "pending";
   }
@@ -216,6 +220,10 @@ export type BadgeVariant = "success" | "warning" | "destructive" | "info" | "sec
 export function getStatusColor(status: string): BadgeVariant {
   const lowerStatus = status.toLowerCase();
 
+  // 파기됨 (계약 파기) reads neutral; checked first so no keyword below can recolour it.
+  if (lowerStatus.includes("파기됨")) {
+    return "secondary";
+  }
   if (lowerStatus.includes("서명 완료")) {
     return "info";
   }
@@ -272,6 +280,9 @@ export function foldContractStats(
 ): ContractStatsBuckets {
   const buckets: ContractStatsBuckets = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
   for (const doc of docs) {
+    // A voided contract (계약 파기) is in no live bucket: eformsign keeps reporting its code, so
+    // this must run before any category check below.
+    if (doc.display_status === "voided") continue;
     const normalized = normalizeStatusCode(doc.status_type);
     const category = getEformsignStatusCategory(doc.status_type);
 

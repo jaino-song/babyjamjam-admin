@@ -131,6 +131,10 @@ export interface LocalEformsignDocRecord {
     contractEndDate?: string | null;
     /** Authoritative display status stamped by the backend at serve time. */
     displayStatus?: string | null;
+    /** ISO timestamp when the contract was voided (계약 파기); null/absent when it was not. */
+    voidedAt?: string | null;
+    /** Name of the user who voided it; null when unresolved (the UI shows 알 수 없음). */
+    voidedByName?: string | null;
 }
 
 export function normalizeDocumentListResponse(

@@ -256,3 +256,27 @@ describe("customer-signed (contracts stepper) is decided from the display status
     expect(signedFor({ status_type: "041", ...reviewStep }, "2025-01-01")).toBe(true);
   });
 });
+
+describe("voided (계약 파기, BJJ-439) 파기됨", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 파기됨 from display_status whatever the provider code says", () => {
+    for (const code of ["003", "060", "070", "042", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, null, "voided")).toBe("파기됨");
+      expect(resolveDocDisplayStatus({ status_type: code, ...reviewStep }, null, "voided")).toBe("voided");
+    }
+  });
+
+  it("uses the neutral pending badge token and the neutral (secondary) variant, not a danger tone", () => {
+    expect(contractStatusBadgeType("파기됨")).toBe("pending");
+    expect(getStatusColor("파기됨")).toBe("secondary");
+    expect(getStatusColor("파기됨")).not.toBe("destructive");
+  });
+
+  it("never counts as a customer signature, even though the document may have been signed", () => {
+    expect(isCustomerSignedDisplayStatus("voided")).toBe(false);
+    expect(isCustomerSignedDisplayStatus(resolveDocDisplayStatus({ status_type: "003", ...reviewStep }, null, "voided"))).toBe(false);
+    // Control: the same completed document without the void is customer-signed.
+    expect(isCustomerSignedDisplayStatus(resolveDocDisplayStatus({ status_type: "003", ...reviewStep }, null, "completed"))).toBe(true);
+  });
+});

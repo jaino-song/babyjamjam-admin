@@ -213,3 +213,27 @@ describe("041 (doc_refuse_revoke) reads exactly like 060", () => {
     expect(mapDocStatusLabel({ status_type: "041", ...customerStep })).toBe("서명 대기");
   });
 });
+
+describe("voided (계약 파기, BJJ-439) 파기됨", () => {
+  const reviewStep = { step_type: "06", step_name: "제공기관 확인" };
+
+  it("is labelled 파기됨 from display_status whatever the provider code says", () => {
+    for (const code of ["003", "060", "070", "042", "080"]) {
+      expect(mapDocStatusLabel({ status_type: code, ...reviewStep }, null, "voided")).toBe("파기됨");
+    }
+  });
+
+  it("uses the neutral (secondary) variant, not a danger tone", () => {
+    expect(getStatusColor("파기됨")).toBe("secondary");
+    expect(getStatusColor("파기됨")).not.toBe("destructive");
+  });
+
+  it("is never receipt-sendable", () => {
+    expect(isReceiptSendableOnCalendar({
+      category: "completed",
+      displayStatus: "voided",
+      currentStatus: { status_type: "003", ...reviewStep },
+      contractEndDate: null,
+    })).toBe(false);
+  });
+});

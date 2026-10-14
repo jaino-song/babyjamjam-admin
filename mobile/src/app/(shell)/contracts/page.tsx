@@ -200,7 +200,9 @@ const ContractPdfViewer = dynamic(
 // terminal and not expired. The customer's signature stays valid; a later 070 or 072 moves it on. It has
 // its own 반려됨 pill: the server's displayStatus filter accepts rejected_by_reviewer, so the pill count
 // and the filtered list both come from the same resolved display status.
-type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "unknown";
+// "voided" is 계약 파기 (the branch voided the document in the app): shown 파기됨 in the muted tone and
+// filed under the "기간 만료" filter like the expired and revoked categories — no pill of its own.
+type ContractCategory = "in-progress" | "signed" | "drafting" | "completed" | "revoke-requested" | "revoked" | "rejected-by-reviewer" | "expired" | "voided" | "unknown";
 type ContractSectionId = "maternal-contracts" | "service-records" | "automations";
 type FilterKey = "전체" | "서명 대기" | "서명 완료" | "검토 필요" | "반려됨" | "계약 완료" | "기간 만료" | "알 수 없음";
 type DetailTabId = "basic" | "signers" | "messages";
@@ -318,6 +320,7 @@ const CATEGORY_BY_DISPLAY_STATUS: Record<string, ContractCategory> = {
   revoked: "revoked",
   rejected_by_reviewer: "rejected-by-reviewer",
   expired: "expired",
+  voided: "voided",
   unknown: "unknown",
 };
 
@@ -386,6 +389,8 @@ const FILTER_BY_CATEGORY: Record<ContractCategory, FilterKey | null> = {
   // 반려됨 (071) has its own pill, selected server-side by displayStatus=rejected_by_reviewer.
   "rejected-by-reviewer": "반려됨",
   expired: "기간 만료",
+  // 파기됨 has no pill of its own: it files under the server's expired filter, like revoked.
+  voided: "기간 만료",
   unknown: "알 수 없음",
 };
 
@@ -495,6 +500,13 @@ function categoryTones(category: ContractCategory): {
     case "expired":
       return {
         badge: "만료",
+        badgeTone: "muted",
+        badgeMini: "muted",
+        infoTone: "muted",
+      };
+    case "voided":
+      return {
+        badge: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided,
         badgeTone: "muted",
         badgeMini: "muted",
         infoTone: "muted",
@@ -714,6 +726,7 @@ function progressLabel(doc: EformsignDocument, calendar: KrBusinessDayCalendar):
   if (category === "revoked") return "철회됨";
   if (category === "rejected-by-reviewer") return "반려됨 - 제공기관 재검토 대기";
   if (category === "expired") return "기간 만료";
+  if (category === "voided") return "파기됨";
   if (category === "unknown") return "상태 알 수 없음";
   if (hasDocumentSendFailure(doc)) return "이용자 문서 전송 실패";
   if (isReviewNeeded(doc, calendar)) return "5/6 - 제공기관 검토 필요";
@@ -1247,7 +1260,11 @@ function contractStageItems(
   const sendFailed = hasDocumentSendFailure(doc);
   const hasOpened = hasOpenedDocument(doc);
   const reviewNeeded = isReviewNeeded(doc, calendar);
-  const hasCustomerSigned = isCustomerSignedCategory(category);
+  const isVoided = category === "voided";
+  // A void overrides every provider code (plan D2), but it does not erase what happened before it: draw the
+  // history the document would show if it were not voided, ignoring display_status, then close it with the void.
+  const historyCategory = isVoided ? categorize({ ...doc, display_status: null }, calendar) : category;
+  const hasCustomerSigned = isCustomerSignedCategory(historyCategory);
   const items: ContractStageItem[] = [
     {
       icon: FileText,
@@ -1265,7 +1282,19 @@ function contractStageItems(
     },
   ];
 
-  if (sendFailed) return items;
+  // 계약 파기: filed under the "expired" filter, but it was voided in the app — neutral, not danger.
+  // A void overrides every other state (plan D2), so it also ends a list that stopped at a send failure.
+  const voidedStage: ContractStageItem = {
+    icon: AlertTriangle,
+    iconVariant: "info",
+    text: "계약이 파기됐어요",
+    time: formatDateTime(doc.voided_at),
+  };
+
+  if (sendFailed) {
+    if (isVoided) items.push(voidedStage);
+    return items;
+  }
 
   if (hasOpened || hasCustomerSigned) {
     items.push({
@@ -1285,7 +1314,7 @@ function contractStageItems(
     });
   }
 
-  if (category === "completed") {
+  if (historyCategory === "completed") {
     items.push(
       {
         icon: FileSignature,
@@ -1300,6 +1329,13 @@ function contractStageItems(
         time: updatedAt,
       },
     );
+    if (isVoided) items.push(voidedStage);
+    return items;
+  }
+
+  // Whatever else the pre-void state was, its terminal or live entry is dropped: the void is the last, closed entry.
+  if (isVoided) {
+    items.push(voidedStage);
     return items;
   }
 

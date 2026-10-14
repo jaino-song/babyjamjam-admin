@@ -260,3 +260,42 @@ describe("foldContractStats", () => {
     ).toEqual({ reviewNeeded: 1, signed: 1, sendRequired: 1, drafting: 1, expired: 1 });
   });
 });
+
+describe("foldContractStats with a voided contract (계약 파기, BJJ-439)", () => {
+  const empty = { reviewNeeded: 0, signed: 0, sendRequired: 0, drafting: 0, expired: 0 };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(TEST_NOW);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("counts a voided document in no bucket although eformsign still reports a live in-progress code", () => {
+    const signals = [
+      // 060 on the customer step would be sendRequired, 070 at review would be reviewNeeded/signed,
+      // 001 would be drafting, 080 would be expired.
+      { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"], display_status: "voided" },
+      { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: PAST_CONTRACT_END_DATE, display_status: "voided" },
+      { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: FAR_CONTRACT_END_DATE, display_status: "voided" },
+      { status_type: "001", step_type: null, step_name: null, step_recipient_types: [], display_status: "voided" },
+      { status_type: "080", step_type: null, step_name: null, step_recipient_types: [], display_status: "voided" },
+    ];
+
+    expect(foldContractStats(signals)).toEqual(empty);
+  });
+
+  it("still counts the same documents when they are not voided (control)", () => {
+    expect(
+      foldContractStats([
+        { status_type: "060", step_type: "05", step_name: "이용자", step_recipient_types: ["01"] },
+        { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: PAST_CONTRACT_END_DATE },
+        { status_type: "070", step_type: "06", step_name: "제공기관 확인", contract_end_date: FAR_CONTRACT_END_DATE },
+        { status_type: "001", step_type: null, step_name: null, step_recipient_types: [] },
+        { status_type: "080", step_type: null, step_name: null, step_recipient_types: [] },
+      ]),
+    ).toEqual({ reviewNeeded: 1, signed: 1, sendRequired: 1, drafting: 1, expired: 1 });
+  });
+});
