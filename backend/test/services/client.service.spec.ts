@@ -783,6 +783,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId: null,
                     statusType: "060",
+                    voidedAt: null,
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
@@ -792,6 +793,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId,
                     statusType: "060",
+                    voidedAt: null,
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "연락처 +82 10 1234 5678",
                 },
@@ -865,6 +867,7 @@ describe("ClientService", () => {
                     detailSourceUpdatedDate: true,
                     detailSyncedAt: true,
                     statusType: true,
+                    voidedAt: true,
                 },
             });
             expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith({
@@ -924,6 +927,7 @@ describe("ClientService", () => {
                         clientId: null,
                         branchId: null,
                         statusType: "060",
+                        voidedAt: null,
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
@@ -933,6 +937,7 @@ describe("ClientService", () => {
                         clientId: null,
                         branchId,
                         statusType: "060",
+                        voidedAt: null,
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "연락처 +82 10 1234 5678",
                     },
@@ -1009,6 +1014,7 @@ describe("ClientService", () => {
                     branchId,
                     customerPhone: "01012345678",
                     statusType: "060",
+                    voidedAt: null,
                     detailPayload: matchingContractDetail(),
                     detailSourceUpdatedDate: new Date("2026-07-30T00:00:00Z"),
                     detailSyncedAt: new Date("2026-07-30T00:01:00Z"),
@@ -1048,6 +1054,7 @@ describe("ClientService", () => {
                     documentId: "DOC-LATEST",
                     clientId: mockClient.id,
                     branchId,
+                    voidedAt: null,
                     stepRecipientSms: "고객 010-1234-5678",
                 }]);
                 arrangeQueries([[55]]);
@@ -1219,6 +1226,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId: null,
                     statusType: "060",
+                    voidedAt: null,
                     detailPayload: matchingContractDetail(),
                     stepRecipientSms: "고객 010-1234-5678",
                 },
@@ -1259,6 +1267,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId: null,
                     statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
@@ -1314,6 +1323,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId: null,
                     statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: null,
@@ -1370,6 +1380,7 @@ describe("ClientService", () => {
                     clientId: null,
                     branchId: null,
                     statusType: "060",
+                    voidedAt: null,
                     documentKind: null,
                     serviceRecordCaseId: null,
                     templateId: "service-record-template",
@@ -1679,6 +1690,7 @@ describe("ClientService", () => {
                         documentId: "DOC-0009",
                         clientId: null,
                         statusType: "060",
+                        voidedAt: null,
                         detailPayload: matchingContractDetail(),
                         stepRecipientSms: "고객 010-1234-5678",
                     },
@@ -2756,6 +2768,7 @@ describe("ClientService", () => {
                         branchId,
                         customerPhone: "01012345678",
                         statusType,
+                        voidedAt: null as Date | null,
                         detailPayload,
                         detailSourceUpdatedDate: new Date("2026-09-01T00:00:00Z"),
                         detailSyncedAt: new Date("2026-09-01T00:01:00Z"),
@@ -2848,6 +2861,108 @@ describe("ClientService", () => {
                     expect(prismaService.client.updateMany.mock.calls.filter(([args]) =>
                         args.data.eDocId !== undefined)).toHaveLength(linked ? 1 : 0);
                     expect(saved.eDocId).toBe(linked ? "DOC-IDENTITY" : null);
+                });
+
+                describe("voided ready contracts on client save", () => {
+                    const voidedAt = new Date("2026-10-01T00:00:00Z");
+
+                    it.each([null, "EXISTING-POINTER"])("keeps pointer %s when the newest owned contract is voided without falling back", async (pointer) => {
+                        const client = createClientEntity();
+                        client.eDocId = pointer;
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(client.id, null);
+                        const newest = { ...older, id: 11, documentId: "DOC-VOIDED", voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(prismaService.$transaction).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBe(pointer);
+                    });
+
+                    it("reassigns only non-voided unlinked rows without promoting the older contract", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(null, matchingContractDetail());
+                        const newest = { ...older, id: 11, documentId: "DOC-VOIDED", voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [older] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(prismaService.eformsign_doc.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                            where: expect.objectContaining({ id: { in: [older.id] } }),
+                        }));
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBeNull();
+                    });
+
+                    it("filters another owner's voided newest document before choosing this client's live pointer", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const older = arrangeDocument(client.id, null);
+                        const newest = { ...older, id: 11, documentId: "DOC-OTHER", clientId: 99, voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [older] : [newest, older]);
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(client.eDocId).toBe(older.documentId);
+                        expect(prismaService.client.updateMany).toHaveBeenCalledWith({
+                            where: { id: client.id, branchId }, data: { eDocId: older.documentId },
+                        });
+                    });
+
+                    it.each([null, 1])("writes nothing and logs failure when owner %s's candidate becomes voided under lock", async (owner) => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const doc = arrangeDocument(owner, matchingContractDetail());
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [] : where.id ? [{ ...doc, voidedAt }] : [doc]);
+                        const errorLog = jest.spyOn(Logger.prototype, "error").mockImplementation();
+                        try {
+                            await service.update(branchId, client.id, {});
+
+                            expect(prismaService.$transaction).toHaveBeenCalledTimes(1);
+                            expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                            expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                            expect(client.eDocId).toBeNull();
+                            expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("[CLIENT_CONTRACT_PHONE_LINK_FAILED]"));
+                        } finally {
+                            errorLog.mockRestore();
+                        }
+                    });
+
+                    it("does not link a voided not-ready candidate through the existing-only usecase", async () => {
+                        const client = createClientEntity();
+                        findClientByIdUsecase.execute.mockResolvedValue(client);
+                        const document = { id: 13, documentId: "DOC-VOIDED-PARTIAL", branchId, voidedAt };
+                        prismaService.eformsign_doc.findMany.mockImplementation(async ({ where }) =>
+                            where.syncStatus?.not ? [document] : []);
+                        const findUnique = jest.fn().mockResolvedValue(document);
+                        const usecase = new LinkMirroredEformsignDocByPhoneUsecase(
+                            { ...prismaService, eformsign_doc: { ...prismaService.eformsign_doc, findUnique } } as unknown as PrismaService,
+                            configService as unknown as ConfigService,
+                            systemSettingService as unknown as SystemSettingService,
+                            holidayCalendar,
+                        );
+                        linkMirroredDocumentByPhoneUsecase.execute.mockImplementation(usecase.execute.bind(usecase));
+
+                        await service.update(branchId, client.id, {});
+
+                        expect(linkMirroredDocumentByPhoneUsecase.execute).toHaveBeenCalledWith(document.documentId, {
+                            existingClientId: client.id, existingClientBranchId: branchId, linkExistingOnly: true,
+                        });
+                        expect(await linkMirroredDocumentByPhoneUsecase.execute.mock.results[0]!.value).toBe("skipped");
+                        expect(findUnique).toHaveBeenCalled();
+                        expect(prismaService.$transaction).not.toHaveBeenCalled();
+                        expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
+                        expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                        expect(client.eDocId).toBeNull();
+                    });
                 });
 
                 describe("계약-05: only an allowed document status is linked", () => {
@@ -2988,6 +3103,7 @@ describe("ClientService", () => {
                         clientId: null,
                         branchId: null,
                         statusType: "060",
+                        voidedAt: null,
                         stepRecipientSms: "제공기관 010 9999 9999",
                         customerPhone: "01012345678",
                         detailPayload: matchingContractDetail(),
