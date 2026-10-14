@@ -109,6 +109,9 @@ function assignmentById(source: ServiceRecordEditSource, assignmentId: string): 
 
 /**
  * Resolve which assignment owns a legacy session, in this order:
+ * 0. (projectLegacy, before this lookup) a session with no row at all that
+ *    follows the current assignee's backfill belongs to the current assignee;
+ *    see currentBackfill.
  * 1. A written row belongs to the assignment of the schedule that wrote it
  *    (the employee must match when both sides name one). No date check, so
  *    rows backfilled before that assignment's own start date keep working.
@@ -148,6 +151,38 @@ function assignmentForSession(
 
     const current = eligible.filter((assignment) => !assignment.replaced);
     return current.length === 1 ? current[0]! : null;
+}
+
+/**
+ * Write authority belongs to the currently assigned caregiver, so a newly
+ * assigned caregiver may backfill sessions that precede its own start date.
+ * Once it has done so (it owns a written row dated before its stored start),
+ * every later session with no row at all is part of that backfill rather than
+ * the outgoing caregiver's leftover. Without this, date lookup would hand the
+ * unwritten sessions that sit between the backfilled ones and the handover to
+ * the outgoing caregiver and produce overlapping assignment ranges.
+ *
+ * `fromIndex` is the first session index the current caregiver backfilled;
+ * sessions after it with no row belong to the current assignment. A caregiver
+ * that only wrote sessions inside its own range has not started a backfill.
+ */
+function currentBackfill(
+    source: ServiceRecordEditSource,
+): { assignment: ServiceRecordEditSourceAssignment; fromIndex: number } | null {
+    const current = source.assignments.filter((assignment) =>
+        Boolean(assignment.id) && assignment.scheduleId !== null && !assignment.replaced);
+    if (current.length !== 1) return null;
+    const assignment = current[0]!;
+    const startDate = assignment.startDate || assignment.scheduleStartDate;
+    if (!startDate) return null;
+    let fromIndex: number | null = null;
+    for (const session of source.sessions) {
+        if (session.ambiguous || session.scheduleId !== assignment.scheduleId) continue;
+        if (session.serviceDate < startDate && (fromIndex === null || session.sessionIndex < fromIndex)) {
+            fromIndex = session.sessionIndex;
+        }
+    }
+    return fromIndex === null ? null : { assignment, fromIndex };
 }
 
 function provenanceVersion(raw: unknown, source: ServiceRecordEditSource): string {
@@ -196,6 +231,40 @@ function sourceAssignmentEntry(
         scheduleId: assignment.scheduleId,
         employeeId: assignment.employeeId,
         provenanceVersion: provenanceVersion(explicit.provenanceVersion, source),
+    };
+}
+
+/**
+ * A persisted vector attributes each slot to the assignment that owned it when
+ * the vector was written. Write authority then moved to the current caregiver,
+ * who may backfill a slot the vector still attributes to a replaced one. In
+ * exactly that case the writer owns the slot: the entry is re-attributed to the
+ * writer's assignment and keeps its vector dates. Any other disagreement
+ * between a row and the vector is left for persistedDayReasons to block.
+ */
+function reattributedToWriter(
+    source: ServiceRecordEditSource,
+    entry: SharedPlannedSession,
+): SharedPlannedSession {
+    const rows = source.sessions.filter((session) => session.sessionIndex === entry.sessionIndex);
+    const row = rows.length === 1 ? rows[0]! : null;
+    if (!row || row.ambiguous || row.scheduleId === null) return entry;
+    if (row.scheduleId === entry.scheduleId && (row.employeeId === null || row.employeeId === entry.employeeId)) {
+        return entry;
+    }
+    const planned = assignmentById(source, entry.assignmentId);
+    if (!planned?.replaced) return entry;
+    const writers = source.assignments.filter((assignment) =>
+        Boolean(assignment.id)
+        && assignment.scheduleId === row.scheduleId
+        && (row.employeeId === null || assignment.employeeId === row.employeeId));
+    const writer = writers.length === 1 ? writers[0]! : null;
+    if (!writer?.id || writer.replaced || writer.scheduleId === null || writer.employeeId === null) return entry;
+    return {
+        ...entry,
+        assignmentId: writer.id,
+        scheduleId: writer.scheduleId,
+        employeeId: writer.employeeId,
     };
 }
 
@@ -375,7 +444,7 @@ function projectPersisted(
             provenanceVersion: explicitProvenanceVersion,
         });
         if ("code" in entry) blockingReasons.push(entry);
-        else entries.push(entry);
+        else entries.push(reattributedToWriter(source, entry));
     }
     if (blockingReasons.length > 0) return { entries: [], source: "planned", blockingReasons };
     try {
@@ -422,6 +491,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
         sessionIndex: session.sessionIndex,
         serviceDate: session.serviceDate,
     }));
+    const backfill = currentBackfill(source);
     const entries: SharedPlannedSession[] = [];
     for (let sessionIndex = 1; sessionIndex <= expected; sessionIndex += 1) {
         const rows = byIndex.get(sessionIndex) ?? [];
@@ -451,7 +521,9 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
                 continue;
             }
         }
-        const assignment = assignmentForSession(source, row?.scheduleId ?? null, row?.employeeId ?? null, serviceDate);
+        const assignment = !row && backfill && sessionIndex > backfill.fromIndex
+            ? backfill.assignment
+            : assignmentForSession(source, row?.scheduleId ?? null, row?.employeeId ?? null, serviceDate);
         const entry = sourceAssignmentEntry(source, sessionIndex, serviceDate, serviceDate, assignment, {
             scheduleId: row?.scheduleId,
             employeeId: row?.employeeId,

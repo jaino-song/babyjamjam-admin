@@ -466,6 +466,50 @@ describe("service-record-edit-preview.policy", () => {
             expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
         });
 
+        it("gives unwritten sessions after a partial backfill to the new assignee instead of blocking on overlap", () => {
+            // A wrote 1; B backfilled 2-3 (dated before B's own start); 4-7 are still unwritten.
+            const rows = [written(1, caregiverA), written(2, caregiverB), written(3, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(legacy(rows, [caregiverA, caregiverB]), calendar);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries[0]!.assignmentId).toBe(caregiverA.id);
+            expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+
+            const preview = buildServiceRecordEditPreview({
+                calendar,
+                draftId: "33333333-3333-4333-8333-333333333333",
+                draftVersion: 1,
+                sourceCaseVersion: 7,
+                sourceFingerprint: "source-fingerprint",
+                source: legacy(rows, [caregiverA, caregiverB]),
+                changes: {},
+                previewId: "preview-1",
+            });
+            expect(preview.blockingReasons).toEqual([]);
+            expect(preview.provenance).toEqual([
+                expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-01" }),
+                expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-02", endDate: "2026-10-23" }),
+            ]);
+        });
+
+        it("leaves an unwritten session before the new assignee's first backfilled one with the date owner", () => {
+            const rows = [written(1, caregiverA), written(3, caregiverB)];
+            const projection = resolveServiceRecordScheduleProjection(legacy(rows, [caregiverA, caregiverB]), calendar);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.slice(0, 2).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            expect(projection.entries.slice(2).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        it("does not treat a later session written inside the new assignee's own range as a backfill", () => {
+            // B only wrote session 8 (the handover day, not before its start), so 4-7 stay with A.
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy([written(1, caregiverA), written(8, caregiverB)], [caregiverA, caregiverB]),
+                calendar,
+            );
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.slice(0, 7).every((entry) => entry.assignmentId === caregiverA.id)).toBe(true);
+            expect(projection.entries.slice(7).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
         it("still blocks an unwritten session when there is no unique current assignment", () => {
             const secondCurrent = { ...caregiverA, replaced: false };
             const projection = resolveServiceRecordScheduleProjection(
@@ -482,6 +526,131 @@ describe("service-record-edit-preview.policy", () => {
                 calendar,
             );
             expect(projection.blockingReasons.map(({ code }) => code)).toContain("MISSING_ASSIGNMENT_PROVENANCE");
+        });
+    });
+
+    describe("persisted vector with a backfilled session", () => {
+        const caregiverA = {
+            ...assignment,
+            id: "aaaaaaaa-0000-4000-8000-00000000000a",
+            scheduleId: 701,
+            employeeId: 31,
+            employeeName: "공혜순",
+            startDate: "2026-10-01",
+            endDate: "2026-10-14",
+            replaced: true,
+            scheduleStartDate: "2026-10-01",
+            scheduleEndDate: "2026-10-14",
+        };
+        const caregiverB = {
+            ...assignment,
+            id: "bbbbbbbb-0000-4000-8000-00000000000b",
+            scheduleId: 702,
+            employeeId: 32,
+            employeeName: "임선녀",
+            startDate: "2026-10-14",
+            endDate: "2026-10-23",
+            replaced: false,
+            scheduleStartDate: "2026-10-14",
+            scheduleEndDate: "2026-10-23",
+        };
+        const dates = [
+            "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08",
+            "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+            "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+        ];
+
+        function written(sessionIndex: number, owner: typeof caregiverA) {
+            return {
+                ...source().sessions[0]!,
+                id: `day-${sessionIndex}`,
+                sourceRowId: `day-${sessionIndex}`,
+                sessionIndex,
+                rawCaseSessionIndex: sessionIndex,
+                rawSessionIndex: sessionIndex,
+                serviceDate: dates[sessionIndex - 1]!,
+                scheduleId: owner.scheduleId,
+                employeeId: owner.employeeId,
+                employeeNameSnapshot: owner.employeeName,
+            };
+        }
+
+        /** The vector attributes sessions 1-7 to A and 8-15 to B, as a confirmed edit would have stored it. */
+        function persisted(
+            rows: Array<ReturnType<typeof written>>,
+            assignments: typeof caregiverA[] = [caregiverA, caregiverB],
+        ): ServiceRecordEditSource {
+            return source({
+                requiredSessionCount: dates.length,
+                startDate: dates[0]!,
+                endDate: dates.at(-1)!,
+                sessions: rows,
+                assignments: assignments.map((item) => ({
+                    ...item,
+                    branchId: assignment.branchId,
+                    serviceRecordCaseId: assignment.serviceRecordCaseId,
+                })),
+                plannedSessions: dates.map((serviceDate, index) => {
+                    const owner = index < 7 ? caregiverA : caregiverB;
+                    return {
+                        sessionIndex: index + 1,
+                        serviceDate,
+                        originalDate: serviceDate,
+                        assignmentId: owner.id,
+                        scheduleId: owner.scheduleId,
+                        employeeId: owner.employeeId,
+                        provenanceVersion: "case-7",
+                    };
+                }),
+            });
+        }
+
+        it("treats the current caregiver's row on a slot the vector gives a replaced one as that caregiver's", () => {
+            const rows = [written(1, caregiverA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, caregiverB))];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries[0]).toEqual(expect.objectContaining({ assignmentId: caregiverA.id, scheduleId: 701, employeeId: 31 }));
+            for (const entry of projection.entries.slice(1)) {
+                expect(entry).toEqual(expect.objectContaining({ assignmentId: caregiverB.id, scheduleId: 702, employeeId: 32 }));
+            }
+            // The vector's dates are untouched.
+            expect(projection.entries.map(({ serviceDate }) => serviceDate)).toEqual(dates);
+
+            const preview = buildServiceRecordEditPreview({
+                calendar: KR_BUILTIN_CALENDAR,
+                draftId: "33333333-3333-4333-8333-333333333333",
+                draftVersion: 1,
+                sourceCaseVersion: 7,
+                sourceFingerprint: "source-fingerprint",
+                source: persisted(rows),
+                changes: {},
+                previewId: "preview-1",
+            });
+            expect(preview.blockingReasons).toEqual([]);
+        });
+
+        it("still blocks a date contradiction on a re-attributed slot", () => {
+            const rows = [written(1, caregiverA), { ...written(2, caregiverB), serviceDate: "2026-10-03" }];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ACTUAL_DAY_CONTRADICTION");
+        });
+
+        it("still blocks when the writer is a replaced assignment and the vector names the current one", () => {
+            const rows = [written(1, caregiverA), written(8, caregiverA)];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+        });
+
+        it("still blocks a row written by a schedule that is not an assignment of the case", () => {
+            const rows = [{ ...written(2, caregiverB), scheduleId: 999 }];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
+        });
+
+        it("still blocks when the row's employee disagrees with the current assignment's", () => {
+            const rows = [{ ...written(2, caregiverB), employeeId: 99 }];
+            const projection = resolveServiceRecordScheduleProjection(persisted(rows), KR_BUILTIN_CALENDAR);
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("ASSIGNMENT_PROVENANCE_MISMATCH");
         });
     });
 
