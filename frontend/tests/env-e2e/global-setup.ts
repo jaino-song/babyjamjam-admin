@@ -5,67 +5,38 @@ import { chromium, type Page } from "@playwright/test";
 import { resolveE2eTarget, type E2eTarget } from "./target";
 
 const LOGIN_TIMEOUT_MS = 60_000;
-const REUSE_MIN_REMAINING_MS = 5 * 60_000;
-
-interface StoredState {
-  cookies?: Array<{ name: string; value: string }>;
-}
-
-function decodeJwtExpiryMs(token: string): number | null {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as {
-      exp?: number;
-    };
-    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Reuse a saved session only while its access token is still comfortably valid.
- * A valid access token means nothing has refreshed (rotated) the stored refresh token yet,
- * so replaying it cannot trip the backend's refresh-reuse revocation.
- */
-function canReuseStoredSession(target: E2eTarget): boolean {
-  if (!fs.existsSync(target.storageStatePath)) return false;
-  try {
-    const state = JSON.parse(fs.readFileSync(target.storageStatePath, "utf8")) as StoredState;
-    const accessToken = state.cookies?.find((cookie) => cookie.name === "auth_token")?.value;
-    const hasBranch = state.cookies?.some((cookie) => cookie.name === "selected_branch_id");
-    const expiresAt = accessToken ? decodeJwtExpiryMs(accessToken) : null;
-    return Boolean(hasBranch && expiresAt && expiresAt - Date.now() > REUSE_MIN_REMAINING_MS);
-  } catch {
-    return false;
-  }
-}
+const BRANCH_CARD = '[data-component="desktop_select-branch_list_card"]';
 
 async function selectBranchIfAsked(page: Page, target: E2eTarget): Promise<void> {
   if (!new URL(page.url()).pathname.startsWith("/select-branch")) return;
 
+  const cards = page.locator(BRANCH_CARD);
+  await cards.first().waitFor({ timeout: LOGIN_TIMEOUT_MS });
   if (target.branchName) {
-    await page.getByRole("button", { name: target.branchName }).first().click();
+    // Exact accessible name, so "고양점" never matches "고양파주점".
+    await page.getByRole("button", { name: `${target.branchName} 지점 선택`, exact: true }).click();
   } else {
-    const buttons = page.locator("main").getByRole("button");
-    await buttons.first().waitFor();
-    const count = await buttons.count();
+    const count = await cards.count();
     if (count !== 1) {
-      const set = target.name === "dev" ? "E2E_DEV_BRANCH_NAME" : "E2E_PREVIEW_BRANCH_NAME";
-      throw new Error(`Account has ${count} branch choices; set ${set} in frontend/.env.local`);
+      const key = target.name === "dev" ? "E2E_DEV_BRANCH_NAME" : "E2E_PREVIEW_BRANCH_NAME";
+      const names = (await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? "")))
+        .map((label) => label.replace(/ 지점 선택$/, ""));
+      throw new Error(
+        `[env-e2e] ${target.name}: account has ${count} branches (${names.join(", ")}); set ${key} in frontend/.env.local`,
+      );
     }
-    await buttons.first().click();
+    await cards.first().click();
   }
   await page.waitForURL((url) => !url.pathname.startsWith("/select-branch"), { timeout: LOGIN_TIMEOUT_MS });
 }
 
+/**
+ * Logs in once per run and saves the session for the tests. A saved session is never reused
+ * across runs: its refresh token may already have been rotated, and replaying a rotated
+ * refresh token makes the backend revoke the whole session.
+ */
 export default async function globalSetup(): Promise<void> {
   const target = resolveE2eTarget();
-
-  if (canReuseStoredSession(target)) {
-    console.log(`[env-e2e] ${target.name}: reusing saved session (${path.relative(process.cwd(), target.storageStatePath)})`);
-    return;
-  }
-
   if (!target.credentials) {
     throw new Error(
       `[env-e2e] ${target.name}: missing ${target.missingCredentialKeys.join(", ")} in frontend/.env.local`,
@@ -75,7 +46,7 @@ export default async function globalSetup(): Promise<void> {
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext({ baseURL: target.baseURL });
-    // A single attempt: failed logins count toward the backend rate limit.
+    // A single attempt, never retried: preview counts logins per IP even for the exempt test account.
     const response = await context.request.post("/api/auth/login", {
       data: { ...target.credentials, autoLogin: true },
       timeout: LOGIN_TIMEOUT_MS,

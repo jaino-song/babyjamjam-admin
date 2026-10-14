@@ -37,6 +37,12 @@ function readEnv(key: string): string | null {
   return value ? value : null;
 }
 
+/** Passwords are used verbatim: surrounding spaces may be part of the password. */
+function readPassword(key: string): string | null {
+  const value = process.env[key];
+  return value ? value : null;
+}
+
 export function resolveE2eTarget(): E2eTarget {
   loadLocalEnvFile();
 
@@ -46,20 +52,15 @@ export function resolveE2eTarget(): E2eTarget {
   }
   const name: E2eTargetName = rawName;
 
-  // dev falls back to the local auto-login account already kept in .env.local.
-  const emailKeys = name === "dev"
-    ? ["E2E_DEV_EMAIL", "LOCAL_AUTO_LOGIN_EMAIL"]
-    : ["E2E_PREVIEW_EMAIL"];
-  const passwordKeys = name === "dev"
-    ? ["E2E_DEV_PASSWORD", "LOCAL_AUTO_LOGIN_PASSWORD"]
-    : ["E2E_PREVIEW_PASSWORD"];
-
-  const email = emailKeys.map(readEnv).find(Boolean) ?? null;
-  const password = passwordKeys.map(readEnv).find(Boolean) ?? null;
-  const missingCredentialKeys = [
-    ...(email ? [] : [emailKeys[0]]),
-    ...(password ? [] : [passwordKeys[0]]),
-  ];
+  // Credentials are taken as a pair: dev uses E2E_DEV_* when both are set, otherwise the local
+  // auto-login account already kept in .env.local. Preview never falls back to local values.
+  const pairs: Array<[string, string]> = name === "dev"
+    ? [["E2E_DEV_EMAIL", "E2E_DEV_PASSWORD"], ["LOCAL_AUTO_LOGIN_EMAIL", "LOCAL_AUTO_LOGIN_PASSWORD"]]
+    : [["E2E_PREVIEW_EMAIL", "E2E_PREVIEW_PASSWORD"]];
+  const pair = pairs.find(([emailKey, passwordKey]) => readEnv(emailKey) && readPassword(passwordKey));
+  const email = pair ? readEnv(pair[0]) : null;
+  const password = pair ? readPassword(pair[1]) : null;
+  const missingCredentialKeys = pair ? [] : [...pairs[0]];
 
   return {
     name,

@@ -45,8 +45,28 @@ export class RateLimitGuard implements CanActivate, OnModuleDestroy {
     private readonly windowMs = 15 * 60 * 1000;
     private readonly cleanupProbability = 0.01;
     private readonly redis: Redis | null;
+    // Local/dev only: AUTH_RATE_LIMIT_DISABLED=true turns the whole guard off. Ignored when
+    // NODE_ENV=production, which every deployed backend (preview and production) runs with.
+    private readonly disabled: boolean;
+    // AUTH_RATE_LIMIT_EXEMPT_EMAILS (comma-separated): accounts skipped by the strict per-account
+    // ceiling only — the per-IP ceiling still applies. Meant for the preview E2E test account.
+    private readonly exemptIdentities: ReadonlySet<string>;
 
     constructor(private readonly prisma: PrismaService) {
+        const disableRequested = process.env["AUTH_RATE_LIMIT_DISABLED"]?.trim().toLowerCase() === "true";
+        const isProduction = process.env["NODE_ENV"] === "production";
+        this.disabled = disableRequested && !isProduction;
+        if (disableRequested && isProduction) {
+            this.logger.warn("AUTH_RATE_LIMIT_DISABLED is ignored when NODE_ENV=production");
+        } else if (this.disabled) {
+            this.logger.warn("Authentication rate limiting is disabled (AUTH_RATE_LIMIT_DISABLED=true)");
+        }
+        this.exemptIdentities = new Set(
+            (process.env["AUTH_RATE_LIMIT_EXEMPT_EMAILS"] ?? "")
+                .split(",")
+                .map((email) => email.trim().toLowerCase())
+                .filter(Boolean),
+        );
         const valkeyUrl = process.env["VALKEY_URL"]?.trim();
         this.redis = valkeyUrl
             ? new Redis(valkeyUrl, {
@@ -65,10 +85,15 @@ export class RateLimitGuard implements CanActivate, OnModuleDestroy {
     }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
+        if (this.disabled) {
+            return true;
+        }
+
         const request = context.switchToHttp().getRequest<Request>();
         const response = context.switchToHttp().getResponse<Response | undefined>();
         const ip = this.getClientIp(request);
-        const identity = this.getEmailFromRequest(request)?.trim().toLowerCase() ?? "";
+        const requestIdentity = this.getEmailFromRequest(request)?.trim().toLowerCase() ?? "";
+        const identity = this.exemptIdentities.has(requestIdentity) ? "" : requestIdentity;
         const endpoint = this.getEndpointScope(context, request);
         const now = new Date();
 

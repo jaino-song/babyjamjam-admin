@@ -17,7 +17,7 @@ LOCAL_AUTO_LOGIN_EMAIL=
 LOCAL_AUTO_LOGIN_PASSWORD=
 
 # Real-login Playwright runs (pnpm e2e:dev / pnpm e2e:preview). Local-only; never set on a deployment.
-# e2e:dev falls back to LOCAL_AUTO_LOGIN_EMAIL/PASSWORD when the E2E_DEV_* pair is blank.
+# e2e:dev uses the E2E_DEV_* pair when both are set, otherwise LOCAL_AUTO_LOGIN_EMAIL/PASSWORD.
 E2E_DEV_EMAIL=
 E2E_DEV_PASSWORD=
 E2E_DEV_BRANCH_NAME=
