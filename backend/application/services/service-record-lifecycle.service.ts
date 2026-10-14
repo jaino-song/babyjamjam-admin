@@ -740,6 +740,7 @@ export class ServiceRecordLifecycleService {
                 WHERE document_id = ${params.documentId}
                   AND branch_id = ${params.branchId}::uuid
                   AND permanent_purge_requested_at IS NULL
+                  AND voided_at IS NULL
                   AND status_type NOT IN ('047', '049', '099')
                 FOR UPDATE
             `);
@@ -822,6 +823,7 @@ export class ServiceRecordLifecycleService {
                   AND detail_synced_at = ${params.detailSyncedAt}
                   AND sync_status = 'ready'
                   AND permanent_purge_requested_at IS NULL
+                  AND voided_at IS NULL
                   AND EXISTS (
                       SELECT 1
                       FROM eformsign_doc_file AS document_file

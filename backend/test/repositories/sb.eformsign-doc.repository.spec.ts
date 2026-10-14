@@ -1061,6 +1061,128 @@ describe("SbEformsignDocRepository", () => {
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
     });
 
+    describe("voided contract fence under the document row lock (BJJ-439)", () => {
+        const branchId = "44444444-4444-4444-4444-444444444444";
+
+        /**
+         * A transaction double whose locked `eformsign_doc` selects behave like PostgreSQL for the
+         * `voided_at` predicate: the candidate lock (the one that selects document_kind) hides a
+         * voided row only when the SQL filters it, so a missing predicate is observable. The
+         * pointed-document lock never filters voided rows in the double, because production must
+         * keep matching a voided pointer.
+         */
+        function fakeTransaction(options: { candidateVoided: boolean; pointer: string | null }) {
+            const candidate = {
+                id: 2,
+                documentId: "doc-new",
+                clientId: 55,
+                branchId,
+                documentKind: "contract",
+                serviceRecordCaseId: null,
+                revisionId: null,
+                updatedDate: new Date("2026-08-02T00:00:00.000Z"),
+                createdDate: new Date("2026-07-02T00:00:00.000Z"),
+            };
+            const pointed = {
+                id: 1,
+                documentId: "doc-old-voided",
+                clientId: 55,
+                branchId,
+                serviceRecordCaseId: null,
+                revisionId: null,
+                updatedDate: new Date("2026-07-01T00:00:00.000Z"),
+                createdDate: new Date("2026-07-01T00:00:00.000Z"),
+            };
+            const queries: string[] = [];
+            const $queryRaw = jest.fn().mockImplementation(async (query: { strings: string[] }) => {
+                const sql = query.strings.join(" ");
+                queries.push(sql);
+                if (sql.includes("FROM eformsign_doc") && !sql.includes("FOR UPDATE")) return [{ clientId: 55 }];
+                if (sql.includes("FROM client")) {
+                    return [{ id: 55, eDocId: options.pointer, branchId }];
+                }
+                if (sql.includes("FROM eformsign_doc") && sql.includes("document_kind")) {
+                    return options.candidateVoided && sql.includes("voided_at IS NULL") ? [] : [candidate];
+                }
+                if (sql.includes("FROM eformsign_doc")) return [pointed];
+                if (sql.includes("FROM service_record_case")) return [];
+                return [];
+            });
+            return {
+                $queryRaw,
+                queries,
+                client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+                eformsign_doc: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            };
+        }
+
+        const repositoryFor = (transaction: ReturnType<typeof fakeTransaction>) =>
+            new SbEformsignDocRepository({
+                eformsign_doc: eformsignDocModel,
+                $transaction: jest.fn((callback) => callback(transaction)),
+            } as unknown as PrismaService);
+
+        it("linkClientIfActive refuses a document that was voided after the caller's unlocked read", async () => {
+            const transaction = fakeTransaction({ candidateVoided: true, pointer: null });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(false);
+
+            const documentLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("document_kind"));
+            expect(documentLock).toContain("voided_at IS NULL");
+            expect(transaction.client.updateMany).not.toHaveBeenCalled();
+            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("linkClientIfActive still links a document that is not voided", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: null });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(true);
+
+            expect(transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, branchId },
+                data: { eDocId: "doc-new" },
+            });
+        });
+
+        it("a newer contract still relinks when the client's pointer is a voided document", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: "doc-old-voided" });
+
+            await expect(repositoryFor(transaction).linkClientIfActive(branchId, "doc-new", 55))
+                .resolves.toBe(true);
+
+            // markVoided never clears the pointer, so the pointed-document lock must keep matching it.
+            const pointedLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("FOR UPDATE") && !sql.includes("document_kind"));
+            expect(pointedLock).toBeDefined();
+            expect(pointedLock).not.toContain("voided_at");
+            expect(transaction.client.updateMany).toHaveBeenCalledWith({
+                where: { id: 55, branchId },
+                data: { eDocId: "doc-new" },
+            });
+        });
+
+        it("isCurrentContractDocument refuses a document that was voided after the caller's unlocked read", async () => {
+            const transaction = fakeTransaction({ candidateVoided: true, pointer: "doc-new" });
+
+            await expect(repositoryFor(transaction).isCurrentContractDocument(branchId, "doc-new"))
+                .resolves.toBe(false);
+
+            const documentLock = transaction.queries.find((sql) =>
+                sql.includes("FROM eformsign_doc") && sql.includes("document_kind"));
+            expect(documentLock).toContain("voided_at IS NULL");
+        });
+
+        it("isCurrentContractDocument still answers true for the pointed document that is not voided", async () => {
+            const transaction = fakeTransaction({ candidateVoided: false, pointer: "doc-new" });
+
+            await expect(repositoryFor(transaction).isCurrentContractDocument(branchId, "doc-new"))
+                .resolves.toBe(true);
+        });
+    });
+
     it("starts over when the document owner moved between the unlocked read and the row lock", async () => {
         const branchId = "44444444-4444-4444-4444-444444444444";
         const transaction = {
