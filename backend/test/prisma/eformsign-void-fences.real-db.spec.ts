@@ -1,4 +1,4 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
@@ -8,11 +8,15 @@ import type { HolidayCalendarService } from "application/services/holiday-calend
 
 /**
  * Real-PostgreSQL regression for BJJ-439 (merge-audit F1): the locked completion fences must
- * refuse a document that was voided AFTER the writer's unlocked read and BEFORE the writer took
- * the row lock. Each case suspends the writer at the entry of its transaction (everything the
- * caller decided before that point is stale), commits the void through `markVoided`, then lets the
- * unchanged writer run. Skipped unless HOLIDAY_REVIEW_REAL_DB=1, and then only against a local
- * throwaway database:
+ * refuse a document that was voided AFTER the writer's genuine unlocked document read and BEFORE
+ * the writer took the document row lock. Each refusal case instruments the writer's transaction
+ * client, lets the unchanged writer run through its own unlocked read (which sees a not-voided
+ * document), and pauses it at the first locked `SELECT ... FROM eformsign_doc ... FOR UPDATE` it
+ * issues. While it is paused the void commits through `markVoided` on a separate connection;
+ * then the writer resumes and takes the lock. A void check made earlier in the transaction
+ * therefore cannot satisfy these cases; only a `voided_at IS NULL` predicate evaluated under the
+ * lock can. Skipped unless HOLIDAY_REVIEW_REAL_DB=1, and then only against a local throwaway
+ * database:
  *
  *   createdb throwaway_vf && export DATABASE_URL=postgresql://<user>@localhost/throwaway_vf DIRECT_URL=$DATABASE_URL
  *   npx prisma migrate deploy && HOLIDAY_REVIEW_REAL_DB=1 npx jest test/prisma/eformsign-void-fences.real-db.spec.ts
@@ -32,11 +36,9 @@ function assertThrowawayTarget(): void {
 const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 const ACTOR = "22222222-2222-4222-8222-222222222222";
 
-function deferred() {
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => { resolve = done; });
-    return { promise, resolve };
-}
+// `FROM eformsign_doc` / `FROM "eformsign_doc"`, but not `eformsign_doc_file`.
+const DOCUMENT_TABLE = /FROM\s+"?eformsign_doc"?(?![A-Za-z0-9_])/i;
+const ROW_LOCK = /FOR\s+UPDATE/i;
 
 describeReal("voided contract fences under the document row lock (real PostgreSQL)", () => {
     let raw: PrismaClient;
@@ -129,35 +131,104 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
     }
 
     /**
-     * Runs `writer` against a Prisma whose `$transaction` is held at its entry, commits the void
-     * of `documentId` while the writer is suspended, then releases it. Returns the writer's result.
+     * Runs `writer` against a Prisma whose transaction client is instrumented. The writer runs
+     * its own unlocked document read first (recorded as UNLOCKED_DOCUMENT_READ once a row is
+     * found); it is then held right before it issues its first locked read of `eformsign_doc`.
+     * At that point the document is verified not voided, the void of `documentId` is committed
+     * on a separate connection (VOID_COMMITTED), and the writer is released to take the lock
+     * (LOCKED_DOCUMENT_QUERY). No timers: the writer is awaited inside the instrumented query.
      */
-    async function voidWhileWriterIsSuspended<T>(
+    async function voidBetweenUnlockedReadAndLock<T>(
         documentId: string,
-        writer: (suspended: PrismaService) => Promise<T>,
+        writer: (instrumented: PrismaService) => Promise<T>,
     ): Promise<T> {
-        const gate = deferred();
-        const entered = deferred();
-        const suspended = new Proxy(raw, {
+        const events: string[] = [];
+        let paused = false;
+
+        const sqlOf = (query: unknown): string => {
+            const sql = (query as { sql?: unknown } | null)?.sql;
+            return typeof sql === "string" ? sql : "";
+        };
+
+        const commitVoidWhilePaused = async () => {
+            expect(events).toContain("UNLOCKED_DOCUMENT_READ");
+            // Nothing else writes this fixture, so a not-voided row here is exactly what the
+            // writer's earlier unlocked read observed.
+            const before = await raw.eformsign_doc.findUniqueOrThrow({ where: { documentId } });
+            expect(before.voidedAt).toBeNull();
+            await expect(repository.markVoided(branchId, documentId, new Date(), ACTOR)).resolves.toBe(true);
+            events.push("VOID_COMMITTED");
+        };
+
+        const instrumentTransaction = (tx: Prisma.TransactionClient): Prisma.TransactionClient =>
+            new Proxy(tx, {
+                get(target, key) {
+                    if (key === "$queryRaw") {
+                        return async (...args: unknown[]) => {
+                            const text = sqlOf(args[0]);
+                            const readsDocument = DOCUMENT_TABLE.test(text);
+                            const locks = ROW_LOCK.test(text);
+                            if (readsDocument && locks && !paused) {
+                                paused = true;
+                                await commitVoidWhilePaused();
+                                events.push("LOCKED_DOCUMENT_QUERY");
+                            }
+                            const rows = await (target.$queryRaw as (...inner: unknown[]) => Promise<unknown>)
+                                .apply(target, args);
+                            if (readsDocument && !locks && Array.isArray(rows) && rows.length > 0) {
+                                events.push("UNLOCKED_DOCUMENT_READ");
+                            }
+                            return rows;
+                        };
+                    }
+                    if (key === "eformsign_doc") {
+                        const delegate = Reflect.get(target, key, target) as unknown as Record<string, unknown>;
+                        return new Proxy(delegate, {
+                            get(inner, method) {
+                                const value = Reflect.get(inner, method, inner);
+                                if (method !== "findFirst" || typeof value !== "function") {
+                                    return typeof value === "function" ? value.bind(inner) : value;
+                                }
+                                return async (...args: unknown[]) => {
+                                    const row = await (value as (...inner: unknown[]) => Promise<unknown>)
+                                        .apply(inner, args);
+                                    if (row && !paused) events.push("UNLOCKED_DOCUMENT_READ");
+                                    return row;
+                                };
+                            },
+                        });
+                    }
+                    const value = Reflect.get(target, key, target);
+                    return typeof value === "function" ? value.bind(target) : value;
+                },
+            });
+
+        const instrumented = new Proxy(raw, {
             get(target, key) {
                 if (key === "$transaction") {
-                    return async (...args: unknown[]) => {
-                        entered.resolve();
-                        await gate.promise;
-                        return (target.$transaction as (...inner: unknown[]) => Promise<unknown>)(...args);
-                    };
+                    return (callback: (tx: Prisma.TransactionClient) => Promise<unknown>, ...rest: unknown[]) =>
+                        (target.$transaction as (...inner: unknown[]) => Promise<unknown>)(
+                            (tx: Prisma.TransactionClient) => callback(instrumentTransaction(tx)),
+                            ...rest,
+                        );
                 }
                 const value = Reflect.get(target, key, target);
                 return typeof value === "function" ? value.bind(target) : value;
             },
         }) as unknown as PrismaService;
 
-        const pending = writer(suspended);
-        await entered.promise;
-        // The void commits while the writer holds a decision made on a not-voided read.
-        await expect(repository.markVoided(branchId, documentId, new Date(), ACTOR)).resolves.toBe(true);
-        gate.resolve();
-        return pending;
+        const result = await writer(instrumented);
+
+        // The void is committed only inside the pause, so a writer that never reached a locked
+        // document read would otherwise pass vacuously.
+        expect(paused).toBe(true);
+        const read = events.indexOf("UNLOCKED_DOCUMENT_READ");
+        const voided = events.indexOf("VOID_COMMITTED");
+        const locked = events.indexOf("LOCKED_DOCUMENT_QUERY");
+        expect(read).toBeGreaterThanOrEqual(0);
+        expect(read).toBeLessThan(voided);
+        expect(voided).toBeLessThan(locked);
+        return result;
     }
 
     const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService;
@@ -171,7 +242,7 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
         const client = await makeClient(null);
         const { documentId } = await makeDocument("link", client.id);
 
-        const linked = await voidWhileWriterIsSuspended(documentId, (suspended) =>
+        const linked = await voidBetweenUnlockedReadAndLock(documentId, (suspended) =>
             new SbEformsignDocRepository(suspended).linkClientIfActive(branchId, documentId, client.id));
 
         expect(linked).toBe(false);
@@ -211,7 +282,7 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
         const voided = await makeDocument("current-voided", voidedClient.id);
         await raw.client.update({ where: { id: voidedClient.id }, data: { eDocId: voided.documentId } });
 
-        const voidedAnswer = await voidWhileWriterIsSuspended(voided.documentId, (suspended) =>
+        const voidedAnswer = await voidBetweenUnlockedReadAndLock(voided.documentId, (suspended) =>
             new SbEformsignDocRepository(suspended).isCurrentContractDocument(branchId, voided.documentId));
         expect(voidedAnswer).toBe(false);
 
@@ -226,7 +297,7 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
         const { documentId } = await makeDocument("sync-current", client.id);
         await raw.client.update({ where: { id: client.id }, data: { eDocId: documentId } });
 
-        const applied = await voidWhileWriterIsSuspended(documentId, (suspended) =>
+        const applied = await voidBetweenUnlockedReadAndLock(documentId, (suspended) =>
             lifecycleFor(suspended).syncEndDateFromCurrentContract({
                 branchId,
                 clientId: client.id,
@@ -257,7 +328,7 @@ describeReal("voided contract fences under the document row lock (real PostgreSQ
         const { documentId } = await makeDocument("sync-mirror", client.id, { ready: true });
         await raw.client.update({ where: { id: client.id }, data: { eDocId: documentId } });
 
-        const applied = await voidWhileWriterIsSuspended(documentId, (suspended) =>
+        const applied = await voidBetweenUnlockedReadAndLock(documentId, (suspended) =>
             lifecycleFor(suspended).syncEndDateFromMirroredContract({
                 branchId,
                 clientId: client.id,
