@@ -398,14 +398,14 @@ function assignmentWrites(
         // Only a candidate that owns sessions may produce the start-after-end conflict below.
         if (
             startDate
-            && stored.slice(0, first).every((item) => item.storedEnd <= startDate)
+            && stored.slice(0, first).every((item) => item.storedEnd < head.storedStart && item.storedEnd <= startDate)
             && (ownsSession(head) || startDate <= head.storedEnd)
         ) {
             head.startDate = startDate;
         }
         if (
             endDate
-            && stored.slice(last + 1).every((item) => item.storedStart >= endDate)
+            && stored.slice(last + 1).every((item) => item.storedStart > tail.storedEnd && item.storedStart >= endDate)
             && (ownsSession(tail) || endDate >= tail.storedStart)
         ) {
             tail.endDate = endDate;
