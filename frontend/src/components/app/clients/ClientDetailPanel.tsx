@@ -2,7 +2,15 @@
 
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isAxiosError } from "axios";
+import dynamic from "next/dynamic";
+import {
+    CONTRACT_VOID_COPY,
+    CONTRACT_VOID_ROW_LABEL,
+    CONTRACT_VOIDED_BY_UNKNOWN_LABEL,
+    isContractVoidable,
+} from "@babyjamjam/shared/constants/eformsign-doc-status";
 import {
     MESSAGE_LOG_STATUS_BADGE_VARIANT,
     MESSAGE_HISTORY_STATUS_LABELS,
@@ -70,6 +78,7 @@ import {
 } from "@/components/app/v3";
 import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/phone";
 import { mapDocStatusLabel, type DocumentStatusLabel } from "@/lib/eformsign/status-codes";
+import type { EformsignDocument } from "@/lib/eformsign/types";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { eformsignApi, type EformsignLinkConfirmation, type LocalEformsignDocRecord } from "@/services/api";
 import { ContractLinkConfirmDialog } from "@/components/app/clients/ContractLinkConfirmDialog";
@@ -81,6 +90,15 @@ import {
 import { CalendarClock, Users } from "lucide-react";
 
 const SOURCE_COMPONENT = "ClientDetailPanel";
+
+// Loaded on demand (client only) like the e-documents page does.
+const ContractDocumentPreviewModal = dynamic(
+    () =>
+        import("@/components/app/contracts/ContractDocumentPreviewModal").then(
+            (module) => module.ContractDocumentPreviewModal,
+        ),
+    { ssr: false },
+);
 
 const CLIENT_DETAIL_TABS = [
     { key: "basic", label: "기본 정보" },
@@ -136,6 +154,21 @@ const DOCUMENT_STATUS_BADGE_STATUS = {
     // 계약 파기 (BJJ-439): inactive, not an error — the pending badge status is the neutral tone.
     "파기됨": "pending",
 } satisfies Record<DocumentStatusLabel, Parameters<typeof StatusBadge>[0]["status"]>;
+
+/**
+ * The preview modal reads only id, name, number, created date and template name of the
+ * snake_case document; the panel's camelCase record carries all five.
+ */
+const toPreviewDocument = (doc: LocalEformsignDocRecord): EformsignDocument => {
+    const createdAt = Date.parse(doc.createdDate);
+    return {
+        id: doc.documentId,
+        document_name: doc.documentName || doc.stepRecipientName || "계약서",
+        document_number: doc.documentNumber ?? "",
+        created_date: Number.isNaN(createdAt) ? 0 : createdAt,
+        template: doc.templateName ? { name: doc.templateName } : undefined,
+    } as EformsignDocument;
+};
 
 const formatScheduleChangeMonthDay = (dateStr: string): string => {
     return formatDateForDisplay(dateStr, dateStr);
@@ -745,6 +778,8 @@ function ClientContractLinkConfirmations({
 }
 
 function ClientContractsList({
+    clientId,
+    clientName,
     docs,
     isError,
     isLoading,
@@ -754,6 +789,8 @@ function ClientContractsList({
     onCreateContract,
     hasPendingLinkConfirmations = false,
 }: {
+    clientId: number;
+    clientName: string;
     docs: LocalEformsignDocRecord[];
     isError: boolean;
     isLoading: boolean;
@@ -766,6 +803,41 @@ function ClientContractsList({
 }) {
     // Display-only: the built-in calendar stands in until the branch calendar loads.
     const { calendar } = useBusinessDayCalendar();
+    const queryClient = useQueryClient();
+    const { toast } = useToast();
+    const [voidTargetId, setVoidTargetId] = useState<string | null>(null);
+    const [previewDoc, setPreviewDoc] = useState<LocalEformsignDocRecord | null>(null);
+
+    const invalidateAfterVoidAttempt = () => {
+        void queryClient.invalidateQueries({ queryKey: clientContractDocsQueryKey(clientId) });
+        void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+        void queryClient.invalidateQueries({ queryKey: ["eformsign-documents"] });
+        void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
+    };
+
+    // No optimistic update: the card changes only once the refetched server data says voided.
+    const voidMutation = useMutation({
+        mutationFn: (documentId: string) => eformsignApi.voidContractDocument(documentId),
+        onSuccess: () => {
+            toast({ variant: "success", description: CONTRACT_VOID_COPY.success });
+            setVoidTargetId(null);
+            invalidateAfterVoidAttempt();
+        },
+        onError: (error: unknown) => {
+            const status = isAxiosError(error) ? error.response?.status : undefined;
+            if (status === 409) {
+                // Already voided or no longer voidable: the card is stale, not the request.
+                toast({ variant: "destructive", description: CONTRACT_VOID_COPY.conflict });
+                setVoidTargetId(null);
+            } else {
+                // Any other failure, including no response or a timeout, leaves the outcome
+                // uncertain (the cancel may have happened): keep the modal for a retry or cancel.
+                toast({ variant: "destructive", description: CONTRACT_VOID_COPY.failure });
+            }
+            invalidateAfterVoidAttempt();
+        },
+    });
+
     if (isLoading) {
         return (
             <div data-component={`${dataComponentPrefix}-contracts-skeleton-list`} className="space-y-3">
@@ -845,6 +917,14 @@ function ClientContractsList({
                     doc.displayStatus,
                     calendar,
                 );
+                const isVoided = Boolean(doc.voidedAt) || doc.displayStatus === "voided";
+                // The shared rule decides on the stamped status; the visible label is checked too so a
+                // payload without displayStatus never offers the button on a 철회됨 / 기간 만료 card.
+                const isVoidable =
+                    isContractVoidable({ displayStatus: doc.displayStatus ?? "", voidedAt: doc.voidedAt }) &&
+                    statusLabel !== "철회됨" &&
+                    statusLabel !== "기간 만료" &&
+                    statusLabel !== "파기됨";
                 return (
                     <InfoCard
                         key={doc.documentId}
@@ -867,9 +947,70 @@ function ClientContractsList({
                             label="수신 연락처"
                             value={doc.stepRecipientSms ? formatKoreanPhoneNumber(doc.stepRecipientSms) : "-"}
                         />
+                        {isVoided ? (
+                            <InfoRow
+                                label={CONTRACT_VOID_ROW_LABEL}
+                                value={`${formatDateTime(doc.voidedAt ?? null)} · ${doc.voidedByName?.trim() || CONTRACT_VOIDED_BY_UNKNOWN_LABEL}`}
+                            />
+                        ) : null}
+                        <div
+                            data-component={`${dataComponentPrefix}-contracts-card_actions`}
+                            className="mt-3 flex gap-2"
+                        >
+                            {isVoidable ? (
+                                <Button
+                                    type="button"
+                                    variant="negative-outline"
+                                    size="sm"
+                                    className="w-1/4"
+                                    data-component={`${dataComponentPrefix}-contracts-card_void`}
+                                    onClick={() => setVoidTargetId(doc.documentId)}
+                                >
+                                    {CONTRACT_VOID_COPY.action}
+                                </Button>
+                            ) : null}
+                            <Button
+                                type="button"
+                                variant="positive"
+                                size="sm"
+                                className={isVoidable ? "w-3/4" : "w-full"}
+                                data-component={`${dataComponentPrefix}-contracts-card_preview`}
+                                onClick={() => setPreviewDoc(doc)}
+                            >
+                                문서 보기
+                            </Button>
+                        </div>
                     </InfoCard>
                 );
             })}
+            <TwoButtonModal
+                data-component={`${dataComponentPrefix}-contracts-void-modal`}
+                open={voidTargetId !== null}
+                onOpenChange={(open) => {
+                    if (!open) setVoidTargetId(null);
+                }}
+                size="detail"
+                title={CONTRACT_VOID_COPY.confirmTitle}
+                description={CONTRACT_VOID_COPY.confirmDescription}
+                isDescriptionVisuallyHidden={false}
+                cancelLabel={CONTRACT_VOID_COPY.cancel}
+                approvalLabel={CONTRACT_VOID_COPY.confirm}
+                approvalVariant="destructive"
+                pendingLabel={CONTRACT_VOID_COPY.pending}
+                isPending={voidMutation.isPending}
+                onApprove={() => {
+                    if (voidTargetId !== null && !voidMutation.isPending) {
+                        voidMutation.mutate(voidTargetId);
+                    }
+                }}
+            />
+            <ContractDocumentPreviewModal
+                data-component={`${dataComponentPrefix}-contracts-document-preview`}
+                open={previewDoc !== null}
+                onClose={() => setPreviewDoc(null)}
+                document={previewDoc ? toPreviewDocument(previewDoc) : null}
+                customerName={clientName}
+            />
         </div>
     );
 }
@@ -1591,6 +1732,8 @@ function ClientDetailPanelBody({
                                         dataComponentPrefix={dataComponentPrefix}
                                     />
                                     <ClientContractsList
+                                        clientId={clientId}
+                                        clientName={client.name}
                                         docs={clientContractDocs}
                                         isLoading={isClientContractsLoading}
                                         isError={isClientContractsError}
