@@ -34,6 +34,9 @@ describe("RateLimitGuard", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        // A developer's local backend/.env may turn the guard off; these tests cover the enforced path.
+        delete process.env["AUTH_RATE_LIMIT_DISABLED"];
+        delete process.env["AUTH_RATE_LIMIT_EXEMPT_EMAILS"];
         prisma.$queryRaw.mockResolvedValue(row(1));
         prisma.$executeRaw.mockResolvedValue(1);
         guard = new RateLimitGuard(prisma as unknown as PrismaService);
