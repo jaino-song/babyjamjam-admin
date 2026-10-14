@@ -683,6 +683,34 @@ describe("service-record-edit-preview.policy", () => {
                 expect(projection.entries.slice(11).every((entry) => entry.assignmentId === latest.id)).toBe(true);
             });
 
+            describe("with a vector of A 1-7, B 8-10 and C 11-15", () => {
+                const threeWay = (sessionIndex: number) => sessionIndex <= 7 ? caregiverA : sessionIndex <= 10 ? middle : latest;
+                const owners = (rows: Array<ReturnType<typeof written>>) =>
+                    resolveServiceRecordScheduleProjection(persisted(rows, chain, threeWay), KR_BUILTIN_CALENDAR);
+                const ownerNames = (entries: Array<{ assignmentId: string }>) => entries.map((entry) =>
+                    entry.assignmentId === caregiverA.id ? "A" : entry.assignmentId === middle.id ? "B" : "C").join("");
+
+                it("lets a later caregiver's backfill carry across the middle caregiver's unwritten slots", () => {
+                    const projection = owners([written(1, caregiverA), written(2, latest)]);
+                    expect(projection.blockingReasons).toEqual([]);
+                    expect(ownerNames(projection.entries)).toBe("ACCCCCCCCCCCCCC");
+                });
+
+                it("follows the nearest preceding backfiller when the backfilling caregiver was replaced in turn", () => {
+                    // B backfilled 5 while current, then C replaced B and wrote 9.
+                    const projection = owners([written(1, caregiverA), written(5, middle), written(9, latest)]);
+                    expect(projection.blockingReasons).toEqual([]);
+                    expect(ownerNames(projection.entries)).toBe("AAAABBBBCCCCCCC");
+                });
+
+                it("hands the slots after a later backfiller's row to that backfiller", () => {
+                    // B (now replaced) backfilled 3, then C wrote 4.
+                    const projection = owners([written(1, caregiverA), written(3, middle), written(4, latest)]);
+                    expect(projection.blockingReasons).toEqual([]);
+                    expect(ownerNames(projection.entries)).toBe("AABCCCCCCCCCCCC");
+                });
+            });
+
             it("still blocks an earlier caregiver writing over a later caregiver's slot", () => {
                 const projection = resolveServiceRecordScheduleProjection(
                     persisted([written(9, caregiverA)], chain, ownerOf),

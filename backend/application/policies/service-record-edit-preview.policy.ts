@@ -300,32 +300,31 @@ function attributedTo(entry: SharedPlannedSession, writer: ServiceRecordEditSour
 }
 
 /**
- * Re-attribute the slots a later caregiver backfilled. Once a successor has
- * backfilled from some session on, the slots after it that still have no row
- * and that the vector gives to an earlier replaced caregiver are part of the
- * same backfill (write authority never interleaves), so they go to that writer
- * too; otherwise the earlier caregiver's leftover slots would straddle the
- * backfilled ones and overlap their range.
+ * Re-attribute the slots a later caregiver backfilled. A slot with no row
+ * that the vector gives to an earlier replaced caregiver follows the writer of
+ * the nearest preceding backfilled row, provided that writer is a successor of
+ * the slot's vector owner: write authority never interleaves, so the slots
+ * between and after backfilled ones belong to whoever backfilled last. Without
+ * this the earlier caregiver's leftover slots would straddle the backfilled
+ * ones and overlap their ranges. Everything else keeps its vector owner.
  */
 function reattributedBackfill(
     source: ServiceRecordEditSource,
     entries: SharedPlannedSession[],
 ): SharedPlannedSession[] {
-    let first: { sessionIndex: number; writer: ServiceRecordEditSourceAssignment } | null = null;
-    const attributed = entries.map((entry) => {
-        const writer = backfillWriter(source, entry);
-        if (!writer) return entry;
-        if (!first || entry.sessionIndex < first.sessionIndex) first = { sessionIndex: entry.sessionIndex, writer };
-        return attributedTo(entry, writer);
-    });
-    const start = first as { sessionIndex: number; writer: ServiceRecordEditSourceAssignment } | null;
-    if (!start) return attributed;
-    return attributed.map((entry) => {
-        if (entry.sessionIndex <= start.sessionIndex) return entry;
-        if (source.sessions.some((session) => session.sessionIndex === entry.sessionIndex)) return entry;
-        const owner = assignmentById(source, entry.assignmentId);
-        return owner && isSuccessorOf(start.writer, owner) ? attributedTo(entry, start.writer) : entry;
-    });
+    let nearest: ServiceRecordEditSourceAssignment | null = null;
+    return [...entries]
+        .sort((left, right) => left.sessionIndex - right.sessionIndex)
+        .map((entry) => {
+            const writer = backfillWriter(source, entry);
+            if (writer) {
+                nearest = writer;
+                return attributedTo(entry, writer);
+            }
+            if (!nearest || source.sessions.some((session) => session.sessionIndex === entry.sessionIndex)) return entry;
+            const owner = assignmentById(source, entry.assignmentId);
+            return owner && isSuccessorOf(nearest, owner) ? attributedTo(entry, nearest) : entry;
+        });
 }
 
 function persistedDayReasons(
