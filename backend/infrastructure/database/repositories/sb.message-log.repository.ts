@@ -50,6 +50,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         const row = await this.prisma.message_log.create({
             data: MessageLogMapper.toPrismaCreate(log),
         });
+        log.markCarrierCheckPersisted();
         return MessageLogMapper.toDomain(row);
     }
 
@@ -64,9 +65,14 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             }
             return MessageLogMapper.toDomain(row);
         };
+        // With a caller-owned transaction the commit is not ours to observe, so the
+        // scheduled flag stays set (a rollback must not lose the schedule).
         if (transaction) return run(transaction);
-        if (this.isDeliveredServiceEndNotice(log)) return this.prisma.$transaction(run);
-        return run(this.prisma);
+        const persisted = this.isDeliveredServiceEndNotice(log)
+            ? await this.prisma.$transaction(run)
+            : await run(this.prisma);
+        log.markCarrierCheckPersisted();
+        return persisted;
     }
 
     async prepareProviderAttempt(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -403,6 +409,14 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             return saved.count === 1 ? "saved" : "stale";
         });
+    }
+
+    async postponeCarrierCheck(id: number, expectedMid: string, until: Date): Promise<boolean> {
+        const result = await this.prisma.message_log.updateMany({
+            where: { id, aligoMid: expectedMid, carrierCheckDueAt: { not: null } },
+            data: { carrierCheckDueAt: until },
+        });
+        return result.count === 1;
     }
 
     async findRetryableServiceRecordSmsByScheduleId(

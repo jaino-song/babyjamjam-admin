@@ -91,6 +91,15 @@ export class MessageLogEntity {
         return this.carrierCheckScheduled;
     }
 
+    /**
+     * Call once the scheduled carrier columns are durably written. Without it
+     * every later update() of this instance would rewrite them and could
+     * overwrite a result the one-shot check saved in the meantime.
+     */
+    markCarrierCheckPersisted(): void {
+        this.carrierCheckScheduled = false;
+    }
+
     /** Schedule (or re-schedule, resetting any earlier result) the one-shot carrier check. */
     scheduleCarrierCheck(baseTime: Date): void {
         this.carrierCheckDueAt = new Date(baseTime.getTime() + CARRIER_CHECK_DELAY_MS);
