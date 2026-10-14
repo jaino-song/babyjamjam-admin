@@ -1137,6 +1137,52 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         expect(extendExpiryForCase).not.toHaveBeenCalled();
     });
 
+    it("lets the currently assigned caregiver submit a session dated before its own schedule start (backfill)", async () => {
+        const handoverSchedule = {
+            id: 702,
+            clientId: 100,
+            branchId: BRANCH_ID,
+            primaryEmployeeId: 32,
+            secondaryEmployeeId: null,
+            startDate: new Date("2026-10-14T00:00:00.000Z"),
+            endDate: new Date("2026-10-23T00:00:00.000Z"),
+            replaced: false,
+            primaryEmployee: { name: "임선녀" },
+        };
+        const { service, transactionClient, upsert, scheduleUpdate } = createHarness({
+            schedule: handoverSchedule,
+            transactionRecord: createRecord({
+                startDate: new Date("2026-10-01T00:00:00.000Z"),
+                endDate: new Date("2026-10-23T00:00:00.000Z"),
+            }),
+        });
+        // Session 2 has no row yet; session 1 was written and locked by the outgoing caregiver.
+        transactionClient.service_record_day.findUnique
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(createDay({
+                scheduleId: 701,
+                employeeId: 31,
+                serviceDate: new Date("2026-10-01T00:00:00.000Z"),
+            }));
+
+        await service.upsertSession(
+            { ...context, scheduleId: 702, employeeId: 32 },
+            2,
+            createDto({ serviceDate: "2026-10-02T00:00:00.000Z" }),
+            false,
+        );
+
+        expect(scheduleUpdate).not.toHaveBeenCalled();
+        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({
+                scheduleId: 702,
+                employeeId: 32,
+                caseSessionIndex: 2,
+                serviceDate: new Date("2026-10-02T00:00:00.000Z"),
+            }),
+        }));
+    });
+
     it("rejects the upsert with a Korean conflict message when extending the end date would overlap another active schedule", async () => {
         const transactionRecord = createRecord({
             requiredSessionCount: 1,

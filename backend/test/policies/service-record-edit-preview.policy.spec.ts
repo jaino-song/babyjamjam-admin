@@ -328,6 +328,108 @@ describe("service-record-edit-preview.policy", () => {
         expect(preview.provenance).toEqual([expect.objectContaining({ endDate: "2026-10-06" })]);
     });
 
+    describe("legacy ownership follows the writer or the current assignee", () => {
+        const BRANCH = assignment.branchId;
+        const CASE = assignment.serviceRecordCaseId;
+        const caregiverA = {
+            ...assignment,
+            id: "aaaaaaaa-0000-4000-8000-00000000000a",
+            scheduleId: 701,
+            employeeId: 31,
+            employeeName: "공혜순",
+            startDate: "2026-10-01",
+            endDate: "2026-10-14",
+            replaced: true,
+            scheduleStartDate: "2026-10-01",
+            scheduleEndDate: "2026-10-14",
+        };
+        const caregiverB = {
+            ...assignment,
+            id: "bbbbbbbb-0000-4000-8000-00000000000b",
+            scheduleId: 702,
+            employeeId: 32,
+            employeeName: "임선녀",
+            startDate: "2026-10-14",
+            endDate: "2026-10-23",
+            replaced: false,
+            scheduleStartDate: "2026-10-14",
+            scheduleEndDate: "2026-10-23",
+        };
+        // 15 business days from 2026-10-01 with 10-05 (substitute) and 10-09 off.
+        const dates = [
+            "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08",
+            "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+            "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+        ];
+
+        function written(sessionIndex: number, owner: typeof caregiverA) {
+            const serviceDate = dates[sessionIndex - 1]!;
+            return {
+                ...source().sessions[0]!,
+                id: `day-${sessionIndex}`,
+                sourceRowId: `day-${sessionIndex}`,
+                sessionIndex,
+                rawCaseSessionIndex: sessionIndex,
+                rawSessionIndex: sessionIndex,
+                serviceDate,
+                scheduleId: owner.scheduleId,
+                employeeId: owner.employeeId,
+                employeeNameSnapshot: owner.employeeName,
+            };
+        }
+
+        function legacy(rows: Array<ReturnType<typeof written>>, assignments: typeof caregiverA[]): ServiceRecordEditSource {
+            return source({
+                plannedSessions: null,
+                requiredSessionCount: dates.length,
+                startDate: dates[0]!,
+                endDate: dates.at(-1)!,
+                sessions: rows,
+                assignments: assignments.map((item) => ({ ...item, branchId: BRANCH, serviceRecordCaseId: CASE })),
+            });
+        }
+
+        const calendar = KR_BUILTIN_CALENDAR;
+
+        it("does not treat the handover day as ambiguous when only the outgoing caregiver wrote session 1", () => {
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy([written(1, caregiverA)], [caregiverA, caregiverB]),
+                calendar,
+            );
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries.map(({ serviceDate }) => serviceDate)).toEqual(dates);
+            expect(projection.entries[0]!.assignmentId).toBe(caregiverA.id);
+            expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+            expect(projection.entries[7]).toEqual(expect.objectContaining({ sessionIndex: 8, assignmentId: caregiverB.id }));
+        });
+
+        it("lets the new assignee own sessions it backfilled before its own start date", () => {
+            const rows = [written(1, caregiverA), ...[2, 3, 4, 5, 6, 7].map((index) => written(index, caregiverB))];
+            const projection = resolveServiceRecordScheduleProjection(legacy(rows, [caregiverA, caregiverB]), calendar);
+            expect(projection.blockingReasons).toEqual([]);
+            expect(projection.entries[0]!.assignmentId).toBe(caregiverA.id);
+            expect(projection.entries.slice(1).every((entry) => entry.assignmentId === caregiverB.id)).toBe(true);
+        });
+
+        it("still blocks an unwritten session when there is no unique current assignment", () => {
+            const secondCurrent = { ...caregiverA, replaced: false };
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy([], [secondCurrent, caregiverB]),
+                calendar,
+            );
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("MISSING_ASSIGNMENT_PROVENANCE");
+            expect(projection.entries).toEqual([]);
+        });
+
+        it("blocks a written row whose schedule is not among the source assignments", () => {
+            const projection = resolveServiceRecordScheduleProjection(
+                legacy([{ ...written(1, caregiverA), scheduleId: 999 }], [caregiverA, caregiverB]),
+                calendar,
+            );
+            expect(projection.blockingReasons.map(({ code }) => code)).toContain("MISSING_ASSIGNMENT_PROVENANCE");
+        });
+    });
+
     describe("branch calendar", () => {
         const withBranchHoliday = (date: string, version: string) => createKrBusinessDayCalendar(
             [...KOREAN_HOLIDAY_CALENDAR[2026]!, date],
