@@ -340,7 +340,11 @@ function hasPlannedDateDifference(
  * caregiver's schedule follows moved session dates. An assignment that owns no
  * session (a terminated or otherwise session-less schedule) is never an outer
  * edge and keeps its stored dates, so it can neither block the confirm nor have
- * its schedule stretched. Every stored assignment is still emitted so the
+ * its schedule stretched. An outer edge also never crosses into a neighbour's
+ * stored period: when the earliest owner's sessions begin before an earlier
+ * assignment's stored end (a backfill by a later caregiver), or the latest
+ * owner's end would pass a later assignment's stored start, the stored date is
+ * kept, since taking the session date would move that boundary. Every stored assignment is still emitted so the
  * repository re-evaluates each schedule's message automation as before, but
  * only the ones whose dates this edit changes are flagged `datesChanged` and
  * written.
@@ -371,10 +375,20 @@ function assignmentWrites(
         .sort((left, right) =>
             left.storedStart.localeCompare(right.storedStart) || left.storedEnd.localeCompare(right.storedEnd));
     if (stored.length === 0) return [];
-    const owners = stored.filter((item) => item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id));
-    if (owners.length > 0) {
-        if (startDate) owners[0]!.startDate = startDate;
-        if (endDate) owners[owners.length - 1]!.endDate = endDate;
+    const ownerIndexes = stored
+        .map((item, index) => (
+            item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id) ? index : -1
+        ))
+        .filter((index) => index >= 0);
+    if (ownerIndexes.length > 0) {
+        const first = ownerIndexes[0]!;
+        const last = ownerIndexes[ownerIndexes.length - 1]!;
+        if (startDate && stored.slice(0, first).every((item) => item.storedEnd <= startDate)) {
+            stored[first]!.startDate = startDate;
+        }
+        if (endDate && stored.slice(last + 1).every((item) => item.storedStart >= endDate)) {
+            stored[last]!.endDate = endDate;
+        }
     }
     return stored.map((item) => {
         if (!item.startDate || !item.endDate || item.startDate > item.endDate) {

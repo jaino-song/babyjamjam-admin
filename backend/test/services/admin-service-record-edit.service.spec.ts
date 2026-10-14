@@ -2392,6 +2392,41 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
+    it("keeps both stored ranges when only the later caregiver wrote sessions, backfilling the earlier ones", async () => {
+        // B wrote sessions 1-8, so the provenance holds only B. B's first session (10-01) lies inside A's
+        // stored period, so B's start must stay on the stored handover day, not move to 10-01.
+        const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((index) => written(index, caregiverB));
+        const plan = await confirmedAssignments(handoverSource(rows), headerOnly);
+        expect(plan.revision?.provenance).toEqual([
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-01", endDate: "2026-10-23" }),
+        ]);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
+    it("keeps the earlier caregiver's end when only the earlier caregiver owns sessions beyond the handover", async () => {
+        // Mirror: every session is A's, and the last (10-23) lies inside B's stored period.
+        const source: ServiceRecordEditSource = {
+            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverA))),
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: caregiverA.id,
+                scheduleId: caregiverA.scheduleId,
+                employeeId: caregiverA.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-14", datesChanged: false }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-23", datesChanged: false }),
+        ]);
+    });
+
     it("flags no assignment as changed when a confirm leaves every date alone", async () => {
         const plan = await confirmedAssignments(
             handoverSource([written(1, caregiverA), written(8, caregiverB)]),
