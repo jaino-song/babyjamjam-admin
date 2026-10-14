@@ -828,6 +828,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             WHERE document_id = ${documentId}
               AND branch_id = ${branchid}::uuid
               AND permanent_purge_requested_at IS NULL
+              AND voided_at IS NULL
               AND status_type NOT IN ('047', '049', '099')
             FOR UPDATE
         `);
@@ -986,6 +987,7 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             WHERE document_id = ${documentId}
               AND branch_id = ${branchid}::uuid
               AND permanent_purge_requested_at IS NULL
+              AND voided_at IS NULL
               AND status_type NOT IN ('047', '049', '099')
             FOR UPDATE
         `);

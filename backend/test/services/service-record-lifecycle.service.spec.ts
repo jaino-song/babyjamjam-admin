@@ -995,6 +995,128 @@ describe("ServiceRecordLifecycleService", () => {
         expect(persistSpy).toHaveBeenCalledTimes(1);
     });
 
+    describe("voided contract fence under the document row lock (BJJ-439)", () => {
+        /**
+         * A complete-lock-surface transaction double (client / employee_schedule / service_record_case
+         * delegates plus $queryRaw: `hasCompleteServiceRecordWriteLockSurface` is true). The locked
+         * `eformsign_doc` select behaves like PostgreSQL for the `voided_at` predicate: a voided row
+         * is returned only when the SQL does not filter it out, so a missing predicate is observable.
+         */
+        function lockSurfaceTransaction(options: { voided: boolean; mirrored: boolean }) {
+            const documentRow = {
+                id: 7,
+                clientId: 1,
+                branchId: rawQueryBranchId,
+                serviceRecordCaseId: rawQueryCaseId,
+                revisionId: null,
+            };
+            const $queryRaw = jest.fn().mockImplementation(async (query: { strings?: string[] }) => {
+                const sql = query.strings?.join(" ") ?? "";
+                if (sql.includes("FROM eformsign_doc") && sql.includes(options.mirrored ? "detail_source_updated_date" : "status_type NOT IN")) {
+                    const filteredOut = options.voided && sql.includes("voided_at IS NULL");
+                    return filteredOut ? [] : [documentRow];
+                }
+                if (sql.includes("e_doc_id")) {
+                    return [{ id: 1, eDocId: rawQueryDocumentId, branchId: rawQueryBranchId }];
+                }
+                if (sql.includes("current_revision_id")) {
+                    return [{
+                        id: rawQueryCaseId,
+                        branchId: rawQueryBranchId,
+                        clientId: 1,
+                        currentRevisionId: null,
+                        currentUsableRevisionId: null,
+                        currentUsableDocumentVersion: null,
+                    }];
+                }
+                return [{ id: 7 }];
+            });
+            return {
+                $queryRaw,
+                eformsign_doc: { findFirst: jest.fn().mockResolvedValue({ id: 7 }) },
+                client: {
+                    findUnique: jest.fn().mockResolvedValue({ id: 1, branchId: rawQueryBranchId, eDocId: rawQueryDocumentId }),
+                    updateMany: jest.fn(),
+                },
+                employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
+                service_record_case: {
+                    findUnique: jest.fn().mockResolvedValue({ id: rawQueryCaseId, branchId: rawQueryBranchId, clientId: 1 }),
+                },
+            };
+        }
+
+        function build(transactionClient: ReturnType<typeof lockSurfaceTransaction>) {
+            const prisma = {
+                $transaction: jest.fn((callback: (tx: typeof transactionClient) => Promise<unknown>) =>
+                    callback(transactionClient)),
+            };
+            const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
+            const persistSpy = jest.spyOn(
+                service as unknown as { syncEndDateFromContractInTransaction: jest.Mock },
+                "syncEndDateFromContractInTransaction",
+            ).mockResolvedValue(undefined);
+            return { service, persistSpy };
+        }
+
+        const currentParams = {
+            branchId: rawQueryBranchId,
+            clientId: 1,
+            endDate: date("2026-10-30"),
+            documentId: rawQueryDocumentId,
+        };
+        const mirroredParams = {
+            ...currentParams,
+            detailSourceUpdatedDate: new Date("2026-07-30T01:00:00.000Z"),
+            detailSyncedAt: new Date("2026-07-30T01:01:00.000Z"),
+        };
+
+        it("syncEndDateFromCurrentContract filters voided_at in the locked document select and refuses a voided document", async () => {
+            const transactionClient = lockSurfaceTransaction({ voided: true, mirrored: false });
+            const { service, persistSpy } = build(transactionClient);
+
+            await expect(service.syncEndDateFromCurrentContract(currentParams)).resolves.toBe(false);
+
+            const documentLock = transactionClient.$queryRaw.mock.calls
+                .map(([query]) => (query as { strings: string[] }).strings.join(" "))
+                .find((sql) => sql.includes("FROM eformsign_doc") && sql.includes("FOR UPDATE"));
+            expect(documentLock).toContain("voided_at IS NULL");
+            expect(persistSpy).not.toHaveBeenCalled();
+            expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("syncEndDateFromCurrentContract still syncs the end date for a document that is not voided", async () => {
+            const transactionClient = lockSurfaceTransaction({ voided: false, mirrored: false });
+            const { service, persistSpy } = build(transactionClient);
+
+            await expect(service.syncEndDateFromCurrentContract(currentParams)).resolves.toBe(true);
+
+            expect(persistSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it("syncEndDateFromMirroredContract filters voided_at in the locked document select and refuses a voided ready mirror", async () => {
+            const transactionClient = lockSurfaceTransaction({ voided: true, mirrored: true });
+            const { service, persistSpy } = build(transactionClient);
+
+            await expect(service.syncEndDateFromMirroredContract(mirroredParams)).resolves.toBe(false);
+
+            const documentLock = transactionClient.$queryRaw.mock.calls
+                .map(([query]) => (query as { strings: string[] }).strings.join(" "))
+                .find((sql) => sql.includes("detail_source_updated_date") && sql.includes("FOR UPDATE"));
+            expect(documentLock).toContain("voided_at IS NULL");
+            expect(persistSpy).not.toHaveBeenCalled();
+            expect(transactionClient.client.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("syncEndDateFromMirroredContract still syncs the end date for a ready mirror that is not voided", async () => {
+            const transactionClient = lockSurfaceTransaction({ voided: false, mirrored: true });
+            const { service, persistSpy } = build(transactionClient);
+
+            await expect(service.syncEndDateFromMirroredContract(mirroredParams)).resolves.toBe(true);
+
+            expect(persistSpy).toHaveBeenCalledTimes(1);
+        });
+    });
+
     it("completes a service-record case idempotently when every locked snapshot is in the completed set", async () => {
         const transactionClient = {
             eformsign_doc: {
