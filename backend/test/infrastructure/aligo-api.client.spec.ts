@@ -88,4 +88,93 @@ describe("AligoApiClient SMS", () => {
         for (const raw of [...Object.values(values), "01000000031", "https://apis.aligo.in"]) expect(JSON.stringify(first)).not.toContain(raw);
         expect(fetchMock).not.toHaveBeenCalled();
     });
+
+    describe("getSmsDeliveryDetails", () => {
+        const credentials = { ALIGO_API_KEY: "api-key", ALIGO_USER_ID: "user-id" };
+        const jsonResponse = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+
+        it("posts mid/page/page_size to /sms_list/ and normalizes rows", async () => {
+            const { client } = createClient(credentials);
+            const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue(jsonResponse({
+                result_code: "1",
+                message: "success",
+                next_yn: "N",
+                list: [
+                    { mdid: 987, receiver: "010-1111-2222", sms_state: " 발송완료 ", send_date: "2026-10-14 10:00:00" },
+                    { receiver: 1033334444, sms_state: null },
+                ],
+            }));
+
+            const result = await client.getSmsDeliveryDetails("987");
+
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            expect(fetchMock.mock.calls[0]?.[0]).toBe("https://apis.aligo.in/sms_list/");
+            const formData = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+            expect(formData.get("key")).toBe("api-key");
+            expect(formData.get("user_id")).toBe("user-id");
+            expect(formData.get("mid")).toBe("987");
+            expect(formData.get("page")).toBe("1");
+            expect(formData.get("page_size")).toBe("500");
+            expect(result).toEqual({
+                resultCode: 1,
+                message: "success",
+                rows: [
+                    { mdid: "987", receiver: "01011112222", smsState: "발송완료", sendDate: "2026-10-14 10:00:00" },
+                    { mdid: null, receiver: "1033334444", smsState: "", sendDate: null },
+                ],
+            });
+        });
+
+        it("follows next_yn across pages and concatenates rows", async () => {
+            const { client } = createClient(credentials);
+            const fetchMock = jest.spyOn(global, "fetch")
+                .mockResolvedValueOnce(jsonResponse({ result_code: 1, message: "ok", next_yn: "Y", list: [{ receiver: "01011112222", sms_state: "발송완료" }] }))
+                .mockResolvedValueOnce(jsonResponse({ result_code: 1, message: "ok", next_yn: "N", list: [{ receiver: "01033334444", sms_state: "결번" }] }));
+
+            const result = await client.getSmsDeliveryDetails("1");
+
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect((fetchMock.mock.calls[1]?.[1]?.body as FormData).get("page")).toBe("2");
+            expect(result.rows.map((r) => r.receiver)).toEqual(["01011112222", "01033334444"]);
+        });
+
+        it("caps paging at 20 pages", async () => {
+            const { client } = createClient(credentials);
+            const fetchMock = jest.spyOn(global, "fetch").mockImplementation(() =>
+                Promise.resolve(jsonResponse({ result_code: 1, message: "ok", next_yn: "Y", list: [{ receiver: "01011112222", sms_state: "발송완료" }] })),
+            );
+
+            const result = await client.getSmsDeliveryDetails("1");
+
+            expect(fetchMock).toHaveBeenCalledTimes(20);
+            expect(result.rows).toHaveLength(20);
+        });
+
+        it("returns a non-1 result_code without throwing and stops paging", async () => {
+            const { client } = createClient(credentials);
+            const fetchMock = jest.spyOn(global, "fetch")
+                .mockResolvedValueOnce(jsonResponse({ result_code: 1, message: "ok", next_yn: "Y", list: [{ receiver: "01011112222", sms_state: "발송완료" }] }))
+                .mockResolvedValueOnce(jsonResponse({ result_code: -101, message: "인증오류" }));
+
+            const result = await client.getSmsDeliveryDetails("1");
+
+            expect(fetchMock).toHaveBeenCalledTimes(2);
+            expect(result).toEqual({ resultCode: -101, message: "인증오류", rows: [] });
+        });
+
+        it("throws on HTTP non-OK responses", async () => {
+            const { client } = createClient(credentials);
+            jest.spyOn(global, "fetch").mockResolvedValue(new Response("boom", { status: 500 }));
+
+            await expect(client.getSmsDeliveryDetails("1")).rejects.toThrow("Aligo SMS list API error (500): boom");
+        });
+
+        it("rejects when credentials are missing", async () => {
+            const { client } = createClient();
+            const fetchMock = jest.spyOn(global, "fetch");
+
+            await expect(client.getSmsDeliveryDetails("1")).rejects.toThrow("Aligo SMS integration is not configured.");
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+    });
 });
