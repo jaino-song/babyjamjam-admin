@@ -696,6 +696,39 @@ describe("AdminServiceRecordService", () => {
             expect(link.sentCount).toBe(0);
         });
 
+        it("lets a newer unrelated pending job outrank a carrier-failed log", async () => {
+            // Job A sent at T0 and its log failed the carrier check at T0+30m. Job B was
+            // created at T0+10m — an unrelated newer attempt — so the link is scheduled.
+            const link = await linkFor(
+                [
+                    job("job-a", "sent", at("1T06:00")),
+                    job("job-b", "pending", at("1T06:10"), { scheduledFor: at("9T06:00"), createdAt: at("1T06:10") }),
+                ],
+                [{
+                    ...log(1, "job-a", "failed", at("1T06:00")),
+                    carrierResultState: "failed",
+                    carrierCheckedAt: at("1T06:30"),
+                }],
+            );
+            expect(link.status).toBe("scheduled");
+            expect(link.scheduledFor).toEqual(at("9T06:00"));
+        });
+
+        it("keeps a carrier-failed log ahead of an unrelated job that is older than it", async () => {
+            const link = await linkFor(
+                [
+                    job("job-a", "sent", at("1T06:00")),
+                    job("job-b", "canceled", at("1T05:00")),
+                ],
+                [{
+                    ...log(1, "job-a", "failed", at("1T06:00")),
+                    carrierResultState: "failed",
+                    carrierCheckedAt: at("1T06:30"),
+                }],
+            );
+            expect(link.status).toBe("failed");
+        });
+
         it("keeps sent when the carrier check delivered the log", async () => {
             const link = await linkFor(
                 [job("job-1", "sent", at("1T06:01"))],
