@@ -710,6 +710,145 @@ describe("ContractDetail voided (파기됨) contract", () => {
     expect(within(stepper).getAllByText("파기됨").length).toBeGreaterThan(0);
   });
 
+  // The visible header stepper only: Stepper renders a second, hidden copy of the steps for
+  // measuring, and only the visible copy exposes the stepper data-component hooks.
+  function visibleStepperSteps() {
+    const root = document.querySelector('[data-component="desktop_v3_stepper"]') as HTMLElement;
+    const labels = Array.from(root.querySelectorAll('[data-component="desktop_v3_stepper_label"]'));
+    return {
+      root,
+      labels: labels.map((label) => label.textContent),
+      done: labels.map((label) => label.className.includes("text-v3-primary")),
+    };
+  }
+
+  function expectAllReached(steps: ReturnType<typeof visibleStepperSteps>) {
+    expect(steps.done.every(Boolean)).toBe(true);
+  }
+
+  const VOIDED = { display_status: "voided", voided_at: VOIDED_AT };
+
+  it("ends the header stepper of a voided unsigned 060 document in a reached 파기됨 step", async () => {
+    await renderDetail({ ...pendingDetailDocumentFixture(), ...VOIDED } as unknown as EformsignDocument);
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual(["문서 생성", "발송 완료", "파기됨"]);
+    expectAllReached(steps);
+  });
+
+  it("keeps the opened stage in the header stepper of a voided document that was opened but not signed", async () => {
+    await renderDetail({
+      ...pendingDetailDocumentFixture(),
+      histories: [{ status_type: "064", step_index: "1", updated_date: 1756800000000 }],
+      ...VOIDED,
+    } as unknown as EformsignDocument);
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual(["문서 생성", "발송 완료", "이용자 문서 열람", "파기됨"]);
+    expectAllReached(steps);
+  });
+
+  it("ends the header stepper of a voided document the customer had signed in 이용자 서명 완료, 파기됨", async () => {
+    await renderDetail({
+      ...serviceRecordReviewNeededFixture(),
+      ...VOIDED,
+    } as unknown as EformsignDocument);
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual(["문서 생성", "발송 완료", "이용자 문서 열람", "이용자 서명 완료", "파기됨"]);
+    expectAllReached(steps);
+  });
+
+  it("ends the header stepper of a completed then voided document in 계약서 완료, 파기됨", async () => {
+    await renderDetail({ ...receiptDetailDocumentFixture(), ...VOIDED } as unknown as EformsignDocument);
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual([
+      "문서 생성",
+      "발송 완료",
+      "이용자 문서 열람",
+      "이용자 서명 완료",
+      "제공기관 검토 완료",
+      "계약서 완료",
+      "파기됨",
+    ]);
+    expectAllReached(steps);
+  });
+
+  it("keeps 파기됨 on screen when the header stepper collapses", async () => {
+    // Drive the real overflow path: the header row is narrower than title + full stepper.
+    const rectSpy = jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function mockRect(this: HTMLElement) {
+        const isHeaderRow = this.parentElement?.getAttribute("data-slot") === "detail-panel-header";
+        const width = isHeaderRow ? 100 : 500;
+        return { width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0, toJSON: () => ({}) };
+      });
+    try {
+      await renderDetail({ ...pendingDetailDocumentFixture(), ...VOIDED } as unknown as EformsignDocument);
+
+      await waitFor(() => {
+        expect(visibleStepperSteps().root.getAttribute("data-collapsed")).toBe("true");
+      });
+      const steps = visibleStepperSteps();
+      expect(steps.labels).toContain("파기됨");
+      expect(steps.labels).toEqual(["발송 완료", "파기됨"]);
+      expectAllReached(steps);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("collapses a completed then voided header stepper to 계약서 완료, 파기됨", async () => {
+    const rectSpy = jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function mockRect(this: HTMLElement) {
+        const isHeaderRow = this.parentElement?.getAttribute("data-slot") === "detail-panel-header";
+        const width = isHeaderRow ? 100 : 500;
+        return { width, height: 0, top: 0, left: 0, right: width, bottom: 0, x: 0, y: 0, toJSON: () => ({}) };
+      });
+    try {
+      await renderDetail({ ...receiptDetailDocumentFixture(), ...VOIDED } as unknown as EformsignDocument);
+
+      await waitFor(() => {
+        expect(visibleStepperSteps().root.getAttribute("data-collapsed")).toBe("true");
+      });
+      expect(visibleStepperSteps().labels).toEqual(["계약서 완료", "파기됨"]);
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
+  it("keeps all six header stepper steps of a non-voided completed 003 document", async () => {
+    await renderDetail(receiptDetailDocumentFixture());
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual([
+      "문서 생성",
+      "발송 완료",
+      "이용자 문서 열람",
+      "이용자 서명 완료",
+      "제공기관 검토 완료",
+      "계약서 완료",
+    ]);
+    expectAllReached(steps);
+  });
+
+  it("keeps all six header stepper steps of a non-voided 060 review-needed document, review still ahead", async () => {
+    await renderDetail(serviceRecordReviewNeededFixture());
+
+    const steps = visibleStepperSteps();
+    expect(steps.labels).toEqual([
+      "문서 생성",
+      "발송 완료",
+      "이용자 문서 열람",
+      "이용자 서명 완료",
+      "제공기관 검토 필요",
+      "계약서 완료",
+    ]);
+    expect(steps.done).toEqual([true, true, true, true, false, false]);
+  });
+
   it("keeps the 제공기관 검토 필요 stage in the header stepper of a non-voided 060 document", async () => {
     await renderDetail(serviceRecordReviewNeededFixture());
 

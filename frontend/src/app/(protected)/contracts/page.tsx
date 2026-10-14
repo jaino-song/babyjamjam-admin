@@ -276,21 +276,23 @@ function getSignatureProgress(
 ) {
   const isCompleted = category === "completed";
   const isSigned = isCompleted || isCustomerSigned;
-  // A voided contract never reads as waiting on the provider review; a completed one keeps its history.
-  const reviewLabel = isCompleted
-    ? "제공기관 검토 완료"
-    : isVoided
-      ? CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided
-      : "제공기관 검토 필요";
   const steps = [
     { label: "문서 생성", done: true },
     { label: "발송 완료", done: true },
     { label: "이용자 문서 열람", done: isSigned || hasOpenedDocument },
     { label: "이용자 서명 완료", done: isSigned },
-    { label: reviewLabel, done: isCompleted },
+    { label: isCompleted ? "제공기관 검토 완료" : "제공기관 검토 필요", done: isCompleted },
     { label: "계약서 완료", done: isCompleted },
   ];
-  return steps;
+  if (!isVoided) {
+    return steps;
+  }
+  // A voided contract is closed: it shows only the stages it actually reached, ending in 파기됨,
+  // so no un-reached stage (or live 제공기관 검토 필요 / 계약서 완료) stays ahead of the void.
+  return [
+    ...steps.filter((step) => step.done),
+    { label: CONTRACT_DOC_DISPLAY_STATUS_LABELS.voided, done: true },
+  ];
 }
 
 function formatCurrencyValue(value: string | null | undefined): string {
@@ -1436,7 +1438,15 @@ export function ContractDetail({
   // an unassigned document ("고객 등록 필요") at the review step is customer-signed too.
   const isReviewNeeded = displayStatus === "review";
   const isCustomerSigned = isCustomerSignedDisplayStatus(displayStatus);
-  const steps = getSignatureProgress(category, hasOpenedDocument, isCustomerSigned, displayStatus === "voided");
+  const isVoided = displayStatus === "voided";
+  // A voided document's display status hides how far it got; the header stepper keeps the
+  // stages it reached, so read the signature from the status it would have without the void.
+  const wasCustomerSigned = isVoided
+    ? isCustomerSignedDisplayStatus(
+        resolveDocDisplayStatus(detailedDocument.current_status, docContractEndDate, null, calendar),
+      )
+    : isCustomerSigned;
+  const steps = getSignatureProgress(category, hasOpenedDocument, wasCustomerSigned, isVoided);
   const customerSignedTimestamp = extractCustomerSignedTimestamp(detailedDocument);
   const customerSignedDate =
     customerSignedTimestamp != null ? formatDateTime(customerSignedTimestamp) : null;
