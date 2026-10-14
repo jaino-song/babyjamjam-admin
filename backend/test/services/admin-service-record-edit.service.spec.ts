@@ -2642,9 +2642,12 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
-    it("still follows the session dates for a single caregiver whose schedule is terminated early and owns every session", async () => {
-        // A case ended early (중도 종료) has its only schedule terminated. It owns the sessions, so it stays
-        // an outer edge: start follows the first session (stored earlier), end follows the last (moved later).
+    it("keeps the contracted period of a single terminated caregiver, extending its end but never shrinking it", async () => {
+        // A case ended early (중도 종료) has its only schedule terminated, and termination deliberately keeps
+        // the contracted period in end_date (client.service.ts). The schedule owns the sessions, so it is
+        // still an outer edge, but only to grow: stored 09-28..10-25. Header-only: the first session (10-01)
+        // is later than the stored start and the last (10-23) earlier than the stored end, so nothing
+        // shrinks. Last session moved to 10-26: the end extends, the start still stays.
         const single = {
             ...caregiverB,
             scheduleTerminatedAt: "2026-10-20T00:00:00.000Z",
@@ -2666,13 +2669,41 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
                 provenanceVersion: "case-7",
             })),
         };
+        const unchanged = await confirmedAssignments(source, headerOnly);
+        expect(unchanged.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-09-28", endDate: "2026-10-25", datesChanged: false }),
+        ]);
         const later = await confirmedAssignments(source, { sessions: [{ sessionIndex: 15, serviceDate: "2026-10-26" }] });
         expect(later.assignments).toEqual([
-            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-26", datesChanged: true }),
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-09-28", endDate: "2026-10-26", datesChanged: true }),
         ]);
-        const earlier = await confirmedAssignments(source, headerOnly);
-        expect(earlier.assignments).toEqual([
-            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-23", datesChanged: true }),
+    });
+
+    it("moves a terminated caregiver's start earlier when the first session precedes it", async () => {
+        const single = {
+            ...caregiverB,
+            scheduleTerminatedAt: "2026-10-20T00:00:00.000Z",
+            startDate: "2026-10-03",
+            scheduleStartDate: "2026-10-03",
+            endDate: "2026-10-25",
+            scheduleEndDate: "2026-10-25",
+        };
+        const source = {
+            ...handoverSource([written(1, single)]),
+            assignments: [single],
+            plannedSessions: dates.map((serviceDate, index) => ({
+                sessionIndex: index + 1,
+                serviceDate,
+                originalDate: serviceDate,
+                assignmentId: single.id,
+                scheduleId: single.scheduleId,
+                employeeId: single.employeeId,
+                provenanceVersion: "case-7",
+            })),
+        };
+        const plan = await confirmedAssignments(source, headerOnly);
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: single.id, startDate: "2026-10-01", endDate: "2026-10-25", datesChanged: true }),
         ]);
     });
 

@@ -383,9 +383,10 @@ function assignmentWrites(
     if (stored.length === 0) return [];
     const ownsSession = (item: (typeof stored)[number]) =>
         item.assignment.id !== null && ownerAssignmentIds.has(item.assignment.id);
+    const isTerminated = (item: (typeof stored)[number]) => Boolean(item.assignment.scheduleTerminatedAt);
     const activeIndexes = stored
         .map((item, index) => (
-            !item.assignment.scheduleTerminatedAt || ownsSession(item) ? index : -1
+            !isTerminated(item) || ownsSession(item) ? index : -1
         ))
         .filter((index) => index >= 0);
     if (activeIndexes.length > 0) {
@@ -400,6 +401,7 @@ function assignmentWrites(
             startDate
             && stored.slice(0, first).every((item) => item.storedEnd < head.storedStart && item.storedEnd <= startDate)
             && (ownsSession(head) || startDate <= head.storedEnd)
+            && (!isTerminated(head) || startDate < head.storedStart)
         ) {
             head.startDate = startDate;
         }
@@ -407,6 +409,7 @@ function assignmentWrites(
             endDate
             && stored.slice(last + 1).every((item) => item.storedStart > tail.storedEnd && item.storedStart >= endDate)
             && (ownsSession(tail) || endDate >= tail.storedStart)
+            && (!isTerminated(tail) || endDate > tail.storedEnd)
         ) {
             tail.endDate = endDate;
         }
