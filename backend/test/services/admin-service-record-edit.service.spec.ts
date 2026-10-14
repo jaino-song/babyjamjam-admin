@@ -2217,8 +2217,10 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         ]);
     });
 
-    it("lets the case's outer edges follow moved sessions and widens a handover only as far as they reach", async () => {
-        // Every session from 7 on moves two business days later.
+    it("falls back to the owned session dates when moved sessions make the stored handover invalid", async () => {
+        // Every session from 7 on moves two business days later, so A now owns a session
+        // (10-15) after the stored handover day (10-14). Keeping 10-14 would cut A short, so both
+        // neighbours use their owned session dates instead and no longer share a day.
         const moved = ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27"];
         const plan = await confirmedAssignments(
             handoverSource([written(1, caregiverA), written(8, caregiverB)]),
@@ -2226,7 +2228,44 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         );
         expect(plan.assignments).toEqual([
             expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-15" }),
-            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-15", endDate: "2026-10-27" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-16", endDate: "2026-10-27" }),
+        ]);
+    });
+
+    it("never writes an end before a start when sessions move far ahead of the stored handover", async () => {
+        // Stored A end = B start = 10-22 (after a pause). Sessions 8-9 are moved back to 10-14 and 10-15,
+        // before that boundary. Keeping it would write B as 10-22..10-15.
+        const afterPause = ["2026-10-22", "2026-10-23"];
+        const source: ServiceRecordEditSource = {
+            ...handoverSource([written(1, caregiverA)]),
+            requiredSessionCount: 9,
+            endDate: "2026-10-23",
+            assignments: [
+                { ...caregiverA, endDate: "2026-10-22", scheduleEndDate: "2026-10-22" },
+                { ...caregiverB, startDate: "2026-10-22", scheduleStartDate: "2026-10-22" },
+            ],
+            plannedSessions: [...dates.slice(0, 7), ...afterPause].map((serviceDate, index) => {
+                const owner = index < 7 ? caregiverA : caregiverB;
+                return {
+                    sessionIndex: index + 1,
+                    serviceDate,
+                    originalDate: serviceDate,
+                    assignmentId: owner.id,
+                    scheduleId: owner.scheduleId,
+                    employeeId: owner.employeeId,
+                    provenanceVersion: "case-7",
+                };
+            }),
+        };
+        const plan = await confirmedAssignments(source, {
+            sessions: [
+                { sessionIndex: 8, serviceDate: "2026-10-14" },
+                { sessionIndex: 9, serviceDate: "2026-10-15" },
+            ],
+        });
+        expect(plan.assignments).toEqual([
+            expect.objectContaining({ assignmentId: caregiverA.id, startDate: "2026-10-01", endDate: "2026-10-13" }),
+            expect.objectContaining({ assignmentId: caregiverB.id, startDate: "2026-10-14", endDate: "2026-10-15" }),
         ]);
     });
 

@@ -336,12 +336,15 @@ function hasPlannedDateDifference(
  * deliberately stores the outgoing end date equal to the incoming start date,
  * and a newly assigned caregiver may backfill sessions before its own start.
  * Deriving every edge from owned sessions would move that boundary on any
- * confirm. So only the outer edges of the case (the first range's start and the
+ * confirm. So the outer edges of the case (the first range's start and the
  * last range's end) follow the sessions, which keeps a single caregiver's
- * schedule tracking moved session dates; every inner edge keeps the stored
- * value. An inner edge is only widened where a moved session would otherwise
- * fall outside its own assignment, and the next caregiver's start then follows
- * so the shared boundary stays shared.
+ * schedule tracking moved session dates, and each boundary between consecutive
+ * ranges keeps its stored shared date when that date is still valid: the
+ * outgoing range must reach its last owned session (boundary >= its owned end)
+ * and the incoming range must not end before the boundary (boundary <= its
+ * owned end). The incoming range may own sessions before the boundary; those
+ * are its backfill. A boundary that is not shared, or that a moved session made
+ * invalid, falls back to the owned session dates for both neighbours.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
@@ -349,24 +352,31 @@ function assignmentWrites(
 ): ServiceRecordEditConfirmAssignmentUpdate[] {
     const ordered = [...ranges].sort((left, right) =>
         left.startDate.localeCompare(right.startDate) || left.endDate.localeCompare(right.endDate));
-    let previousEnd: string | null = null;
+    const starts = ordered.map((range) => range.startDate);
+    const ends = ordered.map((range) => range.endDate);
+    for (let index = 0; index + 1 < ordered.length; index += 1) {
+        const previous = ordered[index]!;
+        const next = ordered[index + 1]!;
+        const storedPrevious = source.assignments.find((candidate) => candidate.id === previous.assignmentId);
+        const storedNext = source.assignments.find((candidate) => candidate.id === next.assignmentId);
+        const boundary = storedPrevious ? storedPrevious.endDate || storedPrevious.scheduleEndDate : "";
+        const nextStart = storedNext ? storedNext.startDate || storedNext.scheduleStartDate : "";
+        if (boundary && boundary === nextStart && previous.endDate <= boundary && boundary <= next.endDate) {
+            ends[index] = boundary;
+            starts[index + 1] = boundary;
+        }
+    }
     return ordered.map((range, index) => {
-        const stored = source.assignments.find((candidate) => candidate.id === range.assignmentId);
-        const first = index === 0;
-        const last = index === ordered.length - 1;
-        const storedStart = stored ? stored.startDate || stored.scheduleStartDate : "";
-        const storedEnd = stored ? stored.endDate || stored.scheduleEndDate : "";
-        let startDate = first || !storedStart ? range.startDate : storedStart;
-        if (!first && previousEnd !== null && startDate < previousEnd) startDate = previousEnd;
-        const endDate = last || !storedEnd
-            ? range.endDate
-            : storedEnd < range.endDate ? range.endDate : storedEnd;
-        previousEnd = endDate;
+        if (starts[index]! > ends[index]!) {
+            throw new ServiceRecordEditConflictError(
+                `Assignment ${range.assignmentId} would be written with its start after its end`,
+            );
+        }
         return {
             assignmentId: range.assignmentId,
             scheduleId: range.scheduleId,
-            startDate,
-            endDate,
+            startDate: starts[index]!,
+            endDate: ends[index]!,
         };
     });
 }
