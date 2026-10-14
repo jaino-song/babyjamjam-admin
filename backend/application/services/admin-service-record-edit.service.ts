@@ -353,11 +353,18 @@ function hasPlannedDateDifference(
  * employee_schedule dates differ from the computed ones are flagged
  * `datesChanged`; those are re-synced in both tables.
  *
- * Moving an outer edge across a terminated neighbour's stored boundary cannot be
- * done without moving that boundary, so the stored date is kept silently;
- * changing boundaries belongs to the caregiver replacement flow. A computed start
- * after its end (e.g. every session now lies after the earliest assignment's
- * stored end) is refused as a conflict to be resolved through that flow.
+ * An edge also stays put when a neighbour merely touches it (a neighbour's stored
+ * end equal to the edge's stored start, or the mirror), so a shared boundary is
+ * never pulled apart. A terminated edge candidate keeps its contracted period: its
+ * start may only move earlier and its end only later, never shrink.
+ *
+ * Moving an outer edge across a neighbour's stored boundary cannot be done
+ * without moving that boundary, so the stored date is kept silently; changing
+ * boundaries belongs to the caregiver replacement flow. An edge candidate that
+ * owns no session and whose new edge would fall outside its own period (e.g. a
+ * caregiver replaced before the contract start, stored as a one-day period) keeps
+ * its stored dates and no other assignment takes the edge. Only a session-owning
+ * candidate whose computed start falls after its end is refused as a conflict.
  */
 function assignmentWrites(
     source: ServiceRecordEditSource,
