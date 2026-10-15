@@ -4,7 +4,8 @@ Date: 2026-10-16 (Asia/Seoul)
 Status: Proposed; `READY_FOR_OWNER_DECISIONS`
 Scope: BJJ-459 Phase 1 결정 계약
 Revision: 0.3 (automatic-link owner revision)
-Correction base: `5eddd4bd116900ce173fe421198836d9036e3bd9`
+Automatic-link revision start: `f84553345912352a434765a4132dac7473eaf2c2`
+Current correction start: `c1ffe51d2bfc195f1379c2f5546f9cff9049e613`
 Historical source base: `037ed2bdde6188869017bbb7173f54cace9739b2`
 
 ## 배경
@@ -27,10 +28,16 @@ transport 근거이지 OTP auth service 증거가 아니다.
 이름은 NFC + boundary trim 뒤 exact equality만 허용하고, DOB는 four-digit
 year를 포함한 완전한 유효 날짜만 date-only 비교한다. six-digit/부분 날짜와
 세기 추정, 영수증의 century-free fallback은 ownership matching에서 거부한다.
+Active link는 이 세 field와 함께 매칭 당시 `client.branchId`와 source
+revision/fingerprint를 bind하며, current branch/source가 같을 때만 data request와
+precommit write를 허용한다. 명시적 revoke를 자동 matching으로 되돌리지 않는다.
 
 최신 사용자 결정은 SMS one-time code + 별도 client-record linkage
-confirmation, Kakao login, Naver login을 모두 요구한다. SMS는 번호 보유만
-증명한다. fresh phone proof 뒤 사용자가 이름과 고객 생년월일을 제출하고,
+confirmation, Kakao login, Naver login을 모두 요구한다. 현재 우선 설계는
+Kakao/Naver first이고 iOS 로그인 eligibility는 별도 review로 남긴다. Apple
+login은 추가하지 않으며, 이는 이미 확정된 선택이라 이 revision에서 재확인하지
+않는다. SMS는 번호 보유만 증명한다. fresh phone proof 뒤 사용자가 이름과
+고객 생년월일을 제출하고,
 authoritative `client.name`, `client.phoneNormalized`, `client.birthday`와
 정확히 하나 일치하면 staff 승인 없이 operational client link를 자동 생성한다.
 provider account, recovery proof, 예외 review authority, multiplicity, retention,
@@ -57,17 +64,22 @@ app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
    현재 principal/session/challenge intent에 bind한다. `refresh`는 유효한
    principal/session/credential만 갱신하며 data permission을 만들지 않는다.
 5. Home와 customer data read/mutation만 non-revoked session, active current
-   link, current phone-proof generation을 모두 요구한다. Unknown/wrong-owner
-   응답은 non-enumerating safe code를 쓴다.
+   link, current phone-proof generation, unchanged valid `client.branchId`와
+   source revision을 모두 요구한다. Branch reassignment/nulling, source
+   mutation, hard delete 뒤에는 old grant를 쓰지 못하고 다음 request/precommit
+   에서 suspend/deny한다. Unknown/wrong-owner 응답은 non-enumerating safe code를 쓴다.
 6. Link 상태는 `none → pending | active`, `pending → active | rejected |
    canceled | expired`, `active → revoked`만 허용한다. 정상 unique match는
-   staff 승인 없이 `active`가 되고, pending은 모호하거나 계속 평가되는
-   예외에만 쓴다. Terminal 상태는 immutable이며 retry는 새 request/new
-   proof/new version이다. 자동 active는 principal/session 허용 상태, 같은
-   phone-proof generation, pending request version, exact full match,
-   source revision, target exclusivity, prior revoke/security block 부재를
-   atomic하게 확인한다. revoke/cancel/phone-change/source mutation은 pending
-   proof와 in-flight match를 무효화한다.
+   staff 승인 없이 `active`가 되고, 단 `client.branchId`가 유효한 assigned
+   branch여야 한다. null/unassigned/invalid branch의 single match도 자동
+   active하지 않으며 ambiguity/help 경로로 끝낸다. Pending은 모호하거나
+   계속 평가되는 예외에만 쓴다. Terminal 상태는 immutable이며 retry는 새
+   request/new proof/new version이다. 자동 active는 principal/session 허용
+   상태, 같은 phone-proof generation, pending request version, exact full
+   match, source `name`/phone/DOB/branch revision, target exclusivity, prior
+   revoke/security block 부재를 atomic하게 확인한다. revoke/cancel/phone-
+   change/source mutation/branch change는 pending proof와 in-flight match를
+   무효화한다.
 7. `/customer/v1`은 provider exchange, phone proof, session refresh/revoke,
    self, own link, minimum home projection만 제안한다. `service_record_token`
    과 `receipt_link_token`은 customer auth로 재사용하지 않는다.
@@ -75,6 +87,12 @@ app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
    sample-only app spike이고 Phase 3는 additive schema/realm boundary를
    먼저 적용한 뒤 customer controller/guard/provider/OTP/link 구현을 한다.
    App ID, signing, SDK, env, schema 세부값은 후속 binding이다.
+
+실제 고객의 name/DOB/phone/OTP/provider proof는 log, audit error, URL,
+persistent cache에 raw로 남기지 않는다. 테스트에서는 production과 분리된
+fully synthetic identity fixture만 허용한다. 낮은 entropy 세 값을 단순 hash한
+것을 강한 identity proof로 표현하지 않으며, 명시적 revoke는 자동 matching으로
+되돌리지 않는다.
 
 ## 허용 전이와 operation matrix 요약
 
@@ -85,7 +103,7 @@ app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
 | self, own status, logout | non-revoked session이면 허용 | 불필요 |
 | link request | fresh phone proof + explicit name/DOB submit이면 허용; unique full match는 staff action 없이 active | 불필요 |
 | refresh | valid principal/session/credential이면 허용 | 불필요 |
-| home/data read/mutation | 거부 | 필요 |
+| home/data read/mutation | 거부 | active link + phone proof + unchanged valid branch/source |
 
 Staff/customer token 상호 배제, revocation의 request-time 확인, logout의
 idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance다.
@@ -120,8 +138,9 @@ idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance
 - customer principal/session/link schema와 guard는 Phase 3의 별도 review가
   필요하다.
 - provider account, recovery, 예외 review authority, multiplicity, TTL/retention,
-  signing, Apple 경로는 owner가 Phase 2/3 gate에서 정할 수 있으며 이 Phase 1
-  boundary 초안의 review를 막는 세부값은 아니다.
+  signing은 owner가 Phase 2/3 gate에서 정할 수 있으며 이 Phase 1 boundary
+  초안의 review를 막는 세부값은 아니다. iOS login eligibility는 별도 review로
+  남기고 Apple login 추가는 이 문서 범위에 없다.
 - 이름/DOB는 낮은 독립성을 가진 knowledge attribute이므로 SMS possession과
   정확한 source matching을 함께 요구해도 PASS나 충분한 recovery proof가 아니다.
 - customer와 staff 앱은 native identity와 release evidence를 따로 유지한다.

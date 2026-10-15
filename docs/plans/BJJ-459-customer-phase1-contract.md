@@ -28,19 +28,20 @@ Plan revision: 0.3 (automatic-link owner revision)
 
 | 항목 | 현재 correction binding |
 | --- | --- |
-| 현재 unit worktree | `/Users/jaino/Development/babyjamjam-admin/unit-bjj-459-auto-link` |
-| 현재 branch | `codex/unit/bjj-459-auto-link` |
+| 현재 unit worktree | `/Users/jaino/Development/babyjamjam-admin/unit-bjj-459-auto-link-correction` |
+| 현재 branch | `codex/unit/bjj-459-auto-link-correction` |
+| current correction 시작 commit | `c1ffe51d2bfc195f1379c2f5546f9cff9049e613` |
 | automatic-link revision 시작 commit | `f84553345912352a434765a4132dac7473eaf2c2` |
 | 역사적 소스 기준 | `037ed2bdde6188869017bbb7173f54cace9739b2` |
-| 이전 통합 후보 commit | `a7fc0fef6`, `5eddd4bd1`, `f84553345` |
+| 이전 통합 후보 commit | `a7fc0fef6`, `5eddd4bd1`, `f84553345`, `c1ffe51d2` |
 | integration worktree/branch | `/Users/jaino/Development/babyjamjam-admin/bjj-459-phase1-plan` / `docs/BJJ-459-phase1-plan` |
 | 허용 변경 | 이 계획과 `docs/adr/ADR-014-customer-access-boundary.md`만 |
 | 실행/감사 | `Execution: LUNA`, local, `Audit: SOL`; correction singleton |
 
 이 revision은 기존 두 문서의 통합 후보에 owner가 확정한 자동 연결 정책을 반영한다. 수정 범위는 두 Markdown 파일뿐이며, main은 통합·최종 감사·Linear 저장을 담당한다. 고객 auth, API, DTO, Prisma, env, app source, SDK, signing, provider 설정은 만들지 않는다.
 
-이 변경은 이전 `f8455334` 후보의 SOL 승인을 새 정책에 재사용하지 않는다. 자동
-연결 소유권 변경에 대한 fresh SOL review가 별도로 필요하다.
+이 변경은 이전 `f8455334` 후보의 SOL 승인을 이 branch-mutation/unassigned
+correction에 재사용하지 않는다. fresh SOL review가 별도로 필요하다.
 
 ## 3. 고객 principal과 로그인 계약
 
@@ -71,6 +72,10 @@ Plan revision: 0.3 (automatic-link owner revision)
 | Phone-only entry | social login이 없는 고객을 위한 제안 UX일 뿐, 별도 진입점으로 선택된 것은 아니다. | 이 UX의 존재와 rate limit |
 | Apple login | 선택되지 않음 | Apple guideline 4.8 대응 경로와 Sign in with Apple 채택 여부 |
 
+현재 우선 설계는 **Kakao/Naver first**이고, iOS 로그인 eligibility는 별도
+review로 남긴다. Apple login은 추가하지 않는다. 이 세 가지는 이미 확정된
+사용자 선택이므로 이 revision에서 재확인을 요구하지 않는다.
+
 SMS OTP는 번호 보유 증명이지 client 기록 소유권 증명이 아니다. OTP 성공 뒤 고객이 이름과 고객 생년월일을 함께 제출하고, 서버가 authoritative client 원본과 정확히 하나 일치하는지 평가한다. 정상적인 유일 일치면 staff 승인 없이 같은 transaction에서 자동 active link를 만든다. 0건·다건·누락·충돌·보안 차단 같은 예외만 generic help/exception 경로로 보내며, 예외 검토 authority는 후속 결정이다. 현재 Aligo 코드는 outbound SMS 근거일 뿐 OTP 인증 서비스가 아니다. Aligo를 delivery 후보로 평가할 수는 있으나 setup, 구매, 실제 발송은 이 문서에 포함하지 않는다.
 
 Kakao ID token은 issuer, audience, expiry, nonce, signature를 확인한다. Kakao의 `phone_number_verified=true`는 provider assertion일 뿐 fresh project phone proof나 기록 소유권이 아니다. tokeninfo는 debug 용도이지 production authenticity proof가 아니다. Naver는 state와 server-validated token/profile의 stable subject를 사용하며, 별도 근거 없이 OIDC 또는 PKCE를 지원한다고 쓰지 않는다. Static state나 URL에 token을 기록하지 않는다.
@@ -100,6 +105,14 @@ date-only ISO로 정규화한 뒤 비교한다. 6자리 `YYMMDD`, MMDD, 부분 �
 기존 `IsBirthdayDate`와 shared normalizer가 legacy six-digit과 세기 추정을
 허용하더라도 이 ownership contract에서는 더 약한 경로를 복사하지 않는다.
 영수증의 `slice(2)` 생일 fallback도 customer ownership에 재사용하지 않는다.
+
+Active link는 이름·전화번호·고객 생년월일뿐 아니라 매칭 당시의
+`client.branchId`와 source revision/fingerprint를 함께 bind한다. `branchId`가
+후속 변경되거나 null/unassigned가 되면 민감 access를 suspend/deny하고, 매
+data request와 precommit write에서 현재 branch와 전체 source revision을 다시
+확인한다. 예전에 캐시한 old branch grant로 접근할 수 없으며, unchanged valid
+branch와 unchanged source만 계속 허용한다. 자동 matching은 명시적으로
+revoked된 grant를 undo하거나 다른 branch로 이전하지 않는다.
 
 ## 4. 기존 auth 재사용과 분리
 
@@ -134,7 +147,7 @@ cookie 이름, session-state 의미를 각각 갖는다. role 문자열이나 br
 | `phone-proof/verify` | 같은 principal/session의 challenge reference, one-time code, current intent | 현재 phone-proof generation을 증가시키고 link flow로 이동 | 다른 session의 challenge, wrong/expired/replayed code, revoked session |
 | `self`, own link status, logout | non-revoked customer session; active link 불필요 | 최소 principal 상태, 본인 link 상태, logout/cleanup | staff token/cookie, 다른 principal의 link ID |
 | `POST /customer/v1/links` | non-revoked session, fresh server phone proof, user-supplied exact name + full DOB, explicit connect submit, idempotency | 정확히 하나인 eligible unclaimed match면 staff 승인 없이 `active` opaque link를 즉시 반환; evaluation이 계속되는 예외만 `pending` | active link가 없다는 이유로 차단하지 않음; request `clientId`/`branchId`, old proof, body owner, staff token은 거부 |
-| `home`와 customer data read/mutation | non-revoked session + active current link + valid current phone-proof generation | 최소 공개 projection만 반환/변경 | unlinked, revoked, phone-proof stale, wrong link, staff credential |
+| `home`와 customer data read/mutation | non-revoked session + active current link + valid current phone-proof generation + unchanged valid `client.branchId`/source revision | 최소 공개 projection만 반환/변경 | unlinked, revoked, phone-proof stale, branch changed/null, source changed, wrong link, staff credential |
 | `session/refresh` | principal/session/credential의 expiry·revoke·reuse 상태가 유효 | rotated credential; active link 없이도 session 수명 연장 가능 | refresh가 customer-data 권한을 만들거나 phone/link 검사를 건너뜀 |
 | `session/revoke` | 현재 session 또는 owner가 정한 all-device 범위 | revoke와 local cleanup; 이미 revoked session의 logout은 idempotent | 다른 principal session revoke, customer token으로 staff revoke |
 
@@ -168,7 +181,7 @@ exception, log에 넣지 않는다.
 
 | 현재 상태 | 허용 전이 | 수행 주체/조건 | 금지 전이와 이유 |
 | --- | --- | --- | --- |
-| `none` | `pending` 또는 `active` | 같은 non-revoked principal/session, fresh phone-proof generation, exact name + full DOB, explicit submit; 유일하고 unclaimed이면 `active` | phone equality, social profile phone, client-supplied verified flag, old proof만으로 연결 금지 |
+| `none` | `pending` 또는 `active` | 같은 non-revoked principal/session, fresh phone-proof generation, exact name + full DOB, explicit submit; 유일하고 unclaimed이며 `client.branchId`가 유효한 assigned branch인 경우만 `active` | phone equality, social profile phone, client-supplied verified flag, old proof, null/unassigned branch만으로 연결 금지 |
 | `pending` | `active` | 예외 평가가 끝난 뒤 동일한 원자 조건을 다시 통과한 경우; 정상 unique match는 이미 자동 active | 정상 성공에 staff 승인을 삽입하거나 임의로 첫 후보를 선택하지 않음 |
 | `pending` | `rejected` | non-match/invalid/보안 예외를 generic reason으로 종결; 예외 review authority는 후속 결정 | candidate PII, mismatch field, 존재 여부 노출 금지 |
 | `pending` | `canceled` | principal의 본인 취소 또는 후속 정책이 허용한 취소 | 취소 뒤 in-flight 평가가 active가 되지 않음 |
@@ -180,15 +193,18 @@ exception, log에 넣지 않는다.
 principal/session이 non-revoked인지, (2) 현재 phone-proof generation과 session/
 intent가 같은지, (3) request version과 idempotency payload가 같은지, (4) 모든
 branch를 포함한 eligible client scope에서 정확히 하나의 full match인지,
-(5) `client.name`, `client.phoneNormalized`, `client.birthday`의 source
-revision/fingerprint가 변하지 않았는지, (6) target link가 unclaimed인지,
-(7) revoked/security-blocked prior grant가 없는지, (8) nullable/unassigned
-branch가 자동 연결을 허용하는 유효 association인지다. 물리적 serialization,
+(5) `client.name`, `client.phoneNormalized`, `client.birthday`,
+`client.branchId`의 source revision/fingerprint가 변하지 않았는지, (6) target
+link가 unclaimed인지, (7) revoked/security-blocked prior grant가 없는지,
+(8) `client.branchId`가 null/unassigned가 아닌 유효 assigned branch인지다.
+따라서 정확히 하나인 full match라도 branch가 null/unassigned/invalid면
+자동 active하지 않고 generic cannot-auto-link/help로 끝낸다. 물리적 serialization,
 unique claim, phantom insert/change 방지는 Phase 3에서 mechanism을 binding한다.
 
 후보 scope는 caller branch filter가 아니라 모든 branch의 기존 eligible client
 row다. nullable/unassigned branch, 이미 다른 principal이 active link를 보유한
-후보도 먼저 ambiguity/claim 판단에 포함한다. 여러 후보 중 unclaimed만 골라
+후보도 먼저 ambiguity/claim 판단에 포함한다. 정확히 하나인 후보라도 branch
+association이 null/unassigned/invalid이면 active로 만들지 않는다. 여러 후보 중 unclaimed만 골라
 unique로 만들지 않으며, 0건·다건·missing/invalid attribute·claimed/revoked/
 security-blocked 후보는 generic cannot-auto-link/help 경로로 보낸다. 같은
 principal의 active retry는 fresh authorization 뒤 기존 link를 반환할 수 있다.
@@ -197,7 +213,10 @@ revoke, cancel, phone change, source identity mutation 또는 hard delete는
 pending proof와 in-flight match를 무효화한다. client에는 `deletedAt`/archive
 field가 없으므로 completed/terminated 상태를 삭제로 추정하지 않는다. Hard
 delete와 동시 insert/change가 claim을 우회하지 않도록 같은 transaction에서
-재검사한다. 동일 principal+idempotency key+동일 payload는 같은 결과를
+재검사한다. Active 이후 `client.branchId`가 reassignment되거나 null/unassigned가
+되면 old branch grant를 사용하지 못하고 다음 data request/precommit에서
+suspend/deny한다. unchanged valid branch와 source만 계속 허용한다. 동일
+principal+idempotency key+동일 payload는 같은 결과를
 반환하고, 같은 key의 변경 payload는 conflict다. recycled/shared phone으로
 link를 자동 이전하거나 명시적 revoke를 되돌리지 않는다.
 
@@ -229,11 +248,13 @@ Challenge와 자동 연결 retry에는 principal, server-verified phone, IP, ses
 함께 고려하는 aggregate abuse limit을 적용한다. 새 challenge가 누적 한도를
 초기화하지 않는다. non-match, duplicate, claimed, revoked 결과는 같은 outward
 denial/status class로 반환하고, rate-limit만 별도 명시적 응답을 허용한다.
-Name/DOB/phone/OTP/provider proof는 URL, analytics, log, audit error, persistent
-client cache, sample fixture에 raw로 남기지 않는다. 낮은 entropy 값을 단순
-hash했다고 안전하다고 주장하지 않으며, 필요하면 keyed digest와 최소 보존을
-후속 Phase 3에서 정한다. 세 값과 SMS possession은 PASS나 독립된 identity
-authentication, 충분한 account recovery가 아니다.
+실제 고객의 Name/DOB/phone/OTP/provider proof는 URL, analytics, log, audit
+error, persistent client cache에 raw로 남기지 않는다. 샘플/테스트에는 실제
+고객 데이터가 들어갈 수 없지만, production과 분리된 fully synthetic identity
+fixture는 명시적으로 허용한다. 낮은 entropy 값을 단순 hash했다고 안전하다고
+주장하지 않으며, 필요하면 keyed digest와 최소 보존을 후속 Phase 3에서 정한다.
+세 값과 SMS possession은 PASS나 독립된 identity authentication, 충분한 account
+recovery가 아니다.
 
 ## 8. 최소 home projection
 
@@ -306,7 +327,7 @@ Phase 2의 알려진 discovery는 Node `22.23.2`, pnpm `10.33.0`, Xcode
 | Multi-record/branch multiplicity | client별 active 1개 제안, cross-branch는 명시 승인 때만 | Phase 1 경계와 Phase 3 schema | owner 확인 필요 |
 | TTL/retention | 임의 값 없이 artifact별 owner 결정 | Phase 3 data/auth | 이 문서 검토 뒤 후속 gate로 유예 가능 |
 | App ID/signing/developer account | customer identity를 staff와 분리 | Phase 2 build/release | 후속 binding |
-| Apple guideline 4.8 | Sign in with Apple 또는 문서화된 예외를 평가; Apple은 미선택 | Phase 2 iOS release | owner 확인 필요 |
+| Apple guideline 4.8 | iOS login eligibility를 별도 review; Apple login은 추가하지 않음 | Phase 2 iOS review/release gate | 이미 확정된 후속 검토이며 selection 재확인 불필요 |
 | Phone-only entry | 제안 UX로만 기록 | 제품 후속 결정 | 선택 전 구현하지 않음 |
 
 Phase 1 close는 provider credential, env key 이름, app ID/signing 값, schema
@@ -344,10 +365,10 @@ Phase 1 종료·Phase 2 실행·code implementation approval을 주장하지 않
 | AUTH-X10 | app identity/signing/Apple gate가 build 전 기록됨 | sample build가 release compliance를 의미하지 않음 |
 | AUTH-X11 | unlinked non-revoked session이 self/status/logout/phone flow를 수행 | active link가 없다는 이유로 onboarding을 deadlock하지 않음 |
 | AUTH-X12 | refresh가 valid principal/session만 갱신 | refresh가 active link/phone proof 없는 data 권한을 만들지 않음 |
-| AUTH-X13 | fresh phone proof로 active link 없는 principal이 `pending`을 생성 | body client/old proof/staff token으로 request 생성 불가 |
+| AUTH-X13 | fresh phone proof + full submitted name/DOB + explicit connect intent의 유일한 valid assigned-branch match가 즉시 `active`; `pending`은 genuinely ongoing unresolved evaluation에만 사용 | name/DOB/intent가 없거나 normal success를 universal `pending`/staff wait로 바꾸면 실패 |
 | AUTH-X14 | `none→pending/active`, `pending→active/rejected/canceled/expired`, `active→revoked`만 성공 | terminal resurrect, replay, duplicate claim, in-flight revoke 우회 불가 |
 | AUTH-X15 | provider exchange가 bounded unauth state에서 principal/session만 만듦 | provider proof만으로 home/data/link active가 되지 않음 |
-| AUTH-X16 | exact normalized phone + NFC/trim exact name + complete four-digit-year customer DOB의 유일 unclaimed match가 staff action 없이 active | 0건·다건·claimed·revoked·security-blocked는 generic cannot-auto-link |
+| AUTH-X16 | exact normalized phone + NFC/trim exact name + complete four-digit-year customer DOB의 유일 unclaimed **assigned valid-branch** match가 staff action 없이 active | 0건·다건·claimed·revoked·security-blocked는 generic cannot-auto-link |
 | AUTH-X17 | phone, name, DOB 각각의 불일치가 동일한 generic denial을 반환 | mismatch field나 candidate 존재를 노출하지 않음 |
 | AUTH-X18 | `client.birthday`의 완전한 YYYY-MM-DD/explicit-year YYYYMMDD만 date-only 비교 | six-digit, MMDD, partial, invalid, century inference와 `client.birthDate` 대체를 거부 |
 | AUTH-X19 | NFC와 boundary trim 뒤 exact name match만 성공 | internal whitespace 제거, case/fuzzy/substring/romanization/NFKC 가정은 실패 |
@@ -357,7 +378,10 @@ Phase 1 종료·Phase 2 실행·code implementation approval을 주장하지 않
 | AUTH-X23 | source name/phoneNormalized/birthday revision 또는 hard delete 뒤 sensitive access가 재평가됨 | claimant input이 source를 backfill/correct하거나 explicit revoke를 resurrect하지 않음 |
 | AUTH-X24 | OTP가 같은 principal/session/intent와 server phone에 묶여 검증됨 | replay, wrong session, wrong phone, client-supplied verified flag는 실패 |
 | AUTH-X25 | fresh challenge가 principal+phone+IP/session aggregate limit에 누적됨 | 새 challenge로 probing/retry 한도를 초기화하지 않음 |
-| AUTH-X26 | non-match/duplicate/claimed/revoked 실패에 raw PII가 없음 | name/DOB/phone/OTP/provider proof가 log/cache/fixture/URL에 남지 않음 |
+| AUTH-X26 | non-match/duplicate/claimed/revoked 실패에 real-customer raw PII가 없음; fully synthetic test identity fixture는 허용 | real customer name/DOB/phone/OTP/provider proof가 log/cache/audit error/URL에 남거나 fixture로 복사됨 |
+| AUTH-X27 | exact full match인 단일 후보가 assigned valid `client.branchId`일 때만 automatic active | 단 하나라도 null/unassigned/invalid branch면 ambiguity/help로 끝나며 자동 active하지 않음 |
+| AUTH-X28 | active link의 bound branch와 source revision이 그대로면 data request/precommit이 허용됨 | branch reassignment/nulling 또는 source mutation 뒤 old cached grant는 deny/suspend |
+| AUTH-X29 | 명시적 revoke 뒤 current triple match가 다시 보여도 revoke 상태가 유지됨 | auto matching이 revoke를 undo하거나 다른 branch로 grant를 이전하지 않음 |
 
 문서 task의 실제 검증은 Markdown 구조, durable source URL/개정, source
 anchor, exact path allowlist, credential-pattern scan이다. Backend
