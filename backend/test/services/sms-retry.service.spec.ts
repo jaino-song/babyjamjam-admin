@@ -795,6 +795,53 @@ describe("SmsRetryService", () => {
         );
     });
 
+    it("schedules the carrier check 30 minutes after the reserved time for a still-future scheduled retry", async () => {
+        const log = createSmsRetryLog();
+        log.variables = {
+            ...log.variables,
+            scheduledDate: "20301231",
+            scheduledTime: "2359",
+        };
+        aligoService.sendSms.mockResolvedValue({
+            request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+            response: { result_code: 1, message: "성공적으로 전송요청 하였습니다.", msg_id: 201, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+        });
+
+        await service.retry(log);
+
+        const updated = logRepository.update.mock.calls[0][0] as MessageLogEntity;
+        expect(updated.carrierCheckDueAt).toEqual(new Date("2031-01-01T00:29:00+09:00"));
+        expect(updated.hasPendingCarrierCheckSchedule()).toBe(true);
+    });
+
+    it("schedules the carrier check 30 minutes after acceptance for an immediate retry", async () => {
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+            response: { result_code: 1, message: "성공적으로 전송요청 하였습니다.", msg_id: 202, success_cnt: 1, error_cnt: 0, msg_type: "LMS" },
+        });
+
+        await service.retry(log);
+
+        const updated = logRepository.update.mock.calls[0][0] as MessageLogEntity;
+        expect(updated.providerAcceptanceState).toBe("accepted");
+        expect(updated.carrierCheckDueAt).toEqual(new Date(30 * 60 * 1000));
+    });
+
+    it("does not schedule a carrier check when the retry is rejected by the provider", async () => {
+        const log = createSmsRetryLog();
+        aligoService.sendSms.mockResolvedValue({
+            request: { senderPhone: "0212345678", receiver: "01012345678", msgType: "LMS", testModeYn: "N" },
+            response: { result_code: -101, message: "rejected", success_cnt: 0, error_cnt: 1, msg_type: "LMS" },
+        });
+
+        await service.retry(log);
+
+        const updated = logRepository.update.mock.calls[0][0] as MessageLogEntity;
+        expect(updated.carrierCheckDueAt).toBeNull();
+        expect(updated.hasPendingCarrierCheckSchedule()).toBe(false);
+    });
+
     it("marks a scheduled historical row with no date or time failed before retrying immediately", async () => {
         const log = createSmsRetryLog();
         log.variables = {

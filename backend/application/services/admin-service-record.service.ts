@@ -552,8 +552,32 @@ export class AdminServiceRecordService {
         const isSupersededLease = (job: ServiceRecordLinkJob): boolean => (
             isCanceledSchedulingLease(job) && latestSuccessTime > job.createdAt.getTime()
         );
+        // A carrier-check failure lands ~30 minutes after the send, flips the log
+        // to "failed" and happens after its trigger job already went "sent". That
+        // failure is the verdict on THAT job's delivery, so it replaces its own
+        // job as an attempt. It deliberately does not lift the log's time: an
+        // unrelated newer job (e.g. a link created after the send but before the
+        // check) is a newer attempt and must still win.
+        const carrierFailedJobIds = new Set(
+            logs
+                .filter((log) => (
+                    (log.status === "sent" || log.status === "failed")
+                    && log.carrierResultState === "failed"
+                    && log.carrierCheckedAt
+                    && log.triggerJobId !== null
+                    && !inFlightJobIds.has(log.triggerJobId)
+                ))
+                .flatMap((log) => {
+                    const ownJob = jobs.find((job) => job.id === log.triggerJobId);
+                    return ownJob && log.carrierCheckedAt!.getTime() >= this.jobActivityTime(ownJob)
+                        ? [ownJob.id]
+                        : [];
+                }),
+        );
         const attempts: LinkAttempt[] = [
-            ...jobs.filter((job) => !isSupersededLease(job)).map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
+            ...jobs
+                .filter((job) => !isSupersededLease(job) && !carrierFailedJobIds.has(job.id))
+                .map((job): LinkAttempt => ({ kind: "job", time: this.jobActivityTime(job), job })),
             ...logs
                 .filter((log) => (
                     (log.status === "sent" || log.status === "failed")

@@ -1033,6 +1033,9 @@ model auth_flow_state {
   @@index([kind, expiresAt], map: "idx_auth_flow_state_kind_expires_at")
 }
 
+/// Database note: partial index `idx_message_log_carrier_check_due` on
+/// (carrier_check_due_at) WHERE carrier_check_due_at IS NOT NULL exists in the
+/// database but cannot be expressed in Prisma (created via migration SQL).
 model message_log {
   id             Int                  @id @default(autoincrement())
   branchId       String?              @map("branch_id") @db.Uuid
@@ -1061,6 +1064,12 @@ model message_log {
   providerReconciledAt          DateTime?            @map("provider_reconciled_at") @db.Timestamptz(6)
   providerReconciledBy          String?              @map("provider_reconciled_by") @db.VarChar(200)
   providerReconciliationReason  String?              @map("provider_reconciliation_reason") @db.VarChar(1000)
+  // One-shot carrier delivery check, scheduled when Aligo accepts an SMS.
+  // carrierCheckDueAt is cleared once the check result is saved.
+  carrierCheckDueAt             DateTime?            @map("carrier_check_due_at") @db.Timestamptz(6)
+  carrierCheckedAt              DateTime?            @map("carrier_checked_at") @db.Timestamptz(6)
+  carrierResultState            String?              @map("carrier_result_state") @db.VarChar(32) // "delivered" | "failed" | "unconfirmed" | "lookup_error"
+  carrierResults                Json?                @map("carrier_results")
   createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch         branch?              @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)

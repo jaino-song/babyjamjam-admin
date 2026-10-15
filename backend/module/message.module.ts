@@ -16,6 +16,7 @@ import { MessageService } from "application/services/message.service";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { MessageTriggerSchedulerService } from "application/services/message-trigger-scheduler.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
+import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
 import { SmsHistoryReconciliationService } from "application/services/sms-history-reconciliation.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
@@ -79,6 +80,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         SmsRetryService,
         SmsHistoryReconciliationService,
         MessageRetrySchedulerService,
+        SmsCarrierCheckService,
         SmsTriggerDeliveryService,
         SmsTriggerPayloadEnricherRegistry,
         MessageTriggerDeliveryService,

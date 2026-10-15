@@ -76,7 +76,13 @@ const RULES = [
     },
     {
         id: "add-column",
-        match: new RegExp(`^ALTER TABLE (?:IF EXISTS )?${IDENT} ADD COLUMN (?!IF NOT EXISTS)(${IDENT})`, "i"),
+        // One ALTER TABLE can carry many comma-separated `ADD COLUMN` clauses, and each one
+        // raises on a second run — so every clause is checked, not just the first.
+        names: (statement) => {
+            if (!new RegExp(`^ALTER TABLE (?:IF EXISTS )?${IDENT} `, "i").test(statement)) return [];
+            return [...statement.matchAll(new RegExp(`\\bADD\\s+COLUMN\\s+(?!IF\\s+NOT\\s+EXISTS\\b)(${IDENT})`, "gi"))]
+                .map((hit) => hit[1]);
+        },
         kind: "column",
         why: "ADD COLUMN without IF NOT EXISTS",
     },
@@ -145,9 +151,14 @@ export function findNonIdempotentStatements(sql) {
         }
 
         for (const rule of RULES) {
-            const hit = statement.match(rule.match);
-            if (!hit) continue;
-            if (rule.kind && dropped.has(`${rule.kind}:${bareName(hit[1])}`)) continue;
+            const names = rule.names
+                ? rule.names(statement)
+                : (() => {
+                    const hit = statement.match(rule.match);
+                    return hit ? [hit[1]] : [];
+                })();
+            if (names.length === 0) continue;
+            if (rule.kind && names.every((name) => dropped.has(`${rule.kind}:${bareName(name)}`))) continue;
             offenders.push({
                 rule: rule.id,
                 why: rule.why,
@@ -230,6 +241,9 @@ test("the checker recognises the shapes that have actually broken this pipeline"
 
     for (const [label, sql] of [
         ["bare add column", `ALTER TABLE "client" ADD COLUMN "note" TEXT;`],
+        // Only the FIRST clause was inspected before; a later unguarded one slipped through.
+        ["bare add column after a guarded one", `ALTER TABLE "client" ADD COLUMN IF NOT EXISTS "a" TEXT, ADD COLUMN IF NOT EXISTS "b" TEXT, ADD COLUMN "c" TEXT;`],
+        ["bare add column as the 4th of a multi-column ALTER", `ALTER TABLE "client"\n ADD COLUMN IF NOT EXISTS "a" TEXT,\n ADD COLUMN IF NOT EXISTS "b" TEXT,\n ADD COLUMN IF NOT EXISTS "c" TEXT,\n ADD COLUMN "d" TEXT;`],
         ["bare add constraint", `ALTER TABLE "client" ADD CONSTRAINT "client_note_check" CHECK (true);`],
         ["bare create type", `CREATE TYPE "mood" AS ENUM ('ok');`],
         ["bare create index", `CREATE UNIQUE INDEX "client_note_key" ON "client" ("note");`],
@@ -243,6 +257,7 @@ test("the checker recognises the shapes that have actually broken this pipeline"
 
     for (const [label, sql] of [
         ["guarded add column", `ALTER TABLE "client" ADD COLUMN IF NOT EXISTS "note" TEXT;`],
+        ["guarded multi-column add", `ALTER TABLE "client" ADD COLUMN IF NOT EXISTS "a" TEXT, ADD COLUMN IF NOT EXISTS "b" TEXT;`],
         ["guarded drop", `DROP TABLE IF EXISTS "client_old";`],
         ["drop-then-create index", `DROP INDEX IF EXISTS "public"."client_note_key"; CREATE UNIQUE INDEX "client_note_key" ON "client" ("note");`],
         ["drop-then-add constraint", `ALTER TABLE "client" DROP CONSTRAINT IF EXISTS "c1"; ALTER TABLE "client" ADD CONSTRAINT "c1" CHECK (true);`],

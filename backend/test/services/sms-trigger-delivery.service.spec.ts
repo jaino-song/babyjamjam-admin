@@ -19,7 +19,7 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
-import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { CARRIER_CHECK_DELAY_MS, MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
@@ -583,6 +583,66 @@ describe("SmsTriggerDeliveryService", () => {
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
         expect(logRepository.update).toHaveBeenCalledTimes(2);
         expect(attempt?.providerAcceptanceState).toBe("accepted");
+    });
+
+    describe("carrier check scheduling", () => {
+        const runWithProviderResponse = async (response: Record<string, unknown>) => {
+            const aligoService = {
+                sendSms: jest.fn().mockResolvedValue({
+                    request: {
+                        senderPhone: "01099998888",
+                        receiver: "01012345678",
+                        msgType: "LMS",
+                        testModeYn: "N",
+                    },
+                    response,
+                }),
+            };
+            const systemTemplateService = {
+                getByKeyForBranch: jest.fn().mockResolvedValue({
+                    content: "{{name}} 산모님 서비스 안내",
+                }),
+            };
+            let attempt: MessageLogEntity | undefined;
+            const logRepository = {
+                save: jest.fn().mockImplementation(async (log: MessageLogEntity) => {
+                    attempt = log;
+                    return log;
+                }),
+                update: jest.fn().mockImplementation(async (log: MessageLogEntity) => log),
+            };
+            const service = new SmsTriggerDeliveryService(
+                aligoService as unknown as AligoService,
+                systemTemplateService as unknown as SystemTemplateService,
+                logRepository as unknown as IMessageLogRepository,
+            undefined, undefined, createLegacyAutomationDeliveryGate());
+            await service.sendJob(createServiceInfoJob());
+            return { attempt: attempt!, logRepository };
+        };
+
+        it("schedules one carrier check 30 minutes after the provider accepted the send", async () => {
+            const { attempt, logRepository } = await runWithProviderResponse({
+                result_code: 1, message: "success", msg_id: 321, success_cnt: 1, error_cnt: 0, msg_type: "LMS",
+            });
+
+            expect(attempt.providerAcceptanceState).toBe("accepted");
+            expect(attempt.providerAcceptedAt).toBeInstanceOf(Date);
+            expect(attempt.carrierCheckDueAt?.getTime()).toBe(
+                attempt.providerAcceptedAt!.getTime() + CARRIER_CHECK_DELAY_MS,
+            );
+            expect(attempt.hasPendingCarrierCheckSchedule()).toBe(true);
+            expect(logRepository.update).toHaveBeenCalledWith(attempt);
+        });
+
+        it("does not schedule a carrier check when the provider rejected the send", async () => {
+            const { attempt } = await runWithProviderResponse({
+                result_code: -101, message: "rejected", success_cnt: 0, error_cnt: 1, msg_type: "LMS",
+            });
+
+            expect(attempt.providerAcceptanceState).toBe("rejected");
+            expect(attempt.carrierCheckDueAt).toBeNull();
+            expect(attempt.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
     });
 
     it("keeps an uncertain fence when provider failure and uncertainty persistence both fail", async () => {

@@ -50,6 +50,7 @@
       "qs@>=6.0.0 <6.16.0": "6.16.0",
       "@ai-sdk/provider-utils@4.0.19": "4.0.33",
       "proxy-addr@<2.0.8": "2.0.8",
+      "handlebars@<4.7.10": "4.7.10",
       "source-map-js@<1.2.2": "1.2.2"
     },
     "onlyBuiltDependencies": [
