@@ -143,6 +143,52 @@ describe("EformsignDocumentJobService", () => {
         }));
     });
 
+    it.each([
+        ["a non-object", "1000"],
+        ["an array", [1, 2, 3]],
+        ["null", null],
+        ["a negative amount", { fullPrice: -1, grant: 0, actualPrice: 0 }],
+        ["a fractional amount", { fullPrice: 1000.5, grant: 0, actualPrice: 0 }],
+        ["an unsafe integer amount", { fullPrice: Number.MAX_SAFE_INTEGER + 1, grant: 0, actualPrice: 0 }],
+        ["a string amount", { fullPrice: "1000", grant: 0, actualPrice: 0 }],
+        ["a missing amount", { fullPrice: 1000, grant: 0 }],
+        ["an empty servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "" }],
+        ["a whitespace-only servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "   " }],
+        ["a non-string servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: 7 }],
+        ["an oversized servicePeriod", { fullPrice: 1, grant: 1, actualPrice: 0, servicePeriod: "x".repeat(65) }],
+    ])("rejects %s prefillAmounts at enqueue with a 400 before queueing anything", async (_label, prefillAmounts) => {
+        const { service, repository, documents } = buildService();
+        documents.findByDocumentId.mockResolvedValue({ documentId: "owned-document", clientId: 7 });
+
+        await expect(service.enqueueFinalizeDocument({
+            branchId, documentId: "owned-document", requestKey: "request-1", source: "staff",
+            prefillAmounts: prefillAmounts as never,
+        })).rejects.toMatchObject({
+            status: 400,
+            response: expect.objectContaining({ code: "VALIDATION_FAILED" }),
+        });
+        expect(repository.enqueue).not.toHaveBeenCalled();
+    });
+
+    it("carries supersedeDocumentId into the create job payload only when given", async () => {
+        const { service, repository, clients } = buildService();
+        clients.findById.mockResolvedValue({ id: 7 });
+        repository.enqueue.mockResolvedValue({ job: { id: "job-1" }, existing: false });
+
+        await service.enqueueCreateDocument({
+            branchId, clientId: 7, contractData: validContractData as never, requestKey: "request-1",
+            supersedeDocumentId: "old-doc",
+        });
+        await service.enqueueCreateDocument({
+            branchId, clientId: 7, contractData: validContractData as never, requestKey: "request-2",
+        });
+
+        expect(repository.enqueue).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            payload: expect.objectContaining({ supersedeDocumentId: "old-doc" }),
+        }));
+        expect(repository.enqueue.mock.calls[1]![0].payload).not.toHaveProperty("supersedeDocumentId");
+    });
+
     it("refuses finalization of a voided (파기) document with a 409 before queueing anything", async () => {
         const { service, repository, documents } = buildService();
         documents.findByDocumentId.mockResolvedValue({

@@ -31,6 +31,11 @@ export interface EformsignDocumentJobReconciliationResult {
     documentId?: string;
     reason?: string;
     recordedAttempts?: number | null;
+    /**
+     * Set for a completed creation: true only when this run still held the job's
+     * lease, so the completion is this run's to act on. Absent for other results.
+     */
+    completionRecorded?: boolean;
 }
 
 /**
@@ -147,8 +152,8 @@ export class EformsignDocumentJobReconciliationService {
         }
 
         if (!job.leaseToken) return this.requiresAttention(job, "MISSING_JOB_LEASE");
-        await this.repository.markCompleted(job.id, job.leaseToken, documentId);
-        return { status: "completed", documentId };
+        const completed = await this.repository.markCompleted(job.id, job.leaseToken, documentId);
+        return { status: "completed", documentId, completionRecorded: Boolean(completed) };
     }
 
     private async reconcileFinalization(

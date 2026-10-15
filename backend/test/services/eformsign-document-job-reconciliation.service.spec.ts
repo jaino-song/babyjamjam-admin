@@ -68,6 +68,7 @@ describe("EformsignDocumentJobReconciliationService", () => {
         await expect(service.reconcile(job(), TEST_PRINCIPAL)).resolves.toEqual({
             status: "completed",
             documentId: "doc-1",
+            completionRecorded: false,
         });
         expect(adoption.execute).toHaveBeenCalledWith(
             "00000000-0000-0000-0000-000000000010",
@@ -79,6 +80,32 @@ describe("EformsignDocumentJobReconciliationService", () => {
             job().leaseToken,
             "doc-1",
         );
+    });
+
+    it("reports the completion as recorded when the job lease was still held", async () => {
+        const repository = {
+            markCompleted: jest.fn().mockResolvedValue(job({ status: "completed" })),
+            markRequiresAttention: jest.fn(),
+        };
+        const service = new EformsignDocumentJobReconciliationService(
+            repository as never,
+            createCredentialBoundary() as never,
+            {
+                execute: jest.fn().mockResolvedValue([{
+                    id: "doc-1",
+                    created_date: Date.now(),
+                    document_name: "고객 계약서",
+                }]),
+            } as never,
+            { execute: jest.fn() } as never,
+            { execute: jest.fn().mockResolvedValue(undefined) } as never,
+        );
+
+        await expect(service.reconcile(job(), TEST_PRINCIPAL)).resolves.toEqual({
+            status: "completed",
+            documentId: "doc-1",
+            completionRecorded: true,
+        });
     });
 
     it("requires attention when provider creation state is ambiguous", async () => {

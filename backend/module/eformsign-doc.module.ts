@@ -70,6 +70,7 @@ import { EformsignAgentCapabilitiesProvider } from "application/usecases/eformsi
 import { ContractExternalAgentCapabilitiesProvider } from "application/usecases/eformsign-doc/contract-external-agent-capabilities.provider";
 import { FindClientByIdUsecase } from "application/usecases/client/find-client-by-id.usecase";
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
+import { ContractSupersedeService } from "application/services/contract-supersede.service";
 import { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
 import {
@@ -184,6 +185,7 @@ import { HolidayModule } from "./holiday.module";
         EformsignMirrorReadinessService,
         EformsignAgentCapabilitiesProvider,
         ContractExternalAgentCapabilitiesProvider,
+        ContractSupersedeService,
         EformsignDocumentJobService,
         EformsignDocumentJobWorkerService,
         EformsignDocumentJobReconciliationService,
@@ -302,6 +304,7 @@ import { HolidayModule } from "./holiday.module";
         ReconcileCompletedMirroredEformsignDocUsecase,
         LinkMirroredEformsignDocByPhoneUsecase,
         GetContractClientCandidateUsecase,
+        ContractSupersedeService,
         EformsignDocumentJobService,
         EformsignDispatchBoundaryService,
         ServiceRecordRevisionDocumentCoordinator,
