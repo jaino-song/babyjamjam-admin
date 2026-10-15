@@ -1,8 +1,9 @@
 # ADR-014: 고객 principal, provider login, client-record access 경계
 
-Date: 2026-10-15 (Asia/Seoul)
+Date: 2026-10-16 (Asia/Seoul)
 Status: Proposed; `READY_FOR_OWNER_DECISIONS`
 Scope: BJJ-459 Phase 1 결정 계약
+Revision: 0.3 (automatic-link owner revision)
 Correction base: `5eddd4bd116900ce173fe421198836d9036e3bd9`
 Historical source base: `037ed2bdde6188869017bbb7173f54cace9739b2`
 
@@ -20,11 +21,20 @@ customer-to-client link는 없다.
 link이므로 customer account 권한이 될 수 없다. 기존 Aligo SMS도 outbound
 transport 근거이지 OTP auth service 증거가 아니다.
 
+자동 연결의 source는 `client.name`, `client.phoneNormalized`,
+`client.birthday`다. `client.birthday`는 어머니/고객 DOB이며,
+`client.birthDate`는 아기 출산일, `user.birthDate`는 staff profile이다.
+이름은 NFC + boundary trim 뒤 exact equality만 허용하고, DOB는 four-digit
+year를 포함한 완전한 유효 날짜만 date-only 비교한다. six-digit/부분 날짜와
+세기 추정, 영수증의 century-free fallback은 ownership matching에서 거부한다.
+
 최신 사용자 결정은 SMS one-time code + 별도 client-record linkage
 confirmation, Kakao login, Naver login을 모두 요구한다. SMS는 번호 보유만
-증명한다. 민감 데이터에는 fresh phone proof와 active client link가 모두
-필요하다. provider account, recovery proof, 운영 approver, multiplicity,
-retention, app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
+증명한다. fresh phone proof 뒤 사용자가 이름과 고객 생년월일을 제출하고,
+authoritative `client.name`, `client.phoneNormalized`, `client.birthday`와
+정확히 하나 일치하면 staff 승인 없이 operational client link를 자동 생성한다.
+provider account, recovery proof, 예외 review authority, multiplicity, retention,
+app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
 
 ## 결정(제안)
 
@@ -35,7 +45,9 @@ retention, app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴�
 2. SMS OTP, Kakao, Naver를 필수 capability로 둔다. Phone-only entry는 제안
    UX이고 Apple은 미선택이다. Kakao는 issuer/audience/expiry/nonce/signature,
    Naver는 state와 server token/profile stable subject를 검증한다. provider
-   proof로 link나 data 권한을 자동으로 만들지 않는다.
+   proof만으로 link/data 권한을 만들지 않지만, fresh SMS proof와 explicit
+   connect submit 뒤 authoritative 세 값이 정확히 하나 match하면 staff
+   승인 없이 link를 자동으로 active로 만든다.
 3. Customer/staff realm은 issuer, audience, purpose, signing key/strategy,
    cookie, authoritative session state를 분리한다. Staff credential은
    customer route를, customer credential은 staff route를 통과하지 못한다.
@@ -47,12 +59,15 @@ retention, app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴�
 5. Home와 customer data read/mutation만 non-revoked session, active current
    link, current phone-proof generation을 모두 요구한다. Unknown/wrong-owner
    응답은 non-enumerating safe code를 쓴다.
-6. Link 상태는 `none → pending → active | rejected | canceled | expired`,
-   `active → revoked`만 허용한다. terminal 상태는 immutable이며 retry는 새
-   request/new proof/new version이다. Active 승인은 principal/session 허용
-   상태, 같은 phone-proof generation, pending request version, target record
-   exclusivity를 atomic하게 확인한다. revoke/cancel/phone-change는 pending
-   proof와 in-flight approval을 무효화한다.
+6. Link 상태는 `none → pending | active`, `pending → active | rejected |
+   canceled | expired`, `active → revoked`만 허용한다. 정상 unique match는
+   staff 승인 없이 `active`가 되고, pending은 모호하거나 계속 평가되는
+   예외에만 쓴다. Terminal 상태는 immutable이며 retry는 새 request/new
+   proof/new version이다. 자동 active는 principal/session 허용 상태, 같은
+   phone-proof generation, pending request version, exact full match,
+   source revision, target exclusivity, prior revoke/security block 부재를
+   atomic하게 확인한다. revoke/cancel/phone-change/source mutation은 pending
+   proof와 in-flight match를 무효화한다.
 7. `/customer/v1`은 provider exchange, phone proof, session refresh/revoke,
    self, own link, minimum home projection만 제안한다. `service_record_token`
    과 `receipt_link_token`은 customer auth로 재사용하지 않는다.
@@ -68,7 +83,7 @@ retention, app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴�
 | provider exchange | principal/session 생성만 | 불필요 |
 | phone start/verify | 현재 onboarding session에 bind된 경우 | 불필요 |
 | self, own status, logout | non-revoked session이면 허용 | 불필요 |
-| link request | fresh phone proof면 허용 | 불필요 |
+| link request | fresh phone proof + explicit name/DOB submit이면 허용; unique full match는 staff action 없이 active | 불필요 |
 | refresh | valid principal/session/credential이면 허용 | 불필요 |
 | home/data read/mutation | 거부 | 필요 |
 
@@ -79,8 +94,10 @@ idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance
 
 1. Staff JWT/cookie, `user.role`, `selectedBranch`를 customer 권한으로 재사용:
    staff tenant membership은 customer 기록 소유권이 아니므로 거부한다.
-2. phone equality 또는 Kakao phone assertion을 ownership proof로 사용: 번호
-   공유/재사용과 provider assertion의 한계 때문에 거부한다.
+2. phone equality 또는 Kakao phone assertion만으로 ownership proof를 사용:
+   번호 공유/재사용과 provider assertion의 한계 때문에 거부한다. 다만
+   fresh SMS proof 뒤 authoritative phone+name+customer DOB의 정상 유일
+   match는 이 ADR이 정한 자동 연결 조건으로 허용한다.
 3. `service_record_token`/`receipt_link_token`을 account login으로 사용:
    좁은 record/document 경계를 customer account로 확장하므로 거부한다.
 4. Kakao/Naver/phone 값이 같으면 자동 merge: 충돌 시 reauthentication과
@@ -93,6 +110,8 @@ idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance
 - Onboarding이 active link 전에 막히지 않으면서 민감 data는 계속 보호된다.
 - Customer ownership과 staff tenant authority가 분리된다.
 - SMS/Kakao/Naver proof가 operational record owner로 오인되지 않는다.
+- 정상적인 unique phone+name+customer-DOB match는 staff 대기 없이 즉시 연결되고,
+  모호한 결과만 예외 경로로 남는다.
 - request-time revoke와 link/phone generation 검사로 logout, unlink,
   account switch, provider 변경 뒤 stale access를 차단한다.
 
@@ -100,17 +119,20 @@ idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance
 
 - customer principal/session/link schema와 guard는 Phase 3의 별도 review가
   필요하다.
-- provider account, recovery, approver, multiplicity, TTL/retention, signing,
-  Apple 경로는 owner가 Phase 2/3 gate에서 정할 수 있으며 이 Phase 1
+- provider account, recovery, 예외 review authority, multiplicity, TTL/retention,
+  signing, Apple 경로는 owner가 Phase 2/3 gate에서 정할 수 있으며 이 Phase 1
   boundary 초안의 review를 막는 세부값은 아니다.
+- 이름/DOB는 낮은 독립성을 가진 knowledge attribute이므로 SMS possession과
+  정확한 source matching을 함께 요구해도 PASS나 충분한 recovery proof가 아니다.
 - customer와 staff 앱은 native identity와 release evidence를 따로 유지한다.
 
 ## 검증과 rollback
 
 계획 문서 `docs/plans/BJJ-459-customer-phase1-contract.md`는 AUTH-01~08의
-원래 의미와 AUTH-X01~15 확장, success/failure assertion, operation matrix,
+원래 의미와 AUTH-X01~26 확장, success/failure assertion, operation matrix,
 transition race를 기록한다. 이 ADR은 implementation이나 Phase 2 승인이
-아니다. 문서 rollback은 correction commit의 Git revert다. 후속 schema/token
+아니다. `f8455334`에 대한 이전 SOL 승인은 이 자동 연결 정책에 재사용하지
+않으며 fresh review가 필요하다. 문서 rollback은 correction commit의 Git revert다. 후속 schema/token
 realm rollback은 별도 additive migration과 revoke 계획을 요구한다.
 
 주요 정본은 다음 Linear 문서다.
