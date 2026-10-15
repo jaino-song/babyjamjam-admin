@@ -723,6 +723,11 @@ export class EformsignDocumentJobWorkerService {
             if (job.clientId === null || payload.clientId !== job.clientId) {
                 throw new Error("SUPERSEDE_CLIENT_MISMATCH");
             }
+            // The same branch visibility the HTTP route enforces; the document lookup
+            // inside the service is not branch-scoped.
+            if (!(await this.contractSupersedeService.isDocumentVisibleToBranch(job.branchId, oldDocumentId))) {
+                throw new Error("SUPERSEDE_DOCUMENT_NOT_VISIBLE");
+            }
             await this.contractSupersedeService.supersede({
                 branchId: job.branchId,
                 clientId: job.clientId,

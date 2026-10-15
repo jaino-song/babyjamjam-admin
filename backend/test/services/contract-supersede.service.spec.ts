@@ -16,6 +16,7 @@ function build(overrides: {
     terminal?: string[];
 } = {}) {
     const repository = {
+        isHeadquartersBranch: jest.fn().mockResolvedValue(false),
         findSupersedeCandidate: jest.fn().mockResolvedValue(overrides.document === undefined
                 ? {
                     clientId: 7, documentKind: "contract",
@@ -36,6 +37,10 @@ function build(overrides: {
             result: { success_result: ["old-doc"], fail_result: [] },
         }),
     };
+    const eformsignDocService = {
+        findByDocumentIdIncludingPurgePending: jest.fn(),
+        findDocumentIdsForOtherBranches: jest.fn().mockResolvedValue([]),
+    };
     const documentMirrorService = {
         findTerminalDocumentIds: jest.fn().mockResolvedValue(overrides.terminal ?? []),
         purgeDocuments: jest.fn().mockResolvedValue(undefined),
@@ -45,8 +50,9 @@ function build(overrides: {
         credentialBoundary as never,
         eformsignService as never,
         documentMirrorService as never,
+        eformsignDocService as never,
     );
-    return { service, repository, credentialBoundary, eformsignService, documentMirrorService };
+    return { service, eformsignDocService, repository, credentialBoundary, eformsignService, documentMirrorService };
 }
 
 const params = { branchId: BRANCH_ID, clientId: 7, documentId: "old-doc", principal };
@@ -94,16 +100,13 @@ describe("ContractSupersedeService", () => {
         expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
     });
 
-    it("looks the document up scoped to the branch and refuses one another branch owns", async () => {
-        // The branch-scoped read finds nothing for a document a different branch owns.
-        const { service, repository, credentialBoundary, eformsignService, documentMirrorService } = build({ document: null });
+    it("reads the stored document by its id alone, leaving branch visibility to the caller", async () => {
+        const { service, repository } = build();
 
-        await expect(service.supersede(params)).rejects.toBeInstanceOf(ConflictException);
+        await service.supersede(params);
 
-        expect(repository.findSupersedeCandidate).toHaveBeenCalledWith(BRANCH_ID, "old-doc");
-        expect(credentialBoundary.withCredentials).not.toHaveBeenCalled();
-        expect(eformsignService.cancelDocuments).not.toHaveBeenCalled();
-        expect(documentMirrorService.purgeDocuments).not.toHaveBeenCalled();
+        expect(repository.findSupersedeCandidate).toHaveBeenCalledTimes(1);
+        expect(repository.findSupersedeCandidate).toHaveBeenCalledWith("old-doc");
     });
 
     it("refuses a terminal mirrored document", async () => {
@@ -140,5 +143,39 @@ describe("ContractSupersedeService", () => {
         documentMirrorService.purgeDocuments.mockRejectedValue(new Error("db down"));
 
         await expect(service.supersede(params)).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    describe("isDocumentVisibleToBranch (the rule the worker applies; the route uses filterDocumentsByBranch)", () => {
+        it("lets an ordinary branch see only a document it holds locally", async () => {
+            const { service, eformsignDocService } = build();
+            eformsignDocService.findByDocumentIdIncludingPurgePending
+                .mockImplementation(async (branchId: string) => (branchId === BRANCH_ID ? { documentId: "old-doc" } : null));
+
+            await expect(service.isDocumentVisibleToBranch(BRANCH_ID, "old-doc")).resolves.toBe(true);
+            await expect(service.isDocumentVisibleToBranch("other-branch", "old-doc")).resolves.toBe(false);
+            expect(eformsignDocService.findDocumentIdsForOtherBranches).not.toHaveBeenCalled();
+        });
+
+        it("lets the headquarters branch see an unassigned (null-branch) document", async () => {
+            const { service, repository, eformsignDocService } = build();
+            repository.isHeadquartersBranch.mockResolvedValue(true);
+            eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["someone-elses-doc"]);
+
+            await expect(service.isDocumentVisibleToBranch(BRANCH_ID, "unassigned-doc")).resolves.toBe(true);
+        });
+
+        it("keeps the headquarters branch out of a document another branch owns", async () => {
+            const { service, repository, eformsignDocService } = build();
+            repository.isHeadquartersBranch.mockResolvedValue(true);
+            eformsignDocService.findDocumentIdsForOtherBranches.mockResolvedValue(["someone-elses-doc"]);
+
+            await expect(service.isDocumentVisibleToBranch(BRANCH_ID, "someone-elses-doc")).resolves.toBe(false);
+        });
+
+        it("sees nothing without a branch", async () => {
+            const { service } = build();
+
+            await expect(service.isDocumentVisibleToBranch("", "old-doc")).resolves.toBe(false);
+        });
     });
 });

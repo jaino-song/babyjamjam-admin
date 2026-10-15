@@ -158,6 +158,7 @@ function buildWorker(overrides: {
         ? overrides.contractSupersede
         : {
             supersede: jest.fn().mockResolvedValue({ documentId: "old-doc", superseded: true }),
+            isDocumentVisibleToBranch: jest.fn().mockResolvedValue(true),
             ...overrides.contractSupersede,
         }) as unknown as { supersede: jest.Mock };
     const notificationService = {
@@ -995,34 +996,66 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(repository.markRequiresAttention).not.toHaveBeenCalled();
         });
 
-        it("does not cancel a document another branch owns and notifies the branch", async () => {
-            // The real service over a branch-scoped lookup: the old document belongs to a
-            // different branch, so the lookup for this job's branch finds nothing.
-            const cancelDocuments = jest.fn();
-            const purgeDocuments = jest.fn();
-            const supersedeService = new ContractSupersedeService(
+        // The real service over doubles, so the worker's own branch check is what is under test:
+        // the stored document belongs to client 7 and is unsigned, so without the check the
+        // cancel would go through.
+        const realSupersedeService = (visibility: {
+            headquarters: boolean;
+            localDocument?: (lookupBranchId: string) => unknown;
+            otherBranchDocumentIds?: string[];
+        }) => {
+            const cancelDocuments = jest.fn().mockResolvedValue({ result: { success_result: ["old-doc"], fail_result: [] } });
+            const purgeDocuments = jest.fn().mockResolvedValue(undefined);
+            const service = new ContractSupersedeService(
                 {
-                    findSupersedeCandidate: jest.fn(async (lookupBranchId: string) => (
-                        lookupBranchId === "other-branch-id"
-                            ? { clientId: 7, documentKind: "contract", statusType: "030", stepType: "05", stepName: "고객 서명" }
-                            : null
+                    isHeadquartersBranch: jest.fn().mockResolvedValue(visibility.headquarters),
+                    findSupersedeCandidate: jest.fn().mockResolvedValue({
+                        clientId: 7, documentKind: "contract", statusType: "030", stepType: "05", stepName: "고객 서명",
+                    }),
+                } as never,
+                {
+                    withCredentials: jest.fn(async (_p: unknown, _c: string, operation: (c: unknown) => unknown) => (
+                        operation({ accessToken: "token", refreshToken: "refresh" })
                     )),
                 } as never,
-                { withCredentials: jest.fn() } as never,
-                { cancelDocuments, getDocumentById: jest.fn() } as never,
+                {
+                    cancelDocuments,
+                    getDocumentById: jest.fn().mockResolvedValue({
+                        current_status: { status_type: "030", step_type: "05", step_name: "고객 서명" },
+                    }),
+                } as never,
                 { findTerminalDocumentIds: jest.fn().mockResolvedValue([]), purgeDocuments } as never,
+                {
+                    findByDocumentIdIncludingPurgePending: jest.fn(async (lookupBranchId: string) => (
+                        visibility.localDocument?.(lookupBranchId) ?? null
+                    )),
+                    findDocumentIdsForOtherBranches: jest.fn().mockResolvedValue(visibility.otherBranchDocumentIds ?? []),
+                } as never,
             );
-            const claimed = reissueJob("foreign-doc");
-            const { worker, repository, notificationService } = buildWorker({
+            return { service, cancelDocuments, purgeDocuments };
+        };
+        const runWithRealService = async (service: ContractSupersedeService) => {
+            const claimed = reissueJob("old-doc");
+            const built = buildWorker({
                 repository: {
                     claimDue: jest.fn().mockResolvedValue([claimed]),
                     markCompleted: jest.fn().mockResolvedValue(completedJob()),
                 },
                 dispatch: { execute: jest.fn().mockResolvedValue({ ok: true, documentId: "new-doc", durationMs: 1 }) },
-                contractSupersede: supersedeService,
+                contractSupersede: service,
+            });
+            await built.worker.processDueJobs();
+            return built;
+        };
+
+        it("does not cancel a document another branch owns and notifies the branch", async () => {
+            const { service, cancelDocuments, purgeDocuments } = realSupersedeService({
+                headquarters: false,
+                // Only a different branch holds the document; this job's branch finds nothing.
+                localDocument: (lookupBranchId) => (lookupBranchId === "other-branch-id" ? { documentId: "old-doc" } : null),
             });
 
-            await worker.processDueJobs();
+            const { repository, notificationService } = await runWithRealService(service);
 
             expect(repository.markCompleted).toHaveBeenCalledTimes(1);
             expect(cancelDocuments).not.toHaveBeenCalled();
@@ -1031,9 +1064,35 @@ describe("EformsignDocumentJobWorkerService", () => {
                 branchId,
                 "기존 계약서 취소 실패",
                 expect.any(String),
-                expect.objectContaining({ type: "contract-supersede-failed", documentId: "foreign-doc" }),
+                expect.objectContaining({ type: "contract-supersede-failed", documentId: "old-doc" }),
                 expect.anything(),
             );
+        });
+
+        it("keeps a headquarters job out of a document another branch owns", async () => {
+            const { service, cancelDocuments } = realSupersedeService({
+                headquarters: true,
+                otherBranchDocumentIds: ["old-doc"],
+            });
+
+            const { notificationService } = await runWithRealService(service);
+
+            expect(cancelDocuments).not.toHaveBeenCalled();
+            expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+        });
+
+        it("lets a headquarters job cancel an unassigned (null-branch) document", async () => {
+            const { service, cancelDocuments, purgeDocuments } = realSupersedeService({
+                headquarters: true,
+                // A null-branch document is in nobody's "other branch" list.
+                otherBranchDocumentIds: ["someone-elses-doc"],
+            });
+
+            const { notificationService } = await runWithRealService(service);
+
+            expect(cancelDocuments).toHaveBeenCalledWith("token", ["old-doc"]);
+            expect(purgeDocuments).toHaveBeenCalledWith(["old-doc"]);
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
         });
 
         it("logs only ids and the error class when the cancel fails", async () => {

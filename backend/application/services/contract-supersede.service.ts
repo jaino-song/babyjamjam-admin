@@ -13,6 +13,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
+import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignService } from "application/services/eformsign.service";
 import { successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { codeOnlyProblemBody, uncertainProblemBody } from "application/utils/problem-bodies";
@@ -36,10 +37,12 @@ export interface SupersedeContractParams {
  * purge intent, so reconciliation can never purge on its behalf. The local copy
  * is removed only after eformsign confirms the cancellation in this call.
  *
- * This service verifies the document belongs to the given branch (the lookup is
- * branch-scoped) and to the given client. Callers verify the rest: the HTTP route
- * checks the replacement is the client's linked contract; the job worker checks
- * the client belongs to the job's branch.
+ * Callers own branch visibility: the HTTP route checks it with
+ * `filterDocumentsByBranch`; the job worker checks it in `supersedeAfterReissue`
+ * through `isDocumentVisibleToBranch`, which applies the same rule. Callers also own
+ * the rest of their preconditions (the route checks the replacement is the client's
+ * linked contract; the worker checks the client belongs to the job's branch). This
+ * service itself verifies the document belongs to the given client.
  */
 @Injectable()
 export class ContractSupersedeService {
@@ -49,7 +52,28 @@ export class ContractSupersedeService {
         private readonly credentialBoundary: EformsignCredentialBoundary,
         private readonly eformsignService: EformsignService,
         private readonly documentMirrorService: EformsignDocumentMirrorService,
+        private readonly eformsignDocService: EformsignDocService,
     ) {}
+
+    /**
+     * The visibility rule the HTTP route applies with
+     * `filterDocumentsByBranch(..., { includePermanentPurgePending: true })`: a branch
+     * sees the documents it owns; the headquarters branch also sees unassigned ones
+     * and everything not owned by another branch.
+     */
+    async isDocumentVisibleToBranch(branchId: string, documentId: string): Promise<boolean> {
+        if (!branchId) return false;
+        if (!(await this.repository.isHeadquartersBranch(branchId))) {
+            return Boolean(await this.eformsignDocService.findByDocumentIdIncludingPurgePending(
+                branchId,
+                documentId,
+            ));
+        }
+        const otherBranchDocumentIds = new Set(
+            await this.eformsignDocService.findDocumentIdsForOtherBranches(branchId),
+        );
+        return !otherBranchDocumentIds.has(documentId);
+    }
 
     async supersede(params: SupersedeContractParams): Promise<{ documentId: string; superseded: true }> {
         const { branchId, clientId, documentId, principal } = params;
@@ -58,7 +82,7 @@ export class ContractSupersedeService {
         try {
             // Only this client's own contract can be superseded, never another
             // client's document or a service-record snapshot.
-            const document = await this.repository.findSupersedeCandidate(branchId, documentId);
+            const document = await this.repository.findSupersedeCandidate(documentId);
             if (
                 !document
                 || document.documentKind === "service_record_snapshot"
