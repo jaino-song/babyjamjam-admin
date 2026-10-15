@@ -1,25 +1,25 @@
 # Galaxy helper 계약 기준 — Phase 0 사전 점검
 
 작성일: 2026-10-15 · 관련 작업: [BJJ-354](https://linear.app/jaino-studio/issue/BJJ-354)
-상태: **계획 계약 이관 완료 / 현행 코드 binding 미완료 / 구현 미시작**
+상태: **계획 계약 이관 완료 / 현행 코드 binding 미완료 / 검증 APK 별도 준비 중**
 
 ## 기준과 변경 범위
 
 대상은 Android 17 갤럭시 업무 전용폰 한 대다. `native/`는 deprecated이며 새로운 앱은 독립 Kotlin/Jetpack Compose 프로젝트를 사용한다. 오디오 경로는 휴대폰 → Google Drive → 기존 n8n → 기존 backend → admin 통화 인박스다. 고객 등록은 사람의 확인을 거친다.
 
-이 문서는 승인된 계획 §2.2–2.6의 계약을 저장소에 이관한다. API 경로·HTTP 상태는 계획의 제안이며 기존 prefix, 에러 envelope, 권한 decorator, transaction adapter와 연결된 구현 계약은 아직 아니다. 아래 API를 구현 완료나 현재 동작으로 해석하지 않는다. 후속 코드 작업은 `path-map.md`의 미해결 binding을 끝낸 뒤 시작한다.
+이 문서는 승인된 계획 §2.2–2.6의 계약을 저장소에 이관한다. API 경로·HTTP 상태는 계획의 제안이며 기존 prefix, 에러 envelope, 권한 decorator, transaction adapter와 연결된 구현 계약은 아직 아니다. 아래 API를 구현 완료나 현재 동작으로 해석하지 않는다. 제품 구현 코드 작업은 `path-map.md`의 미해결 binding을 끝낸 뒤 시작한다. 사용자 승인으로 분리한 진단 APK 준비는 별도의 실험 경로에서 먼저 수행할 수 있다.
 
 | 정본 | Revision | 문서 |
 |---|---|---|
 | 제품 요구사항 | PRD v1.1 | [PRD](https://linear.app/jaino-studio/document/galaxy-helper-prd-v11-c4a6e8eed12e) |
-| 구현 계획 | implementation-plan-v1.1 | [Implementation Plan](https://linear.app/jaino-studio/document/galaxy-helper-implementation-plan-v11-54de58cc6520) |
+| 구현 계획 | implementation-plan-v1.2 | [Implementation Plan](https://linear.app/jaino-studio/document/galaxy-helper-implementation-plan-v11-54de58cc6520) |
 | 테스트 명세 | test-spec-v1.0 | [44개 테스트 케이스](https://linear.app/jaino-studio/document/galaxy-helper-test-specification-v10-01d719dd3f0b) |
 | 독립 계획 검수 | review-v1.0 | [Plan Review](https://linear.app/jaino-studio/document/galaxy-helper-independent-plan-review-v10-cd06f1caebe1) |
 
 정본 파일 SHA-256:
 
 - PRD: `8a6e73c954e6fd80d10a1c0d94640647b849ef52833e319ce292e0329d5650c2`
-- Plan: `a48520e2a4fe498fa36e7d9ffeea67f745aaa826044cf574ad03acb873cc7d7a`
+- Plan: `9af4d56de961027dcc9dc8cd7d6657f88ecc341280695d84365bf93bafcb4ca0`
 - Test spec: `cfded1d19bbee40626fb711141e5fb9ca345d0e3a79807b3e441923627849698`
 
 Linear의 Markdown 정규화와 별개로 위 해시는 원본 파일을 식별한다. 테스트 명세를 등록한 것은 테스트 실행이 아니다. 제품 테스트 44개와 실기기 증거는 모두 NOT_RUN이다.
@@ -138,3 +138,7 @@ MVP 복귀 링크는 고정된 scheme/host/path의 custom URI로 충분하다. �
 5. Android 빌드 조합과 OAuth 등록의 실제 package/signing binding.
 
 일반 녹음, 실제 계정 비밀, 전화번호, raw 문서 URI는 이 사전 점검 문서에 첨부하지 않는다. 시험 증거에는 합성 녹음과 익명화된 파일 식별자를 사용한다.
+
+## v1.2 순서 변경
+
+2026-10-15 사용자 승인으로 실기기 접근 전에 독립 진단 APK를 작성·빌드할 수 있다. 위 제품 계약 본문은 변경하지 않았다. 실제 Samsung 폴더/녹음/권한 검증, 자동 업로드 활성화와 Phase 0 close/Phase 1 entry는 기존 조건을 유지한다.
