@@ -10,6 +10,7 @@ import android.os.CancellationSignal
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowInsets
 import android.widget.Button
 import android.widget.LinearLayout
@@ -319,12 +320,21 @@ class MainActivity : Activity() {
     }
 
     private fun bringProbeFeedbackIntoView() {
-        probePanel.post {
-            val width = probePanel.width
-            val height = probePanel.height
-            if (width == 0 || height == 0) return@post
-            probePanel.requestRectangleOnScreen(Rect(0, 0, width, height), true)
+        val listener = object : ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (probePanel.viewTreeObserver.isAlive) {
+                    probePanel.viewTreeObserver.removeOnPreDrawListener(this)
+                }
+                val width = probePanel.width
+                val height = probePanel.height
+                if (width > 0 && height > 0) {
+                    probePanel.requestRectangleOnScreen(Rect(0, 0, width, height), true)
+                }
+                return true
+            }
         }
+        probePanel.viewTreeObserver.addOnPreDrawListener(listener)
+        probePanel.requestLayout()
     }
 
     private fun startSampling() {
