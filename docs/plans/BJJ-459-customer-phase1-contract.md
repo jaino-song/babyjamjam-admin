@@ -1,4 +1,4 @@
-TL;DR: Phase 1은 고객용 계정 주체·전화번호 인증·Kakao/Naver 로그인·기존 고객 기록 연결과 직원 권한의 분리 경계를 실행 가능한 계약으로 고정한다. 문자 인증번호(SMS OTP)는 번호 보유 확인으로 확정하고, 고객 기록 연결 확인은 별도 직원 승인으로 둔다. 제공업체·회수·보존·앱 서명 등 소유자 결정이 남아 있으므로 상태는 `READY_FOR_OWNER_DECISIONS`이며, 이 문서는 Phase 1 종료나 Phase 2 실행 승인이 아니다.
+TL;DR: Phase 1은 고객 principal, SMS OTP, Kakao/Naver 로그인, 기존 client 기록 연결, 직원 권한과의 분리 경계를 실행 가능한 제안 계약으로 정리한다. SMS OTP는 번호 보유 확인으로 확정하지만 기록 소유권은 별도 연결 확인과 운영 승인으로 확인한다. 아직 소유자 결정과 독립 SOL 검토가 남아 있으므로 이 문서는 `READY_FOR_OWNER_DECISIONS`이며 Phase 1 종료나 구현 승인이 아니다.
 
 # BJJ-459 고객 앱 Phase 1 결정 계약
 
@@ -6,353 +6,340 @@ Date: 2026-10-15 (Asia/Seoul)
 Status: `READY_FOR_OWNER_DECISIONS`
 Mode: PLAN/document authoring only
 Issue/project: BJJ-459 / Linear project `b625abbd4639`
-Plan revision: 0.1 (Phase 0 source snapshots + latest owner binding)
+Plan revision: 0.2 (correction candidate)
 
-## 1. Source, revision, and authority
+## 1. 출처, 개정, 권한
 
-| Source | Revision/evidence | Use in this contract |
+| 정본 출처 | 개정/식별자 | 이 계약에서의 용도 |
 | --- | --- | --- |
-| `/tmp/bjj-459-phase1-20261015/implementation-plan.md` | 2026-10-15 draft | Phase ordering, non-goals, app target proposal |
-| `/tmp/bjj-459-phase1-20261015/mapping.md` | Revision 1, base `037ed2bdde6188869017bbb7173f54cace9739b2` | Read-only admin route and data evidence |
-| `/tmp/bjj-459-phase1-20261015/feature-spec.md` | Revision 0.2 | FR-01~07 scope and public-field limits |
-| `/tmp/bjj-459-phase1-20261015/test-spec.md` | Revision 0.2 | Existing 62 test IDs; AUTH-01~08 traceability |
-| `/tmp/bjj-459-phase1-20261015/latest-binding.md` | Latest clarification | Mandatory phone verification plus Kakao and Naver |
-| `scout-evidence.md` | Current scout additions | Guard placement, schema anchors, command limits |
-| Repository `dev` | `037ed2bdde6188869017bbb7173f54cace9739b2` | Source snapshot only; not deployment/runtime proof |
+| [고객 앱 구현 계획 v0.2](https://linear.app/jaino-studio/document/implementation-plan-v02-%EA%B3%A0%EA%B0%9D-%EC%95%B1-ea56fdb5c159) | v0.2 | 단계 순서, 범위, 앱 대상 제안 |
+| [어드민 연동 매핑 조사 보고서](https://linear.app/jaino-studio/document/%EC%96%B4%EB%93%9C%EB%AF%BC-%EC%97%B0%EB%8F%99-%EB%A7%A4%ED%95%91-%EC%A1%B0%EC%82%AC-%EB%B3%B4%EA%B3%A0%EC%84%9C-7a66f1c23d25) | Revision 1 | 실제 어드민 경로와 데이터 근거 |
+| [고객 앱 기능 명세 v0.2](https://linear.app/jaino-studio/document/%EA%B8%B0%EB%8A%A5-%EB%AA%85%EC%84%B8-v02-%EA%B3%A0%EA%B0%9D-%EC%95%B1-d4f84be85479) | v0.2 | FR-01~07, 공개 필드와 비목표 |
+| [고객 앱 테스트 명세 v0.2](https://linear.app/jaino-studio/document/%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%AA%85%EC%84%B8-v02-62%EA%B0%9C-%EC%8B%9C%EB%82%98%EB%A6%AC%EC%98%A4-75ccefa72fcd) | v0.2, 기존 62개 ID | AUTH-01~08과 기존 시나리오 보존 |
+| 2026-10-15 소유자 결정 | SMS OTP + 별도 client 기록 연결 확인, Kakao/Naver 필수 | 최신 사용자 권한. PASS는 선택되지 않음 |
+| Repository `dev` | `037ed2bdde6188869017bbb7173f54cace9739b2` | 소스 기준 SHA이며 운영/배포 증거가 아님 |
 
-Authority order is: current user/owner binding, this contract, then the cited
-source snapshots. An older login-choice paragraph is superseded. No provider
-console action, purchase, schema migration, dependency change, app creation,
-runtime start, or deployment is authorized here.
+`/tmp/bjj-459-phase1-20261015/{implementation-plan,mapping,feature-spec,test-spec,latest-binding,owner-decisions,scout-evidence}.md`는 위 정본의 로컬 감사용 복사본이다. 복사본이 Linear 정본과 다르면 Linear 정본과 최신 사용자 결정을 따른다.
 
-## 2. Current worktree binding and scope
+권한의 우선순위는 최신 사용자 결정, 이 계약, Linear 정본, 로컬 감사 복사본 순서다. 이 문서는 provider console 쓰기, 구매, schema migration, dependency 변경, 앱 생성, 환경변수 변경, 런타임 실행, 배포를 허가하지 않는다.
 
-| Item | Binding |
+## 2. 작업 바인딩과 범위
+
+| 항목 | 현재 correction binding |
 | --- | --- |
-| Unit worktree | `/Users/jaino/Development/babyjamjam-admin/unit-bjj-459-contract` |
-| Unit branch | `codex/unit/bjj-459-contract` |
-| Exact base | `037ed2bdde6188869017bbb7173f54cace9739b2` |
-| Integration worktree/branch | `/Users/jaino/Development/babyjamjam-admin/bjj-459-phase1-plan` / `docs/BJJ-459-phase1-plan` |
-| Allowed writes | This plan and `docs/adr/ADR-014-customer-access-boundary.md` only |
-| Execution | `LUNA`, local sandbox, one documentation commit |
-| Audit | Independent SOL PLAN review; no implementation or close approval |
+| 현재 unit worktree | `/Users/jaino/Development/babyjamjam-admin/unit-bjj-459-plan-correction` |
+| 현재 branch | `codex/unit/bjj-459-plan-correction` |
+| correction 시작 commit | `5eddd4bd116900ce173fe421198836d9036e3bd9` |
+| 역사적 소스 기준 | `037ed2bdde6188869017bbb7173f54cace9739b2` |
+| 이전 통합 후보 commit | `a7fc0fef6`, `5eddd4bd1` |
+| integration worktree/branch | `/Users/jaino/Development/babyjamjam-admin/bjj-459-phase1-plan` / `docs/BJJ-459-phase1-plan` |
+| 허용 변경 | 이 계획과 `docs/adr/ADR-014-customer-access-boundary.md`만 |
+| 실행/감사 | `Execution: LUNA`, local, `Audit: SOL`; correction singleton |
 
-Phase 1 documents the customer security/shared contract. It does not implement
-auth, API controllers, DTO files, Prisma models, environment variables, app
-source, SDKs, signing, or provider configuration. The main orchestrator owns
-integration, final audit, and Linear updates.
+이 correction은 원래 두 문서의 통합 후보를 보완한다. 수정 범위는 두 Markdown 파일뿐이며, main은 통합·최종 감사·Linear 저장을 담당한다. 고객 auth, API, DTO, Prisma, env, app source, SDK, signing, provider 설정은 만들지 않는다.
 
-## 3. Product identity and login contract
+## 3. 고객 principal과 로그인 계약
 
-### 3.1 Customer principal
+### 3.1 principal 원칙
 
-1. The customer has an internal stable `customerPrincipalId`. It is the owner
-   of customer sessions, provider bindings, phone-verification state, recovery
-   evidence, and operational client-record links.
-2. A credential binding is separate from the principal and contains a provider,
-   issuer, provider client/app scope, and provider subject. A phone number is
-   never the principal ID or a sufficient client-record owner proof.
-3. Matching email or phone values never create or merge provider accounts
-   automatically. A collision requires an already authenticated session,
-   reauthentication, and fresh proof from the target provider.
-4. Account recovery, social-identity linking, and operational client links are
-   different workflows with different audit events.
-5. The proposed safe default is one active principal per client record. A
-   principal may have explicitly approved links across branches only after the
-   owner decides multiplicity and approval authority. Family sharing is out of
-   scope.
+1. 고객은 내부의 안정적인 `customerPrincipalId`를 가진다. principal은
+   customer session, provider binding, phone-proof 상태, recovery 증거와
+   operational client link의 소유자다.
+2. credential binding은 principal과 별개이며 `provider`, `issuer`, provider
+   client/app scope, `subject`를 묶는다. 전화번호, email, staff user ID,
+   provider subject만으로 client 소유자를 정하지 않는다.
+3. email/전화번호가 같아도 provider 계정을 자동 생성·병합하지 않는다. 다른
+   provider를 추가할 때는 현재 session 재인증과 대상 provider의 fresh proof가
+   모두 필요하며 충돌 시 client link를 자동으로 옮기지 않는다.
+4. account recovery, social identity linking, operational client linking은
+   서로 다른 흐름과 감사 사건이다.
+5. 안전한 제안은 client별 active principal 1개다. 여러 branch의 명시적 link와
+   가족 공유 허용 여부는 owner가 결정하기 전까지 미정이며, 가족 공유는
+   기본 범위에 넣지 않는다.
 
-### 3.2 Required login capabilities
+### 3.2 확정된 로그인 능력과 미정 항목
 
-| Capability | Phase 1 contract | Still owner-controlled |
+| 능력 | Phase 1 계약 | 아직 owner가 정할 것 |
 | --- | --- | --- |
-| Phone verification | **Required and confirmed:** SMS one-time code proves current number possession before sensitive customer data is returned. | Delivery account/provider, message template, abuse limits, recovery proof, retention value |
-| Kakao login | **Required:** server validates the provider proof and binds a stable subject under the Kakao issuer/client scope. | Exact client/app IDs, redirect/signing configuration, console ownership |
-| Naver login | **Required:** state-bound server validation of the provider token/profile and stable subject. | Exact client/app IDs, redirect configuration, console ownership |
-| Phone-only entry | Proposed option for customers without social login; not selected as a separate entry point. | Owner decides whether this UX exists and how it is rate-limited |
-| Apple login | Not selected. | Review whether Sign in with Apple is needed for Apple guideline 4.8 compliance |
+| Phone verification | **필수·확정:** SMS one-time code로 현재 번호 보유를 확인하고, 민감 고객 데이터 전에 fresh phone proof를 만든다. | SMS delivery account/provider, template, abuse limit, recovery proof, retention |
+| Kakao login | **필수:** server가 provider proof를 검증하고 Kakao issuer/client scope 아래 안정 subject를 binding한다. | client/app ID, redirect/signing 설정, console owner |
+| Naver login | **필수:** state-bound server validation으로 token/profile의 안정 subject를 binding한다. | client/app ID, redirect 설정, console owner |
+| Phone-only entry | social login이 없는 고객을 위한 제안 UX일 뿐, 별도 진입점으로 선택된 것은 아니다. | 이 UX의 존재와 rate limit |
+| Apple login | 선택되지 않음 | Apple guideline 4.8 대응 경로와 Sign in with Apple 채택 여부 |
 
-SMS OTP is number-possession proof, not proof that a person owns an existing
-client record. A successful code must be followed by a separate record-link
-confirmation and, where required, staff review before sensitive data appears.
-The existing Aligo integration is outbound messaging evidence only; no OTP
-authentication service was found. Evaluating Aligo as a future delivery option
-is allowed, but no setup, purchase, or send is authorized by this document.
+SMS OTP는 번호 보유 증명이지 client 기록 소유권 증명이 아니다. OTP 성공 뒤에도 별도 기록 연결 확인과 owner가 정한 운영 승인이 있어야 민감 데이터를 제공한다. 현재 Aligo 코드는 outbound SMS 근거일 뿐 OTP 인증 서비스가 아니다. Aligo를 delivery 후보로 평가할 수는 있으나 setup, 구매, 실제 발송은 이 문서에 포함하지 않는다.
 
-Provider-specific minimums are deliberately explicit:
+Kakao ID token은 issuer, audience, expiry, nonce, signature를 확인한다. Kakao의 `phone_number_verified=true`는 provider assertion일 뿐 fresh project phone proof나 기록 소유권이 아니다. tokeninfo는 debug 용도이지 production authenticity proof가 아니다. Naver는 state와 server-validated token/profile의 stable subject를 사용하며, 별도 근거 없이 OIDC 또는 PKCE를 지원한다고 쓰지 않는다. Static state나 URL에 token을 기록하지 않는다.
 
-- Kakao ID-token proofs require issuer, audience, expiry, nonce, and signature
-  validation. `phone_number_verified=true` from Kakao is a provider assertion,
-  not fresh project phone proof or ownership of a client record. Tokeninfo is
-  debug-only and is not production authenticity proof.
-- Naver uses state binding and server-validated token/profile data with a stable
-  subject. This contract does not claim that Naver is OIDC or supports PKCE
-  without separate evidence. Static state or URL-logged tokens are forbidden.
+## 4. 기존 auth 재사용과 분리
 
-Neither social provider may silently merge links when a subject collision is
-found. Raw provider proofs are transient inputs and are not stored in audit
-records.
-
-## 4. Existing auth reuse and segregation
-
-| Existing anchor | Reusable mechanism | Staff-only assumption that must stay out of customer auth | Proposed customer boundary |
+| 실제 anchor | 재사용 가능한 기제 | customer에 가져오면 안 되는 staff 가정 | 제안 customer 경계 |
 | --- | --- | --- | --- |
-| `backend/interface/controllers/auth.controller.ts` | Request validation and existing token/refresh flow patterns | `/auth/token` and `/auth/refresh-token` issue staff sessions and routes | New customer controller under a future `/customer/v1` namespace |
-| `backend/infrastructure/auth/jwt.strategy.ts` | Server lookup, expiry, `sid`, revocation, token-version checks, fail-closed store errors | `user.role`, `approvalStatus`, `branchId`, `organizationId`, and selected staff branch | Customer strategy validates a customer issuer/audience/purpose and principal session |
-| `backend/infrastructure/auth/jwt.guard.ts` | Opt-in guard composition pattern | It authenticates the staff Passport strategy | Separate customer guard; no role-string or cookie fallback |
-| `backend/infrastructure/tenant/tenant.guard.ts` | Current membership lookup can inform a later link-owner check | Owner/`user_branch` membership and staff-selected branch authority | Customer authorization uses active principal-to-client link, never request body branch |
-| `auth_session` | Server-managed device/session family and revocation fields | Existing relation is to `user` and carries selected staff branch | New realm discriminator or separate customer session boundary requires schema review |
-| `auth_refresh_token` | Hashed opaque secret, atomic rotation, replacement marker | Existing rows are staff realm data | Reuse mechanics only after realm/data-boundary review; never cross-read rows |
-| `auth_rate_limit` | Rate-limit storage/policy precedent | Existing keys and thresholds may encode staff/login assumptions | Customer phone/provider/link keys require a separate reviewed policy |
-| `docs/adr/ADR-001-auth-session-and-tenant-principal.md` | 15-minute access/session lookup, opaque refresh, replay handling, fail-closed authorization | Staff tenant principal and route shape | Adopt mechanics by explicit customer ADR amendment, not by copying staff identity |
-| `service_record_token`, `receipt_link_token` | Single-use hash/expiry/replay patterns for their narrow links | Bearer link tokens authorize a particular service record/document only | They never authorize a customer principal, customer session, or client link |
+| `backend/interface/controllers/auth.controller.ts` | request validation, 기존 token/refresh 흐름 | `/auth/token`, `/auth/refresh-token`은 staff session/route | 별도 `/customer/v1` controller |
+| `backend/infrastructure/auth/jwt.strategy.ts` | session 조회, expiry, `sid`, revoke, token-version, fail-closed | `user.role`, `approvalStatus`, `branchId`, `organizationId`, staff branch | customer issuer/audience/purpose와 principal session |
+| `backend/infrastructure/auth/jwt.guard.ts` | opt-in guard 조합 | staff Passport strategy를 인증함 | 별도 customer guard, role/cookie fallback 금지 |
+| `backend/infrastructure/tenant/tenant.guard.ts` | 최신 membership 조회 원리 | owner/`user_branch`와 staff-selected branch | active principal-to-client link 검사 |
+| `auth_session` | server session family, revoke 상태 | 현재 `user` relation과 selected staff branch | realm discriminator 또는 분리 session을 schema review 후 결정 |
+| `auth_refresh_token` | opaque secret hash, atomic rotation, replacement marker | staff realm row를 customer가 읽는 것 | hash/rotation/revoke 기제만 boundary 검토 후 재사용 |
+| `auth_rate_limit` | rate-limit 저장/정책 선례 | staff/login 키와 임계값을 그대로 복사 | customer phone/provider/link 정책을 별도 검토 |
+| `docs/adr/ADR-001-auth-session-and-tenant-principal.md` | opaque refresh, replay, server lookup | staff tenant principal과 route shape | customer ADR의 명시적 결정을 거쳐 적용 |
+| `service_record_token`, `receipt_link_token` | 좁은 link의 hash/expiry/replay 선례 | 특정 record/document bearer 권한 | customer principal/session/link 권한으로 사용 금지 |
 
-No customer principal or link model exists in the inspected schema. Do not
-choose table reuse, a realm discriminator, or a migration until ownership,
-retention, and data-boundary review is complete.
+현재 schema에는 customer principal/link 모델이 없다. realm discriminator,
+기존 table 재사용, 새 table 선택은 data boundary와 retention review 뒤로
+미룬다.
 
-## 5. Session and authorization boundary
+## 5. 세션 경계와 operation authorization matrix
 
-Customer and staff credentials use distinct issuer, audience, purpose, signing
-key/strategy, cookie names, and session-state interpretation. A token is not
-authorized merely because its payload contains a role or a branch identifier.
+Customer와 staff credential은 issuer, audience, purpose, signing key/strategy,
+cookie 이름, session-state 의미를 각각 갖는다. role 문자열이나 branch ID가
+있다는 이유로 권한을 주지 않는다. 두 realm token은 양방향으로 거부한다.
 
-1. Customer routes reject staff access tokens and staff cookies. Staff routes
-   reject customer access tokens and customer cookies. Both directions are
-   required tests.
-2. Guard ordering is: transport extraction → realm signature/issuer/audience/
-   purpose validation → authoritative session lookup → revocation/expiry/
-   token-version/link-state checks → route-specific ownership check. Public
-   metadata is never a blanket customer-auth bypass.
-3. Access-token expiry is not the revocation boundary. A server-side request
-   check must reject logged-out, revoked, blocked, expired, or unlinked sessions
-   before reads and before precommit writes.
-4. Refresh rotation follows the reviewed opaque-secret/hash and reuse-handling
-   mechanics in ADR-001, with customer realm rows isolated. Exact access/refresh
-   TTLs, replay grace, cleanup, and retention are owner decisions; no default is
-   invented here.
-5. On logout, account switch, provider unlink, phone change/recycle, link
-   revocation, or block, customer cache and in-flight response handling must
-   fail closed. A delayed response from account A cannot populate account B.
-6. Refresh secrets never appear in URLs, analytics, exceptions, or logs.
+### 5.1 허용 행위와 차단 행위
 
-## 6. Client-record link lifecycle
+| 행위 | 허용 조건 | 허용 결과 | 반드시 거부할 경우 |
+| --- | --- | --- | --- |
+| `provider-proof/exchange` | 제한된 미인증 exchange state, provider proof, redirect/state/nonce 검증 | principal/session을 만들거나 기존 principal에 binding; link/data 권한은 만들지 않음 | 잘못된 issuer/audience/signature, replay, staff token, state 불일치 |
+| `phone-proof/start` | 현재 non-revoked customer onboarding session과 동일 principal, 명시된 challenge intent | 그 principal/session에 귀속된 challenge reference만 반환 | anonymous transferable challenge, 다른 principal/session, candidate lookup |
+| `phone-proof/verify` | 같은 principal/session의 challenge reference, one-time code, current intent | 현재 phone-proof generation을 증가시키고 link flow로 이동 | 다른 session의 challenge, wrong/expired/replayed code, revoked session |
+| `self`, own link status, logout | non-revoked customer session; active link 불필요 | 최소 principal 상태, 본인 link 상태, logout/cleanup | staff token/cookie, 다른 principal의 link ID |
+| `POST /customer/v1/links` | non-revoked session, fresh verified phone proof, 새 request idempotency | 후보를 열거하지 않고 `pending` link request 생성 | active link가 없다는 이유로 차단하지 않음; old proof, body owner, staff token은 거부 |
+| `home`와 customer data read/mutation | non-revoked session + active current link + valid current phone-proof generation | 최소 공개 projection만 반환/변경 | unlinked, revoked, phone-proof stale, wrong link, staff credential |
+| `session/refresh` | principal/session/credential의 expiry·revoke·reuse 상태가 유효 | rotated credential; active link 없이도 session 수명 연장 가능 | refresh가 customer-data 권한을 만들거나 phone/link 검사를 건너뜀 |
+| `session/revoke` | 현재 session 또는 owner가 정한 all-device 범위 | revoke와 local cleanup; 이미 revoked session의 logout은 idempotent | 다른 principal session revoke, customer token으로 staff revoke |
 
-The conceptual state machine is:
+`phone-proof/start`와 `verify`는 provider exchange에서 나온 customer
+onboarding session에 묶인다. Phone-only entry가 나중에 선택되면 anonymous
+bearer challenge가 아니라 같은 principal/session/challenge-intent binding을
+만드는 별도 bounded bootstrap이 필요하다. 그 UX는 아직 선택되지 않았다.
 
-`no_link → pending → active | rejected → revoked`
+Guard 순서는 transport 추출 → realm signature/issuer/audience/purpose 검증
+→ authoritative session 조회 → expiry/revoke/token-version/reuse 검증
+→ operation별 필요한 current phone-proof/link state 확인 → ownership 검사다.
+Public metadata는 customer auth 우회가 아니다. Revoke, logout, account switch,
+provider unlink, phone change/recycle, link revoke 뒤에는 다음 요청에서
+server가 다시 검사하며, precommit write에도 같은 검사를 적용한다.
 
-`pending` is a request by an authenticated principal after the required phone
-proof. It contains a one-time proof binding, expiry, replay/attempt controls,
-and an audit reference without raw SMS/provider proof. Exact TTLs and attempt
-counts remain owner decisions.
+Refresh는 active link를 요구하지 않지만 valid session/credential만 연장한다.
+Refresh 결과만으로 home/data 권한을 만들 수 없고, fresh phone proof와 active
+link가 없으면 민감 응답은 계속 차단된다. Refresh secret은 URL, analytics,
+exception, log에 넣지 않는다.
 
-`active` is granted only after the configured operational approver confirms the
-record-link evidence. `rejected` gives a safe reason code and no candidate PII.
-`revoked` blocks the link on the next server request and invalidates dependent
-customer reads/writes. An unlink cannot leave an in-flight approval usable.
+즉 customer data는 `active link + valid current phone-proof generation`을
+동시에 요구하고, non-revoked onboarding session만으로는 민감 data를 열지
+않는다.
 
-The implementation must define behavior for simultaneous approvals, a second
-request for the same record, account switch during review, phone change or
-recycled number, app reinstall, multiple devices, provider account collision,
-expired/replayed proof, and staff revocation. None of these cases may enumerate
-candidate customers or infer ownership from phone equality alone.
+## 6. Client-record link 상태와 원자 전이
 
-## 7. Proposed `/customer/v1` contract (conceptual only)
+`none`, `pending`, `active`, `rejected`, `canceled`, `expired`, `revoked`를
+서버의 명시적인 상태로 둔다. 허용 전이는 다음과 같다.
 
-These are allowlists for a future contract, not executable OpenAPI or DTO files.
-Transport and exact field names may change after the provider and retention
-decisions, but the boundary may not broaden silently.
+| 현재 상태 | 허용 전이 | 수행 주체/조건 | 금지 전이와 이유 |
+| --- | --- | --- | --- |
+| `none` | `pending` | 같은 non-revoked principal/session, fresh phone-proof generation, 대상 exclusivity, idempotency | phone equality나 old proof만으로 active 생성 금지 |
+| `pending` | `active` | owner가 정한 approver가 atomic check를 통과시킴 | 승인 없는 자동 active, 다른 principal의 승인 금지 |
+| `pending` | `rejected` | approver가 safe reason code로 거절 | candidate PII나 상세 존재 여부 노출 금지 |
+| `pending` | `canceled` | principal의 본인 취소 또는 owner가 정한 취소 주체 | 취소 뒤 in-flight 승인이 살아나지 않음 |
+| `pending` | `expired` | server cleanup/시간 정책 | 만료 proof 재사용 금지 |
+| `active` | `revoked` | principal unlink, staff revocation, 보안 차단 | `revoked`를 `active`로 되살리지 않음 |
+| terminal 상태 | 없음 | terminal row와 proof binding은 immutable | retry는 새 request, 새 proof, 새 version으로만 가능 |
 
-| Endpoint | Request allowlist | Response allowlist and safe failures |
+`active` 승인 transaction은 (1) principal/session이 허용 상태인지, (2) 같은
+현재 phone-proof generation인지, (3) pending request version이 그대로인지,
+(4) target client record가 아직 exclusive인지 한 번에 확인하고 성공해야
+한다. 어느 하나라도 바뀌면 승인하지 않는다. revoke, cancel, phone change는
+pending proof를 무효화하고 in-flight approval을 막는다. 계정 recovery와
+phone change의 정확한 증명 방식은 owner 결정으로 남기지만, recycled phone이
+자동으로 link를 이전하게 해서는 안 된다.
+
+동시 승인, 중복 request, account switch, multi-device, app reinstall,
+provider collision, expired/replayed proof와 staff revoke를 각각 재현한다.
+`rejected/canceled/expired`에서 `active`로 되돌아가는 경로는 없다.
+
+## 7. 제안 `/customer/v1` 계약
+
+아래는 실행 가능한 OpenAPI/DTO가 아닌 conceptual allowlist다. 정확한 field
+name과 transport는 후속 binding에서 정할 수 있지만, operation별 권한과
+privacy 경계는 넓혀서 해석하지 않는다.
+
+| Endpoint | Request allowlist | Response와 실패 경계 |
 | --- | --- | --- |
-| `POST /customer/v1/auth/provider-proof/exchange` | provider, authorization proof, redirect/state binding, nonce where applicable | opaque customer session handle, short-lived access credential, safe principal state; invalid proof returns generic auth failure |
-| `POST /customer/v1/auth/phone-proof/start` | normalized phone input, challenge intent, client idempotency key | challenge reference and expiry metadata only; rate-limit/unknown responses do not reveal account existence |
-| `POST /customer/v1/auth/phone-proof/verify` | challenge reference, one-time code, idempotency key | phone verification state and next-step link state; wrong/replayed/expired code is a safe verification failure |
-| `POST /customer/v1/auth/session/refresh` | opaque refresh secret/handle in the approved secure transport | rotated session credentials and expiry metadata; reuse/revocation is generic auth failure |
-| `POST /customer/v1/auth/session/revoke` | current customer session and optional all-device intent | success status only; already revoked is idempotent |
-| `GET /customer/v1/self` | authenticated customer session | opaque principal reference, verification state, provider names, link summary; no staff roles or candidate records |
-| `POST /customer/v1/links` | authenticated principal, client-link proof reference, user-entered confirmation, idempotency key | link ID and `pending` status; unknown/not-owner is indistinguishable from no eligible record |
-| `GET /customer/v1/links/:linkId` | active customer session and link ID | link state, safe timestamps, safe reason code, minimal client display only when active |
-| `GET /customer/v1/home` | active customer session and active link | minimum home projection below; revoked/unlinked returns an unavailable state, never staff data |
+| `POST /customer/v1/auth/provider-proof/exchange` | provider, authorization proof, redirect/state binding, nonce(해당 시) | opaque customer session/principal 상태만; data/link 권한 없음 |
+| `POST /customer/v1/auth/phone-proof/start` | 현재 session/principal, challenge intent, normalized phone, idempotency key | principal에 귀속된 challenge reference/expiry만; 존재 여부 비공개 |
+| `POST /customer/v1/auth/phone-proof/verify` | 같은 session/principal의 challenge reference, one-time code, intent, idempotency key | current phone-proof generation과 next link state; wrong/replay/expired는 safe failure |
+| `POST /customer/v1/auth/session/refresh` | secure transport의 opaque refresh secret/handle | rotated credential/expiry; active link 없는 session도 갱신 가능 |
+| `POST /customer/v1/auth/session/revoke` | current customer session, optional all-device intent | success와 cleanup 상태; 이미 revoke된 logout은 idempotent |
+| `GET /customer/v1/self` | non-revoked customer session | opaque principal reference, phone state, provider names, own link summary |
+| `POST /customer/v1/links` | principal/session, fresh phone-proof reference, user confirmation, idempotency key | link ID와 `pending`; eligible candidate를 찾았는지 노출하지 않음 |
+| `GET /customer/v1/links/:linkId` | non-revoked session과 본인 link ID | own state, safe timestamps/reason; active link가 아니어도 own status 허용 |
+| `GET /customer/v1/home` | non-revoked session, active link, current phone-proof generation | 최소 home projection; unlinked/revoked/stale proof는 unavailable |
 
-Unknown identifiers, wrong owners, revoked links, and unlinked sessions use
-safe, non-enumerating problem codes. Internal error details, provider tokens,
-refresh secrets, raw phone numbers, staff notes, signatures, addresses, and
-candidate PII are excluded from responses and logs.
+Unknown identifier, wrong owner, revoked link, unlinked session은 safe generic
+problem code를 쓴다. raw provider proof, refresh secret, raw phone, candidate
+PII, staff note, signature, address, staff contact snapshot은 response/log에
+넣지 않는다. Service-record/receipt bearer token은 customer endpoint의 인증
+대체물이 아니다.
 
-## 8. Minimum home projection
+## 8. 최소 home projection
 
-The first home response contains only server-authorized, customer-safe fields:
+첫 home에는 server가 확인한 다음 항목만 둔다.
 
-- link state and an opaque link reference;
-- service period dates and a server-derived lifecycle label with a clear
-  meaning (for example, contract period or confirmation pending);
-- pending source representation such as `pending_review` or
-  `unavailable_after_revocation`, with source/version metadata where needed;
-- approved next action and safe notification summary, if a later contract
-  provides one.
+- opaque link reference와 link state;
+- service period date와 의미가 설명된 server-derived lifecycle label;
+- `pending_review`, `unavailable_after_revocation` 같은 pending-source 표현과
+  필요한 source/version metadata;
+- 후속 contract가 승인한 safe next action/notification 요약.
 
-Date-derived `active` or `completed` does not mean a real visit started or
-ended. Do not expose internal notes, signatures, addresses, staff contact
-snapshots, payment/receipt outcomes, or full booking/outbox/billing schema in
-this projection. Rich records belong to a later Phase 5 contract and must use
-their own field allowlist and revocation rules.
+Date-derived `active`/`completed`는 실제 방문 시작·종료가 아니다. Internal
+notes, signatures, addresses, staff contact snapshot, payment/receipt outcome,
+완전한 booking/outbox/billing schema는 노출하지 않는다. Rich record는 후속
+Phase 5 field allowlist와 revoke 규칙에서 별도로 정한다.
 
-## 9. App boundary and protected-change inventory
+## 9. 앱 경계, 단계 순서, 보호 변경 목록
 
-The recommended target is a new root `customer/` React Native + Expo app. The
-existing `mobile/` is an admin Next.js app and `native/` is an admin KMP/
-Compose/SwiftUI app; neither is copied or treated as the customer target.
-Retain the 203-token customer visual baseline. Share only pure customer DTOs or
-types in `packages/customer-contracts/` when an actual second consumer exists;
-do not import staff auth, cookies, selected-branch state, or whole stores.
+### 9.1 앱 경계
 
-| Future protected change | Why it is listed | Binding still required |
+권장 대상은 새 root `customer/` React Native + Expo 앱이다. `mobile/`은 직원용
+Next.js 앱이고 `native/`는 직원용 KMP/Compose/SwiftUI 앱이므로 복사하지 않는다.
+고객 시각 기준은 203-token baseline을 유지한다. 실제 두 번째 consumer가 생길
+때에만 `packages/customer-contracts/`에 pure customer DTO/type을 둔다. Staff
+auth, cookie, selected-branch state와 전체 store는 공유하지 않는다.
+
+### 9.2 controlling rollout order
+
+1. **Phase 1 — 이 계약:** owner가 principal, mandatory capabilities, no-merge,
+   operation matrix, link state/approval boundary를 검토하고 SOL이 exact
+   candidate를 감사한다. 이 단계는 문서이며 code/Phase2 승인이 아니다.
+2. **Phase 2 — sample-only app spike:** Phase 1의 앱 위치와 최소 visual
+   binding 뒤, real customer data/provider/push 없이 새 `customer/` 앱의 홈
+   shell만 양 OS에서 검증한다. 이 단계가 Phase 3 auth보다 먼저다.
+3. **Phase 3 — customer auth implementation:** 먼저 additive schema/realm/data
+   boundary를 확정하고 적용한 뒤 같은 Phase 3 안에서 customer controller,
+   guards, provider proof, SMS OTP, link transition을 구현한다. Schema는
+   Phase 2 prerequisite가 아니다.
+4. 이후 app session UX, home/public projection, records/notifications/billing은
+   각자 별도 plan, test, audit gate를 가진다.
+
+Phase 2의 알려진 discovery는 Node `22.23.2`, pnpm `10.33.0`, Xcode
+`26.6 (17F113)`, selected developer directory, Temurin Java `21.0.12`다.
+`adb`, emulator, `sdkmanager`, Watchman은 PATH에서 찾지 못했고
+`~/Library/Android/sdk`도 없었다. 이는 알려진 경로 discovery일 뿐 Android
+부재의 전수 증명이 아니다. 설치·native build·device run·customer runtime
+검증은 하지 않았다.
+
+### 9.3 향후 보호 변경 목록
+
+| Path/영역 | 이유 | 후속 binding |
 | --- | --- | --- |
-| `customer/package.json`, `customer/tsconfig.json` | New app package and strict config | Expo/RN versions and dependency approval |
-| app config and native identifiers/signing files under `customer/` | Separate iOS/Android identity | Bundle/package IDs, signing account, secrets, ownership |
-| `pnpm-workspace.yaml`, `pnpm-lock.yaml` | Explicit workspace membership and lock update | Exact package path and approved dependency set |
-| `packages/customer-contracts/` | Pure DTO/types only when shared consumers exist | Consumer list and versioning policy |
-| future backend customer auth/session/link paths | Principal, provider proof, phone OTP, link authorization | Exact module/file paths, realm schema, transaction boundaries |
-| future env/provider configuration | Issuer, client IDs, keys, SMS credentials | Names, owners, secret storage, provider approval |
+| `customer/package.json`, `customer/tsconfig.json` | 새 앱 package/strict 설정 | Expo/RN version과 dependency |
+| `customer/` app config/native identifiers/signing | staff와 별도 앱 정체성 | bundle/package ID, signing account/owner |
+| `pnpm-workspace.yaml`, `pnpm-lock.yaml` | workspace/lock 반영 | 실제 package path와 승인된 dependency |
+| `packages/customer-contracts/` | 실제 shared consumer가 있을 때 pure DTO/type | consumer와 version policy |
+| Phase 3 backend auth/session/link path | principal, provider proof, OTP, link auth | exact module/path, realm schema, transaction |
+| future env/provider config | issuer, client ID, keys, SMS credential | 이름, secret store, owner, provider approval |
 
-No exact versions, app IDs, signing values, environment variable names, schema
-migration, or customer backend path is chosen by this document.
+정확한 version, app ID, signing 값, env key 이름, schema migration은 여기서
+선택하지 않는다. 후속 계획의 보호 변경 목록과 rollback이 필요하다.
 
-### Phase 2 sample-only prerequisites
+## 10. Owner 결정과 Phase 1 close gate
 
-Phase 2 may run only after Phase 1 decisions are closed and a dedicated plan
-binds the SDK/package versions, Android/iOS identifiers, signing ownership, and
-sample-only paths. A minimal home shell may be built without real customer data,
-provider calls, or push delivery.
+| 질문 | 안전한 제안/확인 사실 | 소비 단계 | Phase 1 처리 |
+| --- | --- | --- | --- |
+| SMS delivery provider/account | Aligo를 capability/owner 검토 후 후보로 평가; setup/send 없음 | Phase 3 provider adapter | provider만 pending, SMS OTP 의미는 확정 |
+| Recovery proof | phone/email 일치만으로 recovery하지 않는 별도 proof | Phase 3 auth/recovery | 정책 pending, 자동 이전 금지 |
+| Link approval authority | 운영 역할과 감사 사건을 명시 | Phase 1 경계 확인 후 Phase 3 workflow | owner 확인 필요 |
+| Multi-record/branch multiplicity | client별 active 1개 제안, cross-branch는 명시 승인 때만 | Phase 1 경계와 Phase 3 schema | owner 확인 필요 |
+| TTL/retention | 임의 값 없이 artifact별 owner 결정 | Phase 3 data/auth | 이 문서 검토 뒤 후속 gate로 유예 가능 |
+| App ID/signing/developer account | customer identity를 staff와 분리 | Phase 2 build/release | 후속 binding |
+| Apple guideline 4.8 | Sign in with Apple 또는 문서화된 예외를 평가; Apple은 미선택 | Phase 2 iOS release | owner 확인 필요 |
+| Phone-only entry | 제안 UX로만 기록 | 제품 후속 결정 | 선택 전 구현하지 않음 |
 
-The read-only environment discovery supplied for planning found Node
-`22.23.2`, pnpm `10.33.0`, Xcode `26.6 (17F113)` at the selected developer
-directory, and Temurin Java `21.0.12`. `adb`, emulator, `sdkmanager`, and
-Watchman were not found in `PATH`; `~/Library/Android/sdk` was absent. This is
-known-path discovery, not exhaustive Android absence proof. No install, native
-build, device run, or customer runtime verification occurred. Any proposed
-Phase 2 commands remain future/nonexistent until that plan binds them.
+Phase 1 close는 provider credential, env key 이름, app ID/signing 값, schema
+table 이름, TTL/retention 숫자를 모두 지금 정하라는 뜻이 아니다. Close에
+필요한 것은 principal/link/token invariants, 세 가지 확정 capability,
+no-merge, operation matrix와 transition boundary를 owner가 승인하고 각
+미정 항목을 Phase 2/3 또는 제품 후속 gate에 명시적으로 배정하는 것이다.
+그 승인과 독립 SOL 검토 전에는 상태를 `READY_FOR_OWNER_DECISIONS`로 두며,
+Phase 1 종료·Phase 2 실행·code implementation approval을 주장하지 않는다.
 
-## 10. Owner decisions and close gate
+## 11. 추적성과 검증 계약
 
-| Question | Safe recommendation/fact | Why it is needed | Gate that consumes the decision | Phase 1 status |
-| --- | --- | --- | --- | --- |
-| SMS delivery account/provider | Evaluate existing Aligo only after capability and ownership review; no setup/send here | Current Aligo code is outbound SMS, not OTP auth | Phase 3 provider adapter; SMS OTP semantics are already fixed | **Owner/provider pending** |
-| Recovery proof | Require a separately approved proof path; do not use phone/email match alone | Recycled numbers and lost provider access can transfer risk | Phase 3 auth/recovery implementation | **Owner pending** |
-| Link approval authority | Name the operational role and audit event for accepting a client link | SMS possession is not record ownership | Phase 1 boundary acknowledgement, then Phase 3 workflow | **Owner pending** |
-| Multiple records/branches | Start with one active link; allow explicit cross-branch links only if approved | Prevents accidental family sharing and ambiguity | Phase 1 boundary choice before link schema | **Owner pending** |
-| Session/link/proof TTL and retention | No arbitrary defaults; owner chooses per artifact | Retention affects privacy, replay, recovery, and cleanup | Phase 3 data/auth implementation; values may remain deferred in this draft | **Owner pending** |
-| App IDs/signing/developer account | Separate customer identities and named owners | Prevents staff/customer app collision and release ambiguity | Phase 2 build/release binding | **Owner pending** |
-| Apple guideline 4.8 route | Recommend evaluating Sign in with Apple or a documented exception; Apple login is not selected | Third-party login may require an equivalent privacy-preserving option | Phase 2 iOS release gate | **Owner pending** |
-| Phone-only entry UX | Keep proposed until product owner chooses the entry point | Avoids inferring a new login surface | Product follow-up; not required for the three confirmed capabilities | **Proposed, unselected** |
+기존 62개 test ID는 변경하지 않는다. AUTH-01~08은 원래 의미를 유지하고,
+아래 AUTH-X ID는 이 경계의 확장이다.
 
-Phase 1 close does not require exact provider accounts, environment key names,
-app IDs, signing values, schema table names, or TTL/retention numbers. It does
-require the owner to approve the principal/link/token boundary, acknowledge the
-three confirmed capabilities and the no-merge rule, and explicitly assign each
-open item to its Phase 2 or Phase 3 gate. The independent SOL review must approve
-the exact candidate; the main records the close gate. Provider console setup,
-app creation, native builds, schema migration, and Phase 2 execution remain
-later gates.
-
-## 11. Traceability and verification contract
-
-The existing 62 test IDs remain unchanged. AUTH-01~08 retain their source
-meanings; the following extensions are new IDs for this customer boundary and
-must not renumber or replace the existing set.
-
-| ID | Success assertion | Failure assertion |
+| ID | 성공 assertion | 실패 assertion |
 | --- | --- | --- |
-| AUTH-01 | Unlinked principal receives link guidance only | No reservation/record detail or candidate PII is returned |
-| AUTH-02 | A’s active link returns only A-owned projection | B/C IDs, files, and writes are rejected without enumeration |
-| AUTH-03 | Phone mismatch or duplicate candidate enters proof/review path | Phone equality alone never activates a link |
-| AUTH-04 | Account A logs out and B logs in while A request is delayed | A data/cache/response cannot appear in B |
-| AUTH-05 | Revoked link is blocked after foreground/server recheck | Direct URL or cached data cannot bypass revocation |
-| AUTH-06 | Concurrent expiry coordinates one refresh and recovers safely | Reuse/revocation cannot loop or mint an unauthorized session |
-| AUTH-07 | Reinstall requires server session/link validation before private screen | Revoked server session is not trusted because a device credential remains |
-| AUTH-08 | Customer token cannot call staff controller and staff token cannot call customer controller | Staff cookie, role, or `selectedBranch` never becomes customer authority |
-| AUTH-X01 | Correct SMS OTP marks number possession and advances to link flow | Wrong, expired, replayed, or rate-limited code is safe and non-enumerating |
-| AUTH-X02 | Kakao proof passes issuer/audience/expiry/nonce/signature checks | Tokeninfo/debug data, bad signature, wrong audience, or stale proof is rejected |
-| AUTH-X03 | Naver state and server token/profile bind one stable subject | Static state, URL token logging, or invented OIDC/PKCE assumption is rejected |
-| AUTH-X04 | Existing-session reauthentication links a new provider safely | Email/phone collision never silently merges principals or links |
-| AUTH-X05 | Staff-approved request becomes `active` exactly once | Concurrent approval, replayed proof, unlink, or expiry cannot activate twice |
-| AUTH-X06 | Server checks revocation/link state before every protected read/write | JWT expiry alone, stale cache, or body-supplied owner bypass cannot authorize |
-| AUTH-X07 | Unknown/not-owner/link-revoked responses have safe generic codes | Candidate lookup, phone existence, or staff data cannot be inferred |
-| AUTH-X08 | Home status describes a contract/source state with provenance | Date-derived status is not presented as real visit or payment evidence |
-| AUTH-X09 | Recovery, phone change/recycle, reinstall, and multi-device policies are explicit | Unresolved recovery proof cannot silently transfer a client link |
-| AUTH-X10 | Future app identity/signing and Apple review route are recorded before build | Sample build or social login does not imply release/signing compliance |
+| AUTH-01 | unlinked principal은 link 안내와 own 상태만 받음 | reservation/record detail과 candidate PII가 나오지 않음 |
+| AUTH-02 | A의 active link는 A-owned projection만 받음 | B/C ID, file, write가 차단되고 열거되지 않음 |
+| AUTH-03 | phone mismatch/duplicate는 proof/review로 이동 | phone equality만으로 link active가 되지 않음 |
+| AUTH-04 | A logout 후 B login과 지연 response를 분리 | A cache/response가 B 화면에 오지 않음 |
+| AUTH-05 | revoke 후 foreground/server 재검사로 차단 | direct URL/cache가 revoke를 우회하지 않음 |
+| AUTH-06 | 동시 expiry에서 refresh를 조정 | reuse/revoke가 무한 loop나 권한 상승을 만들지 않음 |
+| AUTH-07 | reinstall 뒤 server session/link를 확인 | 남은 device credential만으로 private screen을 열지 않음 |
+| AUTH-08 | customer↔staff controller 호출이 양방향 차단 | staff cookie/role/`selectedBranch`가 customer 권한이 되지 않음 |
+| AUTH-X01 | valid SMS OTP가 현재 proof generation을 만들고 link flow로 이동 | wrong/expired/replayed/rate-limited code가 safe failure |
+| AUTH-X02 | Kakao issuer/audience/expiry/nonce/signature 검증 통과 | bad signature/audience, debug tokeninfo, stale proof 거부 |
+| AUTH-X03 | Naver state/token/profile이 stable subject에 binding | static state, URL token log, 무근거 OIDC/PKCE 가정 거부 |
+| AUTH-X04 | reauthentication 후 새 provider binding 성공 | email/phone collision이 principal/link를 자동 merge하지 않음 |
+| AUTH-X05 | atomic approval이 pending을 active로 한 번만 전이 | 동시 승인, old version, old proof, unlink 뒤 active 금지 |
+| AUTH-X06 | revoke/link/phone state를 read/write 직전에 확인 | JWT expiry만으로 data 권한을 주지 않음 |
+| AUTH-X07 | unknown/not-owner 응답이 동일한 safe code | candidate/phone 존재나 staff data 추론 불가 |
+| AUTH-X08 | home이 source/status 의미와 provenance를 표시 | date status를 visit/payment 완료로 표시하지 않음 |
+| AUTH-X09 | recovery/phone recycle/reinstall/multi-device 정책이 명시됨 | recycled phone이 link를 자동 이전하지 않음 |
+| AUTH-X10 | app identity/signing/Apple gate가 build 전 기록됨 | sample build가 release compliance를 의미하지 않음 |
+| AUTH-X11 | unlinked non-revoked session이 self/status/logout/phone flow를 수행 | active link가 없다는 이유로 onboarding을 deadlock하지 않음 |
+| AUTH-X12 | refresh가 valid principal/session만 갱신 | refresh가 active link/phone proof 없는 data 권한을 만들지 않음 |
+| AUTH-X13 | fresh phone proof로 active link 없는 principal이 `pending`을 생성 | body client/old proof/staff token으로 request 생성 불가 |
+| AUTH-X14 | `none→pending`, `pending→active/rejected/canceled/expired`, `active→revoked`만 성공 | terminal resurrect, replay, duplicate approval, in-flight revoke 우회 불가 |
+| AUTH-X15 | provider exchange가 bounded unauth state에서 principal/session만 만듦 | provider proof만으로 home/data/link active가 되지 않음 |
 
-This task verifies Markdown structure, source anchors, path allowlist, and a
-credential-pattern scan only. Backend `type-check`, `lint`, `test`, `build`,
-`test:auth-e2e`, native builds, provider calls, app QA, and database checks are
-`NOT RUN` because no executable implementation exists.
+문서 task의 실제 검증은 Markdown 구조, durable source URL/개정, source
+anchor, exact path allowlist, credential-pattern scan이다. Backend
+`type-check`, `lint`, `test`, `build`, `test:auth-e2e`, native build, provider
+call, device QA, DB check는 executable implementation이 없으므로 `NOT RUN`이다.
 
-## 12. Risks, rollout, and rollback
+## 12. 위험, rollout, rollback
 
-| Risk | Impact | Mitigation |
+| 위험 | 영향 | 완화 |
 | --- | --- | --- |
-| Phone number is recycled or shared | Wrong client record may be exposed | Stable principal plus separate staff-approved link and recovery proof |
-| Staff/customer realm is accidentally shared | Cross-role data or write access | Distinct issuer/audience/purpose/key/strategy and both-direction tests |
-| Provider proof semantics drift | False authentication or account collision | Server-side validation, stable subject binding, provider contract review |
-| Link approval/replay race | Duplicate or unauthorized activation | One-time bound proof, idempotency, atomic review transition, revocation recheck |
-| Retention/TTL is guessed | Privacy or recovery failure | Keep values unresolved; owner decision before schema/code |
-| App signing or Apple review path is unclear | Release rejection or app identity collision | Separate IDs/accounts and 4.8 review gate before Phase 2 release work |
-| Android tooling is missing from known paths | False build confidence | Treat discovery as `NOT RUN`; bind tooling and device evidence in Phase 2 |
+| 번호 공유/재사용 | 잘못된 client 노출 | stable principal + fresh OTP + 별도 link 승인 |
+| staff/customer realm 혼용 | 교차 role data/write | issuer/audience/purpose/key/strategy 분리와 양방향 test |
+| provider proof drift | false auth/충돌 merge | server 검증, stable subject, provider contract review |
+| link race/replay | 중복 active 또는 무단 활성화 | version/proof generation/exclusivity atomic check |
+| retention/TTL 추측 | privacy/recovery 실패 | 값을 비워 두고 Phase 3 owner gate에서 결정 |
+| signing/Apple 경로 불명 | release collision/reject | Phase 2 iOS/release gate |
+| Android tooling 미확인 | false build PASS | discovery를 `NOT RUN`으로 기록 |
 
-Rollout boundaries: later code must land customer schema/realm boundaries before
-customer controllers, then a sample app, then provider-backed login/link flows,
-then richer home data. Each phase needs its own plan, tests, and audit. No
-customer data or provider send is used in a sample-only spike.
+문서 rollback은 correction commit을 Git revert한다. 후속 code rollback은
+새 customer issuance/link activation을 멈추고 revoke와 unresolved lookup을
+보존해야 하며, schema/data rollback은 별도 migration 계획이 필요하다.
 
-Rollback for this document is a Git revert of the documentation commit. Future
-code rollback must disable new customer issuance/link activation while retaining
-auditable revocation and unresolved-result lookup; schema/data rollback needs a
-separate migration plan and is not authorized here.
+## 13. 근거 anchor와 공식 참고
 
-Next resumption steps are: resolve owner table items; update ADR-014 if a
-decision changes the boundary; obtain independent SOL review of the exact
-candidate; bind Phase 2 paths/versions/signing; then create a separate
-implementation contract. Until then, status remains `READY_FOR_OWNER_DECISIONS`
-and `NOT_BUILT`.
+실제 source anchor는 다음과 같다.
 
-## 13. Evidence anchors and official references
-
-The source facts used by this contract are pinned to the inspected repository:
-
-- `backend/interface/controllers/auth.controller.ts` contains the existing
-  staff token routes and opt-in guard usage; it is not a customer controller.
-- `backend/infrastructure/auth/jwt.strategy.ts:29-109` extracts Bearer or
-  `auth_token`, then checks `auth_session`, expiry, revocation, token version,
-  selected branch, and staff approval. `jwt.guard.ts:5-12` is an opt-in
-  Passport guard.
-- `backend/infrastructure/tenant/tenant.guard.ts:24-33` checks staff owner or
-  `user_branch` membership. `backend/app.module.ts:107` registers
-  `JwtStrategy` as a module provider, while the inspected app module contains
-  no `APP_GUARD`/`useGlobalGuards`; `auth.module.ts:41` registers the same
-  strategy for the staff module. Route opt-in remains material.
+- `backend/infrastructure/auth/jwt.strategy.ts:29-109`는 Bearer/`auth_token`,
+  `auth_session`, expiry/revoke/token-version/selected branch/staff approval을
+  확인한다. `jwt.guard.ts:5-12`는 opt-in guard다.
+- `backend/infrastructure/tenant/tenant.guard.ts:24-33`은 owner 또는
+  `user_branch` membership을 확인한다. `backend/app.module.ts:107`과
+  `backend/infrastructure/auth/auth.module.ts:41`은 strategy provider이며,
+  inspected app module에는 `APP_GUARD`/`useGlobalGuards`가 없다.
 - `backend/prisma/schema.prisma:851` (`auth_rate_limit`), `:875`
-  (`auth_session`), `:894` (`auth_refresh_token`), `:1184`
-  (`service_record_token`), and `:1562` (`receipt_link_token`) are existing
-  staff or narrow-link records, not a customer principal/link model.
-- `docs/adr/ADR-001-auth-session-and-tenant-principal.md` is the reuse source
-  for opaque refresh hashing, rotation, replay handling, and server checks.
-  `docs/aligo-preparation.md` documents outbound Aligo setup examples only.
+  (`auth_session`), `:894` (`auth_refresh_token`), `:911`
+  (`auth_email_outbox`), `:1184` (`service_record_token`), `:1562`
+  (`receipt_link_token`)은 customer principal/link가 아니다.
+- `docs/adr/ADR-001-auth-session-and-tenant-principal.md`는 hash/rotation/
+  replay/server lookup 재사용 근거이고, `docs/aligo-preparation.md`는
+  outbound setup 예시일 뿐 OTP auth proof가 아니다.
 
-Official reference links retained for the later implementation review:
+공식 참고 링크는 구현 review에서 다시 확인한다.
 
-- Kakao REST/userinfo and ID-token guidance:
-  <https://developers.kakao.com/docs/ko/kakaologin/rest-api> and
-  <https://developers.kakao.com/docs/ko/kakaologin/utilize>.
-- Naver login API:
-  <https://developers.naver.com/docs/login/api/api.md>.
-- Apple guideline 4.8:
-  <https://developer.apple.com/app-store/review/guidelines/#login-services>.
-- JWT audience and mutually exclusive validation:
-  <https://www.rfc-editor.org/rfc/rfc8725>.
-- Expo monorepo and secure-storage behavior for a future sample-only spike:
-  <https://docs.expo.dev/guides/monorepos/> and
-  <https://docs.expo.dev/versions/latest/sdk/securestore/>.
-- Aligo outbound SMS API candidate (read-only reference; no account or send
-  was verified): <https://smartsms.aligo.in/admin/api/spec.html>.
+- Kakao: <https://developers.kakao.com/docs/ko/kakaologin/rest-api>,
+  <https://developers.kakao.com/docs/ko/kakaologin/utilize>
+- Naver: <https://developers.naver.com/docs/login/api/api.md>
+- Apple guideline 4.8: <https://developer.apple.com/app-store/review/guidelines/#login-services>
+- JWT audience/realm validation: <https://www.rfc-editor.org/rfc/rfc8725>
+- Expo monorepo/SecureStore: <https://docs.expo.dev/guides/monorepos/>,
+  <https://docs.expo.dev/versions/latest/sdk/securestore/>
+- Aligo outbound SMS candidate: <https://smartsms.aligo.in/admin/api/spec.html>

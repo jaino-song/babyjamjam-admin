@@ -1,107 +1,121 @@
-# ADR-014: Customer principal, provider login, and client-record access boundary
+# ADR-014: 고객 principal, provider login, client-record access 경계
 
 Date: 2026-10-15 (Asia/Seoul)
 Status: Proposed; `READY_FOR_OWNER_DECISIONS`
-Scope: BJJ-459 Phase 1 decision contract
-Source base: `037ed2bdde6188869017bbb7173f54cace9739b2`
+Scope: BJJ-459 Phase 1 결정 계약
+Correction base: `5eddd4bd116900ce173fe421198836d9036e3bd9`
+Historical source base: `037ed2bdde6188869017bbb7173f54cace9739b2`
 
-## Context
+## 배경
 
-The repository currently authenticates staff through an opt-in `JwtGuard`,
-`JwtStrategy`, and `TenantGuard`. `JwtStrategy` reads `auth_session`, checks
-expiry/revocation/token version and staff approval, and returns a staff
-principal. `TenantGuard` authorizes owner or `user_branch` membership. The
-Prisma schema has `user`, `auth_session`, `auth_refresh_token`, and
-`auth_rate_limit`, but no customer principal or customer-to-client link.
+현재 repository의 staff 인증은 opt-in `JwtGuard`, `JwtStrategy`,
+`TenantGuard`를 사용한다. `JwtStrategy`는 `auth_session`의 expiry/revoke/
+token-version과 staff approval을 조회하고, `TenantGuard`는 owner 또는
+`user_branch` membership을 확인한다. Prisma에는 `user`, `auth_session`,
+`auth_refresh_token`, `auth_rate_limit`이 있지만 customer principal과
+customer-to-client link는 없다.
 
-`client.branchId + phoneNormalized` is a data constraint, not identity proof.
-`service_record_token` and `receipt_link_token` are narrow bearer links and
-must never become customer-account authorization. Existing Aligo SMS is an
-outbound notification path; the inspected source did not establish OTP auth.
+`client.branchId + phoneNormalized`는 데이터 제약이지 identity proof가 아니다.
+`service_record_token`과 `receipt_link_token`은 좁은 record/document bearer
+link이므로 customer account 권한이 될 수 없다. 기존 Aligo SMS도 outbound
+transport 근거이지 OTP auth service 증거가 아니다.
 
-The owner requires phone verification by SMS one-time code, Kakao login, and
-Naver login. SMS proves number possession only. A separate customer-record
-link confirmation and configured operational approval are required before
-sensitive customer data is exposed. Provider account IDs, delivery account,
-recovery proof, link multiplicity, retention, app signing, and Apple review
-route remain unresolved.
+최신 사용자 결정은 SMS one-time code + 별도 client-record linkage
+confirmation, Kakao login, Naver login을 모두 요구한다. SMS는 번호 보유만
+증명한다. 민감 데이터에는 fresh phone proof와 active client link가 모두
+필요하다. provider account, recovery proof, 운영 approver, multiplicity,
+retention, app signing, Apple guideline 4.8 경로는 owner 결정으로 남긴다.
 
-## Decision (proposed)
+## 결정(제안)
 
-1. Create a distinct internal customer principal ID. Keep provider bindings,
-   phone verification, recovery proof, sessions, and operational client links
-   as separate concepts. Never use a phone number, email match, staff user ID,
-   or provider subject alone as the client-record owner.
-2. Require all three capabilities in the future customer flow: SMS OTP phone
-   possession proof, Kakao login, and Naver login. A phone-only entry is a
-   proposed UX option, not an owner-selected requirement. Apple login is not
-   selected; its 4.8 compliance route needs a separate decision.
-3. Validate Kakao proofs for issuer, audience, expiry, nonce, and signature.
-   Treat Kakao `phone_number_verified` as provider evidence only. Validate Naver
-   state and server token/profile data for a stable subject without claiming
-   OIDC or PKCE support without new evidence. Never log raw provider proofs.
-4. Keep customer and staff token realms mutually exclusive. Use distinct
-   issuer, audience, purpose, signing key/strategy, cookie names, and
-   authoritative session state. Every protected request checks session,
-   revocation, expiry, token version, and active customer link; staff roles and
-   selected branch are not customer authority.
-5. Model client-record access as `no_link → pending → active | rejected →
-   revoked`. SMS OTP can start a request but cannot activate it. Activation
-   requires the owner-selected operational approver and an auditable,
-   single-use proof binding. Values for TTL, attempts, replay grace, and
-   retention remain unset until owner decisions.
-6. Reserve `/customer/v1` for a future provider-proof exchange, phone proof,
-   session refresh/revoke, self, link request/status, and minimum home
-   projection. Unknown or wrong-owner requests are non-enumerating. Staff
-   endpoints, service-record links, and receipt links are not customer routes.
-7. Prefer a new root `customer/` React Native + Expo app and a pure
-   `packages/customer-contracts/` package only when a real shared consumer
-   exists. Do not copy the staff `mobile/` Next.js app, `native/` KMP app, staff
-   auth, or staff stores. App IDs, signing accounts, SDK versions, workspace
-   edits, and provider environment keys require later scoped approval.
+1. 내부 안정 ID `customerPrincipalId`를 만들고 provider binding, phone proof,
+   recovery, session, operational client link를 별도 개념으로 둔다. 전화번호,
+   email 일치, staff user ID, provider subject만으로 기록 소유자를 정하지
+   않는다.
+2. SMS OTP, Kakao, Naver를 필수 capability로 둔다. Phone-only entry는 제안
+   UX이고 Apple은 미선택이다. Kakao는 issuer/audience/expiry/nonce/signature,
+   Naver는 state와 server token/profile stable subject를 검증한다. provider
+   proof로 link나 data 권한을 자동으로 만들지 않는다.
+3. Customer/staff realm은 issuer, audience, purpose, signing key/strategy,
+   cookie, authoritative session state를 분리한다. Staff credential은
+   customer route를, customer credential은 staff route를 통과하지 못한다.
+4. Onboarding session은 active link 없이도 `self`, own link status, logout,
+   phone proof를 수행할 수 있다. `provider-proof/exchange`는 bounded
+   unauth state에서 principal/session만 만들고, `phone-proof/start/verify`는
+   현재 principal/session/challenge intent에 bind한다. `refresh`는 유효한
+   principal/session/credential만 갱신하며 data permission을 만들지 않는다.
+5. Home와 customer data read/mutation만 non-revoked session, active current
+   link, current phone-proof generation을 모두 요구한다. Unknown/wrong-owner
+   응답은 non-enumerating safe code를 쓴다.
+6. Link 상태는 `none → pending → active | rejected | canceled | expired`,
+   `active → revoked`만 허용한다. terminal 상태는 immutable이며 retry는 새
+   request/new proof/new version이다. Active 승인은 principal/session 허용
+   상태, 같은 phone-proof generation, pending request version, target record
+   exclusivity를 atomic하게 확인한다. revoke/cancel/phone-change는 pending
+   proof와 in-flight approval을 무효화한다.
+7. `/customer/v1`은 provider exchange, phone proof, session refresh/revoke,
+   self, own link, minimum home projection만 제안한다. `service_record_token`
+   과 `receipt_link_token`은 customer auth로 재사용하지 않는다.
+8. 앱은 새 root `customer/` React Native + Expo를 권장한다. Phase 2는
+   sample-only app spike이고 Phase 3는 additive schema/realm boundary를
+   먼저 적용한 뒤 customer controller/guard/provider/OTP/link 구현을 한다.
+   App ID, signing, SDK, env, schema 세부값은 후속 binding이다.
 
-## Alternatives considered
+## 허용 전이와 operation matrix 요약
 
-1. Reuse staff JWTs, cookies, `user.role`, or `selectedBranch` for customers.
-   Rejected: staff approval and tenant membership do not establish a customer
-   principal-to-client link, and shared realms make cross-role leakage likely.
-2. Treat phone equality or Kakao phone assertion as ownership proof.
-   Rejected: numbers can be shared or recycled, and provider assertions are
-   not fresh ownership of an operational record.
-3. Reuse `service_record_token` or `receipt_link_token` as account login.
-   Rejected: each is scoped to one record/document and has a different threat
-   model, expiry, and audit boundary.
-4. Automatically merge Kakao/Naver/phone accounts when values match.
-   Rejected: collisions require reauthentication and fresh target-provider
-   proof; silent merges can transfer links.
+| 행위 | link 없이 허용 | active link와 phone proof 필요 |
+| --- | --- | --- |
+| provider exchange | principal/session 생성만 | 불필요 |
+| phone start/verify | 현재 onboarding session에 bind된 경우 | 불필요 |
+| self, own status, logout | non-revoked session이면 허용 | 불필요 |
+| link request | fresh phone proof면 허용 | 불필요 |
+| refresh | valid principal/session/credential이면 허용 | 불필요 |
+| home/data read/mutation | 거부 | 필요 |
 
-## Consequences
+Staff/customer token 상호 배제, revocation의 request-time 확인, logout의
+idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance다.
+
+## 대안 검토
+
+1. Staff JWT/cookie, `user.role`, `selectedBranch`를 customer 권한으로 재사용:
+   staff tenant membership은 customer 기록 소유권이 아니므로 거부한다.
+2. phone equality 또는 Kakao phone assertion을 ownership proof로 사용: 번호
+   공유/재사용과 provider assertion의 한계 때문에 거부한다.
+3. `service_record_token`/`receipt_link_token`을 account login으로 사용:
+   좁은 record/document 경계를 customer account로 확장하므로 거부한다.
+4. Kakao/Naver/phone 값이 같으면 자동 merge: 충돌 시 reauthentication과
+   fresh target-provider proof가 필요하므로 거부한다.
+
+## 결과
 
 ### Positive
 
-- Customer ownership is explicit and separable from staff tenant authority.
-- SMS, Kakao, and Naver can evolve without turning a provider subject into an
-  operational record owner.
-- Server-side revocation and link checks remain effective before writes,
-  including after logout, unlink, account switch, or provider changes.
-- A small public home projection limits accidental exposure while later record,
-  document, notification, and billing contracts are designed independently.
+- Onboarding이 active link 전에 막히지 않으면서 민감 data는 계속 보호된다.
+- Customer ownership과 staff tenant authority가 분리된다.
+- SMS/Kakao/Naver proof가 operational record owner로 오인되지 않는다.
+- request-time revoke와 link/phone generation 검사로 logout, unlink,
+  account switch, provider 변경 뒤 stale access를 차단한다.
 
-### Negative and unresolved
+### 부정적 결과와 미정 항목
 
-- New principal/session/link data boundaries and customer guards will require a
-  later schema and implementation review.
-- Provider app IDs, delivery account, recovery, approver, multiplicity, TTL,
-  retention, signing ownership, and Apple review path remain downstream owner
-  decisions. They may be explicitly deferred to the Phase 2/3 gates without
-  preventing review of this Phase 1 boundary draft.
-- Customer app and staff app must maintain separate native configuration and
-  release evidence.
+- customer principal/session/link schema와 guard는 Phase 3의 별도 review가
+  필요하다.
+- provider account, recovery, approver, multiplicity, TTL/retention, signing,
+  Apple 경로는 owner가 Phase 2/3 gate에서 정할 수 있으며 이 Phase 1
+  boundary 초안의 review를 막는 세부값은 아니다.
+- customer와 staff 앱은 native identity와 release evidence를 따로 유지한다.
 
-## Verification and rollback
+## 검증과 rollback
 
-The plan at `docs/plans/BJJ-459-customer-phase1-contract.md` carries AUTH-01~08
-and AUTH-X01~10 traceability, expected success/failure assertions, and the
-future phase gates. This ADR is not implementation or Phase 2 authorization.
-The documentation rollback is a Git revert. Any future schema or token-realm
-rollback requires its own additive migration and revocation plan.
+계획 문서 `docs/plans/BJJ-459-customer-phase1-contract.md`는 AUTH-01~08의
+원래 의미와 AUTH-X01~15 확장, success/failure assertion, operation matrix,
+transition race를 기록한다. 이 ADR은 implementation이나 Phase 2 승인이
+아니다. 문서 rollback은 correction commit의 Git revert다. 후속 schema/token
+realm rollback은 별도 additive migration과 revoke 계획을 요구한다.
+
+주요 정본은 다음 Linear 문서다.
+
+- <https://linear.app/jaino-studio/document/implementation-plan-v02-%EA%B3%A0%EA%B0%9D-%EC%95%B1-ea56fdb5c159>
+- <https://linear.app/jaino-studio/document/%EC%96%B4%EB%93%9C%EB%AF%BC-%EC%97%B0%EB%8F%99-%EB%A7%A4%ED%95%91-%EC%A1%B0%EC%82%AC-%EB%B3%B4%EA%B3%A0%EC%84%9C-7a66f1c23d25>
+- <https://linear.app/jaino-studio/document/%EA%B8%B0%EB%8A%A5-%EB%AA%85%EC%84%B8-v02-%EA%B3%A0%EA%B0%9D-%EC%95%B1-d4f84be85479>
+- <https://linear.app/jaino-studio/document/%ED%85%8C%EC%8A%A4%ED%8A%B8-%EB%AA%85%EC%84%B8-v02-62%EA%B0%9C-%EC%8B%9C%EB%82%98%EB%A6%AC%EC%98%A4-75ccefa72fcd>
