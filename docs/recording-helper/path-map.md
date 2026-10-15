@@ -1,7 +1,132 @@
 # Galaxy helper 실행 경로와 재개 지점
 
 작성일: 2026-10-15 · [BJJ-354](https://linear.app/jaino-studio/issue/BJJ-354)
-상태: **Phase 0 OPEN — 사용자 승인으로 검증용 APK 선제작 진행**
+상태: **Phase 0 OPEN — 현행 소스 조사 완료, API fixture·GUI·실기기 검증 미완료**
+
+## 로컬 재개 갱신 — 2026-10-15 KST
+
+이 절이 아래의 이전 환경 사전 점검 기록보다 우선한다. 기존 제품/API/권한 계약은 변경하지 않는다.
+조사한 경로를 새 구현의 승인된 allow-list나 테스트 실행 증거로 간주하지 않는다.
+
+| 항목 | 현재 확인 |
+|---|---|
+| 소스 기준 | 원격 fetch 후 `dev` = `037ed2bdde6188869017bbb7173f54cace9739b2` |
+| 문서 작업 | Execution: N/A · Documentation: MAIN · Audit: SOL; 관찰 사실·경로·명령만 갱신 |
+| 문서 시작 | PR #826 `797f59fd0479c5d85f771235213c8008321a0374` |
+| 로컬 문서 branch | `docs/BJJ-354-phase0-local` |
+| 로컬 문서 worktree | `/Users/jaino/Development/babyjamjam-admin/bjj-354-phase0-local` |
+| 진단 소스 | PR #827 `61b9b2c0418f12a793e0c8e89d4f974ac6479909` |
+| 진단 로컬 checkout | `/Users/jaino/Documents/Codex/2026-10-15/new-chat/work/helper-saf-ui-review` |
+| Studio 프로젝트 | 위 checkout의 `experiments/helper-saf-spike` |
+| 지정 탐색기 | `explorer` / `opencode-go/deepseek-v4.1-flash` / high; 현재 요청의 소스 조사 성공 |
+| main runtime | model / effort 미확인 (`unknown`) |
+
+두 PR은 OPEN/Draft/미병합이다. 문서 worktree 생성 직후 `env-bootstrap`이 기존 dev의
+backend/frontend env를 복사했다. 값은 출력·커밋하지 않았다. dev의 기존 미추적
+`frontend/AGENTS.md`, `mobile/AGENTS.md`는 보존했다.
+
+### 현행 수집·권한 경로
+
+| 경계 | 현재 소스 근거 |
+|---|---|
+| 수집 흐름 | `docs/n8n/README.md`, `call-transcription-branch-template.json`: Drive Trigger → 다운로드 → Gemini 전사 → `POST /webhooks/call-transcripts` |
+| webhook | `backend/interface/controllers/call-transcript-webhook.controller.ts`: CallIngestGuard, request.callIngestBranchId, 신규 202 / 중복 200 |
+| 입력 | `backend/interface/dto/call-inbox.dto.ts`: CallTranscriptWebhookDto, driveFileId 최대 200자 |
+| 지점 결정 | `backend/infrastructure/auth/call-ingest.guard.ts`: token lookup의 system scope 후 tenant branch 설정; payload branchId 사용 안 함 |
+| 중복 | `backend/application/services/call-ingestion.service.ts`: 전역 driveFileId 조회, P2002 경합 처리 |
+| DB | `backend/prisma/schema.prisma`: call_record.driveFileId @unique, call_ingest_token.tokenHash @unique |
+| 수집 credential | `backend/application/services/call-ingest-token.service.ts`: 난수 발급·hash 저장·철회; helper 권한과 재사용하지 않는 것은 기존 계획 요구 |
+| 조회 | `backend/application/services/call-inbox.service.ts`: getCallRecord(branchId, id); branch+driveFileId 전용 adapter는 아직 없음 |
+| 등록 지점 | `backend/module/call-inbox.module.ts`, `backend/app.module.ts` |
+| 웹 인증 | `backend/infrastructure/auth/jwt.guard.ts` |
+| tenant | `backend/infrastructure/tenant/tenant.guard.ts`: 활성 지점, user_branch membership, tenant context |
+| 지점 관리자 | `backend/infrastructure/auth/branch-manager.guard.ts`: global owner 또는 branch admin/manager |
+| 관리 API 예시 | `backend/interface/controllers/call-ingest-token.controller.ts`: JwtGuard/TenantGuard/BranchManagerGuard와 route branch 대조 |
+| 허용 지점 | `backend/interface/controllers/auth.controller.ts`의 /auth/branches → `backend/application/services/auth.service.ts`의 getUserBranches/filterSelectableUserBranches |
+| 공개 지점 | /auth/branches/all은 공개 목록이며 승인 권한 증명으로 대체할 수 없음 |
+| HTTP 경계 | `backend/main.ts`: 전역 prefix 없음, GlobalValidationPipe, PrismaExceptionFilter, ServiceRecordSentryExceptionFilter |
+| 오류 본문 | `backend/application/utils/problem-bodies.ts`, `backend/infrastructure/filters/problem-response.ts`, `prisma-exception.filter.ts`, `backend/infrastructure/observability/service-record-sentry-exception.filter.ts` |
+| return path | `frontend/src/lib/auth/safe-return-path.ts`와 `.test.ts`: 현재 /service-record-admin/<id>만 허용 |
+
+전역 unique의 배포 DB 적용 상태와 실제 workflow 실행은 NOT_RUN이다. 계획의 “기존 웹 CSRF 방어”는
+helper 승인 경로에 아직 binding되지 않았다. 브라우저 → BFF → backend의 credential 전달과 write
+방어를 추적해야 하며, 이 미확인을 CSRF 취약점이 확인됐다는 뜻으로 해석하지 않는다.
+
+### 화면·디자인 시스템·fixture
+
+현행 통화 인박스는 `mobile/src/app/(shell)/calls/page.tsx`에 있다. frontend의 같은 inbox 화면은
+확인하지 못했다. “admin 통화 인박스”를 새 desktop inbox 구현 지시로 넓히지 않는다.
+
+* 인박스 BFF: `mobile/src/app/api/call-records/route.ts`, `mobile/src/app/api/call-records/[id]/route.ts`.
+* UI tests: `mobile/src/app/(shell)/calls/__tests__/page.test.tsx`, `mobile/tests/calls-inbox.spec.ts`.
+* 기존 운영 UI: `frontend/src/app/(protected)/settings/page.tsx`,
+  `frontend/src/components/app/call-ingest-tokens/CallIngestTokenSection.tsx`.
+* 기존 운영 API: `frontend/src/services/call-ingest-tokens.ts`,
+  `frontend/src/app/api/branches/[branchId]/call-ingest-tokens/route.ts`,
+  `frontend/src/app/api/call-ingest-tokens/[id]/revoke/route.ts`.
+* 탐색기가 `docs/design-system/AGENT_UI_RULES.md`와 `component-manifest.json`을 읽었다.
+  `@/components/app/v3`의 SplitLayout/ListPanel/DetailPanel/PageHeader/SearchFilterBar/InfoCard와
+  `@/components/app/ui/status-badge`의 StatusBadge가 재사용 후보이며, 구현 시 다시 대조한다.
+* migration 근거: `backend/prisma/README.md`, `backend/prisma/migrations/`.
+  조사 시 최신은 `20261014120000_add_message_log_carrier_check`.
+* tenant 모델 생성: `backend/scripts/tenant/generate-tenant-models.ts` →
+  `backend/infrastructure/tenant/tenant-models.generated.ts`; 후속 schema scope에 생성·drift 검사를 포함해야 한다.
+* controller fixture 예시: `backend/test/integration/call-transcript-webhook.controller.integration.spec.ts`,
+  `backend/test/integration/call-ingest-token.controller.integration.spec.ts` (TestingModule/supertest).
+  허용 지점 성공·타 지점 실패를 함께 보존한다.
+* guard/service 예시: `backend/test/infrastructure/auth/call-ingest.guard.enforce.spec.ts`,
+  `backend/test/services/call-inbox.service.spec.ts`.
+* DB E2E: `backend/test/e2e/call-inbox.e2e.spec.ts`는 E2E_VENDOR_STUBS=1 없으면 skip한다.
+  `backend/scripts/run-call-inbox-e2e.mjs`의 disposable DB 경로로 실행해야 한다.
+* tenant E2E: `backend/test/auth-e2e/tenant-isolation.spec.ts`, `transitive-tenant-isolation.spec.ts`.
+
+44개 제품 테스트의 helper fixture는 현행 소스에서 확인되지 않았다. 정본 Test Spec의
+Branch A/B, Operator A, P1/P2, S1/C1/config1, G1/G2, F1/F2, R-old/test/new/growing/renamed/late,
+J1/D1/X1은 문서용 별칭이다. 실행 fixture에서는 실제 타입 ID와 synthetic bytes를 고정해야 한다.
+
+### 확인된 재실행 명령
+
+아래 명령은 package scripts에서 확인했다. 이번 문서 변경에서 실행한 결과가 아니다.
+
+| 대상 | 명령 |
+|---|---|
+| backend | `pnpm --filter ./backend type-check`, `pnpm --filter ./backend lint`, `pnpm --filter ./backend test` |
+| 수집 집중 검사 | `pnpm --filter ./backend test test/integration/call-transcript-webhook.controller.integration.spec.ts` |
+| DB E2E | `pnpm --filter ./backend e2e:call-inbox`, `pnpm --filter ./backend test:auth-e2e` — 각 격리 harness 전제 확인 |
+| frontend | `pnpm --filter ./frontend type-check`, `pnpm --filter ./frontend lint`, `pnpm --filter ./frontend test` |
+| return path | `pnpm --filter ./frontend test src/lib/auth/safe-return-path.test.ts` |
+| mobile | `pnpm --filter ./mobile type-check`, `pnpm --filter ./mobile lint`, `pnpm --filter ./mobile test` |
+| 별도 웹 E2E | `pnpm --filter ./frontend test:smoke`, `pnpm --filter ./mobile test:e2e` |
+| 빌드/UI 구조 | `pnpm build:be`, `pnpm build:fe`, `pnpm lint:ui-architecture` |
+| 진단 Android | 실험 프로젝트에서 `./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --no-daemon` |
+
+root typecheck는 없다. backend type-check/pretest는 Prisma client를 생성한다.
+frontend/mobile Jest는 tests/의 Playwright를 실행하지 않는다. db:migrate/db:migrate:deploy는
+read-only 검증 명령이 아니며 이번에 실행하지 않았다. 앱 코드 변경이 없는 문서 검증과 구분한다.
+
+### 로컬 상태와 아직 열린 항목
+
+* 사용자는 실제 Galaxy를 지금 연결할 수 없어 로컬 준비·에뮬레이터 검수를 먼저 선택했다.
+* `/Applications/Android Studio.app`의 실제 Setup Wizard 실행과 codesign strict 검증 exit 0을 확인했다.
+  로컬 `android-studio-rabbit1-mac_arm.dmg` SHA-256은 공식 페이지와 같은
+  `16d4a0f8a52413b51869fc18d5bdcdf9cecd38615cd7bb7cf14d51b99d2fef54`다.
+* JDK 17: `/Users/jaino/.gradle/jdks/eclipse_adoptium-17-aarch64-os_x.2/jdk-17.0.20.1+1/Contents/Home`.
+  진단 소스의 조합은 AGP 9.2.1 / Gradle 9.4.1 / compile-min-target SDK 37이다.
+* 로컬 재개 시 SDK·AVD·APK는 확인되지 않았다. 이전 환경의 JVM 14 PASS/lint/APK 기록은 PR #827의
+  증거이며 이번 Mac에서 재실행한 증거와 구분한다.
+* Vault `/Users/jaino/Development/covenant-labs-vault` 검색은 stale-index 경고를 반환했다.
+  BJJ-354의 직접 근거를 얻지 못해 최신 Linear/소스를 우선했고 Vault 파일은 수정하지 않았다.
+
+Task 0.1은 소스 조사만으로 닫지 않는다. 남은 항목은 helper API별 정상 status·error code/envelope·
+반복 철회 terminal 응답의 fixture 고정, 승인 write 경계, branch+driveFileId adapter,
+운영 화면과 각 구현 task의 exact allow-list다. ADR는 조사 시 ADR-014가 다음 번호지만
+새 작성 시 충돌을 다시 확인하며 실기기에서 아직 얻지 못한 완료 판별을 미리 결정하지 않는다.
+
+Task 0.2의 로컬 GUI와 실제 Galaxy 검증도 아직 미완료다. Phase 0 공통 종료 조건과 실기기 증거가
+확보되기 전 Phase 1을 시작하지 않는다. 실험 코드를 제품 dev로 병합하거나 Google/n8n 쓰기·
+운영 배포를 수행하지 않는다.
+
+## 이전 실행 환경 기록 (아래는 로컬 재개 전 관측)
 
 ## 실행 기준
 
