@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
+import { createHash } from "node:crypto";
+import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import {
@@ -9,6 +11,7 @@ import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar, type KrBusinessDa
 import type {
     ServiceRecordEditRevisionFactsSource,
     ServiceRecordEditSource,
+    ServiceRecordEditConfirmPlan,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -781,11 +784,42 @@ describe("AdminServiceRecordEditService", () => {
         const input = harness.repository.confirmDraft.mock.calls.at(-1)?.[0] as {
             prepare: (snapshot: { draft: typeof activeDraft; source: ServiceRecordEditSource }) => unknown;
         };
-        const plan = input.prepare({ draft: activeDraft, source }) as {
-            sessions: Array<Record<string, unknown>>;
-            revision: { payload: Record<string, unknown> } | null;
-        };
-        expect(plan.sessions[0]?.["answers"]).toEqual({
+        const plan = input.prepare({ draft: activeDraft, source }) as ServiceRecordEditConfirmPlan;
+        const bytesHash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+        // Pinned against this pre-existing fixture before introducing beforeSnapshot.
+        expect({
+            revisionPayload: bytesHash(plan.revision?.payload),
+            revisionFingerprint: plan.documentJob?.payloadFingerprint,
+            documentJobPayload: bytesHash(plan.documentJob?.payload),
+            contractImmutableInput: bytesHash(plan.contractOperation?.immutableInput),
+            receiptImmutableInput: bytesHash(plan.receiptOperation?.immutableInput),
+        }).toEqual({
+            contractImmutableInput: "17522468ae55ca34c4a75644631d5def376e3ba6d17023965d28ee86f0974602",
+            documentJobPayload: "a2a5a37767da82212f44ecb021f3c0f05cc7447e48fcb54a16c4b2ae48c41292",
+            receiptImmutableInput: "7938134c25809346905c0be4772af31ec247830138aa11310e0b0c82edb7e5f1",
+            revisionFingerprint: "4f5a18231965c321cbfa2136e70b3902abd48da3a09fb574f7a63eecea5cae07",
+            revisionPayload: "4f5a18231965c321cbfa2136e70b3902abd48da3a09fb574f7a63eecea5cae07",
+        });
+        expect(plan.revision?.beforeSnapshot).toEqual({
+            snapshotVersion: 1,
+            startDate: source.startDate,
+            endDate: source.endDate,
+            header: source.header,
+            plannedSessions: preview.before.sessions,
+            sessions: source.sessions.map((session) => ({
+                sessionIndex: session.sessionIndex,
+                serviceDate: session.serviceDate,
+                answers: session.answers,
+                etcService: session.etcService,
+                notes: session.notes,
+                paymentConfirmed: session.paymentConfirmed,
+                employeeId: session.employeeId,
+                employeeNameSnapshot: session.employeeNameSnapshot,
+                clientSignatureFingerprint: serviceRecordSignatureFingerprint(session.clientSignature),
+            })),
+        });
+        expect(JSON.stringify(plan.revision?.beforeSnapshot)).not.toContain("data:image");
+        expect(plan.sessions[0]?.answers).toEqual({
             perineum: ["이상없음"],
             breast: ["이상없음"],
         });

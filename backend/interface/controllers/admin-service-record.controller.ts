@@ -136,6 +136,17 @@ export class AdminServiceRecordController {
         return this.adminServiceRecordService.getRevisionHistory(tenant.branchId, clientId);
     }
 
+    @Get("clients/:clientId/revisions/:revisionId/changes")
+    @UseGuards(BranchManagerGuard)
+    getRevisionChanges(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+        @Param("revisionId") revisionId: string,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        return this.adminServiceRecordService.getRevisionChanges(tenant.branchId, clientId, revisionId);
+    }
+
     @Post("revisions/:revisionId/documents/:documentStateId/retry")
     @UseGuards(BranchManagerGuard)
     retryRevisionDocument(
