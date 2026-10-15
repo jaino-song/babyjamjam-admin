@@ -408,6 +408,14 @@ export interface ServiceRecordEditConfirmAssignmentUpdate {
     scheduleId: number | null;
     startDate: string;
     endDate: string;
+    /**
+     * True when service_record_assignment and employee_schedule do not both
+     * already hold `startDate`/`endDate`. Only then are the dates written, to
+     * both tables, so they are re-synced to the computed value; when false
+     * neither table is touched. The entry is emitted either way so message
+     * automation is re-evaluated. A missing flag is treated as true.
+     */
+    datesChanged?: boolean;
 }
 
 export interface ServiceRecordEditConfirmDocumentJobPlan {

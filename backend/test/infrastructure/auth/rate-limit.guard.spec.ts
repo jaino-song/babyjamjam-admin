@@ -42,6 +42,9 @@ describe("RateLimitGuard", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         delete process.env["VALKEY_URL"];
+        // A developer's local backend/.env may turn the guard off; these tests cover the enforced path.
+        delete process.env["AUTH_RATE_LIMIT_DISABLED"];
+        delete process.env["AUTH_RATE_LIMIT_EXEMPT_EMAILS"];
         prisma.$queryRaw.mockResolvedValue(row(1));
         prisma.$executeRaw.mockResolvedValue(1);
         guard = new RateLimitGuard(prisma as unknown as PrismaService);
@@ -125,6 +128,61 @@ describe("RateLimitGuard", () => {
         expect(prisma.$queryRaw).not.toHaveBeenCalled();
         await guard.onModuleDestroy();
         expect(redis.disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    describe("environment switches", () => {
+        const savedEnv = { ...process.env };
+        const loginContext = () => createExecutionContext({
+            ip: "198.51.100.10",
+            body: { email: "E2E@Example.com" },
+        });
+
+        afterEach(() => {
+            process.env = { ...savedEnv };
+        });
+
+        it("skips every counter when AUTH_RATE_LIMIT_DISABLED=true outside production", async () => {
+            process.env["NODE_ENV"] = "development";
+            process.env["AUTH_RATE_LIMIT_DISABLED"] = "true";
+            prisma.$queryRaw.mockResolvedValue(row(999));
+
+            await expect(new RateLimitGuard(prisma as unknown as PrismaService)
+                .canActivate(loginContext())).resolves.toBe(true);
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+        });
+
+        it("ignores AUTH_RATE_LIMIT_DISABLED when NODE_ENV=production", async () => {
+            process.env["NODE_ENV"] = "production";
+            process.env["AUTH_RATE_LIMIT_DISABLED"] = "true";
+            prisma.$queryRaw.mockResolvedValue(row(6));
+
+            await expect(new RateLimitGuard(prisma as unknown as PrismaService)
+                .canActivate(loginContext())).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+        });
+
+        it("drops only the per-account counter for an exempt email and keeps the per-IP ceiling", async () => {
+            process.env["NODE_ENV"] = "production";
+            process.env["AUTH_RATE_LIMIT_EXEMPT_EMAILS"] = " other@example.com , e2e@example.com ";
+            prisma.$queryRaw.mockResolvedValue(row(6));
+
+            await expect(new RateLimitGuard(prisma as unknown as PrismaService)
+                .canActivate(loginContext())).resolves.toBe(true);
+            expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+
+            prisma.$queryRaw.mockResolvedValue(row(101));
+            await expect(new RateLimitGuard(prisma as unknown as PrismaService)
+                .canActivate(loginContext())).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+        });
+
+        it("still applies the per-account ceiling to emails that are not exempt", async () => {
+            process.env["AUTH_RATE_LIMIT_EXEMPT_EMAILS"] = "e2e@example.com";
+            prisma.$queryRaw.mockResolvedValueOnce(row(6)).mockResolvedValueOnce(row(1));
+
+            await expect(new RateLimitGuard(prisma as unknown as PrismaService).canActivate(createExecutionContext({
+                ip: "198.51.100.10",
+                body: { email: "someone@example.com" },
+            }))).rejects.toMatchObject({ status: HttpStatus.TOO_MANY_REQUESTS });
+        });
     });
 
     it("should atomically enforce both per-identity and per-IP counters without storing email PII", async () => {

@@ -109,4 +109,19 @@ describe("formatMessageFailureReason", () => {
       .toBe("발송 실패: 잔액 부족");
     expect(formatMessageFailureReason(null)).toBe("");
   });
+
+  it("keeps the digits, colon and commas of a carrier-check failure reason", () => {
+    expect(formatMessageFailureReason("통신사 전달 실패: 1234 가입자없음, 5678 결번"))
+      .toBe("통신사 전달 실패: 1234 가입자없음, 5678 결번");
+    // Digits and commas stay removed from every other reason.
+    expect(formatMessageFailureReason("전달 실패: 1234 가입자없음, 5678 결번"))
+      .toBe("전달 실패 가입자없음 결번");
+  });
+
+  it("applies both rules to a permanent failure whose rest is a carrier reason", () => {
+    expect(formatMessageFailureReason("발송 실패: 통신사 전달 실패: 1234 가입자없음"))
+      .toBe("발송 실패: 통신사 전달 실패: 1234 가입자없음");
+    expect(formatMessageFailureReason("발송 실패: 잔액 부족 1234"))
+      .toBe("발송 실패: 잔액 부족");
+  });
 });

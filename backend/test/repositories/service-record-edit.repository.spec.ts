@@ -819,6 +819,90 @@ describe("ServiceRecordEditRepository", () => {
         ))).toBe(true);
     });
 
+    it("writes assignment and schedule dates only for assignments whose dates this confirm changes", async () => {
+        const source = futureSource();
+        const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
+        const service_record_assignment = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+        const employee_schedule = { updateMany: jest.fn().mockResolvedValue({ count: 1 }) };
+        const tx = {
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            service_record_edit_draft: {
+                findFirst: jest.fn().mockResolvedValue(activeDraft),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            service_record_case: {
+                update: jest.fn().mockResolvedValue({ version: source.caseVersion + 1 }),
+            },
+            client: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            service_record_day: { updateMany: jest.fn(), create: jest.fn() },
+            service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            service_record_assignment,
+            employee_schedule,
+        };
+        const repository = new ServiceRecordEditRepository(transactionalPrisma(tx) as never);
+        const internals = repository as unknown as {
+            findDraftByIdWithClient: jest.Mock;
+            loadSourceWithClient: jest.Mock;
+        };
+        jest.spyOn(internals, "findDraftByIdWithClient").mockResolvedValue(activeDraft);
+        jest.spyOn(internals, "loadSourceWithClient").mockResolvedValue(source);
+
+        const plan: ServiceRecordEditConfirmPlan = {
+            status: "confirmed",
+            sourceFingerprint: "a".repeat(64),
+            caseId,
+            clientId: source.client.id,
+            formVersion: source.formVersion,
+            requiredSessionCount: source.requiredSessionCount,
+            startDate: source.startDate,
+            endDate: source.endDate,
+            header: source.header,
+            plannedSessions: source.plannedSessions,
+            sessions: [],
+            newSessions: [],
+            assignments: [
+                { assignmentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", scheduleId: 55, startDate: "2026-09-01", endDate: "2026-09-10", datesChanged: false },
+                { assignmentId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", scheduleId: 56, startDate: "2026-09-10", endDate: "2026-09-20", datesChanged: true },
+                { assignmentId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", scheduleId: 57, startDate: "2026-09-20", endDate: "2026-09-30" },
+            ],
+            revision: null,
+            dispatchContext: null,
+            documentStatus: "capability_unverified",
+            documentJob: null,
+        };
+
+        await repository.confirmDraft({
+            branchId,
+            draftId,
+            expectedDraftVersion: activeDraft.draftVersion,
+            previewId: `srp_${"a".repeat(64)}`,
+            idempotencyKey: "66666666-6666-4666-8666-666666666666",
+            requestFingerprint: "b".repeat(64),
+            actorUserId: actorId,
+            prepare: () => plan,
+        });
+
+        const assignmentWrites = service_record_assignment.updateMany.mock.calls.map(([call]) => call.where.id);
+        expect(assignmentWrites).toEqual([
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        ]);
+        expect(employee_schedule.updateMany.mock.calls.map(([call]) => call.where.id)).toEqual([56, 57]);
+        expect(service_record_assignment.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+            data: {
+                startDate: new Date("2026-09-10T00:00:00.000Z"),
+                endDate: new Date("2026-09-20T00:00:00.000Z"),
+            },
+        }));
+        expect(employee_schedule.updateMany).toHaveBeenCalledWith({
+            where: { id: 56, branchId },
+            data: {
+                startDate: new Date("2026-09-10T00:00:00.000Z"),
+                endDate: new Date("2026-09-20T00:00:00.000Z"),
+            },
+        });
+    });
+
     it("allocates the next revision number under a case lock and never updates a prior revision", async () => {
         const tx = {
             $queryRaw: jest.fn().mockResolvedValue([{ id: caseId }]),
