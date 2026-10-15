@@ -102,7 +102,7 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
                         {changes.data.basicInfo.length > 0 ? (
                             <ReviewSection data-component={child("body_changes_basic")} titleId={`${labelId}-basic`} title="기본정보" tone="mom">
                                 {changes.data.basicInfo.map((change) => (
-                                    <ChangeRow key={change.path} change={change} root={child("body_changes_basic_row")} />
+                                    <ChangeRow key={change.path} change={change} root={child("body_changes_basic_rows_row")} />
                                 ))}
                             </ReviewSection>
                         ) : null}
@@ -194,7 +194,7 @@ function SessionChangeGroup({ session, root, idPrefix }: { session: ServiceRecor
             </div>
             <div data-component={`${root}_rows`} className="flex flex-col gap-[calc(6px*var(--glint-ui-scale,1))]">
                 {session.changes.map((change) => (
-                    <ChangeRow key={change.path} change={change} root={`${root}_row`} />
+                    <ChangeRow key={change.path} change={change} root={`${root}_rows_row`} />
                 ))}
             </div>
         </section>
