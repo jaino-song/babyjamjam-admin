@@ -273,6 +273,31 @@ export interface ServiceRecordRevisionHistoryResponse {
     currentUsableRevisionId: string | null;
     revisions: ServiceRecordRevisionHistoryEntry[];
 }
+export type ServiceRecordRevisionChangeValue = string | number | boolean | null | string[];
+export interface ServiceRecordRevisionFieldChange {
+    /** "period.startDate" | "period.endDate" | "header.<key>" | "session.serviceDate"
+     *  | "session.answers.<key>" | "session.etcService" | "session.notes"
+     *  | "session.paymentConfirmed" | "session.employee" | "session.clientSignature" */
+    path: string;
+    before: ServiceRecordRevisionChangeValue;
+    after: ServiceRecordRevisionChangeValue;
+}
+export interface ServiceRecordRevisionSessionChange {
+    sessionIndex: number;
+    kind: "added" | "removed" | "changed";
+    serviceDateBefore: string | null;
+    serviceDateAfter: string | null;
+    changes: ServiceRecordRevisionFieldChange[];
+}
+export interface ServiceRecordRevisionChangesResponse {
+    revisionId: string;
+    revisionNumber: number;
+    confirmedAt: string;
+    formVersion: number;
+    beforeAvailable: boolean;
+    basicInfo: ServiceRecordRevisionFieldChange[];
+    sessions: ServiceRecordRevisionSessionChange[];
+}
 export interface ServiceRecordRevisionDocumentRetryRequest {
     expectedGeneration: string;
 }
