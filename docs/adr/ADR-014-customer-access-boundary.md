@@ -25,8 +25,10 @@ transport 근거이지 OTP auth service 증거가 아니다.
 자동 연결의 source는 `client.name`, `client.phoneNormalized`,
 `client.birthday`다. `client.birthday`는 어머니/고객 DOB이며,
 `client.birthDate`는 아기 출산일, `user.birthDate`는 staff profile이다.
-이름은 NFC + boundary trim 뒤 exact equality만 허용하고, DOB는 four-digit
-year를 포함한 완전한 유효 날짜만 date-only 비교한다. six-digit/부분 날짜와
+제출 이름과 저장 `client.name`은 각각 NFC + boundary trim 뒤 nonempty인지
+확인하고 exact equality만 허용한다. 어느 한쪽이 null/empty/whitespace-only면
+phone+DOB가 맞아도 generic cannot-auto-link다. DOB는 four-digit year를
+포함한 완전한 유효 날짜만 date-only 비교한다. six-digit/부분 날짜와
 세기 추정, 영수증의 century-free fallback은 ownership matching에서 거부한다.
 Active link는 이 세 field와 함께 매칭 당시 `client.branchId`와 source
 revision/fingerprint를 bind하며, current branch/source가 같을 때만 data request와
@@ -148,7 +150,7 @@ idempotent cleanup, fresh proof generation은 후속 구현의 필수 acceptance
 ## 검증과 rollback
 
 계획 문서 `docs/plans/BJJ-459-customer-phase1-contract.md`는 AUTH-01~08의
-원래 의미와 AUTH-X01~26 확장, success/failure assertion, operation matrix,
+원래 의미와 AUTH-X01~30 확장, success/failure assertion, operation matrix,
 transition race를 기록한다. 이 ADR은 implementation이나 Phase 2 승인이
 아니다. `f8455334`에 대한 이전 SOL 승인은 이 자동 연결 정책에 재사용하지
 않으며 fresh review가 필요하다. 문서 rollback은 correction commit의 Git revert다. 후속 schema/token

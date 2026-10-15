@@ -96,9 +96,11 @@ branch별 제약이라 전역 유일하지 않다. 서버의 검증된 phone pro
 `docs/superpowers/specs/2026-09-03-service-end-receipt-link-design.md:29`에
 기록되어 있다. 이 task에서는 live data의 형식 분포를 조사하거나 보정하지 않는다.
 
-이름은 Unicode NFC 후 양 끝 boundary whitespace만 trim하고 exact equality를
-적용한다. 내부 whitespace 제거, case 변경, NFKC/romanization, fuzzy·substring
-비교를 하지 않는다. 고객 DOB와 저장 DOB는 모두 완전한 유효 달력 날짜이며
+제출 이름과 저장 `client.name`은 각각 Unicode NFC 후 양 끝 boundary
+whitespace만 trim한 normalized 값이 모두 nonempty여야 exact equality를
+적용한다. 어느 한쪽이 null, empty, 또는 whitespace-only이면 phone+DOB가
+맞아도 generic cannot-auto-link/help로 끝낸다. 내부 whitespace 제거, case 변경,
+NFKC/romanization, fuzzy·substring 비교를 하지 않는다. 고객 DOB와 저장 DOB는 모두 완전한 유효 달력 날짜이며
 4자리 연도를 가져야 한다. `YYYY-MM-DD` 또는 명시적 연도의 `YYYYMMDD`만
 date-only ISO로 정규화한 뒤 비교한다. 6자리 `YYMMDD`, MMDD, 부분 날짜,
 연도 추정, 잘못된 날짜, 모호하거나 누락된 저장값은 자동 연결하지 않는다.
@@ -382,6 +384,7 @@ Phase 1 종료·Phase 2 실행·code implementation approval을 주장하지 않
 | AUTH-X27 | exact full match인 단일 후보가 assigned valid `client.branchId`일 때만 automatic active | 단 하나라도 null/unassigned/invalid branch면 ambiguity/help로 끝나며 자동 active하지 않음 |
 | AUTH-X28 | active link의 bound branch와 source revision이 그대로면 data request/precommit이 허용됨 | branch reassignment/nulling 또는 source mutation 뒤 old cached grant는 deny/suspend |
 | AUTH-X29 | 명시적 revoke 뒤 current triple match가 다시 보여도 revoke 상태가 유지됨 | auto matching이 revoke를 undo하거나 다른 branch로 grant를 이전하지 않음 |
+| AUTH-X30 | 제출 이름과 저장 `client.name`이 NFC+boundary trim 뒤 모두 nonempty이고 exact match면 정상 유일 연결을 허용 | 어느 한쪽이 null/empty/whitespace-only이면 phone+DOB가 맞아도 generic cannot-auto-link |
 
 문서 task의 실제 검증은 Markdown 구조, durable source URL/개정, source
 anchor, exact path allowlist, credential-pattern scan이다. Backend
