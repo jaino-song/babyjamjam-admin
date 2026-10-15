@@ -67,6 +67,7 @@ yarn-error.log*
 !mobile/.env.example
 frontend/auth.json
 mobile/auth.json
+frontend/.auth/
 
 # local audit / verification screenshots (Playwright captures from manual debugging)
 audit-*.png
