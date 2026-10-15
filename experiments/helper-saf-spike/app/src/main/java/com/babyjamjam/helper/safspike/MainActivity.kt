@@ -3,6 +3,7 @@ package com.babyjamjam.helper.safspike
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
@@ -37,6 +38,7 @@ class MainActivity : Activity() {
 
     private lateinit var grantView: TextView
     private lateinit var statusView: TextView
+    private lateinit var probePanel: LinearLayout
     private lateinit var filesContainer: LinearLayout
     private lateinit var scanButton: Button
     private lateinit var startButton: Button
@@ -182,13 +184,15 @@ class MainActivity : Activity() {
         content.addView(revokeButton)
 
         content.addView(text(getString(R.string.files_title), 18f, true))
+        probePanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        probePanel.addView(text(getString(R.string.select_for_probe), 15f, false))
+        probeButton = actionButton(R.string.probe) { probeSelectedFile() }
+        probePanel.addView(probeButton)
+        statusView = text(getString(R.string.status_waiting), 15f, false)
+        probePanel.addView(statusView)
+        content.addView(probePanel)
         filesContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         content.addView(filesContainer)
-        content.addView(text(getString(R.string.select_for_probe), 15f, false))
-        probeButton = actionButton(R.string.probe) { probeSelectedFile() }
-        content.addView(probeButton)
-        statusView = text(getString(R.string.status_waiting), 15f, false)
-        content.addView(statusView)
         stopButton.isEnabled = false
         probeButton.isEnabled = false
         updateActionState()
@@ -302,6 +306,7 @@ class MainActivity : Activity() {
                     selectedDocument = metadata
                     statusView.text = getString(R.string.selected_file, metadata.displayName ?: "(이름 없음)")
                     updateActionState()
+                    bringProbeFeedbackIntoView()
                 })
             }
         }
@@ -310,6 +315,15 @@ class MainActivity : Activity() {
         }
         if (listing.entryCapReached) {
             filesContainer.addView(text(getString(R.string.truncated), 15f, true))
+        }
+    }
+
+    private fun bringProbeFeedbackIntoView() {
+        probePanel.post {
+            val width = probePanel.width
+            val height = probePanel.height
+            if (width == 0 || height == 0) return@post
+            probePanel.requestRectangleOnScreen(Rect(0, 0, width, height), true)
         }
     }
 
