@@ -1007,6 +1007,67 @@ describe("SbMessageLogRepository", () => {
                 data: { serviceEndNoticeSentAt: expect.any(Date) },
             });
         });
+
+        it("persists the carrier-check schedule when an uncertain attempt is reconciled as delivered with a mid", async () => {
+            const uncertainAt = new Date("2026-10-14T03:00:00.000Z");
+            const row = {
+                id: 44, branchId: "branch-1", provider: "aligo_sms", templateKey: "manual_sms", triggerJobId: null,
+                receiver: "01012345678", clientId: null, recipientName: "수신자", recipientPhone: "01012345678",
+                messageBody: "message", variables: { retrySafety: "uncertain" }, status: "failed", aligoMid: null,
+                errorMessage: "timeout", attempts: 1, lastAttemptAt: uncertainAt, nextRetryAt: null,
+                createdAt: uncertainAt, updatedAt: uncertainAt, providerAcceptanceKey: "sms:key-44",
+                providerAcceptanceFingerprint: "fingerprint-44", providerAcceptanceState: "uncertain",
+                providerCallStartedAt: uncertainAt, providerAcceptedAt: null, providerReconciledAt: null,
+                providerReconciledBy: null, providerReconciliationReason: null,
+                carrierCheckDueAt: null, carrierCheckedAt: null, carrierResultState: null, carrierResults: null,
+            };
+            messageLogModel.findUnique
+                .mockResolvedValueOnce(row)
+                .mockResolvedValueOnce({ ...row, status: "sent", providerAcceptanceState: "reconciled_delivered" });
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            const attempt = MessageLogEntity.reconstitute(
+                44, "branch-1", "aligo_sms", "manual_sms", null, "01012345678", null, "message",
+                { retrySafety: "uncertain" }, "failed", null, "timeout", 1, uncertainAt, null,
+                uncertainAt, uncertainAt, "수신자", "01012345678", "sms:key-44", "fingerprint-44", "uncertain", uncertainAt,
+            );
+
+            await repository.reconcileProviderAttempt(attempt, "delivered", "system:aligo-history", "history", "mid-44");
+
+            const data = messageLogModel.updateMany.mock.calls[0]?.[0].data;
+            expect(data).toMatchObject({
+                status: "sent",
+                aligoMid: "mid-44",
+                carrierCheckDueAt: expect.any(Date),
+                carrierCheckedAt: null,
+                carrierResultState: null,
+            });
+            expect(data.carrierCheckDueAt.getTime()).toBe(data.providerAcceptedAt.getTime() + 30 * 60 * 1000);
+        });
+
+        it("does not write carrier columns when an uncertain attempt is reconciled as not delivered", async () => {
+            const uncertainAt = new Date("2026-10-14T03:00:00.000Z");
+            const row = {
+                id: 45, branchId: "branch-1", provider: "aligo_sms", templateKey: "manual_sms", triggerJobId: null,
+                receiver: "01012345678", clientId: null, recipientName: "수신자", recipientPhone: "01012345678",
+                messageBody: "message", variables: {}, status: "failed", aligoMid: null, errorMessage: "timeout",
+                attempts: 1, lastAttemptAt: uncertainAt, nextRetryAt: null, createdAt: uncertainAt, updatedAt: uncertainAt,
+                providerAcceptanceKey: "sms:key-45", providerAcceptanceFingerprint: "fingerprint-45",
+                providerAcceptanceState: "uncertain", providerCallStartedAt: uncertainAt, providerAcceptedAt: null,
+                providerReconciledAt: null, providerReconciledBy: null, providerReconciliationReason: null,
+            };
+            messageLogModel.findUnique.mockResolvedValueOnce(row).mockResolvedValueOnce(row);
+            messageLogModel.updateMany.mockResolvedValue({ count: 1 });
+            const attempt = MessageLogEntity.reconstitute(
+                45, "branch-1", "aligo_sms", "manual_sms", null, "01012345678", null, "message",
+                {}, "failed", null, "timeout", 1, uncertainAt, null,
+                uncertainAt, uncertainAt, "수신자", "01012345678", "sms:key-45", "fingerprint-45", "uncertain", uncertainAt,
+            );
+
+            await repository.reconcileProviderAttempt(attempt, "not-delivered", "operator-1", "checked", "mid-45", { retry: "none" });
+
+            const data = messageLogModel.updateMany.mock.calls[0]?.[0].data;
+            expect(data).not.toHaveProperty("carrierCheckDueAt");
+        });
     });
 
     describe("findCarrierChecksDueSystemScope", () => {

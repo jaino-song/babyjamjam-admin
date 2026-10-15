@@ -359,6 +359,12 @@ export class MessageLogEntity {
             this.nextRetryAt = null;
             this.providerAcceptedAt = this.providerAcceptedAt ?? now;
             this.variables = { ...this.variables, retrySafety: "delivered" };
+            // A reconciled send has a provider message id just like a directly accepted one,
+            // so it gets the same one-shot carrier check unless one is already scheduled or done.
+            if (this.aligoMid && this.carrierCheckDueAt === null
+                && this.carrierCheckedAt === null && this.carrierResultState === null) {
+                this.scheduleCarrierCheck(this.providerAcceptedAt);
+            }
             return;
         }
 

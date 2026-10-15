@@ -154,4 +154,77 @@ describe("message log carrier check", () => {
             });
         });
     });
+
+    describe("reconcileProviderOutcome", () => {
+        const reconcilable = (overrides: Record<string, unknown> = {}) => MessageLogMapper.toDomain({
+            ...baseRow,
+            status: "failed",
+            aligoMid: null,
+            providerAcceptanceState: "uncertain",
+            ...overrides,
+        });
+        const reconciledAt = new Date("2026-10-14T05:10:00.000Z");
+        const deliver = (entity: ReturnType<typeof reconcilable>, providerMessageId: string | null = "mid-9") =>
+            entity.reconcileProviderOutcome({
+                outcome: "delivered", actor: "system:aligo-history", reason: "history", providerMessageId, now: reconciledAt,
+            });
+
+        it("schedules the carrier check from the acceptance time when delivery is reconciled with a mid", () => {
+            const entity = reconcilable();
+            deliver(entity);
+
+            expect(entity.carrierCheckDueAt).toEqual(new Date(reconciledAt.getTime() + CARRIER_CHECK_DELAY_MS));
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(true);
+            expect(MessageLogMapper.toPrismaUpdate(entity)).toMatchObject({
+                carrierCheckDueAt: entity.carrierCheckDueAt,
+            });
+        });
+
+        it("keeps an existing acceptance time as the schedule base", () => {
+            const acceptedAt = new Date("2026-10-14T04:00:00.000Z");
+            const entity = reconcilable({ providerAcceptedAt: acceptedAt });
+            deliver(entity);
+
+            expect(entity.carrierCheckDueAt).toEqual(new Date(acceptedAt.getTime() + CARRIER_CHECK_DELAY_MS));
+        });
+
+        it("does not schedule without a provider message id", () => {
+            const entity = reconcilable();
+            deliver(entity, null);
+
+            expect(entity.carrierCheckDueAt).toBeNull();
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(false);
+            expect(MessageLogMapper.toPrismaUpdate(entity)).not.toHaveProperty("carrierCheckDueAt");
+        });
+
+        it("does not schedule when delivery was not established", () => {
+            const entity = reconcilable();
+            entity.reconcileProviderOutcome({
+                outcome: "not-delivered", actor: "operator", reason: "checked", providerMessageId: "mid-9", retry: "none", now: reconciledAt,
+            });
+
+            expect(entity.carrierCheckDueAt).toBeNull();
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
+
+        it("does not reschedule a check that is already scheduled", () => {
+            const due = new Date("2026-10-14T09:00:00.000Z");
+            const entity = reconcilable({ carrierCheckDueAt: due });
+            deliver(entity);
+
+            expect(entity.carrierCheckDueAt).toEqual(due);
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
+
+        it("does not reschedule a check that already completed", () => {
+            const checkedAt = new Date("2026-10-14T05:05:00.000Z");
+            const entity = reconcilable({ carrierCheckedAt: checkedAt, carrierResultState: "failed", carrierResults: [] });
+            deliver(entity);
+
+            expect(entity.carrierCheckDueAt).toBeNull();
+            expect(entity.carrierCheckedAt).toEqual(checkedAt);
+            expect(entity.carrierResultState).toBe("failed");
+            expect(entity.hasPendingCarrierCheckSchedule()).toBe(false);
+        });
+    });
 });
