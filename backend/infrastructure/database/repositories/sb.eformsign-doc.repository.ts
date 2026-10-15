@@ -747,7 +747,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
             FOR UPDATE
         `);
         if (lockedClients?.length !== 1) {
-            return false;
+            // The observed owner is gone (the document was reassigned and the old owner deleted
+            // after the unlocked read). The vendor cancel already happened, so this is the same
+            // owner-changed case as below: start over and re-read the owner, never refuse here.
+            throw new VoidOwnerChanged();
         }
         await tx.$executeRaw(Prisma.sql`
             UPDATE client

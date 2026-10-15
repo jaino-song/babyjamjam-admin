@@ -242,15 +242,44 @@ describe("SbEformsignDocRepository", () => {
             expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         });
 
-        it("returns false and writes nothing when the owning client row is gone", async () => {
-            const transaction = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
-            const { repository: repo } = repositoryFor([transaction]);
+        it("rolls back and retries with the new owner when the peeked owner row is gone (reassigned, then deleted)", async () => {
+            // The vendor cancel already happened: a vanished observed owner is an owner change, not a refusal.
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const settled = voidTransaction({
+                peek: [{ clientId: 77 }], locked: [{ clientId: 77 }], lockedClients: [{ id: 77 }],
+            });
+            const { repository: repo, $transaction } = repositoryFor([vanished, settled]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(true);
+
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(vanished.order).toEqual(["PEEK", "CLIENT_LOCK"]);
+            expect(vanished.$executeRaw).not.toHaveBeenCalled();
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(settled.$queryRaw.mock.calls[1]![0].values).toContain(77);
+            expect(settled.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
+        });
+
+        it("returns false only when the re-peek after a vanished owner finds no owner", async () => {
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const unowned = voidTransaction({ peek: [{ clientId: null }] });
+            const { repository: repo, $transaction } = repositoryFor([vanished, unowned]);
 
             await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
 
-            expect(transaction.order).toEqual(["PEEK", "CLIENT_LOCK"]);
-            expect(transaction.$executeRaw).not.toHaveBeenCalled();
-            expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect($transaction).toHaveBeenCalledTimes(2);
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
+            expect(unowned.eformsign_doc.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("gives up with false after the bounded number of vanished owners", async () => {
+            const vanished = voidTransaction({ peek: [{ clientId: 55 }], lockedClients: [] });
+            const { repository: repo, $transaction } = repositoryFor([vanished]);
+
+            await expect(repo.markVoided(branchId, "doc-1", voidedAt, "actor")).resolves.toBe(false);
+
+            expect($transaction).toHaveBeenCalledTimes(3);
+            expect(vanished.eformsign_doc.updateMany).not.toHaveBeenCalled();
         });
 
         it("returns false when the update matches no row", async () => {

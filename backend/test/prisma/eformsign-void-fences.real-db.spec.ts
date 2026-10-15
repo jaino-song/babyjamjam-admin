@@ -1165,4 +1165,85 @@ describeReal("voiding a newer contract is serialised with phone-link pointer wri
 
         expect(await pointerOf(client.id)).toBe(older);
     }, CASE_TIMEOUT_MS);
+
+    /**
+     * Runs a void whose transaction is held right before its first client lock; `betweenPeekAndLock`
+     * then changes the world on other connections.
+     */
+    async function voidWithChangeBeforeClientLock(
+        documentId: string,
+        betweenPeekAndLock: () => Promise<void>,
+    ): Promise<boolean> {
+        let changed = false;
+        const prisma = new Proxy(raw, {
+            get(target, key) {
+                if (key === "$transaction") {
+                    return (callback: (tx: Prisma.TransactionClient) => Promise<unknown>, ...rest: unknown[]) =>
+                        (target.$transaction as (...a: unknown[]) => Promise<unknown>).call(
+                            target,
+                            (tx: Prisma.TransactionClient) => callback(new Proxy(tx, {
+                                get(inner, innerKey) {
+                                    if (innerKey === "$queryRaw") {
+                                        return async (...args: unknown[]) => {
+                                            const text = sqlOf(args[0]);
+                                            if (!changed && CLIENT_TABLE.test(text) && ROW_LOCK.test(text)) {
+                                                changed = true;
+                                                await betweenPeekAndLock();
+                                            }
+                                            return (inner.$queryRaw as (...a: unknown[]) => Promise<unknown>).apply(inner, args);
+                                        };
+                                    }
+                                    const value = Reflect.get(inner, innerKey, inner);
+                                    return typeof value === "function" ? value.bind(inner) : value;
+                                },
+                            })),
+                            ...rest,
+                        );
+                }
+                const value = Reflect.get(target, key, target);
+                return typeof value === "function" ? value.bind(target) : value;
+            },
+        }) as unknown as PrismaService;
+        const voided = await new SbEformsignDocRepository(prisma)
+            .markVoided(branchId, documentId, new Date(), ACTOR);
+        expect(changed).toBe(true);
+        return voided;
+    }
+
+    it("5. a void whose peeked owner was reassigned and then deleted before the client lock still persists on the new owner's document", async () => {
+        // The vendor cancel has already happened: refusing here would leave a cancelled document unvoided.
+        const ownerA = await makeClient();
+        const ownerB = await makeClient();
+        const documentId = await makeDocument("reassigned", ownerA, {
+            createdDate: "2026-10-12T00:00:00.000Z", ready: false, owner: "client",
+        });
+
+        const voided = await voidWithChangeBeforeClientLock(documentId, async () => {
+            await raw.eformsign_doc.update({ where: { documentId }, data: { clientId: ownerB.id } });
+            await raw.client.delete({ where: { id: ownerA.id } });
+        });
+
+        expect(voided).toBe(true);
+        const row = await documentRow(documentId);
+        expect(row.clientId).toBe(ownerB.id);
+        expect(row.voidedAt).not.toBeNull();
+        expect(row.voidedBy).toBe(ACTOR);
+    }, CASE_TIMEOUT_MS);
+
+    it("5. control: a void whose peeked owner was reassigned (still existing) before the client lock persists on the new owner's document", async () => {
+        const ownerA = await makeClient();
+        const ownerB = await makeClient();
+        const documentId = await makeDocument("reassigned-kept", ownerA, {
+            createdDate: "2026-10-12T00:00:00.000Z", ready: false, owner: "client",
+        });
+
+        const voided = await voidWithChangeBeforeClientLock(documentId, async () => {
+            await raw.eformsign_doc.update({ where: { documentId }, data: { clientId: ownerB.id } });
+        });
+
+        expect(voided).toBe(true);
+        const row = await documentRow(documentId);
+        expect(row.clientId).toBe(ownerB.id);
+        expect(row.voidedAt).not.toBeNull();
+    }, CASE_TIMEOUT_MS);
 });
