@@ -622,6 +622,14 @@ describe("per-session administrator editing", () => {
         expect(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[2]).toBeEnabled();
     });
 
+    it("keeps 수정 이력 보기 enabled while edits are pending: it only reads", async () => {
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        expect(screen.getByRole("button", { name: "수정 이력 보기" })).toBeEnabled();
+    });
+
     it("batches two sessions, a header edit and a date move into one 수정 확정 with one confirm", async () => {
         movedDates = { 3: "2026-09-10" };
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
@@ -794,10 +802,14 @@ describe("per-session administrator editing", () => {
             expect(container.querySelector('[data-slot="commit-error"]')).toBeNull();
             expect(screen.queryByText(/수정 기준을 확인할 수 없습니다/)).not.toBeInTheDocument();
             expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
+            // Locked like 기본정보 수정 while the confirm / reload request is in flight.
+            expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeDisabled();
+            expect(screen.getByRole("button", { name: "수정 이력 보기" })).toBeDisabled();
 
             await act(async () => { settleEditor(); });
 
             await waitFor(() => expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeEnabled());
+            expect(screen.getByRole("button", { name: "수정 이력 보기" })).toBeEnabled();
             expect(container.querySelector('[data-slot="commit-error"]')).toBeNull();
             expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument();
             expect(container).not.toHaveTextContent("조회 가능");
