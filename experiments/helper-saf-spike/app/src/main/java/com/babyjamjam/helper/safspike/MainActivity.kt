@@ -113,6 +113,7 @@ class MainActivity : Activity() {
 
         val scroll = ScrollView(this).apply {
             isFillViewport = true
+            clipToPadding = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
         val content = LinearLayout(this).apply {
@@ -121,9 +122,10 @@ class MainActivity : Activity() {
         }
         scroll.addView(content)
         scroll.setOnApplyWindowInsetsListener { view, insets ->
-            val bars = insets.getInsets(WindowInsets.Type.systemBars())
-            view.setPadding(0, 0, 0, 0)
-            content.setPadding(dp(16) + bars.left, dp(16) + bars.top, dp(16) + bars.right, dp(16) + bars.bottom)
+            val safeInsets = insets.getInsets(
+                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+            )
+            view.setPadding(safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom)
             insets
         }
 
